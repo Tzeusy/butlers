@@ -11,7 +11,8 @@ import pytest
 class SpawnerResult:
     """Represents the result of a Claude Code spawner invocation."""
 
-    result: str | None = None
+    output: str | None = None
+    success: bool = False
     tool_calls: list[dict] = field(default_factory=list)
     error: str | None = None
     duration_ms: int = 0

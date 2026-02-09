@@ -180,7 +180,8 @@ class ButlerDaemon:
             """Trigger the CC spawner with a prompt."""
             result = await spawner.trigger(prompt=prompt, trigger_source="trigger_tool")
             return {
-                "result": result.result,
+                "output": result.output,
+                "success": result.success,
                 "error": result.error,
                 "duration_ms": result.duration_ms,
             }

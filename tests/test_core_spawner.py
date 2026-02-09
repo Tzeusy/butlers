@@ -235,20 +235,25 @@ class TestSpawnerResult:
 
     def test_default_values(self):
         r = SpawnerResult()
-        assert r.result is None
+        assert r.output is None
+        assert r.success is False
         assert r.tool_calls == []
         assert r.error is None
         assert r.duration_ms == 0
 
     def test_success_result(self):
-        r = SpawnerResult(result="output", tool_calls=[{"name": "t"}], duration_ms=42)
-        assert r.result == "output"
+        r = SpawnerResult(
+            output="output text", success=True, tool_calls=[{"name": "t"}], duration_ms=42
+        )
+        assert r.output == "output text"
+        assert r.success is True
         assert len(r.tool_calls) == 1
         assert r.error is None
 
     def test_error_result(self):
-        r = SpawnerResult(error="something broke", duration_ms=10)
-        assert r.result is None
+        r = SpawnerResult(error="something broke", success=False, duration_ms=10)
+        assert r.output is None
+        assert r.success is False
         assert r.error == "something broke"
 
 
@@ -267,7 +272,8 @@ class TestCCSdkInvocation:
         )
 
         result = await spawner.trigger("hello", "tick")
-        assert result.result == "Hello from CC!"
+        assert result.output == "Hello from CC!"
+        assert result.success is True
         assert result.error is None
         assert result.duration_ms >= 0
 
@@ -283,7 +289,8 @@ class TestCCSdkInvocation:
         )
 
         result = await spawner.trigger("use tools", "trigger_tool")
-        assert result.result == "Done with tools"
+        assert result.output == "Done with tools"
+        assert result.success is True
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0]["name"] == "state_get"
         assert result.tool_calls[0]["input"] == {"key": "foo"}
@@ -303,7 +310,8 @@ class TestCCSdkInvocation:
         assert result.error is not None
         assert "RuntimeError" in result.error
         assert "SDK connection failed" in result.error
-        assert result.result is None
+        assert result.output is None
+        assert result.success is False
         assert result.duration_ms >= 0
 
     async def test_duration_measured(self, tmp_path: Path):
@@ -538,6 +546,7 @@ class TestSerialDispatch:
 
         # All should succeed
         assert all(r.error is None for r in results)
+        assert all(r.success is True for r in results)
 
         # Verify serial execution: each "start" must be followed by its "end"
         # before the next "start"
@@ -580,11 +589,13 @@ class TestSerialDispatch:
 
         result1 = await spawner.trigger("first", "tick")
         assert result1.error is not None
+        assert result1.success is False
 
         # Lock should be released — second call should work
         result2 = await spawner.trigger("second", "tick")
         assert result2.error is None
-        assert result2.result == "second call works"
+        assert result2.output == "second call works"
+        assert result2.success is True
 
 
 # ---------------------------------------------------------------------------
@@ -626,12 +637,16 @@ class TestSessionLogging:
 
             # session_complete called with result data
             mock_complete.assert_called_once()
-            call_args = mock_complete.call_args
-            assert call_args[0][0] is mock_pool
-            assert call_args[0][1] == fake_session_id
-            assert call_args[0][2] == "Hello from CC!"  # result text
-            assert isinstance(call_args[0][3], list)  # tool_calls
-            assert call_args[0][4] >= 0  # duration_ms
+            call_kwargs = mock_complete.call_args.kwargs
+            call_args = mock_complete.call_args.args
+            assert call_args[0] is mock_pool
+            assert call_args[1] == fake_session_id
+            # Check keyword arguments for the new signature
+            assert call_kwargs["output"] == "Hello from CC!"
+            assert isinstance(call_kwargs["tool_calls"], list)
+            assert call_kwargs["duration_ms"] >= 0
+            assert call_kwargs["success"] is True
+            assert call_kwargs.get("error") is None
 
     async def test_session_completed_on_error(self, tmp_path: Path):
         config_dir = tmp_path / "config"
@@ -658,14 +673,18 @@ class TestSessionLogging:
 
             result = await spawner.trigger("fail", "tick")
             assert result.error is not None
+            assert result.success is False
 
             # session_complete called with error info
             mock_complete.assert_called_once()
-            call_args = mock_complete.call_args
-            assert call_args[0][0] is mock_pool
-            assert call_args[0][1] == fake_session_id
-            assert "RuntimeError" in call_args[0][2]  # error message as result
-            assert call_args[0][3] == []  # empty tool_calls on error
+            call_kwargs = mock_complete.call_args.kwargs
+            call_args = mock_complete.call_args.args
+            assert call_args[0] is mock_pool
+            assert call_args[1] == fake_session_id
+            assert call_kwargs["output"] is None
+            assert call_kwargs["tool_calls"] == []
+            assert call_kwargs["success"] is False
+            assert "RuntimeError" in call_kwargs["error"]
 
     async def test_no_session_logging_without_pool(self, tmp_path: Path):
         """When pool is None, no session logging occurs (no errors either)."""
@@ -682,7 +701,8 @@ class TestSessionLogging:
 
         # Should not raise even without a pool
         result = await spawner.trigger("no pool", "tick")
-        assert result.result == "Hello from CC!"
+        assert result.output == "Hello from CC!"
+        assert result.success is True
 
 
 # ---------------------------------------------------------------------------
@@ -741,7 +761,8 @@ class TestFullFlow:
         ):
             result = await spawner.trigger("do the thing", "schedule")
 
-        assert result.result == "All done!"
+        assert result.output == "All done!"
+        assert result.success is True
         assert result.error is None
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0]["name"] == "state_set"

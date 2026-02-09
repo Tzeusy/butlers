@@ -13,7 +13,8 @@ def test_version():
 def test_spawner_result_defaults():
     """SpawnerResult has sensible defaults."""
     r = SpawnerResult()
-    assert r.result is None
+    assert r.output is None
+    assert r.success is False
     assert r.tool_calls == []
     assert r.error is None
     assert r.duration_ms == 0
@@ -22,20 +23,20 @@ def test_spawner_result_defaults():
 async def test_mock_spawner_records_invocations(mock_spawner: MockSpawner):
     """MockSpawner records invocations and returns the default result."""
     result = await mock_spawner.spawn(prompt="hello")
-    assert result.result is None
+    assert result.output is None
     assert len(mock_spawner.invocations) == 1
     assert mock_spawner.invocations[0] == {"prompt": "hello"}
 
 
 async def test_mock_spawner_enqueued_results(mock_spawner: MockSpawner):
     """MockSpawner returns enqueued results in FIFO order."""
-    mock_spawner.enqueue_result(SpawnerResult(result="first"))
-    mock_spawner.enqueue_result(SpawnerResult(result="second"))
+    mock_spawner.enqueue_result(SpawnerResult(output="first", success=True))
+    mock_spawner.enqueue_result(SpawnerResult(output="second", success=True))
 
     r1 = await mock_spawner.spawn()
     r2 = await mock_spawner.spawn()
     r3 = await mock_spawner.spawn()
 
-    assert r1.result == "first"
-    assert r2.result == "second"
-    assert r3.result is None  # falls back to default
+    assert r1.output == "first"
+    assert r2.output == "second"
+    assert r3.output is None  # falls back to default

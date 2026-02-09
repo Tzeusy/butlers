@@ -68,6 +68,8 @@ async def pool(postgres_container):
             duration_ms INTEGER,
             trace_id TEXT,
             cost JSONB,
+            success BOOLEAN,
+            error TEXT,
             started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             completed_at TIMESTAMPTZ
         )
@@ -107,6 +109,8 @@ async def test_create_session_persists_fields(pool):
     assert session["result"] is None
     assert session["tool_calls"] == []
     assert session["duration_ms"] is None
+    assert session["success"] is None
+    assert session["error"] is None
     assert session["completed_at"] is None
     assert session["started_at"] is not None
 
@@ -117,7 +121,7 @@ async def test_create_session_persists_fields(pool):
 
 
 async def test_complete_session_updates_fields(pool):
-    """session_complete sets result, tool_calls, duration_ms, and completed_at."""
+    """session_complete sets result, tool_calls, duration_ms, success, and completed_at."""
     from butlers.core.sessions import session_complete, session_create, sessions_get
 
     session_id = await session_create(pool, prompt="Test", trigger_source="schedule")
@@ -126,9 +130,10 @@ async def test_complete_session_updates_fields(pool):
     await session_complete(
         pool,
         session_id=session_id,
-        result="All done",
+        output="All done",
         tool_calls=tool_calls,
         duration_ms=1234,
+        success=True,
         cost={"input_tokens": 100, "output_tokens": 50},
     )
 
@@ -138,11 +143,13 @@ async def test_complete_session_updates_fields(pool):
     assert session["tool_calls"] == tool_calls
     assert session["duration_ms"] == 1234
     assert session["cost"] == {"input_tokens": 100, "output_tokens": 50}
+    assert session["success"] is True
+    assert session["error"] is None
     assert session["completed_at"] is not None
 
 
 async def test_complete_with_failure(pool):
-    """session_complete stores error information in the result field."""
+    """session_complete stores error information with success=false."""
     from butlers.core.sessions import session_complete, session_create, sessions_get
 
     session_id = await session_create(pool, prompt="Failing task", trigger_source="heartbeat")
@@ -150,14 +157,18 @@ async def test_complete_with_failure(pool):
     await session_complete(
         pool,
         session_id=session_id,
-        result="ERROR: Connection timed out after 30s",
+        output=None,
         tool_calls=[],
         duration_ms=30000,
+        success=False,
+        error="Connection timed out after 30s",
     )
 
     session = await sessions_get(pool, session_id)
     assert session is not None
-    assert "ERROR" in session["result"]
+    assert session["success"] is False
+    assert session["error"] == "Connection timed out after 30s"
+    assert session["result"] is None
     assert session["duration_ms"] == 30000
     assert session["cost"] is None
     assert session["completed_at"] is not None
@@ -172,9 +183,10 @@ async def test_complete_nonexistent_session_raises(pool):
         await session_complete(
             pool,
             session_id=fake_id,
-            result="nope",
+            output="nope",
             tool_calls=[],
             duration_ms=0,
+            success=True,
         )
 
 
@@ -189,7 +201,7 @@ async def test_duration_ms_stored_correctly(pool):
 
     for ms in (0, 1, 999, 60_000, 3_600_000):
         sid = await session_create(pool, prompt=f"dur-{ms}", trigger_source="tick")
-        await session_complete(pool, sid, result="ok", tool_calls=[], duration_ms=ms)
+        await session_complete(pool, sid, output="ok", tool_calls=[], duration_ms=ms, success=True)
         session = await sessions_get(pool, sid)
         assert session is not None
         assert session["duration_ms"] == ms
@@ -215,6 +227,43 @@ async def test_trigger_source_invalid_raises(pool):
 
     with pytest.raises(ValueError, match="Invalid trigger_source"):
         await session_create(pool, prompt="test", trigger_source="unknown")
+
+
+# ---------------------------------------------------------------------------
+# success and error columns
+# ---------------------------------------------------------------------------
+
+
+async def test_successful_session_has_success_true_error_null(pool):
+    """Successful sessions have success=true and error=NULL."""
+    from butlers.core.sessions import session_complete, session_create, sessions_get
+
+    sid = await session_create(pool, prompt="success test", trigger_source="tick")
+    await session_complete(pool, sid, output="done", tool_calls=[], duration_ms=100, success=True)
+    session = await sessions_get(pool, sid)
+    assert session["success"] is True
+    assert session["error"] is None
+    assert session["result"] == "done"
+
+
+async def test_failed_session_has_success_false_error_set_result_null(pool):
+    """Failed sessions have success=false, error=<message>, result=NULL."""
+    from butlers.core.sessions import session_complete, session_create, sessions_get
+
+    sid = await session_create(pool, prompt="fail test", trigger_source="schedule")
+    await session_complete(
+        pool,
+        sid,
+        output=None,
+        tool_calls=[],
+        duration_ms=200,
+        success=False,
+        error="RuntimeError: something broke",
+    )
+    session = await sessions_get(pool, sid)
+    assert session["success"] is False
+    assert session["error"] == "RuntimeError: something broke"
+    assert session["result"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +315,20 @@ async def test_sessions_list_pagination(pool):
     assert page1_ids.isdisjoint(page2_ids)
 
 
+async def test_sessions_list_includes_success_and_error(pool):
+    """sessions_list returns success and error columns."""
+    from butlers.core.sessions import session_complete, session_create, sessions_list
+
+    sid = await session_create(pool, prompt="list-check", trigger_source="tick")
+    await session_complete(pool, sid, output="ok", tool_calls=[], duration_ms=10, success=True)
+    sessions = await sessions_list(pool, limit=100)
+    match = next(s for s in sessions if s["id"] == sid)
+    assert "success" in match
+    assert "error" in match
+    assert match["success"] is True
+    assert match["error"] is None
+
+
 # ---------------------------------------------------------------------------
 # sessions_get
 # ---------------------------------------------------------------------------
@@ -288,6 +351,8 @@ async def test_sessions_get_returns_full_record(pool):
         "duration_ms",
         "trace_id",
         "cost",
+        "success",
+        "error",
         "started_at",
         "completed_at",
     }

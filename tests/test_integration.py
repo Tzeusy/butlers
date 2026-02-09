@@ -57,6 +57,8 @@ CORE_TABLES_SQL = """
         duration_ms INTEGER,
         trace_id TEXT,
         cost JSONB,
+        success BOOLEAN,
+        error TEXT,
         started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         completed_at TIMESTAMPTZ
     );
@@ -249,9 +251,10 @@ class TestButlerStartupIntegration:
         await session_complete(
             pool,
             session_id,
-            result="Done",
+            output="Done",
             tool_calls=[{"tool": "state_get", "args": {"key": "x"}}],
             duration_ms=150,
+            success=True,
             cost={"input_tokens": 100, "output_tokens": 50},
         )
 
@@ -259,6 +262,8 @@ class TestButlerStartupIntegration:
         assert session["result"] == "Done"
         assert session["duration_ms"] == 150
         assert session["completed_at"] is not None
+        assert session["success"] is True
+        assert session["error"] is None
         assert session["tool_calls"] == [{"tool": "state_get", "args": {"key": "x"}}]
         assert session["cost"] == {"input_tokens": 100, "output_tokens": 50}
 
@@ -428,9 +433,10 @@ class TestSchedulerTickIntegration:
         await session_complete(
             pool,
             session_ids[0],
-            result="Report generated",
+            output="Report generated",
             tool_calls=[],
             duration_ms=500,
+            success=True,
         )
 
         # Verify the session was stored correctly
@@ -440,6 +446,8 @@ class TestSchedulerTickIntegration:
         assert session["trigger_source"] == "schedule"
         assert session["result"] == "Report generated"
         assert session["duration_ms"] == 500
+        assert session["success"] is True
+        assert session["error"] is None
         assert session["completed_at"] is not None
 
     async def test_tick_skips_future_and_disabled_tasks(self, pool):
