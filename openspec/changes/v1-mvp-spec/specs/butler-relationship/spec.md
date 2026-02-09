@@ -241,7 +241,7 @@ CREATE INDEX idx_contact_feed_contact ON contact_feed(contact_id, created_at DES
 
 ### Requirement: Relationship butler schema provisioning
 
-The Relationship butler's database tables SHALL be created during butler startup as butler-specific migrations, applied after core migrations. The schema MUST include the tables `contacts`, `contact_info`, `relationships`, `important_dates`, `notes`, `interactions`, `reminders`, `gifts`, `loans`, `groups`, `group_members`, `labels`, `contact_labels`, `quick_facts`, `addresses`, and `contact_feed`, along with all associated indexes.
+The Relationship butler's database tables SHALL be created during butler startup as Alembic revisions in the `relationship` version chain, applied after the core Alembic chain. The schema MUST include the tables `contacts`, `contact_info`, `relationships`, `important_dates`, `notes`, `interactions`, `reminders`, `gifts`, `loans`, `groups`, `group_members`, `labels`, `contact_labels`, `quick_facts`, `addresses`, and `contact_feed`, along with all associated indexes.
 
 #### Scenario: Butler starts with a fresh database
 

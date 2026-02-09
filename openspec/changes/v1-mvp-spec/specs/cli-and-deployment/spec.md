@@ -8,7 +8,7 @@ The `butlers` CLI is the primary interface for running the Butlers AI agent fram
 
 ### Requirement: butlers up (Dev Mode)
 
-The `butlers up` command SHALL start all discovered butlers in a single process, running concurrently within one asyncio event loop. It MUST discover all `butler.toml` files under the `butlers/` subdirectory, provision per-butler databases, apply migrations, and start all MCP servers concurrently on their configured ports.
+The `butlers up` command SHALL start all discovered butlers in a single process, running concurrently within one asyncio event loop. It MUST discover all `butler.toml` files under the `butlers/` subdirectory, provision per-butler databases, apply Alembic migrations, and start all MCP servers concurrently on their configured ports.
 
 The command SHALL accept an optional `--only` flag with a comma-separated list of butler names to start a subset of the discovered butlers.
 
@@ -17,7 +17,7 @@ The command SHALL accept an optional `--only` flag with a comma-separated list o
 WHEN `butlers up` is invoked with no arguments,
 THEN the CLI MUST discover all `butlers/*/butler.toml` config files,
 AND for each discovered butler, the CLI MUST create the butler's database if it does not exist,
-AND apply core migrations followed by butler-specific migrations,
+AND apply core Alembic migrations followed by butler-specific Alembic migrations,
 AND sync TOML scheduled tasks to the database,
 AND start all butler MCP servers concurrently on their configured ports within a single asyncio event loop.
 
@@ -38,7 +38,7 @@ THEN the CLI MUST log a timestamped message for each butler indicating its name 
 WHEN `butlers up --only switchboard,health` is invoked,
 THEN the CLI MUST start only the `switchboard` and `health` butlers,
 AND all other discovered butlers MUST NOT be started,
-AND each started butler MUST still go through the full startup sequence (database provisioning, migrations, TOML sync, MCP server start).
+AND each started butler MUST still go through the full startup sequence (database provisioning, Alembic migrations, TOML sync, MCP server start).
 
 #### Scenario: --only references a non-existent butler
 
@@ -64,7 +64,7 @@ The command MUST accept a `--config` option pointing to the butler's config dire
 
 WHEN `butlers run --config butlers/health` is invoked,
 THEN the CLI MUST load the `butler.toml` from `butlers/health/`,
-AND the CLI MUST execute the full butler startup sequence (provision database, apply migrations, sync TOML tasks, load modules, register tools, start MCP server),
+AND the CLI MUST execute the full butler startup sequence (provision database, apply Alembic migrations, sync TOML tasks, load modules, register tools, start MCP server),
 AND the butler MUST run as a single long-lived daemon until a shutdown signal is received.
 
 #### Scenario: Missing --config flag
@@ -153,7 +153,7 @@ All CLI commands that interact with PostgreSQL SHALL use the `DATABASE_URL` envi
 #### Scenario: DATABASE_URL is set
 
 WHEN `butlers up` or `butlers run` is invoked and `DATABASE_URL` is set in the environment,
-THEN the CLI MUST use the provided `DATABASE_URL` to connect to PostgreSQL for database provisioning and migrations.
+THEN the CLI MUST use the provided `DATABASE_URL` to connect to PostgreSQL for database provisioning and Alembic migrations.
 
 #### Scenario: DATABASE_URL is not set
 
@@ -177,15 +177,15 @@ On startup, both `butlers up` and `butlers run` SHALL automatically provision pe
 WHEN a butler starts for the first time,
 THEN the CLI MUST connect to PostgreSQL as the butlers user,
 AND the CLI MUST execute `CREATE DATABASE butler_<name>` if the database does not already exist,
-AND the CLI MUST apply all core migrations from `migrations/core/` in lexicographic order,
-AND the CLI MUST apply butler-specific migrations from `migrations/<name>/` if the directory exists,
+AND the CLI MUST apply all core Alembic revisions from the `core` version chain,
+AND the CLI MUST apply butler-specific Alembic revisions from the `<name>` version chain if it exists,
 AND the CLI MUST sync TOML scheduled tasks to the `scheduled_tasks` table.
 
 #### Scenario: Database already exists on subsequent startup
 
 WHEN a butler starts and its database `butler_<name>` already exists,
 THEN the CLI MUST NOT attempt to re-create the database,
-AND the CLI MUST still apply any unapplied migrations,
+AND the CLI MUST still apply any unapplied Alembic revisions,
 AND the CLI MUST still sync TOML scheduled tasks.
 
 #### Scenario: Dev mode provisions all databases

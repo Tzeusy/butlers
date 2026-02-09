@@ -99,11 +99,28 @@ The codebase is Python 3.12+, uses `uv` for package management, `ruff` for linti
 
 **Rationale:** Polling is simpler for local development (no public URL needed). Webhooks are more efficient in production (no polling overhead, instant delivery). Both use the same internal message handling path.
 
-### D12: Migrations as ordered SQL files
+### D12: Alembic for database migrations
 
-**Choice:** Migrations are plain `.sql` files in `migrations/<butler-name>/` directories, applied in lexicographic order on startup. A `_migrations` tracking table records which have been applied.
+**Choice:** Use Alembic for all database migrations. A shared `alembic/` directory at the project root contains a single Alembic environment with multiple version chains: one `core` chain (applied to every butler) and per-butler chains (e.g., `relationship`, `health`, `general`, `switchboard`) applied only to the relevant butler's database. Migrations use raw SQL via `op.execute()` to stay consistent with D3 (no ORM at runtime).
 
-**Rationale:** Simple, transparent, and debuggable. Each butler applies core migrations first, then its own butler-specific migrations. No migration framework dependency needed — just file ordering and an applied-migrations table.
+**Rationale:** Alembic provides proper migration tooling that plain SQL files lack: version dependency tracking, upgrade/downgrade support, migration generation scaffolding (`alembic revision`), and branch/merge handling for parallel development. As the number of butlers and modules grows, ordered SQL files become fragile — Alembic's revision graph handles this robustly. While Alembic depends on SQLAlchemy, it is used only at migration time, not at runtime; the application still uses asyncpg directly for all queries.
+
+**Structure:**
+```
+alembic/
+├── alembic.ini
+├── env.py              # Programmatic env that targets the correct butler DB
+└── versions/
+    ├── core/           # Core migrations (state, scheduled_tasks, sessions)
+    ├── switchboard/    # Switchboard-specific migrations
+    ├── relationship/   # Relationship-specific migrations
+    ├── health/         # Health-specific migrations
+    └── general/        # General-specific migrations
+```
+
+At startup, the daemon runs `alembic upgrade head` programmatically (via `alembic.command.upgrade`) against the butler's database, applying the core chain first, then the butler-specific chain. Module migrations are also managed as Alembic revisions, with each module contributing revisions that depend on the core chain head.
+
+**Alternative considered:** Plain SQL files in lexicographic order with a custom `_migrations` tracking table. Rejected because it reinvents migration tracking poorly — no downgrade path, no dependency graph, no tooling for generating or inspecting migrations, and fragile ordering as the project scales.
 
 ## Risks / Trade-offs
 

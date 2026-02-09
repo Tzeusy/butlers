@@ -104,7 +104,7 @@ AND only core tools and butler-specific health tools SHALL be registered.
 
 ### Requirement: Butler-Specific Migration
 
-The Health butler SHALL have butler-specific migrations in `migrations/health/` that create the `measurements`, `medications`, `medication_doses`, `conditions`, `meals`, `symptoms`, and `research` tables as defined in the database schema above. These migrations SHALL be applied after core migrations during the daemon startup sequence.
+The Health butler SHALL have Alembic revisions in the `health` version chain that create the `measurements`, `medications`, `medication_doses`, `conditions`, `meals`, `symptoms`, and `research` tables as defined in the database schema above. These revisions SHALL be applied after the core Alembic chain during the daemon startup sequence.
 
 #### Scenario: Health tables created on first startup
 

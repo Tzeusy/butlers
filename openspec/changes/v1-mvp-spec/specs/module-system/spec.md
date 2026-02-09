@@ -14,16 +14,16 @@ The `Module` ABC SHALL declare the following abstract members:
 - `config_schema` — a `type[BaseModel]` property returning the Pydantic model class that describes this module's configuration shape
 - `dependencies` — a `list[str]` property returning the names of other modules this module depends on
 - `register_tools(mcp, config, db)` — an async method that registers MCP tools on the butler's FastMCP server; `mcp` is the FastMCP instance, `config` is the validated module config (instance of `config_schema`), and `db` is the asyncpg database connection pool
-- `migrations()` — a method returning a `list[str]` of SQL migration statements for module-specific tables
-- `on_startup(config, db)` — an async method called after dependency resolution and migration application; `config` is the validated module config, `db` is the asyncpg connection pool
+- `migration_revisions()` — a method returning `str | None` — the Alembic branch label for the module's migration revisions (e.g., `"email"`), corresponding to revisions in `alembic/versions/<module-name>/`, or `None` if no migrations are needed
+- `on_startup(config, db)` — an async method called after dependency resolution and Alembic migration application; `config` is the validated module config, `db` is the asyncpg connection pool
 - `on_shutdown()` — an async method called during butler shutdown
 
-A module implementation MUST provide concrete implementations for all abstract members. A module that has no dependencies SHALL return an empty list from `dependencies`. A module that requires no migrations SHALL return an empty list from `migrations()`.
+A module implementation MUST provide concrete implementations for all abstract members. A module that has no dependencies SHALL return an empty list from `dependencies`. A module that requires no migrations SHALL return `None` from `migration_revisions()`.
 
 #### Scenario: Implementing a minimal module
 
 WHEN a developer creates a new module class that inherits from the `Module` ABC
-AND provides concrete implementations for `name`, `config_schema`, `dependencies`, `register_tools`, `migrations`, `on_startup`, and `on_shutdown`
+AND provides concrete implementations for `name`, `config_schema`, `dependencies`, `register_tools`, `migration_revisions`, `on_startup`, and `on_shutdown`
 THEN the module class SHALL be instantiable without errors
 AND the module SHALL be usable by the module registry.
 
@@ -40,8 +40,8 @@ THEN the module SHALL have no ordering constraints relative to other independent
 
 #### Scenario: Module with no migrations
 
-WHEN a module's `migrations()` method returns an empty list
-THEN the butler SHALL skip migration application for that module and proceed to startup without error.
+WHEN a module's `migration_revisions()` method returns `None`
+THEN the butler SHALL skip Alembic migration application for that module and proceed to startup without error.
 
 ---
 
@@ -184,28 +184,28 @@ THEN the registry SHALL successfully resolve the startup order without raising a
 
 ### Requirement: Module Migrations
 
-The butler runtime SHALL apply each loaded module's SQL migration statements during startup, after core migrations and before calling `on_startup`. Migrations MUST be idempotent or tracked to prevent re-application.
+The butler runtime SHALL apply each loaded module's Alembic revisions during startup, after core and butler-specific Alembic chains and before calling `on_startup`. For each module whose `migration_revisions()` returns a non-`None` branch label, the runtime SHALL run `alembic upgrade head` on that branch against the butler's database. Alembic's version tracking prevents re-application of already-applied revisions.
 
 #### Scenario: Applying module migrations on first startup
 
 WHEN a butler starts for the first time
-AND the loaded email module's `migrations()` returns two SQL statements
-THEN the butler SHALL execute both SQL statements against the butler's database in order
-AND the statements SHALL be recorded as applied in the migrations tracking table.
+AND the loaded email module's `migration_revisions()` returns `"email"` (pointing to revisions in `alembic/versions/email/`)
+THEN the butler SHALL apply all pending Alembic revisions from the `email` branch
+AND the revisions SHALL be tracked by Alembic's `alembic_version` table.
 
 #### Scenario: Skipping already-applied migrations
 
 WHEN a butler restarts
-AND a module's migration statements have already been applied (recorded in the tracking table)
-THEN the butler SHALL skip those statements
+AND a module's Alembic revisions have already been applied
+THEN Alembic SHALL detect the branch is up-to-date and skip all revisions
 AND SHALL NOT execute them again.
 
 #### Scenario: Applying new migrations on upgrade
 
-WHEN a module adds a new migration statement to its `migrations()` list (appended to the end)
+WHEN a module adds a new Alembic revision to its branch
 AND the butler restarts
-THEN the butler SHALL apply only the new, previously unapplied statements
-AND SHALL record them in the tracking table.
+THEN the butler SHALL apply only the new, previously unapplied revisions
+AND Alembic SHALL record them as applied.
 
 ---
 
@@ -265,7 +265,7 @@ AND the module SHALL NOT import or call core state store internals.
 #### Scenario: Module uses its own database tables
 
 WHEN a module's registered MCP tools need to persist data
-THEN the tools SHALL use the module's own database tables (created via `migrations()`)
+THEN the tools SHALL use the module's own database tables (created via the module's Alembic revisions)
 AND the tools SHALL access those tables through the `db` connection pool passed to `register_tools`.
 
 ---

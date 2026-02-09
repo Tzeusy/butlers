@@ -23,7 +23,7 @@ CREATE TABLE sessions (
 
 ### Requirement: Sessions table provisioning
 
-The `sessions` table SHALL be created during butler database provisioning as part of core migrations, before any module migrations run.
+The `sessions` table SHALL be created during butler database provisioning as part of the core Alembic migration chain, before any butler-specific or module Alembic migrations run.
 
 #### Scenario: Butler starts with a fresh database
 

@@ -41,3 +41,6 @@ pgdata/
 
 # Temp files from CC spawner
 /tmp/butler_*/
+
+# bv (beads viewer) local config and caches
+.bv/

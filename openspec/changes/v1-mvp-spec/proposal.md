@@ -22,7 +22,7 @@ The Butlers framework has a detailed project plan but no formal specifications. 
 ### New Capabilities
 
 - `butler-daemon`: Core butler daemon lifecycle — config loading from `butler.toml`, MCP server startup (FastMCP), database auto-provisioning, module composition, shutdown. The foundational runtime that all butlers share.
-- `module-system`: Module abstract base class, registry with topological dependency sort, tool registration via `register_tools()`, migrations, startup/shutdown hooks. How opt-in capabilities plug into a butler.
+- `module-system`: Module abstract base class, registry with topological dependency sort, tool registration via `register_tools()`, Alembic migrations, startup/shutdown hooks. How opt-in capabilities plug into a butler.
 - `state-store`: Key-value JSONB persistence in each butler's PostgreSQL database. Core MCP tools: `state_get`, `state_set`, `state_delete`, `state_list`.
 - `task-scheduler`: Cron-driven task dispatch. TOML bootstrap tasks synced to DB on startup, runtime task creation via MCP tools. `tick()` entry point checks for due tasks and dispatches prompts to CC spawner. Tools: `schedule_list`, `schedule_create`, `schedule_update`, `schedule_delete`.
 - `cc-spawner`: Ephemeral Claude Code instance management via the CC SDK. Generates locked-down MCP configs, spawns CC with constrained tool access, logs sessions. Tools: `trigger`. Includes MockSpawner for testing.

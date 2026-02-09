@@ -17,16 +17,16 @@
 
 ## 3. Module System
 
-- [ ] 3.1 Create `src/butlers/modules/base.py` — Module ABC with name, config_schema, dependencies, register_tools, migrations, on_startup, on_shutdown
+- [ ] 3.1 Create `src/butlers/modules/base.py` — Module ABC with name, config_schema, dependencies, register_tools, migration_revisions, on_startup, on_shutdown
 - [ ] 3.2 Create `src/butlers/modules/registry.py` — module registry with topological sort, circular dependency detection, load-from-config
 - [ ] 3.3 Write `tests/test_module_base.py` — minimal module implementation, missing members
 - [ ] 3.4 Write `tests/test_module_registry.py` — registration, dependency ordering, circular detection, missing dependencies, config validation
 
 ## 4. Database Layer
 
-- [ ] 4.1 Create `src/butlers/db.py` — asyncpg connection pool, database auto-provisioning (CREATE DATABASE IF NOT EXISTS), migration runner
-- [ ] 4.2 Create `migrations/core/001_core.sql` — state, scheduled_tasks, sessions tables + _migrations tracking table
-- [ ] 4.3 Write `tests/test_db.py` — database creation, migration application, idempotent re-run (testcontainers PostgreSQL)
+- [ ] 4.1 Create `src/butlers/db.py` — asyncpg connection pool, database auto-provisioning (CREATE DATABASE IF NOT EXISTS), Alembic migration runner (programmatic `alembic.command.upgrade`)
+- [ ] 4.2 Create `alembic/` directory — `alembic.ini`, `env.py` (programmatic env targeting butler DB), `alembic/versions/core/` with initial revision creating state, scheduled_tasks, sessions tables
+- [ ] 4.3 Write `tests/test_db.py` — database creation, Alembic migration application, idempotent re-run (testcontainers PostgreSQL)
 
 ## 5. Credential Management
 
@@ -69,7 +69,7 @@
 
 ## 11. Butler Daemon
 
-- [ ] 11.1 Create `src/butlers/daemon.py` — ButlerDaemon class orchestrating startup sequence: config load → credential validation → DB provision → core migrations → butler migrations → module init → tool registration → server start
+- [ ] 11.1 Create `src/butlers/daemon.py` — ButlerDaemon class orchestrating startup sequence: config load → credential validation → DB provision → core Alembic migrations → butler Alembic migrations → module init → tool registration → server start
 - [ ] 11.2 Implement core MCP tool registration — wire status(), tick(), trigger(), state_*, schedule_*, sessions_* tools on FastMCP server
 - [ ] 11.3 Implement module tool registration — call register_tools(mcp, config, db) for each module in topological order
 - [ ] 11.4 Implement graceful shutdown — stop connections, wait for in-flight CC, module on_shutdown (reverse order), close DB pool
@@ -95,7 +95,7 @@
 
 ## 15. Switchboard Butler
 
-- [ ] 15.1 Create `migrations/switchboard/001_switchboard.sql` — butler_registry and routing_log tables
+- [ ] 15.1 Create `alembic/versions/switchboard/` with initial Alembic revision — butler_registry and routing_log tables
 - [ ] 15.2 Create `src/butlers/tools/switchboard.py` — route(), list_butlers(), discover() tools
 - [ ] 15.3 Implement MCP client for inter-butler communication — SSE transport, trace context propagation via _trace_context
 - [ ] 15.4 Implement routing flow — message intake → CC classification → route to target butler → return response
@@ -109,7 +109,7 @@
 
 ## 17. Relationship Butler
 
-- [ ] 17.1 Create `migrations/relationship/001_relationship.sql` — all 16 tables + indexes
+- [ ] 17.1 Create `alembic/versions/relationship/` with initial Alembic revision — all 16 tables + indexes
 - [ ] 17.2 Create `src/butlers/tools/relationship.py` — contact CRUD tools (create, update, get, search, archive)
 - [ ] 17.3 Add relationship tools — relationship_add (bidirectional), relationship_list, relationship_remove
 - [ ] 17.4 Add date tools — date_add (partial dates), date_list, upcoming_dates (month/day matching)
@@ -127,7 +127,7 @@
 
 ## 18. Health Butler
 
-- [ ] 18.1 Create `migrations/health/001_health.sql` — measurements, medications, medication_doses, conditions, meals, symptoms, research tables + indexes
+- [ ] 18.1 Create `alembic/versions/health/` with initial Alembic revision — measurements, medications, medication_doses, conditions, meals, symptoms, research tables + indexes
 - [ ] 18.2 Create `src/butlers/tools/health.py` — measurement tools (log, history, latest)
 - [ ] 18.3 Add medication tools — medication_add, medication_list, medication_log_dose, medication_history (with adherence rate)
 - [ ] 18.4 Add condition tools — condition_add, condition_list, condition_update
@@ -140,7 +140,7 @@
 
 ## 19. General Butler
 
-- [ ] 19.1 Create `migrations/general/001_general.sql` — collections and entities tables + GIN indexes
+- [ ] 19.1 Create `alembic/versions/general/` with initial Alembic revision — collections and entities tables + GIN indexes
 - [ ] 19.2 Create `src/butlers/tools/general.py` — entity CRUD (create, get, update with deep merge, search, delete), collection CRUD, export tools
 - [ ] 19.3 Create `butlers/general/butler.toml` and `butlers/general/CLAUDE.md`
 - [ ] 19.4 Write `tests/test_tools_general.py` — entity CRUD, deep merge, search (GIN), collection management, export, freeform JSONB
@@ -165,7 +165,7 @@
 
 ## 22. Integration Tests
 
-- [ ] 22.1 Write integration test: full butler startup with testcontainer PostgreSQL + MockSpawner — config load → DB provision → migrations → tool registration → status()
+- [ ] 22.1 Write integration test: full butler startup with testcontainer PostgreSQL + MockSpawner — config load → DB provision → Alembic migrations → tool registration → status()
 - [ ] 22.2 Write integration test: scheduler tick dispatches to MockSpawner and logs session
 - [ ] 22.3 Write integration test: switchboard route() forwards to target butler and returns result
 - [ ] 22.4 Write integration test: trace context propagates from switchboard.route → butler.trigger → CC session

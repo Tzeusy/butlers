@@ -41,7 +41,7 @@ The Switchboard exposes all core MCP tools (state, scheduler, sessions, trigger,
 
 ### Requirement: Switchboard-specific table provisioning
 
-The `butler_registry` and `routing_log` tables SHALL be created during Switchboard database provisioning as Switchboard-specific migrations, applied after core migrations.
+The `butler_registry` and `routing_log` tables SHALL be created during Switchboard database provisioning as Alembic revisions in the `switchboard` version chain, applied after the core Alembic chain.
 
 #### Scenario: Switchboard starts with a fresh database
 
@@ -53,7 +53,7 @@ AND the `routing_log` table MUST exist with columns `id` (UUID PRIMARY KEY), `so
 
 WHEN the Switchboard butler starts up against a newly provisioned database
 THEN the core tables (`state`, `scheduled_tasks`, `sessions`) MUST also be present
-AND core migrations MUST have been applied before Switchboard-specific migrations
+AND the core Alembic chain MUST have been applied before the Switchboard Alembic chain
 
 ---
 

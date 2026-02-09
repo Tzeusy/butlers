@@ -50,7 +50,7 @@ AND the FastMCP server SHALL listen on port 8101.
 
 ### Requirement: Butler-Specific Migration Provisioning
 
-The General butler SHALL provision the `collections` and `entities` tables during butler-specific migration application. GIN indexes SHALL be created on the `entities.tags` and `entities.data` columns for efficient querying, and a B-tree index SHALL be created on `entities.collection_id` for collection lookups.
+The General butler SHALL provision the `collections` and `entities` tables via Alembic revisions in the `general` version chain, applied after the core Alembic chain. GIN indexes SHALL be created on the `entities.tags` and `entities.data` columns for efficient querying, and a B-tree index SHALL be created on `entities.collection_id` for collection lookups.
 
 #### Scenario: Tables created on first startup
 
@@ -60,10 +60,10 @@ AND the `entities` table MUST exist with columns `id` (UUID PK), `collection_id`
 AND GIN indexes MUST exist on `entities.tags` and `entities.data`,
 AND a B-tree index MUST exist on `entities.collection_id`.
 
-#### Scenario: Migrations are idempotent on restart
+#### Scenario: Alembic migrations are idempotent on restart
 
 WHEN the General butler restarts and the `collections` and `entities` tables already exist,
-THEN the butler SHALL skip the already-applied migrations without error.
+THEN Alembic SHALL detect that all revisions are already applied and skip them without error.
 
 ---
 

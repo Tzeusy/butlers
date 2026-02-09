@@ -36,7 +36,7 @@ AND it MUST expose only core MCP tools (no module-specific tools)
 
 WHEN the Heartbeat butler's configuration is loaded
 THEN the modules list MUST be empty
-AND no module `register_tools()`, `migrations()`, `on_startup()`, or `on_shutdown()` hooks SHALL be invoked
+AND no module `register_tools()`, `migration_revisions()`, `on_startup()`, or `on_shutdown()` hooks SHALL be invoked
 
 ---
 
@@ -170,19 +170,19 @@ AND no additional tools SHALL be present
 
 ### Requirement: Heartbeat butler uses a dedicated database
 
-The Heartbeat butler SHALL own a dedicated PostgreSQL database named `butler_heartbeat`, containing only the core schema tables. No butler-specific migrations exist beyond the core.
+The Heartbeat butler SHALL own a dedicated PostgreSQL database named `butler_heartbeat`, containing only the core schema tables. No butler-specific Alembic version chain exists beyond the core chain.
 
 #### Scenario: Database is provisioned on startup
 
 WHEN the Heartbeat butler starts for the first time
 THEN the `butler_heartbeat` database MUST be created if it does not already exist
-AND core migrations MUST be applied, creating the `state`, `scheduled_tasks`, and `sessions` tables
+AND the core Alembic chain MUST be applied, creating the `state`, `scheduled_tasks`, and `sessions` tables
 
-#### Scenario: No butler-specific migrations
+#### Scenario: No butler-specific Alembic chain
 
-WHEN the Heartbeat butler applies migrations on startup
-THEN only core migrations SHALL be applied
-AND no butler-specific migration files SHALL exist or be required for the Heartbeat butler
+WHEN the Heartbeat butler applies Alembic migrations on startup
+THEN only the core Alembic chain SHALL be applied
+AND no butler-specific Alembic version chain SHALL exist or be required for the Heartbeat butler
 
 ---
 
