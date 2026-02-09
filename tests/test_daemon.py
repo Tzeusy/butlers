@@ -5,6 +5,7 @@ Uses extensive mocking to avoid real DB, FastMCP, and CC SDK dependencies.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 from typing import Any
@@ -187,7 +188,8 @@ def _patch_infra():
         "init_telemetry": patch("butlers.daemon.init_telemetry"),
         "sync_schedules": patch("butlers.daemon.sync_schedules", new_callable=AsyncMock),
         "FastMCP": patch("butlers.daemon.FastMCP"),
-        "CCSpawner": patch("butlers.daemon.CCSpawner", return_value=mock_spawner),
+"CCSpawner": patch("butlers.daemon.CCSpawner", return_value=mock_spawner),
+        "start_mcp_server": patch.object(ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock),
         "mock_db": mock_db,
         "mock_pool": mock_pool,
         "mock_spawner": mock_spawner,
@@ -203,7 +205,7 @@ class TestStartupSequence:
     """Verify the startup sequence executes in the documented order."""
 
     async def test_startup_calls_in_order(self, butler_dir: Path) -> None:
-        """Steps 1-11 should execute in documented order."""
+        """Steps 1-13 should execute in documented order."""
         patches = _patch_infra()
         call_order: list[str] = []
 
@@ -215,6 +217,7 @@ class TestStartupSequence:
             patches["sync_schedules"] as mock_sync,
             patches["FastMCP"] as mock_fastmcp,
             patches["CCSpawner"] as mock_spawner_cls,
+            patches["start_mcp_server"] as mock_start_server,
         ):
             mock_db = patches["mock_db"]
 
@@ -242,6 +245,7 @@ class TestStartupSequence:
                 call_order.append("CCSpawner"),
                 MagicMock(),
             )[-1]
+            mock_start_server.side_effect = lambda *a, **kw: call_order.append("start_mcp_server")
 
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -256,6 +260,7 @@ class TestStartupSequence:
             "CCSpawner",
             "sync_schedules",
             "FastMCP",
+            "start_mcp_server",
         ]
         # Filter to only expected items (there may be extra calls)
         filtered = [c for c in call_order if c in expected_order]
@@ -272,6 +277,7 @@ class TestStartupSequence:
             patches["sync_schedules"],
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -292,6 +298,7 @@ class TestStartupSequence:
             patches["sync_schedules"],
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
             before = time.monotonic()
@@ -346,6 +353,7 @@ class TestCoreToolRegistration:
             patches["sync_schedules"],
             patch("butlers.daemon.FastMCP", return_value=mock_mcp),
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -369,6 +377,7 @@ class TestModuleToolRegistration:
             patches["sync_schedules"],
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -390,6 +399,7 @@ class TestModuleToolRegistration:
             patches["sync_schedules"],
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -410,6 +420,7 @@ class TestModuleToolRegistration:
             patches["sync_schedules"],
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -435,6 +446,7 @@ class TestModuleToolRegistration:
             patches["sync_schedules"],
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -460,6 +472,7 @@ class TestShutdownSequence:
             patches["sync_schedules"],
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -492,6 +505,7 @@ class TestShutdownSequence:
             patches["sync_schedules"],
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -513,6 +527,7 @@ class TestShutdownSequence:
             patches["sync_schedules"],
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -535,6 +550,149 @@ class TestShutdownSequence:
         next(m for m in daemon._modules if m.name == "stub_a")
         # Since we didn't patch stub_a, check it was called via the original
         # We just verify db.close was called — the important assertion
+
+    async def test_shutdown_stops_mcp_server(self, butler_dir: Path) -> None:
+        """shutdown() should signal the uvicorn server to exit and await the task."""
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["CCSpawner"],
+            patches["start_mcp_server"],
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        # Simulate a running server and task using a real asyncio future
+        mock_server = MagicMock()
+        mock_server.should_exit = False
+        task_completed = False
+
+        async def _fake_serve():
+            nonlocal task_completed
+            task_completed = True
+
+        mock_task = asyncio.ensure_future(_fake_serve())
+        await mock_task  # Let it complete so shutdown await returns immediately
+
+        daemon._server = mock_server
+        daemon._server_task = mock_task
+
+        await daemon.shutdown()
+
+        # Server should have been signalled to exit
+        assert mock_server.should_exit is True
+        # Task should have completed
+        assert mock_task.done()
+        assert task_completed
+        # References should be cleared
+        assert daemon._server is None
+        assert daemon._server_task is None
+
+
+class TestMCPServerStartup:
+    """Verify the MCP server is started as a background asyncio task."""
+
+    async def test_start_mcp_server_creates_uvicorn_server(self, butler_dir: Path) -> None:
+        """_start_mcp_server should create a uvicorn server with SSE transport."""
+        patches = _patch_infra()
+
+        mock_mcp = MagicMock()
+        mock_app = MagicMock()
+        mock_mcp.http_app.return_value = mock_app
+
+        mock_uvicorn_server = MagicMock()
+        mock_uvicorn_server.serve = AsyncMock()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patch("butlers.daemon.FastMCP", return_value=mock_mcp),
+            patches["CCSpawner"],
+            patch("butlers.daemon.uvicorn.Config") as mock_config_cls,
+            patch("butlers.daemon.uvicorn.Server", return_value=mock_uvicorn_server),
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+            # Verify http_app was called with SSE transport
+            mock_mcp.http_app.assert_called_once_with(transport="sse")
+
+            # Verify uvicorn.Config was created with correct parameters
+            mock_config_cls.assert_called_once_with(
+                mock_app,
+                host="0.0.0.0",
+                port=9100,
+                log_level="info",
+                timeout_graceful_shutdown=0,
+            )
+
+        # Verify server instance was stored
+        assert daemon._server is mock_uvicorn_server
+        # Verify a background task was created
+        assert daemon._server_task is not None
+
+        # Clean up background task
+        daemon._server_task.cancel()
+        try:
+            await daemon._server_task
+        except asyncio.CancelledError:
+            pass
+
+    async def test_start_mcp_server_runs_as_background_task(self, butler_dir: Path) -> None:
+        """The server should run as an asyncio background task, not block start()."""
+        patches = _patch_infra()
+
+        # Create a mock server whose serve() blocks until cancelled
+        serve_started = asyncio.Event()
+
+        async def mock_serve():
+            serve_started.set()
+            await asyncio.sleep(999)  # Block indefinitely
+
+        mock_mcp = MagicMock()
+        mock_app = MagicMock()
+        mock_mcp.http_app.return_value = mock_app
+
+        mock_uvicorn_server = MagicMock()
+        mock_uvicorn_server.serve = mock_serve
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patch("butlers.daemon.FastMCP", return_value=mock_mcp),
+            patches["CCSpawner"],
+            patch("butlers.daemon.uvicorn.Config"),
+            patch("butlers.daemon.uvicorn.Server", return_value=mock_uvicorn_server),
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            # start() should return even though serve() blocks
+            await daemon.start()
+
+        # The serve task should be running in the background
+        assert daemon._server_task is not None
+        assert not daemon._server_task.done()
+
+        # Verify _started_at was recorded (start() completed)
+        assert daemon._started_at is not None
+
+        # Clean up
+        daemon._server_task.cancel()
+        try:
+            await daemon._server_task
+        except asyncio.CancelledError:
+            pass
 
 
 class TestStatusTool:
@@ -566,6 +724,7 @@ class TestStatusTool:
             patches["sync_schedules"],
             patch("butlers.daemon.FastMCP", return_value=mock_mcp),
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -608,6 +767,7 @@ class TestStatusTool:
             patches["sync_schedules"],
             patch("butlers.daemon.FastMCP", return_value=mock_mcp),
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -750,6 +910,7 @@ class TestStartupFailurePropagation:
             patches["sync_schedules"],
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
             with pytest.raises(CredentialError, match="missing ANTHROPIC_API_KEY"):
@@ -772,6 +933,7 @@ class TestStartupFailurePropagation:
             patches["sync_schedules"],
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
             with pytest.raises(ConnectionRefusedError):
@@ -795,6 +957,7 @@ class TestScheduleSync:
             patches["sync_schedules"] as mock_sync,
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -824,6 +987,7 @@ class TestModuleCredentials:
             patches["sync_schedules"],
             patches["FastMCP"],
             patches["CCSpawner"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()

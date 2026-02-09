@@ -13,22 +13,25 @@ The ButlerDaemon manages the lifecycle of a butler:
 10. Sync TOML schedules to DB
 11. Create FastMCP server and register core tools
 12. Register module MCP tools
+13. Start FastMCP SSE server on configured port
 
 On startup failure, already-initialized modules get on_shutdown() called.
 
-Graceful shutdown: (a) stops accepting new MCP connections,
-(b) drains in-flight CC sessions up to a configurable timeout,
-(c) shuts down modules in reverse topological order, (d) closes DB pool.
+Graceful shutdown: (a) stops the MCP server, (b) stops accepting new triggers,
+(c) drains in-flight CC sessions up to a configurable timeout,
+(d) shuts down modules in reverse topological order, (e) closes DB pool.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
+import uvicorn
 from fastmcp import FastMCP
 
 from butlers.config import ButlerConfig, load_config
@@ -71,7 +74,9 @@ class ButlerDaemon:
         self.spawner: CCSpawner | None = None
         self._modules: list[Module] = []
         self._started_at: float | None = None
-        self._accepting_connections = False
+self._accepting_connections = False
+        self._server: uvicorn.Server | None = None
+        self._server_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """Execute the full startup sequence.
@@ -157,10 +162,30 @@ class ButlerDaemon:
         # 12. Register module MCP tools
         await self._register_module_tools()
 
+# 13. Start FastMCP SSE server on configured port
+        await self._start_mcp_server()
+
         # Mark as accepting connections and record startup time
         self._accepting_connections = True
         self._started_at = time.monotonic()
         logger.info("Butler %s started on port %d", self.config.name, self.config.port)
+
+    async def _start_mcp_server(self) -> None:
+        """Start the FastMCP SSE server as a background asyncio task.
+
+        Creates a uvicorn server bound to the configured port and launches it
+        in a background task so that ``start()`` returns immediately.
+        """
+        app = self.mcp.http_app(transport="sse")
+        config = uvicorn.Config(
+            app,
+            host="0.0.0.0",
+            port=self.config.port,
+            log_level="info",
+            timeout_graceful_shutdown=0,
+        )
+        self._server = uvicorn.Server(config)
+        self._server_task = asyncio.create_task(self._server.serve())
 
     def _collect_module_credentials(self) -> dict[str, list[str]]:
         """Collect credentials_env from enabled modules."""
@@ -331,8 +356,8 @@ class ButlerDaemon:
     async def shutdown(self) -> None:
         """Graceful shutdown.
 
-        1. Stop accepting new MCP connections
-        2. Drain in-flight CC sessions (up to configurable timeout)
+1. Stop MCP server
+        2. Stop accepting new triggers and drain in-flight CC sessions
         3. Module on_shutdown in reverse topological order
         4. Close DB pool
         """
@@ -341,10 +366,19 @@ class ButlerDaemon:
             self.config.name if self.config else "unknown",
         )
 
-        # 1. Stop accepting new MCP connections
-        self._accepting_connections = False
+# 1. Stop MCP server
+        if self._server is not None:
+            self._server.should_exit = True
+        if self._server_task is not None:
+            try:
+                await self._server_task
+            except Exception:
+                logger.exception("Error while stopping MCP server")
+            self._server_task = None
+            self._server = None
 
-        # 2. Drain in-flight CC sessions
+        # 2. Stop accepting new triggers and drain in-flight CC sessions
+        self._accepting_connections = False
         if self.spawner is not None:
             self.spawner.stop_accepting()
             timeout = self.config.shutdown_timeout_s if self.config else 30.0
