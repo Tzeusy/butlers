@@ -194,7 +194,7 @@ async def schedule_list(pool: asyncpg.Pool) -> list[dict[str, Any]]:
 async def schedule_create(pool: asyncpg.Pool, name: str, cron: str, prompt: str) -> uuid.UUID:
     """Create a runtime scheduled task.
 
-    Validates cron syntax via croniter. Sets ``source='runtime'``.
+    Validates cron syntax via croniter. Sets ``source='db'``.
     Computes initial ``next_run_at``.
 
     Args:
@@ -217,7 +217,7 @@ async def schedule_create(pool: asyncpg.Pool, name: str, cron: str, prompt: str)
         task_id: uuid.UUID = await pool.fetchval(
             """
             INSERT INTO scheduled_tasks (name, cron, prompt, source, enabled, next_run_at)
-            VALUES ($1, $2, $3, 'runtime', true, $4)
+            VALUES ($1, $2, $3, 'db', true, $4)
             RETURNING id
             """,
             name,

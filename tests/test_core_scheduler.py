@@ -509,13 +509,13 @@ async def test_create_returns_uuid(pool):
     assert isinstance(task_id, uuid.UUID)
 
 
-async def test_create_sets_source_runtime(pool):
-    """Runtime-created tasks have source='runtime'."""
+async def test_create_sets_source_db(pool):
+    """Runtime-created tasks have source='db'."""
     from butlers.core.scheduler import schedule_create
 
     task_id = await schedule_create(pool, "runtime-src", "0 9 * * *", "test")
     row = await pool.fetchrow("SELECT source FROM scheduled_tasks WHERE id = $1", task_id)
-    assert row["source"] == "runtime"
+    assert row["source"] == "db"
 
 
 async def test_create_invalid_cron_raises(pool):
