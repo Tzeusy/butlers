@@ -12,7 +12,7 @@ The Butlers framework has a detailed project plan but no formal specifications. 
 - Specify the Heartbeat butler: periodic tick cycle across all registered butlers
 - Specify three domain butlers: Relationship (personal CRM), Health (tracking), General (freeform catch-all)
 - Specify the CLI and deployment modes: `butlers up` (dev, single-process) and `butlers run` (prod, per-butler)
-- Specify OpenTelemetry instrumentation: trace context propagation, span creation, Jaeger integration
+- Specify OpenTelemetry instrumentation: trace context propagation, span creation, LGTM stack integration
 - Define the testing strategy: MockSpawner, testcontainers, test layers
 - Specify per-butler credential management: env var declaration, scoping, module credential references, CC instance passthrough, startup validation
 - Specify skill directory structure: SKILL.md format, script access, CC discovery, CLAUDE.md personality, AGENTS.md runtime notes
@@ -32,8 +32,8 @@ The Butlers framework has a detailed project plan but no formal specifications. 
 - `butler-relationship`: Personal CRM butler — contacts, relationships, important dates, notes, interactions, reminders, gifts, loans, groups, labels, quick facts, activity feed. Dedicated PostgreSQL schema and scheduled tasks.
 - `butler-health`: Health tracking butler — measurements, medications, conditions, diet/meals, symptoms, research notes, reports. Dedicated PostgreSQL schema and scheduled tasks.
 - `butler-general`: Catch-all butler with freeform JSONB entities and collections. Schema-light storage for anything that doesn't fit a specialist butler, with export tools for future migration.
-- `cli-and-deployment`: CLI commands (`butlers up`, `butlers run`, `butlers list`, `butlers init`), Dockerfile with Claude Code, docker-compose with per-butler containers + PostgreSQL + Jaeger, database auto-provisioning.
-- `telemetry`: OpenTelemetry integration — tracer initialization, span wrappers for MCP tool handlers, trace context propagation across inter-butler calls and CC sessions, Jaeger export.
+- `cli-and-deployment`: CLI commands (`butlers up`, `butlers run`, `butlers list`, `butlers init`), Dockerfile with Claude Code, docker-compose with per-butler containers + PostgreSQL + LGTM stack, database auto-provisioning.
+- `telemetry`: OpenTelemetry integration — tracer initialization, span wrappers for MCP tool handlers, trace context propagation across inter-butler calls and CC sessions, OTLP export to LGTM stack.
 - `butler-credentials`: Per-butler credential and environment variable management. How each butler declares required env vars, how modules reference credentials via `credentials_env`, how credentials are scoped in dev mode (single process) vs production (per-container), how env vars are passed through to CC instances, and startup validation.
 - `butler-skills`: Skill directory structure and discovery within each butler's config dir. `skills/<name>/SKILL.md` + optional scripts, how CC discovers available skills, how `CLAUDE.md` shapes CC personality/instructions, and how `AGENTS.md` provides runtime notes.
 
@@ -45,6 +45,6 @@ The Butlers framework has a detailed project plan but no formal specifications. 
 
 - **Code**: Entire `src/butlers/` package — core, modules, tools, CLI
 - **Dependencies**: FastMCP, claude-code-sdk, asyncpg/psycopg, croniter, opentelemetry-sdk, click/typer (CLI), testcontainers, docker
-- **Infrastructure**: PostgreSQL (one database per butler), Docker, Jaeger
+- **Infrastructure**: PostgreSQL (one database per butler), Docker, LGTM stack (Grafana, Tempo, Loki)
 - **APIs**: Each butler exposes an MCP server (SSE transport) with core + module-specific tools
 - **External integrations**: Telegram Bot API, Gmail/IMAP (via modules on Switchboard)

@@ -349,7 +349,7 @@ AND no messages SHALL be dropped; they MUST be queued for processing
 
 ### Requirement: Routing log includes trace_id for distributed tracing
 
-Each `routing_log` entry SHALL include the OpenTelemetry trace ID for correlation with traces in Jaeger.
+Each `routing_log` entry SHALL include the OpenTelemetry trace ID for correlation with traces in the telemetry backend (Grafana Tempo).
 
 #### Scenario: Trace ID is recorded in routing log
 
@@ -359,7 +359,7 @@ THEN the `routing_log` entry's `trace_id` column MUST contain the trace ID of th
 #### Scenario: Trace ID links to end-to-end trace
 
 WHEN a `routing_log` entry has a `trace_id` value
-THEN that trace ID MUST correspond to a trace in the telemetry backend (e.g., Jaeger) that includes spans for message receipt, classification, routing, and target butler execution
+THEN that trace ID MUST correspond to a trace in the telemetry backend (Grafana Tempo) that includes spans for message receipt, classification, routing, and target butler execution
 
 ---
 
