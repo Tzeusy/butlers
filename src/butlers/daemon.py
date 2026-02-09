@@ -50,7 +50,7 @@ from butlers.core.state import state_get as _state_get
 from butlers.core.state import state_list as _state_list
 from butlers.core.state import state_set as _state_set
 from butlers.core.telemetry import init_telemetry
-from butlers.credentials import validate_credentials
+from butlers.credentials import detect_secrets, validate_credentials
 from butlers.db import Database
 from butlers.migrations import has_butler_chain, run_migrations
 from butlers.modules.base import Module
@@ -61,6 +61,40 @@ logger = logging.getLogger(__name__)
 
 class ModuleConfigError(Exception):
     """Raised when a module's configuration fails Pydantic validation."""
+
+
+def _flatten_config_for_secret_scan(config: ButlerConfig) -> dict[str, Any]:
+    """Flatten ButlerConfig into a dict for secret scanning.
+
+    Excludes credentials_env fields and [butler.env] lists per spec.
+    """
+    flat: dict[str, Any] = {}
+
+    # Butler identity
+    flat["butler.name"] = config.name
+    flat["butler.port"] = config.port
+    if config.description:
+        flat["butler.description"] = config.description
+    flat["butler.db.name"] = config.db_name
+
+    # Schedules (cron and prompt strings)
+    for i, schedule in enumerate(config.schedules):
+        flat[f"butler.schedule[{i}].name"] = schedule.name
+        flat[f"butler.schedule[{i}].cron"] = schedule.cron
+        flat[f"butler.schedule[{i}].prompt"] = schedule.prompt
+
+    # Module configs (flatten nested dicts, skip credentials_env keys)
+    for mod_name, mod_cfg in config.modules.items():
+        for key, value in mod_cfg.items():
+            # Skip credentials_env as it's just a list of env var names
+            if key == "credentials_env":
+                continue
+            flat[f"modules.{mod_name}.{key}"] = value
+
+    # NOTE: [butler.env].required and [butler.env].optional are lists of
+    # env var *names* (not values), so they are exempt from scanning.
+
+    return flat
 
 
 class ButlerDaemon:
@@ -95,6 +129,12 @@ self._accepting_connections = False
 
         # 2. Initialize telemetry
         init_telemetry(f"butler.{self.config.name}")
+
+        # 2.5. Detect inline secrets in config
+        config_values = _flatten_config_for_secret_scan(self.config)
+        secret_warnings = detect_secrets(config_values)
+        for warning in secret_warnings:
+            logger.warning(warning)
 
         # 3. Validate credentials
         module_creds = self._collect_module_credentials()
