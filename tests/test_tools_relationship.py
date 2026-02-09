@@ -597,8 +597,9 @@ async def test_interaction_list_with_limit(pool):
     from butlers.tools.relationship import contact_create, interaction_list, interaction_log
 
     c = await contact_create(pool, "Inter-Limit")
+    types = ["call", "email", "text", "video", "chat"]
     for idx in range(5):
-        await interaction_log(pool, c["id"], "chat", summary=f"Chat {idx}")
+        await interaction_log(pool, c["id"], types[idx], summary=f"Chat {idx}")
 
     results = await interaction_list(pool, c["id"], limit=3)
     assert len(results) == 3
