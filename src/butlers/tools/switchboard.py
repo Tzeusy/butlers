@@ -204,3 +204,74 @@ async def classify_message(
         logger.exception("Classification failed")
 
     return "general"
+
+
+async def post_mail(
+    pool: asyncpg.Pool,
+    target_butler: str,
+    sender: str,
+    sender_channel: str,
+    body: str,
+    subject: str | None = None,
+    priority: int = 2,
+    metadata: dict[str, Any] | None = None,
+    *,
+    call_fn: Any | None = None,
+) -> dict[str, Any]:
+    """Post a message to a target butler's mailbox via Switchboard routing.
+
+    Validates the target butler exists and has the mailbox module enabled,
+    then routes the message to the target butler's mailbox_post tool.
+
+    Parameters
+    ----------
+    pool:
+        Database connection pool (switchboard DB).
+    target_butler:
+        Name of the butler to deliver mail to.
+    sender:
+        Identity of the sender (butler name, user handle, etc.).
+    sender_channel:
+        How the message was sent (mcp, telegram, email, api, scheduler).
+    body:
+        Message body text.
+    subject:
+        Optional subject line.
+    priority:
+        Message priority (0=critical to 4=backlog, default 2).
+    metadata:
+        Optional metadata dict.
+    call_fn:
+        Optional callable for testing; see route().
+    """
+    # 1. Check target butler exists in registry
+    row = await pool.fetchrow("SELECT modules FROM butler_registry WHERE name = $1", target_butler)
+    if row is None:
+        return {"error": f"Butler '{target_butler}' not found in registry"}
+
+    # 2. Check target butler has mailbox module
+    modules = json.loads(row["modules"]) if isinstance(row["modules"], str) else row["modules"]
+    if "mailbox" not in modules:
+        return {"error": f"Butler '{target_butler}' does not have the mailbox module enabled"}
+
+    # 3. Route to target butler's mailbox_post tool
+    args: dict[str, Any] = {
+        "sender": sender,
+        "sender_channel": sender_channel,
+        "body": body,
+    }
+    if subject is not None:
+        args["subject"] = subject
+    if priority != 2:
+        args["priority"] = priority
+    if metadata:
+        args["metadata"] = json.dumps(metadata)
+
+    return await route(
+        pool,
+        target_butler,
+        "mailbox_post",
+        args,
+        source_butler="switchboard",
+        call_fn=call_fn,
+    )
