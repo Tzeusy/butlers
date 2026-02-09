@@ -208,6 +208,7 @@ class CodexAdapter(RuntimeAdapter):
         mcp_servers: dict[str, Any],
         env: dict[str, str],
         max_turns: int = 20,
+        model: str | None = None,
         cwd: Path | None = None,
         timeout: int | None = None,
     ) -> tuple[str | None, list[dict[str, Any]]]:
