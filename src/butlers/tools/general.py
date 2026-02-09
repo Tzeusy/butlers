@@ -38,7 +38,10 @@ async def collection_delete(pool: asyncpg.Pool, collection_id: uuid.UUID) -> Non
 
 
 async def entity_create(
-    pool: asyncpg.Pool, collection_name: str, data: dict[str, Any]
+    pool: asyncpg.Pool,
+    collection_name: str,
+    data: dict[str, Any],
+    tags: list[str] | None = None,
 ) -> uuid.UUID:
     """Create an entity in a collection (by collection name).
 
@@ -50,10 +53,14 @@ async def entity_create(
     if collection_id is None:
         raise ValueError(f"Collection '{collection_name}' not found")
 
+    tags_json = json.dumps(tags if tags is not None else [])
     entity_id = await pool.fetchval(
-        "INSERT INTO entities (collection_id, data) VALUES ($1, $2::jsonb) RETURNING id",
+        """INSERT INTO entities (collection_id, data, tags)
+           VALUES ($1, $2::jsonb, $3::jsonb)
+           RETURNING id""",
         collection_id,
         json.dumps(data),
+        tags_json,
     )
     return entity_id
 
@@ -66,13 +73,21 @@ async def entity_get(pool: asyncpg.Pool, entity_id: uuid.UUID) -> dict[str, Any]
     d = dict(row)
     if isinstance(d.get("data"), str):
         d["data"] = json.loads(d["data"])
+    if isinstance(d.get("tags"), str):
+        d["tags"] = json.loads(d["tags"])
     return d
 
 
-async def entity_update(pool: asyncpg.Pool, entity_id: uuid.UUID, data: dict[str, Any]) -> None:
-    """Update an entity with deep merge (new data merged into existing).
+async def entity_update(
+    pool: asyncpg.Pool,
+    entity_id: uuid.UUID,
+    data: dict[str, Any],
+    tags: list[str] | None = None,
+) -> None:
+    """Update an entity with deep merge for data, full replace for tags.
 
     Fetches current data, deep merges in Python, then writes back.
+    If tags is provided, it fully replaces the existing tags array.
     This is safe since entities have per-row granularity.
     """
     row = await pool.fetchrow("SELECT data FROM entities WHERE id = $1", entity_id)
@@ -85,11 +100,22 @@ async def entity_update(pool: asyncpg.Pool, entity_id: uuid.UUID, data: dict[str
 
     merged = _deep_merge(existing, data)
 
-    await pool.execute(
-        "UPDATE entities SET data = $2::jsonb, updated_at = now() WHERE id = $1",
-        entity_id,
-        json.dumps(merged),
-    )
+    if tags is not None:
+        tags_json = json.dumps(tags)
+        await pool.execute(
+            """UPDATE entities
+               SET data = $2::jsonb, tags = $3::jsonb, updated_at = now()
+               WHERE id = $1""",
+            entity_id,
+            json.dumps(merged),
+            tags_json,
+        )
+    else:
+        await pool.execute(
+            "UPDATE entities SET data = $2::jsonb, updated_at = now() WHERE id = $1",
+            entity_id,
+            json.dumps(merged),
+        )
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -107,11 +133,13 @@ async def entity_search(
     pool: asyncpg.Pool,
     collection_name: str | None = None,
     query: dict[str, Any] | None = None,
+    tags: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Search entities using JSONB containment (@>).
 
-    Optionally filter by collection name.
-    Uses the GIN index on entities.data.
+    Optionally filter by collection name, JSONB query, and/or tags.
+    Tag filtering uses JSONB containment: each tag must be present in the tags array.
+    Uses the GIN indexes on entities.data and entities.tags.
     """
     conditions: list[str] = []
     params: list[Any] = []
@@ -127,11 +155,17 @@ async def entity_search(
         params.append(json.dumps(query))
         idx += 1
 
+    if tags:
+        for tag in tags:
+            conditions.append(f"e.tags @> ${idx}::jsonb")
+            params.append(json.dumps([tag]))
+            idx += 1
+
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
     rows = await pool.fetch(
         f"""
-        SELECT e.id, e.collection_id, e.data, e.created_at, e.updated_at,
+        SELECT e.id, e.collection_id, e.data, e.tags, e.created_at, e.updated_at,
                c.name as collection_name
         FROM entities e
         JOIN collections c ON e.collection_id = c.id
@@ -146,6 +180,8 @@ async def entity_search(
         d = dict(row)
         if isinstance(d.get("data"), str):
             d["data"] = json.loads(d["data"])
+        if isinstance(d.get("tags"), str):
+            d["tags"] = json.loads(d["tags"])
         result.append(d)
     return result
 
@@ -161,7 +197,7 @@ async def collection_export(pool: asyncpg.Pool, collection_name: str) -> list[di
     """Export all entities from a collection as a list of dicts."""
     rows = await pool.fetch(
         """
-        SELECT e.id, e.data, e.created_at, e.updated_at
+        SELECT e.id, e.data, e.tags, e.created_at, e.updated_at
         FROM entities e
         JOIN collections c ON e.collection_id = c.id
         WHERE c.name = $1
@@ -175,5 +211,7 @@ async def collection_export(pool: asyncpg.Pool, collection_name: str) -> list[di
         d = dict(row)
         if isinstance(d.get("data"), str):
             d["data"] = json.loads(d["data"])
+        if isinstance(d.get("tags"), str):
+            d["tags"] = json.loads(d["tags"])
         result.append(d)
     return result
