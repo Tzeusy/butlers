@@ -1,0 +1,468 @@
+"""Tests for butlers.core.scheduler — cron-driven task scheduler with TOML sync."""
+
+from __future__ import annotations
+
+import shutil
+import uuid
+from datetime import UTC, datetime, timedelta
+
+import asyncpg
+import pytest
+
+# Skip all tests in this module if Docker is not available
+docker_available = shutil.which("docker") is not None
+pytestmark = pytest.mark.skipif(not docker_available, reason="Docker not available")
+
+
+def _unique_db_name() -> str:
+    return f"test_{uuid.uuid4().hex[:12]}"
+
+
+@pytest.fixture(scope="module")
+def postgres_container():
+    """Start a PostgreSQL container for the test module."""
+    from testcontainers.postgres import PostgresContainer
+
+    with PostgresContainer("postgres:16") as pg:
+        yield pg
+
+
+@pytest.fixture
+async def pool(postgres_container):
+    """Create a fresh database with the scheduled_tasks table and return a pool."""
+    db_name = _unique_db_name()
+
+    admin_conn = await asyncpg.connect(
+        host=postgres_container.get_container_host_ip(),
+        port=int(postgres_container.get_exposed_port(5432)),
+        user=postgres_container.username,
+        password=postgres_container.password,
+        database="postgres",
+    )
+    try:
+        safe_name = db_name.replace('"', '""')
+        await admin_conn.execute(f'CREATE DATABASE "{safe_name}"')
+    finally:
+        await admin_conn.close()
+
+    p = await asyncpg.create_pool(
+        host=postgres_container.get_container_host_ip(),
+        port=int(postgres_container.get_exposed_port(5432)),
+        user=postgres_container.username,
+        password=postgres_container.password,
+        database=db_name,
+        min_size=1,
+        max_size=3,
+    )
+
+    await p.execute("""
+        CREATE TABLE IF NOT EXISTS scheduled_tasks (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            name TEXT NOT NULL,
+            cron TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'db',
+            enabled BOOLEAN NOT NULL DEFAULT true,
+            next_run_at TIMESTAMPTZ,
+            last_run_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+    """)
+
+    yield p
+    await p.close()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+class _Dispatch:
+    """Captures dispatch calls for assertions."""
+
+    def __init__(self, *, fail_on: set[str] | None = None):
+        self.calls: list[dict] = []
+        self._fail_on = fail_on or set()
+
+    async def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("prompt") in self._fail_on:
+            raise RuntimeError(f"Simulated failure for: {kwargs['prompt']}")
+
+
+# ---------------------------------------------------------------------------
+# sync_schedules — first run inserts all
+# ---------------------------------------------------------------------------
+
+
+async def test_sync_inserts_new_tasks(pool):
+    """First sync run inserts all TOML schedules as new tasks."""
+    from butlers.core.scheduler import sync_schedules
+
+    schedules = [
+        {"name": "daily-report", "cron": "0 9 * * *", "prompt": "Generate daily report"},
+        {"name": "weekly-digest", "cron": "0 8 * * 1", "prompt": "Send weekly digest"},
+    ]
+    await sync_schedules(pool, schedules)
+
+    rows = await pool.fetch(
+        "SELECT name, cron, prompt, source, enabled FROM scheduled_tasks ORDER BY name"
+    )
+    assert len(rows) == 2
+    assert rows[0]["name"] == "daily-report"
+    assert rows[0]["source"] == "toml"
+    assert rows[0]["enabled"] is True
+    assert rows[1]["name"] == "weekly-digest"
+    assert rows[1]["cron"] == "0 8 * * 1"
+
+
+async def test_sync_sets_next_run_at(pool):
+    """Synced tasks have a non-null next_run_at computed via croniter."""
+    from butlers.core.scheduler import sync_schedules
+
+    schedules = [
+        {"name": "check-nra", "cron": "*/5 * * * *", "prompt": "check"},
+    ]
+    await sync_schedules(pool, schedules)
+
+    row = await pool.fetchrow("SELECT next_run_at FROM scheduled_tasks WHERE name = 'check-nra'")
+    assert row is not None
+    assert row["next_run_at"] is not None
+    # next_run_at should be in the future
+    assert row["next_run_at"] > datetime.now(UTC) - timedelta(seconds=5)
+
+
+# ---------------------------------------------------------------------------
+# sync_schedules — update run updates changed
+# ---------------------------------------------------------------------------
+
+
+async def test_sync_updates_changed_cron(pool):
+    """Second sync with changed cron expression updates the existing task."""
+    from butlers.core.scheduler import sync_schedules
+
+    original = [{"name": "updatable", "cron": "0 9 * * *", "prompt": "hello"}]
+    await sync_schedules(pool, original)
+
+    updated = [{"name": "updatable", "cron": "0 10 * * *", "prompt": "hello"}]
+    await sync_schedules(pool, updated)
+
+    row = await pool.fetchrow(
+        "SELECT cron FROM scheduled_tasks WHERE name = 'updatable' AND source = 'toml'"
+    )
+    assert row["cron"] == "0 10 * * *"
+
+
+async def test_sync_updates_changed_prompt(pool):
+    """Second sync with changed prompt updates the existing task."""
+    from butlers.core.scheduler import sync_schedules
+
+    original = [{"name": "prompt-change", "cron": "0 9 * * *", "prompt": "old prompt"}]
+    await sync_schedules(pool, original)
+
+    updated = [{"name": "prompt-change", "cron": "0 9 * * *", "prompt": "new prompt"}]
+    await sync_schedules(pool, updated)
+
+    row = await pool.fetchrow(
+        "SELECT prompt FROM scheduled_tasks WHERE name = 'prompt-change' AND source = 'toml'"
+    )
+    assert row["prompt"] == "new prompt"
+
+
+# ---------------------------------------------------------------------------
+# sync_schedules — removal disables
+# ---------------------------------------------------------------------------
+
+
+async def test_sync_disables_removed_tasks(pool):
+    """Tasks removed from TOML are disabled, not deleted."""
+    from butlers.core.scheduler import sync_schedules
+
+    schedules = [
+        {"name": "keep-me", "cron": "0 9 * * *", "prompt": "keep"},
+        {"name": "drop-me", "cron": "0 10 * * *", "prompt": "drop"},
+    ]
+    await sync_schedules(pool, schedules)
+
+    # Re-sync without "drop-me"
+    await sync_schedules(pool, [{"name": "keep-me", "cron": "0 9 * * *", "prompt": "keep"}])
+
+    row = await pool.fetchrow("SELECT enabled FROM scheduled_tasks WHERE name = 'drop-me'")
+    assert row is not None  # Not deleted
+    assert row["enabled"] is False
+
+
+async def test_sync_re_enables_restored_task(pool):
+    """A previously disabled TOML task is re-enabled when it reappears in config."""
+    from butlers.core.scheduler import sync_schedules
+
+    schedules = [{"name": "toggle-me", "cron": "0 9 * * *", "prompt": "toggle"}]
+    await sync_schedules(pool, schedules)
+
+    # Remove it
+    await sync_schedules(pool, [])
+    row = await pool.fetchrow("SELECT enabled FROM scheduled_tasks WHERE name = 'toggle-me'")
+    assert row["enabled"] is False
+
+    # Restore it
+    await sync_schedules(pool, schedules)
+    row = await pool.fetchrow("SELECT enabled FROM scheduled_tasks WHERE name = 'toggle-me'")
+    assert row["enabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# tick — dispatches due tasks
+# ---------------------------------------------------------------------------
+
+
+async def test_tick_dispatches_due_tasks(pool):
+    """tick() dispatches tasks whose next_run_at is in the past."""
+    from butlers.core.scheduler import schedule_create, tick
+
+    # Create a task with next_run_at in the past by setting it directly
+    task_id = await schedule_create(pool, "due-task", "*/1 * * * *", "run this")
+    # Force next_run_at to the past
+    await pool.execute(
+        "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
+        task_id,
+        datetime.now(UTC) - timedelta(minutes=5),
+    )
+
+    dispatch = _Dispatch()
+    count = await tick(pool, dispatch)
+
+    assert count == 1
+    assert len(dispatch.calls) == 1
+    assert dispatch.calls[0]["prompt"] == "run this"
+    assert dispatch.calls[0]["trigger_source"] == "schedule"
+
+
+async def test_tick_noop_when_nothing_due(pool):
+    """tick() returns 0 when no tasks are due."""
+    from butlers.core.scheduler import schedule_create, tick
+
+    # Create a task with next_run_at far in the future (default from _next_run)
+    await schedule_create(pool, "future-task", "0 0 1 1 *", "future prompt")
+
+    dispatch = _Dispatch()
+    count = await tick(pool, dispatch)
+
+    assert count == 0
+    assert len(dispatch.calls) == 0
+
+
+async def test_tick_skips_disabled_tasks(pool):
+    """tick() does not dispatch disabled tasks even if they are due."""
+    from butlers.core.scheduler import schedule_create, schedule_update, tick
+
+    task_id = await schedule_create(pool, "disabled-task", "*/1 * * * *", "skip me")
+    await pool.execute(
+        "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
+        task_id,
+        datetime.now(UTC) - timedelta(minutes=5),
+    )
+    await schedule_update(pool, task_id, enabled=False)
+
+    dispatch = _Dispatch()
+    count = await tick(pool, dispatch)
+
+    assert count == 0
+    assert len(dispatch.calls) == 0
+
+
+async def test_tick_continues_on_dispatch_failure(pool):
+    """tick() continues to next task if dispatch_fn raises for one task."""
+    from butlers.core.scheduler import schedule_create, tick
+
+    # Create two due tasks
+    id1 = await schedule_create(pool, "fail-task", "*/1 * * * *", "I will fail")
+    id2 = await schedule_create(pool, "ok-task", "*/1 * * * *", "I will succeed")
+    for tid in (id1, id2):
+        await pool.execute(
+            "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
+            tid,
+            datetime.now(UTC) - timedelta(minutes=5),
+        )
+
+    dispatch = _Dispatch(fail_on={"I will fail"})
+    count = await tick(pool, dispatch)
+
+    # Only the successful one counts
+    assert count == 1
+    # Both were attempted
+    assert len(dispatch.calls) == 2
+
+
+async def test_tick_updates_next_run_at_and_last_run_at(pool):
+    """After tick(), next_run_at is advanced and last_run_at is set."""
+    from butlers.core.scheduler import schedule_create, tick
+
+    task_id = await schedule_create(pool, "advance-task", "*/5 * * * *", "advance")
+    past = datetime.now(UTC) - timedelta(minutes=10)
+    await pool.execute(
+        "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
+        task_id,
+        past,
+    )
+
+    dispatch = _Dispatch()
+    await tick(pool, dispatch)
+
+    row = await pool.fetchrow(
+        "SELECT next_run_at, last_run_at FROM scheduled_tasks WHERE id = $1",
+        task_id,
+    )
+    # next_run_at should now be in the future
+    assert row["next_run_at"] > datetime.now(UTC) - timedelta(seconds=5)
+    # last_run_at should be set
+    assert row["last_run_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# next_run_at computed correctly via croniter
+# ---------------------------------------------------------------------------
+
+
+async def test_next_run_at_is_future(pool):
+    """Newly created task's next_run_at is in the future."""
+    from butlers.core.scheduler import schedule_create
+
+    task_id = await schedule_create(pool, "cron-check", "0 12 * * *", "noon task")
+    row = await pool.fetchrow("SELECT next_run_at FROM scheduled_tasks WHERE id = $1", task_id)
+    assert row["next_run_at"] > datetime.now(UTC) - timedelta(seconds=5)
+
+
+# ---------------------------------------------------------------------------
+# CRUD — schedule_list
+# ---------------------------------------------------------------------------
+
+
+async def test_schedule_list_returns_all(pool):
+    """schedule_list returns all tasks ordered by name."""
+    from butlers.core.scheduler import schedule_create, schedule_list
+
+    await schedule_create(pool, "zz-last", "0 9 * * *", "last")
+    await schedule_create(pool, "aa-first", "0 9 * * *", "first")
+
+    tasks = await schedule_list(pool)
+    names = [t["name"] for t in tasks]
+    assert "aa-first" in names
+    assert "zz-last" in names
+    # Check ordering
+    assert names.index("aa-first") < names.index("zz-last")
+
+
+# ---------------------------------------------------------------------------
+# CRUD — schedule_create
+# ---------------------------------------------------------------------------
+
+
+async def test_create_returns_uuid(pool):
+    """schedule_create returns a valid UUID."""
+    from butlers.core.scheduler import schedule_create
+
+    task_id = await schedule_create(pool, "uuid-task", "*/10 * * * *", "test")
+    assert isinstance(task_id, uuid.UUID)
+
+
+async def test_create_sets_source_runtime(pool):
+    """Runtime-created tasks have source='runtime'."""
+    from butlers.core.scheduler import schedule_create
+
+    task_id = await schedule_create(pool, "runtime-src", "0 9 * * *", "test")
+    row = await pool.fetchrow("SELECT source FROM scheduled_tasks WHERE id = $1", task_id)
+    assert row["source"] == "runtime"
+
+
+async def test_create_invalid_cron_raises(pool):
+    """schedule_create raises ValueError for an invalid cron expression."""
+    from butlers.core.scheduler import schedule_create
+
+    with pytest.raises(ValueError, match="Invalid cron"):
+        await schedule_create(pool, "bad-cron", "not a cron", "test")
+
+
+# ---------------------------------------------------------------------------
+# CRUD — schedule_update
+# ---------------------------------------------------------------------------
+
+
+async def test_update_name(pool):
+    """schedule_update can change the task name."""
+    from butlers.core.scheduler import schedule_create, schedule_update
+
+    task_id = await schedule_create(pool, "old-name", "0 9 * * *", "test")
+    await schedule_update(pool, task_id, name="new-name")
+
+    row = await pool.fetchrow("SELECT name FROM scheduled_tasks WHERE id = $1", task_id)
+    assert row["name"] == "new-name"
+
+
+async def test_update_cron_recomputes_next_run(pool):
+    """Updating cron recomputes next_run_at."""
+    from butlers.core.scheduler import schedule_create, schedule_update
+
+    task_id = await schedule_create(pool, "recron", "0 0 1 1 *", "rare")
+    old_row = await pool.fetchrow("SELECT next_run_at FROM scheduled_tasks WHERE id = $1", task_id)
+
+    await schedule_update(pool, task_id, cron="*/1 * * * *")
+    new_row = await pool.fetchrow(
+        "SELECT next_run_at, cron FROM scheduled_tasks WHERE id = $1", task_id
+    )
+    assert new_row["cron"] == "*/1 * * * *"
+    # The new next_run_at should differ from the old one (much sooner)
+    assert new_row["next_run_at"] != old_row["next_run_at"]
+
+
+async def test_update_nonexistent_raises(pool):
+    """schedule_update raises ValueError for a nonexistent task ID."""
+    from butlers.core.scheduler import schedule_update
+
+    with pytest.raises(ValueError, match="not found"):
+        await schedule_update(pool, uuid.uuid4(), name="ghost")
+
+
+async def test_update_invalid_cron_raises(pool):
+    """schedule_update raises ValueError for an invalid cron expression."""
+    from butlers.core.scheduler import schedule_create, schedule_update
+
+    task_id = await schedule_create(pool, "cron-upd-fail", "0 9 * * *", "test")
+    with pytest.raises(ValueError, match="Invalid cron"):
+        await schedule_update(pool, task_id, cron="bad cron")
+
+
+# ---------------------------------------------------------------------------
+# CRUD — schedule_delete
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_runtime_task(pool):
+    """schedule_delete removes a runtime task."""
+    from butlers.core.scheduler import schedule_create, schedule_delete
+
+    task_id = await schedule_create(pool, "deletable", "0 9 * * *", "test")
+    await schedule_delete(pool, task_id)
+
+    row = await pool.fetchrow("SELECT id FROM scheduled_tasks WHERE id = $1", task_id)
+    assert row is None
+
+
+async def test_delete_toml_task_raises(pool):
+    """schedule_delete raises ValueError for TOML-sourced tasks."""
+    from butlers.core.scheduler import schedule_delete, sync_schedules
+
+    await sync_schedules(pool, [{"name": "toml-nodelete", "cron": "0 9 * * *", "prompt": "keep"}])
+    row = await pool.fetchrow("SELECT id FROM scheduled_tasks WHERE name = 'toml-nodelete'")
+
+    with pytest.raises(ValueError, match="TOML"):
+        await schedule_delete(pool, row["id"])
+
+
+async def test_delete_nonexistent_raises(pool):
+    """schedule_delete raises ValueError for a nonexistent task ID."""
+    from butlers.core.scheduler import schedule_delete
+
+    with pytest.raises(ValueError, match="not found"):
+        await schedule_delete(pool, uuid.uuid4())
