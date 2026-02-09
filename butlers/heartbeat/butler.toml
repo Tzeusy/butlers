@@ -1,0 +1,10 @@
+[butler]
+name = "heartbeat"
+port = 8199
+description = "Heartbeat monitor that ticks all registered butlers every 10 minutes"
+
+[butler.db]
+name = "butler_heartbeat"
+
+[butler.schedule]
+tick = "*/10 * * * *"
