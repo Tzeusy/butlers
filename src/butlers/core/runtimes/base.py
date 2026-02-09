@@ -20,6 +20,15 @@ class RuntimeAdapter(abc.ABC):
     adapter so that butler core stays runtime-agnostic.
     """
 
+    @property
+    @abc.abstractmethod
+    def binary_name(self) -> str:
+        """Return the name of the CLI binary this adapter requires.
+
+        Used at startup to verify the binary is on PATH via ``shutil.which``.
+        """
+        ...
+
     @abc.abstractmethod
     async def invoke(
         self,
@@ -134,37 +143,3 @@ def get_adapter(type_str: str) -> type[RuntimeAdapter]:
         available = ", ".join(sorted(_ADAPTER_REGISTRY)) or "(none)"
         raise ValueError(f"Unknown runtime type {type_str!r}. Available adapters: {available}")
     return _ADAPTER_REGISTRY[type_str]
-
-
-# ---------------------------------------------------------------------------
-# Stub adapter — real implementation in separate module
-# ---------------------------------------------------------------------------
-
-
-class GeminiAdapter(RuntimeAdapter):
-    """Stub adapter for Google Gemini runtime."""
-
-    async def invoke(
-        self,
-        prompt: str,
-        system_prompt: str,
-        mcp_servers: dict[str, Any],
-        env: dict[str, str],
-        cwd: Path | None = None,
-        timeout: int | None = None,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
-        raise NotImplementedError("GeminiAdapter.invoke not yet implemented")
-
-    def build_config_file(
-        self,
-        mcp_servers: dict[str, Any],
-        tmp_dir: Path,
-    ) -> Path:
-        raise NotImplementedError("GeminiAdapter.build_config_file not yet implemented")
-
-    def parse_system_prompt_file(self, config_dir: Path) -> str:
-        raise NotImplementedError("GeminiAdapter.parse_system_prompt_file not yet implemented")
-
-
-# Register the built-in stub adapter
-register_adapter("gemini", GeminiAdapter)

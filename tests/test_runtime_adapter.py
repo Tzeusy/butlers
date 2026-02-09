@@ -8,9 +8,9 @@ from typing import Any
 import pytest
 
 from butlers.core.runtimes import RuntimeAdapter, get_adapter, register_adapter
-from butlers.core.runtimes.base import GeminiAdapter
 from butlers.core.runtimes.claude_code import ClaudeCodeAdapter
 from butlers.core.runtimes.codex import CodexAdapter
+from butlers.core.runtimes.gemini import GeminiAdapter
 
 # ---------------------------------------------------------------------------
 # Test fixtures — concrete and partial subclasses
@@ -236,32 +236,6 @@ def test_all_adapters_instantiate():
     assert ClaudeCodeAdapter()
     assert CodexAdapter()
     assert GeminiAdapter()
-
-
-async def test_gemini_stub_invoke_raises_not_implemented():
-    """GeminiAdapter stub raises NotImplementedError on invoke()."""
-    adapter = GeminiAdapter()
-    with pytest.raises(NotImplementedError):
-        await adapter.invoke(
-            prompt="test",
-            system_prompt="test",
-            mcp_servers={},
-            env={},
-        )
-
-
-def test_gemini_stub_build_config_raises_not_implemented(tmp_path: Path):
-    """GeminiAdapter stub raises NotImplementedError on build_config_file()."""
-    adapter = GeminiAdapter()
-    with pytest.raises(NotImplementedError):
-        adapter.build_config_file(mcp_servers={}, tmp_dir=tmp_path)
-
-
-def test_gemini_stub_parse_prompt_raises_not_implemented(tmp_path: Path):
-    """GeminiAdapter stub raises NotImplementedError."""
-    adapter = GeminiAdapter()
-    with pytest.raises(NotImplementedError):
-        adapter.parse_system_prompt_file(config_dir=tmp_path)
 
 
 # ---------------------------------------------------------------------------
