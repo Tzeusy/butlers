@@ -1,8 +1,6 @@
 """Tests for the CC Spawner (butlers-0qp.8).
 
 Covers:
-- MCP config generation (correct JSON structure, single endpoint)
-- Temp dir cleanup (success and failure paths)
 - Serial dispatch (lock prevents concurrent execution)
 - Credential passthrough (only declared vars included)
 - CLAUDE.md handling (present, missing, empty)
@@ -13,7 +11,6 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -24,10 +21,7 @@ from butlers.core.spawner import (
     CCSpawner,
     SpawnerResult,
     _build_env,
-    _build_mcp_config,
-    _cleanup_temp_dir,
     _read_system_prompt,
-    _write_mcp_config,
 )
 
 # ---------------------------------------------------------------------------
@@ -117,112 +111,6 @@ async def _slow_sdk_query(*, prompt: str, options: Any):
         usage={},
         result="slow result",
     )
-
-
-# ---------------------------------------------------------------------------
-# 8.1: MCP config generation
-# ---------------------------------------------------------------------------
-
-
-class TestMcpConfigGeneration:
-    """Tests for MCP config JSON structure and temp dir management."""
-
-    def test_build_mcp_config_structure(self):
-        config = _build_mcp_config("my-butler", 9100)
-        assert "mcpServers" in config
-        assert len(config["mcpServers"]) == 1
-        assert "my-butler" in config["mcpServers"]
-        assert config["mcpServers"]["my-butler"]["url"] == "http://localhost:9100/sse"
-
-    def test_build_mcp_config_different_port(self):
-        config = _build_mcp_config("other-butler", 8888)
-        assert config["mcpServers"]["other-butler"]["url"] == "http://localhost:8888/sse"
-
-    def test_write_mcp_config_creates_temp_dir(self):
-        temp_dir = _write_mcp_config("test-butler", 9100)
-        try:
-            assert temp_dir.exists()
-            assert temp_dir.is_dir()
-            assert "butler_test-butler_" in temp_dir.name
-
-            mcp_json = temp_dir / "mcp.json"
-            assert mcp_json.exists()
-
-            data = json.loads(mcp_json.read_text())
-            assert data["mcpServers"]["test-butler"]["url"] == "http://localhost:9100/sse"
-        finally:
-            _cleanup_temp_dir(temp_dir)
-
-    def test_write_mcp_config_unique_dirs(self):
-        """Each invocation creates a unique temp dir."""
-        dirs = [_write_mcp_config("test-butler", 9100) for _ in range(3)]
-        try:
-            paths = {str(d) for d in dirs}
-            assert len(paths) == 3, "Expected 3 unique temp directories"
-        finally:
-            for d in dirs:
-                _cleanup_temp_dir(d)
-
-
-# ---------------------------------------------------------------------------
-# 8.1 continued: Temp dir cleanup
-# ---------------------------------------------------------------------------
-
-
-class TestTempDirCleanup:
-    """Temp dir is cleaned up after CC session on both success and failure."""
-
-    async def test_cleanup_on_success(self, tmp_path: Path):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-
-        spawner = CCSpawner(
-            config=config,
-            config_dir=config_dir,
-            sdk_query=_noop_sdk_query,
-        )
-
-        with patch("butlers.core.spawner._write_mcp_config") as mock_write:
-            real_dir = _write_mcp_config("test-butler", 9100)
-            mock_write.return_value = real_dir
-
-            with patch("butlers.core.spawner._cleanup_temp_dir") as mock_cleanup:
-                await spawner.trigger("test", "tick")
-                mock_cleanup.assert_called_once_with(real_dir)
-
-        # Manual cleanup if still exists
-        if real_dir.exists():
-            _cleanup_temp_dir(real_dir)
-
-    async def test_cleanup_on_sdk_error(self, tmp_path: Path):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-
-        spawner = CCSpawner(
-            config=config,
-            config_dir=config_dir,
-            sdk_query=_error_sdk_query,
-        )
-
-        with patch("butlers.core.spawner._write_mcp_config") as mock_write:
-            real_dir = _write_mcp_config("test-butler", 9100)
-            mock_write.return_value = real_dir
-
-            with patch("butlers.core.spawner._cleanup_temp_dir") as mock_cleanup:
-                result = await spawner.trigger("test", "tick")
-                assert result.error is not None
-                mock_cleanup.assert_called_once_with(real_dir)
-
-        if real_dir.exists():
-            _cleanup_temp_dir(real_dir)
-
-    async def test_actual_cleanup_removes_dir(self):
-        temp_dir = _write_mcp_config("cleanup-test", 9100)
-        assert temp_dir.exists()
-        _cleanup_temp_dir(temp_dir)
-        assert not temp_dir.exists()
 
 
 # ---------------------------------------------------------------------------
