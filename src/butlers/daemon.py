@@ -48,7 +48,7 @@ from butlers.core.state import state_set as _state_set
 from butlers.core.telemetry import init_telemetry
 from butlers.credentials import validate_credentials
 from butlers.db import Database
-from butlers.migrations import run_migrations
+from butlers.migrations import has_butler_chain, run_migrations
 from butlers.modules.base import Module
 from butlers.modules.registry import ModuleRegistry
 
@@ -101,6 +101,11 @@ class ButlerDaemon:
         # 5. Run core Alembic migrations
         db_url = self._build_db_url()
         await run_migrations(db_url, chain="core")
+
+        # 5b. Run butler-specific Alembic migrations (if chain exists)
+        if has_butler_chain(self.config.name):
+            logger.info("Running butler-specific migrations for: %s", self.config.name)
+            await run_migrations(db_url, chain=self.config.name)
 
         # 6. Initialize modules (topological order)
         self._modules = self._registry.load_from_config(self.config.modules)

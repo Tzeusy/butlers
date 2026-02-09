@@ -50,6 +50,28 @@ def _build_alembic_config(db_url: str, chains: list[str] | None = None) -> Confi
     return config
 
 
+def has_butler_chain(butler_name: str) -> bool:
+    """Check whether a butler-name-specific Alembic version chain exists.
+
+    A chain is considered to exist when the directory
+    ``alembic/versions/<butler_name>/`` is present and contains at least one
+    ``.py`` migration file (excluding ``__init__.py``).
+
+    Args:
+        butler_name: The butler identity name (e.g. ``"relationship"``).
+
+    Returns:
+        ``True`` if a non-empty migration chain directory exists for the butler.
+    """
+    chain_dir = ALEMBIC_DIR / "versions" / butler_name
+    if not chain_dir.is_dir():
+        return False
+    migration_files = [
+        f for f in chain_dir.iterdir() if f.suffix == ".py" and f.name != "__init__.py"
+    ]
+    return len(migration_files) > 0
+
+
 async def run_migrations(db_url: str, chain: str = "core") -> None:
     """Run Alembic migrations programmatically for a specific chain.
 
