@@ -6,9 +6,15 @@ a validated ButlerConfig dataclass.
 
 from __future__ import annotations
 
+import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+# Pattern matching ${VAR_NAME} — supports alphanumeric + underscore variable names.
+_ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 class ConfigError(Exception):
@@ -36,6 +42,68 @@ class ButlerConfig:
     modules: dict[str, dict] = field(default_factory=dict)
     env_required: list[str] = field(default_factory=list)
     env_optional: list[str] = field(default_factory=list)
+
+
+def resolve_env_vars(value: Any) -> Any:
+    """Recursively resolve ``${VAR_NAME}`` references in config values.
+
+    Walks dicts, lists, and strings.  Non-string leaf values (int, bool,
+    float, None) are returned unchanged.
+
+    Parameters
+    ----------
+    value:
+        A parsed TOML value — may be a dict, list, string, int, float,
+        bool, or None.
+
+    Returns
+    -------
+    Any
+        The same structure with all ``${VAR_NAME}`` references in string
+        values replaced by the corresponding environment variable.
+
+    Raises
+    ------
+    ConfigError
+        If a referenced environment variable is not set.
+    """
+    if isinstance(value, dict):
+        return {k: resolve_env_vars(v) for k, v in value.items()}
+
+    if isinstance(value, list):
+        return [resolve_env_vars(item) for item in value]
+
+    if isinstance(value, str):
+        return _resolve_string(value)
+
+    # int, float, bool, None — pass through unchanged.
+    return value
+
+
+def _resolve_string(s: str) -> str:
+    """Replace all ``${VAR_NAME}`` occurrences in *s* with env var values.
+
+    Collects all missing variable names and reports them in a single error.
+    """
+    missing: list[str] = []
+
+    def _replace(match: re.Match) -> str:
+        var_name = match.group(1)
+        env_value = os.environ.get(var_name)
+        if env_value is None:
+            missing.append(var_name)
+            return match.group(0)  # keep placeholder for error reporting
+        return env_value
+
+    result = _ENV_VAR_PATTERN.sub(_replace, s)
+
+    if missing:
+        vars_str = ", ".join(missing)
+        raise ConfigError(
+            f"Unresolved environment variable(s) in config value: {vars_str} (original: {s!r})"
+        )
+
+    return result
 
 
 def load_config(config_dir: Path) -> ButlerConfig:
@@ -66,6 +134,9 @@ def load_config(config_dir: Path) -> ButlerConfig:
         data = tomllib.loads(raw_bytes.decode())
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"Invalid TOML in {toml_path}: {exc}") from exc
+
+    # --- Resolve env var references before any validation ---
+    data = resolve_env_vars(data)
 
     # --- [butler] section (required) ---
     butler_section = data.get("butler")
