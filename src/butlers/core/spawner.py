@@ -7,6 +7,7 @@ The spawner is responsible for:
 4. Reading the butler's CLAUDE.md as system prompt
 5. Enforcing serial dispatch (one CC instance at a time per butler)
 6. Logging sessions before and after invocation
+7. Passing the configured model to the SDK when set
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ class SpawnerResult:
     tool_calls: list[dict] = field(default_factory=list)
     error: str | None = None
     duration_ms: int = 0
+    model: str | None = None
 
 
 def _build_mcp_config(butler_name: str, port: int) -> dict[str, Any]:
@@ -204,9 +206,12 @@ class CCSpawner:
         temp_dir: Path | None = None
         session_id: uuid.UUID | None = None
 
+        # Read the configured model (may be None for runtime default)
+        model = self._config.runtime.model
+
         # Create session record
         if self._pool is not None:
-            session_id = await session_create(self._pool, prompt, trigger_source)
+            session_id = await session_create(self._pool, prompt, trigger_source, model=model)
 
         t0 = time.monotonic()
 
@@ -233,6 +238,7 @@ class CCSpawner:
                 system_prompt=system_prompt,
                 mcp_servers=mcp_servers,
                 permission_mode="bypassPermissions",
+                model=model,
                 env=env,
             )
 
@@ -260,6 +266,7 @@ class CCSpawner:
                 result=result_text,
                 tool_calls=tool_calls,
                 duration_ms=duration_ms,
+                model=model,
             )
 
             # Log session completion
@@ -282,6 +289,7 @@ class CCSpawner:
             spawner_result = SpawnerResult(
                 error=error_msg,
                 duration_ms=duration_ms,
+                model=model,
             )
 
             # Log failed session

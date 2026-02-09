@@ -8,6 +8,7 @@ Covers:
 - CLAUDE.md handling (present, missing, empty)
 - Session logging wired correctly
 - SpawnerResult construction on success and error
+- Model passthrough to SDK options and session logging
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from butlers.config import ButlerConfig
+from butlers.config import ButlerConfig, RuntimeConfig
 from butlers.core.spawner import (
     CCSpawner,
     SpawnerResult,
@@ -40,10 +41,12 @@ def _make_config(
     port: int = 9100,
     env_required: list[str] | None = None,
     env_optional: list[str] | None = None,
+    model: str | None = None,
 ) -> ButlerConfig:
     return ButlerConfig(
         name=name,
         port=port,
+        runtime=RuntimeConfig(model=model),
         env_required=env_required or [],
         env_optional=env_optional or [],
     )
@@ -239,6 +242,7 @@ class TestSpawnerResult:
         assert r.tool_calls == []
         assert r.error is None
         assert r.duration_ms == 0
+        assert r.model is None
 
     def test_success_result(self):
         r = SpawnerResult(result="output", tool_calls=[{"name": "t"}], duration_ms=42)
@@ -250,6 +254,10 @@ class TestSpawnerResult:
         r = SpawnerResult(error="something broke", duration_ms=10)
         assert r.result is None
         assert r.error == "something broke"
+
+    def test_result_with_model(self):
+        r = SpawnerResult(result="output", model="claude-opus-4-20250514", duration_ms=42)
+        assert r.model == "claude-opus-4-20250514"
 
 
 class TestCCSdkInvocation:
@@ -622,7 +630,7 @@ class TestSessionLogging:
             await spawner.trigger("log me", "schedule")
 
             # session_create called with correct args
-            mock_create.assert_called_once_with(mock_pool, "log me", "schedule")
+            mock_create.assert_called_once_with(mock_pool, "log me", "schedule", model=None)
 
             # session_complete called with result data
             mock_complete.assert_called_once()
@@ -683,6 +691,141 @@ class TestSessionLogging:
         # Should not raise even without a pool
         result = await spawner.trigger("no pool", "tick")
         assert result.result == "Hello from CC!"
+
+    async def test_session_logging_includes_model(self, tmp_path: Path):
+        """Session logging passes model through to session_create."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config(model="claude-opus-4-20250514")
+
+        mock_pool = AsyncMock()
+
+        with (
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
+            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock),
+        ):
+            import uuid
+
+            fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000003")
+            mock_create.return_value = fake_session_id
+
+            spawner = CCSpawner(
+                config=config,
+                config_dir=config_dir,
+                pool=mock_pool,
+                sdk_query=_result_sdk_query,
+            )
+
+            await spawner.trigger("model test", "schedule")
+
+            mock_create.assert_called_once_with(
+                mock_pool, "model test", "schedule", model="claude-opus-4-20250514"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Model passthrough tests
+# ---------------------------------------------------------------------------
+
+
+class TestModelPassthrough:
+    """Model string from config is passed through to SDK options."""
+
+    async def test_model_passed_to_sdk_options(self, tmp_path: Path):
+        """When model is set in config, it appears in ClaudeCodeOptions."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config(model="claude-sonnet-4-20250514")
+
+        captured_options: list[Any] = []
+
+        async def capturing_sdk(*, prompt: str, options: Any):
+            captured_options.append(options)
+            return
+            yield
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=capturing_sdk,
+        )
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-key"}, clear=False):
+            await spawner.trigger("test model", "tick")
+
+        assert len(captured_options) == 1
+        assert captured_options[0].model == "claude-sonnet-4-20250514"
+
+    async def test_model_none_when_not_configured(self, tmp_path: Path):
+        """When model is not set, ClaudeCodeOptions.model is None (runtime default)."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()  # model defaults to None
+
+        captured_options: list[Any] = []
+
+        async def capturing_sdk(*, prompt: str, options: Any):
+            captured_options.append(options)
+            return
+            yield
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=capturing_sdk,
+        )
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-key"}, clear=False):
+            await spawner.trigger("test default", "tick")
+
+        assert len(captured_options) == 1
+        assert captured_options[0].model is None
+
+    async def test_model_in_spawner_result_on_success(self, tmp_path: Path):
+        """SpawnerResult includes the model used on successful invocation."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config(model="claude-opus-4-20250514")
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=_result_sdk_query,
+        )
+
+        result = await spawner.trigger("test", "tick")
+        assert result.model == "claude-opus-4-20250514"
+
+    async def test_model_in_spawner_result_on_error(self, tmp_path: Path):
+        """SpawnerResult includes the model even on error."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config(model="claude-opus-4-20250514")
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=_error_sdk_query,
+        )
+
+        result = await spawner.trigger("fail", "tick")
+        assert result.error is not None
+        assert result.model == "claude-opus-4-20250514"
+
+    async def test_model_none_in_spawner_result_when_not_configured(self, tmp_path: Path):
+        """SpawnerResult.model is None when not configured."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=_result_sdk_query,
+        )
+
+        result = await spawner.trigger("test", "tick")
+        assert result.model is None
 
 
 # ---------------------------------------------------------------------------
@@ -754,3 +897,48 @@ class TestFullFlow:
         assert "flow-butler" in opts.mcp_servers
         assert opts.env["ANTHROPIC_API_KEY"] == "sk-flow"
         assert opts.env["CUSTOM_VAR"] == "cv"
+
+    async def test_full_flow_with_model(self, tmp_path: Path):
+        """Full flow with a model configured passes it through to SDK options."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        claude_md = config_dir / "CLAUDE.md"
+        claude_md.write_text("You are the test butler with a model.")
+
+        config = _make_config(
+            name="model-butler",
+            port=9201,
+            model="claude-sonnet-4-20250514",
+        )
+
+        captured: dict[str, Any] = {}
+
+        async def capturing_sdk(*, prompt: str, options: Any):
+            captured["prompt"] = prompt
+            captured["options"] = options
+            from claude_code_sdk import ResultMessage
+
+            yield ResultMessage(
+                subtype="result",
+                duration_ms=10,
+                duration_api_ms=8,
+                is_error=False,
+                num_turns=1,
+                session_id="model-flow",
+                total_cost_usd=0.005,
+                usage={},
+                result="Model test done!",
+            )
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=capturing_sdk,
+        )
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-flow"}, clear=False):
+            result = await spawner.trigger("model test", "tick")
+
+        assert result.result == "Model test done!"
+        assert result.model == "claude-sonnet-4-20250514"
+        assert captured["options"].model == "claude-sonnet-4-20250514"

@@ -67,6 +67,7 @@ async def pool(postgres_container):
             tool_calls JSONB NOT NULL DEFAULT '[]',
             duration_ms INTEGER,
             trace_id TEXT,
+            model TEXT,
             cost JSONB,
             started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             completed_at TIMESTAMPTZ
@@ -287,6 +288,7 @@ async def test_sessions_get_returns_full_record(pool):
         "tool_calls",
         "duration_ms",
         "trace_id",
+        "model",
         "cost",
         "started_at",
         "completed_at",
