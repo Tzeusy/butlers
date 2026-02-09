@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -65,6 +66,7 @@ async def pool(postgres_container):
             enabled BOOLEAN NOT NULL DEFAULT true,
             next_run_at TIMESTAMPTZ,
             last_run_at TIMESTAMPTZ,
+            last_result JSONB,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
@@ -82,14 +84,16 @@ async def pool(postgres_container):
 class _Dispatch:
     """Captures dispatch calls for assertions."""
 
-    def __init__(self, *, fail_on: set[str] | None = None):
+    def __init__(self, *, fail_on: set[str] | None = None, result=None):
         self.calls: list[dict] = []
         self._fail_on = fail_on or set()
+        self._result = result
 
     async def __call__(self, **kwargs):
         self.calls.append(kwargs)
         if kwargs.get("prompt") in self._fail_on:
             raise RuntimeError(f"Simulated failure for: {kwargs['prompt']}")
+        return self._result
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +322,144 @@ async def test_tick_updates_next_run_at_and_last_run_at(pool):
     assert row["next_run_at"] > datetime.now(UTC) - timedelta(seconds=5)
     # last_run_at should be set
     assert row["last_run_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# tick — last_result
+# ---------------------------------------------------------------------------
+
+
+async def test_tick_writes_last_result_after_dispatch(pool):
+    """tick() stores the dispatch_fn return value in last_result after dispatch."""
+    from butlers.core.scheduler import schedule_create, tick
+
+    task_id = await schedule_create(pool, "result-task", "*/1 * * * *", "get result")
+    await pool.execute(
+        "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
+        task_id,
+        datetime.now(UTC) - timedelta(minutes=5),
+    )
+
+    # dispatch_fn returns a dict-like result
+    dispatch = _Dispatch(result={"result": "All good", "tool_calls": [], "duration_ms": 42})
+    await tick(pool, dispatch)
+
+    row = await pool.fetchrow(
+        "SELECT last_result FROM scheduled_tasks WHERE id = $1",
+        task_id,
+    )
+    assert row["last_result"] is not None
+    result_data = json.loads(row["last_result"])
+    assert result_data["result"] == "All good"
+    assert result_data["duration_ms"] == 42
+
+
+async def test_tick_writes_last_result_with_dataclass(pool):
+    """tick() stores a SpawnerResult-like dataclass in last_result."""
+    from dataclasses import dataclass, field
+
+    from butlers.core.scheduler import schedule_create, tick
+
+    @dataclass
+    class FakeSpawnerResult:
+        result: str | None = None
+        tool_calls: list = field(default_factory=list)
+        error: str | None = None
+        duration_ms: int = 0
+
+    task_id = await schedule_create(pool, "dataclass-task", "*/1 * * * *", "dataclass test")
+    await pool.execute(
+        "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
+        task_id,
+        datetime.now(UTC) - timedelta(minutes=5),
+    )
+
+    dispatch = _Dispatch(result=FakeSpawnerResult(result="done", duration_ms=100))
+    await tick(pool, dispatch)
+
+    row = await pool.fetchrow(
+        "SELECT last_result FROM scheduled_tasks WHERE id = $1",
+        task_id,
+    )
+    assert row["last_result"] is not None
+    result_data = json.loads(row["last_result"])
+    assert result_data["result"] == "done"
+    assert result_data["duration_ms"] == 100
+
+
+async def test_tick_writes_error_to_last_result_on_failure(pool):
+    """tick() stores error info in last_result when dispatch fails."""
+    from butlers.core.scheduler import schedule_create, tick
+
+    task_id = await schedule_create(pool, "error-result-task", "*/1 * * * *", "I will fail")
+    await pool.execute(
+        "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
+        task_id,
+        datetime.now(UTC) - timedelta(minutes=5),
+    )
+
+    dispatch = _Dispatch(fail_on={"I will fail"})
+    await tick(pool, dispatch)
+
+    row = await pool.fetchrow(
+        "SELECT last_result FROM scheduled_tasks WHERE id = $1",
+        task_id,
+    )
+    assert row["last_result"] is not None
+    result_data = json.loads(row["last_result"])
+    assert "error" in result_data
+    assert "Simulated failure" in result_data["error"]
+
+
+async def test_last_result_null_for_new_tasks(pool):
+    """Newly created tasks have last_result as NULL."""
+    from butlers.core.scheduler import schedule_create
+
+    task_id = await schedule_create(pool, "new-task-null", "0 9 * * *", "new task")
+    row = await pool.fetchrow(
+        "SELECT last_result FROM scheduled_tasks WHERE id = $1",
+        task_id,
+    )
+    assert row["last_result"] is None
+
+
+# ---------------------------------------------------------------------------
+# schedule_list — includes last_result
+# ---------------------------------------------------------------------------
+
+
+async def test_schedule_list_includes_last_result(pool):
+    """schedule_list includes last_result in its output."""
+    from butlers.core.scheduler import schedule_create, schedule_list, tick
+
+    task_id = await schedule_create(pool, "list-result-task", "*/1 * * * *", "list me")
+    await pool.execute(
+        "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
+        task_id,
+        datetime.now(UTC) - timedelta(minutes=5),
+    )
+
+    # Dispatch to populate last_result
+    dispatch = _Dispatch(result={"status": "ok"})
+    await tick(pool, dispatch)
+
+    tasks = await schedule_list(pool)
+    task = next(t for t in tasks if t["name"] == "list-result-task")
+    assert "last_result" in task
+    result_data = json.loads(task["last_result"])
+    assert result_data["status"] == "ok"
+
+
+async def test_schedule_list_last_result_null_for_unrun_task(pool):
+    """schedule_list returns last_result=None for tasks that have never been dispatched."""
+    from butlers.core.scheduler import schedule_create, schedule_list
+
+    await schedule_create(pool, "unrun-task", "0 9 * * *", "never ran")
+
+    tasks = await schedule_list(pool)
+    task = next(t for t in tasks if t["name"] == "unrun-task")
+    assert "last_result" in task
+    assert task["last_result"] is None
 
 
 # ---------------------------------------------------------------------------

@@ -43,6 +43,7 @@ CORE_TABLES_SQL = """
         enabled BOOLEAN NOT NULL DEFAULT true,
         next_run_at TIMESTAMPTZ,
         last_run_at TIMESTAMPTZ,
+        last_result JSONB,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
