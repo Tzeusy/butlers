@@ -76,9 +76,11 @@ async def session_create(
 async def session_complete(
     pool: asyncpg.Pool,
     session_id: uuid.UUID,
-    result: str,
+    output: str | None,
     tool_calls: list[dict[str, Any]],
     duration_ms: int,
+    success: bool,
+    error: str | None = None,
     cost: dict[str, Any] | None = None,
 ) -> None:
     """Mark a session as completed with its outcome data.
@@ -88,9 +90,11 @@ async def session_complete(
     Args:
         pool: asyncpg connection pool for the butler's database.
         session_id: UUID of the session to complete.
-        result: The textual result or error message from the CC instance.
+        output: The textual output from the CC instance, or None on failure.
         tool_calls: List of tool call records (serialised as JSONB).
         duration_ms: Wall-clock duration of the CC invocation in milliseconds.
+        success: Whether the session completed successfully.
+        error: Error message if the session failed, None otherwise.
         cost: Optional cost/token usage dict (serialised as JSONB).
 
     Raises:
@@ -103,19 +107,23 @@ async def session_complete(
             tool_calls   = $3::jsonb,
             duration_ms  = $4,
             cost         = $5::jsonb,
+            success      = $6,
+            error        = $7,
             completed_at = now()
         WHERE id = $1
         RETURNING id
         """,
         session_id,
-        result,
+        output,
         json.dumps(tool_calls),
         duration_ms,
         json.dumps(cost) if cost is not None else None,
+        success,
+        error,
     )
     if row is None:
         raise ValueError(f"Session {session_id} not found")
-    logger.info("Session completed: %s (%d ms)", session_id, duration_ms)
+    logger.info("Session completed: %s (%d ms, success=%s)", session_id, duration_ms, success)
 
 
 async def sessions_list(
@@ -136,7 +144,7 @@ async def sessions_list(
     rows = await pool.fetch(
         """
         SELECT id, prompt, trigger_source, result, tool_calls,
-               duration_ms, trace_id, cost, started_at, completed_at
+               duration_ms, trace_id, cost, success, error, started_at, completed_at
         FROM sessions
         ORDER BY started_at DESC
         LIMIT $1 OFFSET $2
@@ -163,7 +171,7 @@ async def sessions_get(
     row = await pool.fetchrow(
         """
         SELECT id, prompt, trigger_source, result, tool_calls,
-               duration_ms, trace_id, cost, started_at, completed_at
+               duration_ms, trace_id, cost, success, error, started_at, completed_at
         FROM sessions
         WHERE id = $1
         """,

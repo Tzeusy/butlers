@@ -194,8 +194,8 @@ async def classify_message(
     try:
         result = await dispatch_fn(prompt=prompt, trigger_source="tick")
         # Parse butler name from result
-        if result and hasattr(result, "result") and result.result:
-            name = result.result.strip().lower()
+        if result and hasattr(result, "output") and result.output:
+            name = result.output.strip().lower()
             # Validate it's a known butler
             known = {b["name"] for b in butlers}
             if name in known:

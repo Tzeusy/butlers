@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 class SpawnerResult:
     """Result of a Claude Code spawner invocation."""
 
-    result: str | None = None
+    output: str | None = None
+    success: bool = False
     tool_calls: list[dict] = field(default_factory=list)
     error: str | None = None
     duration_ms: int = 0
@@ -257,7 +258,8 @@ class CCSpawner:
             duration_ms = int((time.monotonic() - t0) * 1000)
 
             spawner_result = SpawnerResult(
-                result=result_text,
+                output=result_text,
+                success=True,
                 tool_calls=tool_calls,
                 duration_ms=duration_ms,
             )
@@ -267,9 +269,10 @@ class CCSpawner:
                 await session_complete(
                     self._pool,
                     session_id,
-                    result_text,
-                    tool_calls,
-                    duration_ms,
+                    output=result_text,
+                    tool_calls=tool_calls,
+                    duration_ms=duration_ms,
+                    success=True,
                 )
 
             return spawner_result
@@ -281,6 +284,7 @@ class CCSpawner:
 
             spawner_result = SpawnerResult(
                 error=error_msg,
+                success=False,
                 duration_ms=duration_ms,
             )
 
@@ -289,9 +293,11 @@ class CCSpawner:
                 await session_complete(
                     self._pool,
                     session_id,
-                    error_msg,
-                    [],
-                    duration_ms,
+                    output=None,
+                    tool_calls=[],
+                    duration_ms=duration_ms,
+                    success=False,
+                    error=error_msg,
                 )
 
             return spawner_result
