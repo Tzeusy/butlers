@@ -8,9 +8,9 @@ from typing import Any
 import pytest
 
 from butlers.core.runtimes import RuntimeAdapter, get_adapter, register_adapter
-from butlers.core.runtimes.base import GeminiAdapter
 from butlers.core.runtimes.claude_code import ClaudeCodeAdapter
 from butlers.core.runtimes.codex import CodexAdapter
+from butlers.core.runtimes.gemini import GeminiAdapter
 
 # ---------------------------------------------------------------------------
 # Test fixtures — concrete and partial subclasses
