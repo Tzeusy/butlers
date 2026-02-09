@@ -20,6 +20,10 @@ from butlers.core.runtimes.gemini import GeminiAdapter
 class FullAdapter(RuntimeAdapter):
     """Fully concrete adapter implementation for testing."""
 
+    @property
+    def binary_name(self) -> str:
+        return "full-test-binary"
+
     async def invoke(
         self,
         prompt: str,
@@ -45,6 +49,10 @@ class FullAdapter(RuntimeAdapter):
 class MissingInvokeAdapter(RuntimeAdapter):
     """Missing the invoke() method."""
 
+    @property
+    def binary_name(self) -> str:
+        return "test"
+
     def build_config_file(
         self,
         mcp_servers: dict[str, Any],
@@ -58,6 +66,10 @@ class MissingInvokeAdapter(RuntimeAdapter):
 
 class MissingBuildConfigAdapter(RuntimeAdapter):
     """Missing the build_config_file() method."""
+
+    @property
+    def binary_name(self) -> str:
+        return "test"
 
     async def invoke(
         self,
@@ -76,6 +88,10 @@ class MissingBuildConfigAdapter(RuntimeAdapter):
 
 class MissingParsePromptAdapter(RuntimeAdapter):
     """Missing the parse_system_prompt_file() method."""
+
+    @property
+    def binary_name(self) -> str:
+        return "test"
 
     async def invoke(
         self,
@@ -372,3 +388,49 @@ def test_claude_code_adapter_importable_from_runtimes():
     from butlers.core.runtimes import ClaudeCodeAdapter as CCA
 
     assert CCA is ClaudeCodeAdapter
+
+
+# ---------------------------------------------------------------------------
+# binary_name property tests
+# ---------------------------------------------------------------------------
+
+
+def test_claude_code_adapter_binary_name():
+    """ClaudeCodeAdapter.binary_name returns 'claude'."""
+    adapter = ClaudeCodeAdapter()
+    assert adapter.binary_name == "claude"
+
+
+def test_codex_adapter_binary_name():
+    """CodexAdapter.binary_name returns 'codex'."""
+    adapter = CodexAdapter()
+    assert adapter.binary_name == "codex"
+
+
+def test_gemini_adapter_binary_name():
+    """GeminiAdapter.binary_name returns 'gemini'."""
+    adapter = GeminiAdapter()
+    assert adapter.binary_name == "gemini"
+
+
+def test_full_adapter_binary_name():
+    """FullAdapter.binary_name returns the test binary name."""
+    adapter = FullAdapter()
+    assert adapter.binary_name == "full-test-binary"
+
+
+def test_adapter_must_implement_binary_name():
+    """A subclass missing binary_name cannot be instantiated."""
+
+    class AdapterWithoutBinary(RuntimeAdapter):
+        async def invoke(self, prompt, system_prompt, mcp_servers, env, cwd=None, timeout=None):
+            return ("ok", [])
+
+        def build_config_file(self, mcp_servers, tmp_dir):
+            return tmp_dir / "config.json"
+
+        def parse_system_prompt_file(self, config_dir):
+            return ""
+
+    with pytest.raises(TypeError):
+        AdapterWithoutBinary()  # type: ignore[abstract]

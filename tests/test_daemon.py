@@ -1,6 +1,6 @@
 """Tests for the ButlerDaemon class.
 
-Uses extensive mocking to avoid real DB, FastMCP, and CC SDK dependencies.
+Uses extensive mocking to avoid real DB, FastMCP, and runtime dependencies.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import pytest
 from pydantic import BaseModel
 
 from butlers.credentials import CredentialError
-from butlers.daemon import ButlerDaemon
+from butlers.daemon import ButlerDaemon, RuntimeBinaryNotFoundError
 from butlers.modules.base import Module
 from butlers.modules.registry import ModuleRegistry
 
@@ -124,7 +124,11 @@ def _toml_value(v: Any) -> str:
     return str(v)
 
 
-def _make_butler_toml(tmp_path: Path, modules: dict | None = None) -> Path:
+def _make_butler_toml(
+    tmp_path: Path,
+    modules: dict | None = None,
+    runtime_type: str | None = None,
+) -> Path:
     """Write a minimal butler.toml in tmp_path and return the directory."""
     modules = modules or {}
     toml_lines = [
@@ -145,6 +149,9 @@ def _make_butler_toml(tmp_path: Path, modules: dict | None = None) -> Path:
         toml_lines.append(f"\n[modules.{mod_name}]")
         for k, v in mod_cfg.items():
             toml_lines.append(f"{k} = {_toml_value(v)}")
+    if runtime_type is not None:
+        toml_lines.append("\n[runtime]")
+        toml_lines.append(f'type = "{runtime_type}"')
     (tmp_path / "butler.toml").write_text("\n".join(toml_lines))
     return tmp_path
 
@@ -191,6 +198,11 @@ def _patch_infra():
     mock_spawner.stop_accepting = MagicMock()
     mock_spawner.drain = AsyncMock()
 
+    # Mock adapter class that returns an adapter with binary_name
+    mock_adapter = MagicMock()
+    mock_adapter.binary_name = "claude"
+    mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
     return {
         "db_from_env": patch("butlers.daemon.Database.from_env", return_value=mock_db),
         "run_migrations": patch("butlers.daemon.run_migrations", new_callable=AsyncMock),
@@ -198,11 +210,15 @@ def _patch_infra():
         "init_telemetry": patch("butlers.daemon.init_telemetry"),
         "sync_schedules": patch("butlers.daemon.sync_schedules", new_callable=AsyncMock),
         "FastMCP": patch("butlers.daemon.FastMCP"),
-"CCSpawner": patch("butlers.daemon.CCSpawner", return_value=mock_spawner),
+        "Spawner": patch("butlers.daemon.Spawner", return_value=mock_spawner),
         "start_mcp_server": patch.object(ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock),
+        "get_adapter": patch("butlers.daemon.get_adapter", return_value=mock_adapter_cls),
+        "shutil_which": patch("butlers.daemon.shutil.which", return_value="/usr/bin/claude"),
         "mock_db": mock_db,
         "mock_pool": mock_pool,
         "mock_spawner": mock_spawner,
+        "mock_adapter_cls": mock_adapter_cls,
+        "mock_adapter": mock_adapter,
     }
 
 
@@ -226,7 +242,9 @@ class TestStartupSequence:
             patches["init_telemetry"] as mock_telemetry,
             patches["sync_schedules"] as mock_sync,
             patches["FastMCP"] as mock_fastmcp,
-            patches["CCSpawner"] as mock_spawner_cls,
+            patches["Spawner"] as mock_spawner_cls,
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"] as mock_start_server,
         ):
             mock_db = patches["mock_db"]
@@ -252,7 +270,7 @@ class TestStartupSequence:
                 MagicMock(),
             )[-1]
             mock_spawner_cls.side_effect = lambda **kw: (
-                call_order.append("CCSpawner"),
+                call_order.append("Spawner"),
                 MagicMock(),
             )[-1]
             mock_start_server.side_effect = lambda *a, **kw: call_order.append("start_mcp_server")
@@ -267,7 +285,7 @@ class TestStartupSequence:
             "provision",
             "connect",
             "run_migrations(core)",
-            "CCSpawner",
+            "Spawner",
             "sync_schedules",
             "FastMCP",
             "start_mcp_server",
@@ -286,7 +304,9 @@ class TestStartupSequence:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
@@ -307,7 +327,9 @@ class TestStartupSequence:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
@@ -362,7 +384,9 @@ class TestCoreToolRegistration:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patch("butlers.daemon.FastMCP", return_value=mock_mcp),
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
@@ -386,7 +410,9 @@ class TestModuleToolRegistration:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
@@ -408,7 +434,9 @@ class TestModuleToolRegistration:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
@@ -429,7 +457,9 @@ class TestModuleToolRegistration:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
@@ -455,7 +485,9 @@ class TestModuleToolRegistration:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
@@ -481,7 +513,9 @@ class TestShutdownSequence:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
@@ -514,7 +548,9 @@ class TestShutdownSequence:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
@@ -536,7 +572,9 @@ class TestShutdownSequence:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
@@ -572,7 +610,9 @@ class TestShutdownSequence:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
@@ -626,7 +666,9 @@ class TestMCPServerStartup:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patch("butlers.daemon.FastMCP", return_value=mock_mcp),
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patch("butlers.daemon.uvicorn.Config") as mock_config_cls,
             patch("butlers.daemon.uvicorn.Server", return_value=mock_uvicorn_server),
         ):
@@ -682,7 +724,9 @@ class TestMCPServerStartup:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patch("butlers.daemon.FastMCP", return_value=mock_mcp),
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patch("butlers.daemon.uvicorn.Config"),
             patch("butlers.daemon.uvicorn.Server", return_value=mock_uvicorn_server),
         ):
@@ -733,7 +777,9 @@ class TestStatusTool:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patch("butlers.daemon.FastMCP", return_value=mock_mcp),
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
@@ -776,7 +822,9 @@ class TestStatusTool:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patch("butlers.daemon.FastMCP", return_value=mock_mcp),
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
@@ -813,7 +861,9 @@ class TestHealthCheck:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patch("butlers.daemon.FastMCP", return_value=mock_mcp),
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -919,7 +969,9 @@ class TestStartupFailurePropagation:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
@@ -942,7 +994,9 @@ class TestStartupFailurePropagation:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
@@ -966,7 +1020,9 @@ class TestScheduleSync:
             patches["init_telemetry"],
             patches["sync_schedules"] as mock_sync,
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
@@ -996,7 +1052,9 @@ class TestModuleCredentials:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
@@ -1041,7 +1099,9 @@ class TestModuleCredentialsTomlSource:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             caplog.at_level(logging.WARNING, logger="butlers.daemon"),
         ):
             daemon = ButlerDaemon(butler_dir)
@@ -1074,7 +1134,9 @@ name = "butler_test"
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             caplog.at_level(logging.WARNING, logger="butlers.daemon"),
         ):
             daemon = ButlerDaemon(tmp_path)
@@ -1123,7 +1185,9 @@ name = "butler_test"
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             caplog.at_level(logging.WARNING, logger="butlers.daemon"),
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
@@ -1183,7 +1247,9 @@ optional = ["OPTIONAL_KEY"]
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -1218,7 +1284,9 @@ optional = ["OPTIONAL_KEY"]
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -1235,7 +1303,7 @@ optional = ["OPTIONAL_KEY"]
         assert "stub_b" not in module_creds
 
     async def test_toml_credentials_passed_to_spawner(self, tmp_path: Path) -> None:
-        """TOML-declared credentials are forwarded to CCSpawner."""
+        """TOML-declared credentials are forwarded to Spawner."""
         butler_dir = _make_butler_toml(
             tmp_path,
             modules={"stub_a": {"credentials_env": ["TOML_KEY"]}},
@@ -1250,7 +1318,9 @@ optional = ["OPTIONAL_KEY"]
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             caplog.at_level(logging.WARNING, logger="butlers.daemon"),
         ):
             daemon = ButlerDaemon(tmp_path)
@@ -1286,7 +1356,9 @@ name = "ghp_1234567890abcdefghij1234567890abcdef"
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
             caplog.at_level(logging.WARNING, logger="butlers.daemon"),
         ):
             daemon = ButlerDaemon(tmp_path)
@@ -1403,7 +1475,9 @@ optional = ["OPTIONAL_KEY"]
         # env lists should not be in flattened output (they are just env var names)
         assert "butler.env.required" not in flat
         assert "butler.env.optional" not in flat
-            patches["CCSpawner"] as mock_spawner_cls,
+            patches["Spawner"] as mock_spawner_cls,
+            patches["get_adapter"],
+            patches["shutil_which"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -1411,3 +1485,102 @@ optional = ["OPTIONAL_KEY"]
         mock_spawner_cls.assert_called_once()
         spawner_kwargs = mock_spawner_cls.call_args.kwargs
         assert spawner_kwargs["module_credentials_env"] == {"stub_a": ["TOML_KEY"]}
+
+            patches["Spawner"] as mock_spawner_cls,
+            patches["get_adapter"],
+            patches["shutil_which"],
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        mock_spawner_cls.assert_called_once()
+        call_kwargs = mock_spawner_cls.call_args.kwargs
+        assert "runtime" in call_kwargs
+        # The runtime should be the instance created by mock_adapter_cls()
+        assert call_kwargs["runtime"] is patches["mock_adapter"]
+
+
+class TestRuntimeBinaryCheck:
+    """Verify that missing runtime binaries are detected at startup."""
+
+    async def test_missing_binary_raises_at_startup(self, butler_dir: Path) -> None:
+        """When shutil.which returns None, startup should raise RuntimeBinaryNotFoundError."""
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patch("butlers.daemon.shutil.which", return_value=None),
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            with pytest.raises(RuntimeBinaryNotFoundError, match="not found on PATH"):
+                await daemon.start()
+
+    async def test_missing_binary_error_names_binary(self, butler_dir: Path) -> None:
+        """The error message should include the binary name."""
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patch("butlers.daemon.shutil.which", return_value=None),
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            with pytest.raises(RuntimeBinaryNotFoundError, match="'claude'"):
+                await daemon.start()
+
+    async def test_binary_found_allows_startup(self, butler_dir: Path) -> None:
+        """When shutil.which finds the binary, startup should proceed normally."""
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"] as mock_which,
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        # shutil.which should have been called with the binary name
+        mock_which.assert_called_once_with("claude")
+        # Daemon should have completed startup
+        assert daemon._started_at is not None
+
+    async def test_missing_binary_prevents_spawner_creation(self, butler_dir: Path) -> None:
+        """When binary is missing, Spawner should not be created."""
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"] as mock_spawner_cls,
+            patches["get_adapter"],
+            patch("butlers.daemon.shutil.which", return_value=None),
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            with pytest.raises(RuntimeBinaryNotFoundError):
+                await daemon.start()
+
+        mock_spawner_cls.assert_not_called()

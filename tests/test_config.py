@@ -302,10 +302,11 @@ type = "gemini"
 """
     config_dir = _write_toml(tmp_path, toml)
     cfg = load_config(config_dir)
-    
+
     # Can access runtime.type directly
     assert cfg.runtime.type == "gemini"
-    
+
     # Runtime config is a RuntimeConfig instance
     from butlers.config import RuntimeConfig
+
     assert isinstance(cfg.runtime, RuntimeConfig)

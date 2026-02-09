@@ -1,4 +1,4 @@
-"""CC Spawner — invokes ephemeral Claude Code instances for a butler.
+"""Spawner — invokes ephemeral AI runtime instances for a butler.
 
 The spawner is responsible for:
 1. Generating a locked-down MCP config pointing exclusively at this butler
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SpawnerResult:
-    """Result of a Claude Code spawner invocation."""
+    """Result of a spawner invocation."""
 
     output: str | None = None
     success: bool = False
@@ -47,7 +47,7 @@ class SpawnerResult:
 def _build_mcp_config(butler_name: str, port: int) -> dict[str, Any]:
     """Build a locked-down MCP config dict with a single SSE endpoint.
 
-    The config restricts the CC instance to communicate exclusively with
+    The config restricts the runtime instance to communicate exclusively with
     the butler's own MCP server.
     """
     return {
@@ -103,7 +103,7 @@ def _build_env(
     config: ButlerConfig,
     module_credentials_env: dict[str, list[str]] | None = None,
 ) -> dict[str, str]:
-    """Build an explicit env dict for the CC instance.
+    """Build an explicit env dict for the runtime instance.
 
     Only declared variables are included — no undeclared env vars leak through.
     Always includes ANTHROPIC_API_KEY, plus butler-level required/optional
@@ -136,11 +136,11 @@ def _build_env(
     return env
 
 
-class CCSpawner:
-    """Core component that invokes ephemeral Claude Code instances for a butler.
+class Spawner:
+    """Core component that invokes ephemeral AI runtime instances for a butler.
 
-    Each butler has exactly one CCSpawner. An asyncio.Lock ensures serial
-    dispatch — only one CC instance runs at a time per butler.
+    Each butler has exactly one Spawner. An asyncio.Lock ensures serial
+    dispatch — only one runtime instance runs at a time per butler.
 
     Parameters
     ----------
@@ -200,15 +200,15 @@ class CCSpawner:
 context: str | None = None,
         max_turns: int = 20,
     ) -> SpawnerResult:
-        """Spawn an ephemeral Claude Code instance.
+        """Spawn an ephemeral runtime instance.
 
         Acquires a per-butler lock to ensure serial dispatch, generates the
-        MCP config, invokes CC via the runtime adapter, and logs the session.
+        MCP config, invokes the runtime via the adapter, and logs the session.
 
         Parameters
         ----------
         prompt:
-            The prompt to send to the CC instance.
+            The prompt to send to the runtime instance.
         trigger_source:
 What caused this invocation (schedule, trigger_tool, tick, heartbeat).
         context:
@@ -220,7 +220,7 @@ What caused this invocation (schedule, trigger_tool, tick, heartbeat).
         Returns
         -------
         SpawnerResult
-            The result of the CC invocation.
+            The result of the runtime invocation.
 
         Raises
         ------
@@ -301,7 +301,7 @@ What caused this invocation (schedule, trigger_tool, tick, heartbeat).
 context: str | None = None,
         max_turns: int = 20,
     ) -> SpawnerResult:
-        """Internal: run the CC invocation (called under lock)."""
+        """Internal: run the runtime invocation (called under lock)."""
         temp_dir: Path | None = None
         session_id: uuid.UUID | None = None
 
@@ -385,7 +385,7 @@ context: str | None = None,
         except Exception as exc:
             duration_ms = int((time.monotonic() - t0) * 1000)
             error_msg = f"{type(exc).__name__}: {exc}"
-            logger.error("CC invocation failed: %s", error_msg, exc_info=True)
+            logger.error("Runtime invocation failed: %s", error_msg, exc_info=True)
 
             # Record exception on span
             span.set_status(trace.StatusCode.ERROR, str(exc))
@@ -419,3 +419,7 @@ context: str | None = None,
             # End span and detach context
             span.end()
             trace.context_api.detach(token)
+
+
+# Backward-compatible alias
+CCSpawner = Spawner

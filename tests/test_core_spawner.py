@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, patch
 
 from butlers.config import ButlerConfig
 from butlers.core.spawner import (
-    CCSpawner,
+    Spawner,
     SpawnerResult,
     _build_env,
     _build_mcp_config,
@@ -177,7 +177,7 @@ class TestTempDirCleanup:
         config_dir.mkdir()
         config = _make_config()
 
-        spawner = CCSpawner(
+        spawner = Spawner(
             config=config,
             config_dir=config_dir,
             sdk_query=_noop_sdk_query,
@@ -200,7 +200,7 @@ class TestTempDirCleanup:
         config_dir.mkdir()
         config = _make_config()
 
-        spawner = CCSpawner(
+        spawner = Spawner(
             config=config,
             config_dir=config_dir,
             sdk_query=_error_sdk_query,
@@ -258,14 +258,14 @@ class TestSpawnerResult:
 
 
 class TestCCSdkInvocation:
-    """Tests for SDK invocation via CCSpawner.trigger()."""
+    """Tests for SDK invocation via Spawner.trigger()."""
 
     async def test_success_with_result_message(self, tmp_path: Path):
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
 
-        spawner = CCSpawner(
+        spawner = Spawner(
             config=config,
             config_dir=config_dir,
             sdk_query=_result_sdk_query,
@@ -282,7 +282,7 @@ class TestCCSdkInvocation:
         config_dir.mkdir()
         config = _make_config()
 
-        spawner = CCSpawner(
+        spawner = Spawner(
             config=config,
             config_dir=config_dir,
             sdk_query=_tool_use_sdk_query,
@@ -300,7 +300,7 @@ class TestCCSdkInvocation:
         config_dir.mkdir()
         config = _make_config()
 
-        spawner = CCSpawner(
+        spawner = Spawner(
             config=config,
             config_dir=config_dir,
             sdk_query=_error_sdk_query,
@@ -319,7 +319,7 @@ class TestCCSdkInvocation:
         config_dir.mkdir()
         config = _make_config()
 
-        spawner = CCSpawner(
+        spawner = Spawner(
             config=config,
             config_dir=config_dir,
             sdk_query=_slow_sdk_query,
@@ -423,7 +423,7 @@ class TestCredentialPassthrough:
             return
             yield
 
-        spawner = CCSpawner(
+        spawner = Spawner(
             config=config,
             config_dir=config_dir,
             sdk_query=capturing_sdk,
@@ -486,7 +486,7 @@ class TestSystemPrompt:
             return
             yield
 
-        spawner = CCSpawner(
+        spawner = Spawner(
             config=config,
             config_dir=config_dir,
             sdk_query=capturing_sdk,
@@ -531,7 +531,7 @@ class TestSerialDispatch:
                 result=f"result-{prompt}",
             )
 
-        spawner = CCSpawner(
+        spawner = Spawner(
             config=config,
             config_dir=config_dir,
             sdk_query=tracking_sdk,
@@ -581,7 +581,7 @@ class TestSerialDispatch:
                 result="second call works",
             )
 
-        spawner = CCSpawner(
+        spawner = Spawner(
             config=config,
             config_dir=config_dir,
             sdk_query=failing_then_succeeding_sdk,
@@ -623,7 +623,7 @@ class TestSessionLogging:
             fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
             mock_create.return_value = fake_session_id
 
-            spawner = CCSpawner(
+            spawner = Spawner(
                 config=config,
                 config_dir=config_dir,
                 pool=mock_pool,
@@ -670,7 +670,7 @@ class TestSessionLogging:
             fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
             mock_create.return_value = fake_session_id
 
-            spawner = CCSpawner(
+            spawner = Spawner(
                 config=config,
                 config_dir=config_dir,
                 pool=mock_pool,
@@ -698,7 +698,7 @@ class TestSessionLogging:
         config_dir.mkdir()
         config = _make_config()
 
-        spawner = CCSpawner(
+        spawner = Spawner(
             config=config,
             config_dir=config_dir,
             pool=None,
@@ -754,7 +754,7 @@ class TestFullFlow:
                 result="All done!",
             )
 
-        spawner = CCSpawner(
+        spawner = Spawner(
             config=config,
             config_dir=config_dir,
             sdk_query=capturing_sdk,

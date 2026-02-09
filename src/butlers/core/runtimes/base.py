@@ -20,6 +20,15 @@ class RuntimeAdapter(abc.ABC):
     adapter so that butler core stays runtime-agnostic.
     """
 
+    @property
+    @abc.abstractmethod
+    def binary_name(self) -> str:
+        """Return the name of the CLI binary this adapter requires.
+
+        Used at startup to verify the binary is on PATH via ``shutil.which``.
+        """
+        ...
+
     @abc.abstractmethod
     async def invoke(
         self,
@@ -143,6 +152,10 @@ def get_adapter(type_str: str) -> type[RuntimeAdapter]:
 
 class GeminiAdapter(RuntimeAdapter):
     """Stub adapter for Google Gemini runtime."""
+
+    @property
+    def binary_name(self) -> str:
+        return "gemini"
 
     async def invoke(
         self,
