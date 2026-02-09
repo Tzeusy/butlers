@@ -295,8 +295,8 @@ async def test_routing_log_records_not_found(pool):
 # ------------------------------------------------------------------
 
 
-async def test_classify_message_returns_known_butler(pool):
-    """classify_message returns a known butler name when the spawner returns it."""
+async def test_classify_message_single_domain(pool):
+    """classify_message returns a single-entry list for a single-domain message."""
     from butlers.tools.switchboard import classify_message, register_butler
 
     await pool.execute("DELETE FROM butler_registry")
@@ -305,17 +305,50 @@ async def test_classify_message_returns_known_butler(pool):
 
     @dataclass
     class FakeResult:
-        result: str = "health"
+        result: str = '[{"butler": "health", "prompt": "I have a headache"}]'
 
     async def fake_dispatch(**kwargs):
         return FakeResult()
 
-    name = await classify_message(pool, "I have a headache", fake_dispatch)
-    assert name == "health"
+    result = await classify_message(pool, "I have a headache", fake_dispatch)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["butler"] == "health"
+    assert result[0]["prompt"] == "I have a headache"
 
 
-async def test_classify_message_defaults_to_general(pool):
-    """classify_message defaults to 'general' when the spawner fails."""
+async def test_classify_message_multi_domain(pool):
+    """classify_message returns multiple entries for a multi-domain message."""
+    from butlers.tools.switchboard import classify_message, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await register_butler(pool, "health", "http://localhost:8101/sse", "Health butler")
+    await register_butler(pool, "relationship", "http://localhost:8103/sse", "Relationship butler")
+    await register_butler(pool, "general", "http://localhost:8102/sse", "General butler")
+
+    @dataclass
+    class FakeResult:
+        result: str = (
+            '[{"butler": "health", "prompt": "Log weight at 75kg"}, '
+            '{"butler": "relationship", "prompt": "Remind me to call Mom on Tuesday"}]'
+        )
+
+    async def fake_dispatch(**kwargs):
+        return FakeResult()
+
+    result = await classify_message(
+        pool,
+        "Log my weight at 75kg and remind me to call Mom on Tuesday",
+        fake_dispatch,
+    )
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0] == {"butler": "health", "prompt": "Log weight at 75kg"}
+    assert result[1] == {"butler": "relationship", "prompt": "Remind me to call Mom on Tuesday"}
+
+
+async def test_classify_message_defaults_to_general_on_exception(pool):
+    """classify_message defaults to general fallback when the spawner raises."""
     from butlers.tools.switchboard import classify_message, register_butler
 
     await pool.execute("DELETE FROM butler_registry")
@@ -324,12 +357,14 @@ async def test_classify_message_defaults_to_general(pool):
     async def broken_dispatch(**kwargs):
         raise RuntimeError("spawner broken")
 
-    name = await classify_message(pool, "hello", broken_dispatch)
-    assert name == "general"
+    result = await classify_message(pool, "hello", broken_dispatch)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0] == {"butler": "general", "prompt": "hello"}
 
 
-async def test_classify_message_defaults_for_unknown_name(pool):
-    """classify_message defaults to 'general' when spawner returns unknown butler."""
+async def test_classify_message_defaults_for_unknown_butler(pool):
+    """classify_message defaults to general fallback when CC returns unknown butler."""
     from butlers.tools.switchboard import classify_message, register_butler
 
     await pool.execute("DELETE FROM butler_registry")
@@ -337,10 +372,194 @@ async def test_classify_message_defaults_for_unknown_name(pool):
 
     @dataclass
     class FakeResult:
-        result: str = "nonexistent_butler"
+        result: str = '[{"butler": "nonexistent_butler", "prompt": "test"}]'
 
     async def bad_dispatch(**kwargs):
         return FakeResult()
 
-    name = await classify_message(pool, "test", bad_dispatch)
-    assert name == "general"
+    result = await classify_message(pool, "test", bad_dispatch)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0] == {"butler": "general", "prompt": "test"}
+
+
+async def test_classify_message_defaults_for_invalid_json(pool):
+    """classify_message defaults to general fallback when CC returns invalid JSON."""
+    from butlers.tools.switchboard import classify_message, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await register_butler(pool, "general", "http://localhost:8102/sse")
+
+    @dataclass
+    class FakeResult:
+        result: str = "this is not valid json"
+
+    async def bad_dispatch(**kwargs):
+        return FakeResult()
+
+    result = await classify_message(pool, "test message", bad_dispatch)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0] == {"butler": "general", "prompt": "test message"}
+
+
+async def test_classify_message_defaults_for_empty_array(pool):
+    """classify_message defaults to general fallback when CC returns empty array."""
+    from butlers.tools.switchboard import classify_message, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await register_butler(pool, "general", "http://localhost:8102/sse")
+
+    @dataclass
+    class FakeResult:
+        result: str = "[]"
+
+    async def bad_dispatch(**kwargs):
+        return FakeResult()
+
+    result = await classify_message(pool, "test", bad_dispatch)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0] == {"butler": "general", "prompt": "test"}
+
+
+async def test_classify_message_defaults_for_missing_keys(pool):
+    """classify_message defaults to general fallback when entries lack required keys."""
+    from butlers.tools.switchboard import classify_message, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await register_butler(pool, "health", "http://localhost:8101/sse")
+    await register_butler(pool, "general", "http://localhost:8102/sse")
+
+    @dataclass
+    class FakeResult:
+        result: str = '[{"butler": "health"}]'
+
+    async def bad_dispatch(**kwargs):
+        return FakeResult()
+
+    result = await classify_message(pool, "test", bad_dispatch)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0] == {"butler": "general", "prompt": "test"}
+
+
+async def test_classify_message_defaults_for_none_result(pool):
+    """classify_message defaults to general fallback when dispatch returns None."""
+    from butlers.tools.switchboard import classify_message, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await register_butler(pool, "general", "http://localhost:8102/sse")
+
+    async def none_dispatch(**kwargs):
+        return None
+
+    result = await classify_message(pool, "hello", none_dispatch)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0] == {"butler": "general", "prompt": "hello"}
+
+
+async def test_classify_message_prompt_includes_decomposition_instruction(pool):
+    """classify_message sends a prompt that instructs JSON decomposition."""
+    from butlers.tools.switchboard import classify_message, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await register_butler(pool, "health", "http://localhost:8101/sse", "Health butler")
+
+    captured_prompt = None
+
+    @dataclass
+    class FakeResult:
+        result: str = '[{"butler": "health", "prompt": "test"}]'
+
+    async def capturing_dispatch(**kwargs):
+        nonlocal captured_prompt
+        captured_prompt = kwargs.get("prompt", "")
+        return FakeResult()
+
+    await classify_message(pool, "test message", capturing_dispatch)
+
+    assert captured_prompt is not None
+    assert "JSON array" in captured_prompt
+    assert '"butler"' in captured_prompt
+    assert '"prompt"' in captured_prompt
+    assert "multiple domains" in captured_prompt or "multiple" in captured_prompt.lower()
+
+
+# ------------------------------------------------------------------
+# _parse_classification (unit tests for the parser)
+# ------------------------------------------------------------------
+
+
+def test_parse_classification_valid_single():
+    """_parse_classification correctly parses a single-entry JSON response."""
+    from butlers.tools.switchboard import _parse_classification
+
+    butlers = [{"name": "health"}, {"name": "general"}]
+    raw = '[{"butler": "health", "prompt": "Log weight"}]'
+    result = _parse_classification(raw, butlers, "original msg")
+    assert result == [{"butler": "health", "prompt": "Log weight"}]
+
+
+def test_parse_classification_valid_multi():
+    """_parse_classification correctly parses a multi-entry JSON response."""
+    from butlers.tools.switchboard import _parse_classification
+
+    butlers = [{"name": "health"}, {"name": "relationship"}, {"name": "general"}]
+    raw = (
+        '[{"butler": "health", "prompt": "Log weight"}, '
+        '{"butler": "relationship", "prompt": "Call Mom"}]'
+    )
+    result = _parse_classification(raw, butlers, "original msg")
+    assert len(result) == 2
+    assert result[0] == {"butler": "health", "prompt": "Log weight"}
+    assert result[1] == {"butler": "relationship", "prompt": "Call Mom"}
+
+
+def test_parse_classification_invalid_json():
+    """_parse_classification returns fallback for invalid JSON."""
+    from butlers.tools.switchboard import _parse_classification
+
+    butlers = [{"name": "general"}]
+    result = _parse_classification("not json", butlers, "orig")
+    assert result == [{"butler": "general", "prompt": "orig"}]
+
+
+def test_parse_classification_not_a_list():
+    """_parse_classification returns fallback when JSON is not a list."""
+    from butlers.tools.switchboard import _parse_classification
+
+    butlers = [{"name": "general"}]
+    result = _parse_classification('{"butler": "health"}', butlers, "orig")
+    assert result == [{"butler": "general", "prompt": "orig"}]
+
+
+def test_parse_classification_unknown_butler():
+    """_parse_classification returns fallback when a butler name is unknown."""
+    from butlers.tools.switchboard import _parse_classification
+
+    butlers = [{"name": "general"}]
+    raw = '[{"butler": "unknown", "prompt": "test"}]'
+    result = _parse_classification(raw, butlers, "orig")
+    assert result == [{"butler": "general", "prompt": "orig"}]
+
+
+def test_parse_classification_normalizes_case():
+    """_parse_classification normalizes butler names to lowercase."""
+    from butlers.tools.switchboard import _parse_classification
+
+    butlers = [{"name": "health"}, {"name": "general"}]
+    raw = '[{"butler": "Health", "prompt": "Log weight"}]'
+    result = _parse_classification(raw, butlers, "orig")
+    assert result == [{"butler": "health", "prompt": "Log weight"}]
+
+
+def test_parse_classification_strips_whitespace():
+    """_parse_classification strips whitespace from butler names and prompts."""
+    from butlers.tools.switchboard import _parse_classification
+
+    butlers = [{"name": "health"}, {"name": "general"}]
+    raw = '[{"butler": "  health  ", "prompt": "  Log weight  "}]'
+    result = _parse_classification(raw, butlers, "orig")
+    assert result == [{"butler": "health", "prompt": "Log weight"}]
