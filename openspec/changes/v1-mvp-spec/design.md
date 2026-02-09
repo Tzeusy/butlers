@@ -23,7 +23,7 @@ The codebase is Python 3.12+, uses `uv` for package management, `ruff` for linti
 - Authentication/authorization between butlers (v1 trusts the Docker network)
 - Concurrent CC instances per butler (serial dispatch; queuing is a future enhancement)
 - OAuth flow management for integration modules (credentials provided as env vars, set up out-of-band)
-- Web UI or dashboard (CLI + Jaeger tracing only)
+- Web UI or dashboard (CLI + telemetry tracing via LGTM stack only)
 - Butler hot-reload (restart required for config changes)
 - Multi-tenant or multi-user support (single-user personal system)
 
@@ -87,11 +87,11 @@ The codebase is Python 3.12+, uses `uv` for package management, `ruff` for linti
 
 **Rationale:** Lightweight, well-documented, and widely used. The CLI is simple (4-5 commands), so a heavier framework like Typer adds unnecessary dependency weight. Click's decorator-based interface maps cleanly to the command structure (`butlers up`, `butlers run`, `butlers list`, `butlers init`).
 
-### D10: OpenTelemetry with Jaeger for local development
+### D10: OpenTelemetry with LGTM stack
 
-**Choice:** OpenTelemetry SDK with OTLP exporter, Jaeger all-in-one for local trace visualization.
+**Choice:** OpenTelemetry SDK with OTLP exporter, LGTM stack (Grafana, Tempo, Loki, and Alloy) for local trace visualization.
 
-**Rationale:** OTel is the industry standard for distributed tracing. Jaeger provides a free, lightweight UI for visualizing traces in development. In production, the OTLP exporter can point to any compatible backend (Datadog, Grafana Tempo, etc.) without code changes.
+**Rationale:** OTel is the industry standard for distributed tracing. The LGTM stack provides a free, lightweight solution for visualizing traces in development. Alloy handles log/metric collection, Tempo stores traces, and Grafana provides the UI. In production, the OTLP exporter can point to any compatible backend without code changes.
 
 ### D11: Telegram polling for dev, webhook for production
 

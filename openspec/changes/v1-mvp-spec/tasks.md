@@ -159,8 +159,8 @@
 ## 21. Docker & Deployment
 
 - [ ] 21.1 Create `Dockerfile` — python:3.12-slim, Node.js 22, claude-code, uv
-- [ ] 21.2 Create `docker-compose.yml` — postgres:17, jaeger, switchboard, general, relationship, health, heartbeat services
-- [ ] 21.3 Verify `docker compose up -d postgres jaeger && butlers up` works (dev quick start)
+- [ ] 21.2 Create `docker-compose.yml` — postgres:17, LGTM stack (grafana, tempo, loki, alloy), switchboard, general, relationship, health, heartbeat services
+- [ ] 21.3 Verify `docker compose up -d postgres` with LGTM stack && butlers up` works (dev quick start)
 - [ ] 21.4 Verify `docker compose up -d` works (production quick start)
 
 ## 22. Integration Tests
