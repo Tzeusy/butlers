@@ -211,9 +211,17 @@ class ButlerDaemon:
             return {"key": key, "status": "deleted"}
 
         @mcp.tool()
-        async def list_state(prefix: str | None = None) -> list[dict]:
-            """List all entries in the state store, optionally filtered by prefix."""
-            return await state_list(pool, prefix)
+        async def list_state(
+            prefix: str | None = None, keys_only: bool = True
+        ) -> list[str] | list[dict]:
+            """List keys in the state store, optionally filtered by prefix.
+
+            Args:
+                prefix: If given, only keys starting with this string are returned.
+                keys_only: If True (default), return list of key strings.
+                    If False, return list of {"key": ..., "value": ...} dicts.
+            """
+            return await state_list(pool, prefix, keys_only)
 
         # Schedule tools
         @mcp.tool()
