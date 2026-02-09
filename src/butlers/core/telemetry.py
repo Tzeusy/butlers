@@ -168,3 +168,24 @@ def get_traceparent_env() -> dict[str, str]:
     if traceparent:
         return {"TRACEPARENT": traceparent}
     return {}
+
+
+def extract_trace_from_args(kwargs: dict) -> Context | None:
+    """Extract trace context from tool call kwargs and remove _trace_context.
+
+    If ``_trace_context`` is present in kwargs, extract it and return a Context
+    that can be used as the parent context for a new span. The ``_trace_context``
+    key is removed from kwargs as a side effect.
+
+    Returns None if no _trace_context is present, allowing normal span creation.
+
+    Args:
+        kwargs: Tool call kwargs that may contain ``_trace_context``
+
+    Returns:
+        OpenTelemetry Context if trace context was found, None otherwise
+    """
+    trace_context_dict = kwargs.pop("_trace_context", None)
+    if trace_context_dict:
+        return extract_trace_context(trace_context_dict)
+    return None

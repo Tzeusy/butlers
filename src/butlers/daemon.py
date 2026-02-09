@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
+from opentelemetry import trace
 
 from butlers.config import ButlerConfig, load_config
 from butlers.core.scheduler import (
@@ -40,7 +41,7 @@ from butlers.core.scheduler import (
 from butlers.core.sessions import sessions_get, sessions_list
 from butlers.core.spawner import CCSpawner
 from butlers.core.state import state_delete, state_get, state_list, state_set
-from butlers.core.telemetry import init_telemetry
+from butlers.core.telemetry import extract_trace_context, init_telemetry
 from butlers.credentials import validate_credentials
 from butlers.db import Database
 from butlers.migrations import run_migrations
@@ -193,27 +194,47 @@ class ButlerDaemon:
 
         # State tools
         @mcp.tool()
-        async def get_state(key: str) -> dict:
+        async def get_state(key: str, _trace_context: dict | None = None) -> dict:
             """Get a value from the state store."""
-            value = await state_get(pool, key)
-            return {"key": key, "value": value}
+            parent_ctx = extract_trace_context(_trace_context) if _trace_context else None
+            tracer = trace.get_tracer("butlers")
+            with tracer.start_as_current_span("butler.tool.get_state", context=parent_ctx) as span:
+                span.set_attribute("butler.name", daemon.config.name)
+                value = await state_get(pool, key)
+                return {"key": key, "value": value}
 
         @mcp.tool()
-        async def set_state(key: str, value: Any) -> dict:
+        async def set_state(key: str, value: Any, _trace_context: dict | None = None) -> dict:
             """Set a value in the state store."""
-            await state_set(pool, key, value)
-            return {"key": key, "status": "ok"}
+            parent_ctx = extract_trace_context(_trace_context) if _trace_context else None
+            tracer = trace.get_tracer("butlers")
+            with tracer.start_as_current_span("butler.tool.set_state", context=parent_ctx) as span:
+                span.set_attribute("butler.name", daemon.config.name)
+                await state_set(pool, key, value)
+                return {"key": key, "status": "ok"}
 
         @mcp.tool()
-        async def delete_state(key: str) -> dict:
+        async def delete_state(key: str, _trace_context: dict | None = None) -> dict:
             """Delete a key from the state store."""
-            await state_delete(pool, key)
-            return {"key": key, "status": "deleted"}
+            parent_ctx = extract_trace_context(_trace_context) if _trace_context else None
+            tracer = trace.get_tracer("butlers")
+            with tracer.start_as_current_span(
+                "butler.tool.delete_state", context=parent_ctx
+            ) as span:
+                span.set_attribute("butler.name", daemon.config.name)
+                await state_delete(pool, key)
+                return {"key": key, "status": "deleted"}
 
         @mcp.tool()
-        async def list_state(prefix: str | None = None) -> list[dict]:
+        async def list_state(
+            prefix: str | None = None, _trace_context: dict | None = None
+        ) -> list[dict]:
             """List all entries in the state store, optionally filtered by prefix."""
-            return await state_list(pool, prefix)
+            parent_ctx = extract_trace_context(_trace_context) if _trace_context else None
+            tracer = trace.get_tracer("butlers")
+            with tracer.start_as_current_span("butler.tool.list_state", context=parent_ctx) as span:
+                span.set_attribute("butler.name", daemon.config.name)
+                return await state_list(pool, prefix)
 
         # Schedule tools
         @mcp.tool()
