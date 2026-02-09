@@ -18,6 +18,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_BUTLERS_DIR = Path("butlers")
 
 
+def _parse_comma_separated(ctx, param, value):
+    """Parse comma-separated butler names from --only flag."""
+    if not value:
+        return ()
+    # Split on comma and strip whitespace
+    return tuple(name.strip() for name in value.split(",") if name.strip())
+
+
 @click.group()
 @click.version_option(version="0.1.0")
 def cli() -> None:
@@ -26,7 +34,11 @@ def cli() -> None:
 
 
 @cli.command()
-@click.option("--only", multiple=True, help="Start only specific butlers by name")
+@click.option(
+    "--only",
+    callback=_parse_comma_separated,
+    help="Start only specific butlers (comma-separated names)",
+)
 @click.option(
     "--dir",
     "butlers_dir",

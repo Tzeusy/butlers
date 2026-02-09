@@ -147,6 +147,35 @@ class TestUpCommand:
         assert result.exit_code != 0
         assert "not found" in result.output
 
+    def test_up_only_comma_separated_multiple(self, runner, multi_butler_dir, monkeypatch):
+        """Test --only with comma-separated butler names."""
+        monkeypatch.setattr("asyncio.run", lambda coro: None)
+        result = runner.invoke(cli, ["up", "--dir", str(multi_butler_dir), "--only", "alpha,gamma"])
+        assert result.exit_code == 0
+        assert "Starting 2 butler(s)" in result.output
+        assert "alpha" in result.output
+        assert "gamma" in result.output
+        # beta should not be mentioned in the starting message
+        assert result.output.count("beta") == 0
+
+    def test_up_only_comma_separated_with_spaces(self, runner, multi_butler_dir, monkeypatch):
+        """Test --only with comma-separated names and spaces."""
+        monkeypatch.setattr("asyncio.run", lambda coro: None)
+        result = runner.invoke(cli, ["up", "--dir", str(multi_butler_dir), "--only", "alpha, beta"])
+        assert result.exit_code == 0
+        assert "Starting 2 butler(s)" in result.output
+        assert "alpha" in result.output
+        assert "beta" in result.output
+
+    def test_up_only_comma_separated_missing_butler(self, runner, multi_butler_dir):
+        """Test --only with comma-separated names including nonexistent butler."""
+        result = runner.invoke(
+            cli, ["up", "--dir", str(multi_butler_dir), "--only", "alpha,nonexistent"]
+        )
+        assert result.exit_code != 0
+        assert "not found" in result.output
+        assert "nonexistent" in result.output
+
     def test_up_shows_starting_message(self, runner, butler_config_dir, monkeypatch):
         """Test that up command outputs the starting message before trying to start daemons."""
         # Patch asyncio.run to avoid actually starting daemons
