@@ -174,6 +174,7 @@ class CCSpawner:
         self,
         prompt: str,
         trigger_source: str,
+        context: str | None = None,
     ) -> SpawnerResult:
         """Spawn an ephemeral Claude Code instance.
 
@@ -187,26 +188,36 @@ class CCSpawner:
         trigger_source:
             What caused this invocation (schedule, trigger_tool, tick, heartbeat).
 
+        context:
+            Optional text to prepend to the prompt. If provided and non-empty,
+            this will be prepended to the prompt with two newlines separating them.
+
         Returns
         -------
         SpawnerResult
             The result of the CC invocation.
         """
         async with self._lock:
-            return await self._run(prompt, trigger_source)
+            return await self._run(prompt, trigger_source, context)
 
     async def _run(
         self,
         prompt: str,
         trigger_source: str,
+        context: str | None = None,
     ) -> SpawnerResult:
         """Internal: run the CC invocation (called under lock)."""
         temp_dir: Path | None = None
         session_id: uuid.UUID | None = None
 
+        # Prepend context to prompt if provided
+        final_prompt = prompt
+        if context:
+            final_prompt = f"{context}\n\n{prompt}"
+
         # Create session record
         if self._pool is not None:
-            session_id = await session_create(self._pool, prompt, trigger_source)
+            session_id = await session_create(self._pool, final_prompt, trigger_source)
 
         t0 = time.monotonic()
 
@@ -240,7 +251,7 @@ class CCSpawner:
             result_text = ""
             tool_calls: list[dict] = []
 
-            async for message in self._sdk_query(prompt=prompt, options=options):
+            async for message in self._sdk_query(prompt=final_prompt, options=options):
                 if isinstance(message, ResultMessage):
                     result_text = message.result or ""
                 elif hasattr(message, "content"):

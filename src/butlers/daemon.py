@@ -176,9 +176,19 @@ class ButlerDaemon:
             }
 
         @mcp.tool()
-        async def trigger(prompt: str) -> dict:
-            """Trigger the CC spawner with a prompt."""
-            result = await spawner.trigger(prompt=prompt, trigger_source="trigger_tool")
+        async def trigger(prompt: str, context: str | None = None) -> dict:
+            """Trigger the CC spawner with a prompt.
+
+            Parameters
+            ----------
+            prompt:
+                The prompt to send to the CC instance.
+            context:
+                Optional text to prepend to the prompt.
+            """
+            result = await spawner.trigger(
+                prompt=prompt, context=context, trigger_source="trigger_tool"
+            )
             return {
                 "result": result.result,
                 "error": result.error,
