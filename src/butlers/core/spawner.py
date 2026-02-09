@@ -7,6 +7,7 @@ The spawner is responsible for:
 4. Reading the butler's system prompt via the adapter
 5. Enforcing serial dispatch (one instance at a time per butler)
 6. Logging sessions before and after invocation
+7. Passing the configured model to the SDK when set
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ class SpawnerResult:
     tool_calls: list[dict] = field(default_factory=list)
     error: str | None = None
     duration_ms: int = 0
+    model: str | None = None
 
 
 def _build_env(
@@ -253,6 +255,9 @@ class Spawner:
         if context:
             final_prompt = f"{context}\n\n{prompt}"
 
+        # Read the configured model (may be None for runtime default)
+        model = self._config.runtime.model
+
         # Get tracer and start butler.cc_session span
         tracer = trace.get_tracer("butlers")
         span = tracer.start_span("butler.cc_session")
@@ -271,7 +276,7 @@ class Spawner:
             # Create session record with trace_id
             if self._pool is not None:
                 session_id = await session_create(
-                    self._pool, final_prompt, trigger_source, trace_id
+                    self._pool, final_prompt, trigger_source, trace_id, model=model
                 )
                 # Set session_id on span
                 span.set_attribute("session_id", str(session_id))
@@ -298,6 +303,7 @@ class Spawner:
                 mcp_servers=mcp_servers,
                 env=env,
                 max_turns=max_turns,
+                model=model,
                 cwd=str(self._config_dir),
             )
 
@@ -309,6 +315,7 @@ class Spawner:
                 success=True,
                 tool_calls=tool_calls,
                 duration_ms=duration_ms,
+                model=model,
             )
 
             # Log session completion
@@ -337,6 +344,7 @@ class Spawner:
                 error=error_msg,
                 success=False,
                 duration_ms=duration_ms,
+                model=model,
             )
 
             # Log failed session

@@ -34,9 +34,15 @@ class ScheduleConfig:
 
 @dataclass
 class RuntimeConfig:
-    """Runtime configuration from [runtime] section."""
+    """Runtime configuration from [butler.runtime] section.
+
+    Controls which LLM runtime and model the butler uses. The model string
+    is opaque to the framework — no validation beyond non-empty. Each runtime
+    defines its own valid model IDs.
+    """
 
     type: str = "claude-code"
+    model: str | None = None
 
 
 @dataclass
@@ -47,12 +53,12 @@ class ButlerConfig:
     port: int
     description: str | None = None
     db_name: str = ""
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     schedules: list[ScheduleConfig] = field(default_factory=list)
     modules: dict[str, dict] = field(default_factory=dict)
     env_required: list[str] = field(default_factory=list)
     env_optional: list[str] = field(default_factory=list)
     shutdown_timeout_s: float = 30.0
-    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
 
 def resolve_env_vars(value: Any) -> Any:
@@ -115,6 +121,22 @@ def _resolve_string(s: str) -> str:
         )
 
     return result
+
+
+def _parse_runtime(butler_section: dict) -> RuntimeConfig:
+    """Parse the optional [butler.runtime] sub-section.
+
+    Returns a RuntimeConfig with model set to None if the section or field
+    is absent. Empty-string model values are normalised to None.
+    """
+    runtime_section = butler_section.get("runtime", {})
+    model = runtime_section.get("model")
+
+    # Normalise empty string to None
+    if isinstance(model, str) and not model.strip():
+        model = None
+
+    return RuntimeConfig(model=model)
 
 
 def load_config(config_dir: Path) -> ButlerConfig:
@@ -205,17 +227,19 @@ def load_config(config_dir: Path) -> ButlerConfig:
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 
-    runtime = RuntimeConfig(type=runtime_type)
+    # Parse model from [butler.runtime] sub-section
+    butler_runtime = _parse_runtime(butler_section)
+    runtime = RuntimeConfig(type=runtime_type, model=butler_runtime.model)
 
     return ButlerConfig(
         name=name,
         port=port,
         description=description,
         db_name=db_name,
+        runtime=runtime,
         schedules=schedules,
         modules=modules,
         env_required=env_required,
         env_optional=env_optional,
         shutdown_timeout_s=shutdown_timeout_s,
-        runtime=runtime,
     )

@@ -54,6 +54,7 @@ async def session_create(
     prompt: str,
     trigger_source: str,
     trace_id: str | None = None,
+    model: str | None = None,
 ) -> uuid.UUID:
     """Insert a new session row and return its UUID.
 
@@ -63,6 +64,7 @@ async def session_create(
         trigger_source: What caused this session. Must be one of:
             ``"tick"``, ``"external"``, ``"trigger"``, or ``"schedule:<task-name>"``.
         trace_id: Optional OpenTelemetry trace ID for correlation.
+        model: Optional model identifier used for this invocation.
 
     Returns:
         The UUID of the newly created session.
@@ -78,15 +80,16 @@ async def session_create(
 
     session_id: uuid.UUID = await pool.fetchval(
         """
-        INSERT INTO sessions (prompt, trigger_source, trace_id)
-        VALUES ($1, $2, $3)
+        INSERT INTO sessions (prompt, trigger_source, trace_id, model)
+        VALUES ($1, $2, $3, $4)
         RETURNING id
         """,
         prompt,
         trigger_source,
         trace_id,
+        model,
     )
-    logger.info("Session created: %s (trigger=%s)", session_id, trigger_source)
+    logger.info("Session created: %s (trigger=%s, model=%s)", session_id, trigger_source, model)
     return session_id
 
 
@@ -161,7 +164,7 @@ async def sessions_list(
     rows = await pool.fetch(
         """
         SELECT id, prompt, trigger_source, result, tool_calls,
-               duration_ms, trace_id, cost, success, error, started_at, completed_at
+               duration_ms, trace_id, model, cost, success, error, started_at, completed_at
         FROM sessions
         ORDER BY started_at DESC
         LIMIT $1 OFFSET $2
@@ -188,7 +191,7 @@ async def sessions_get(
     row = await pool.fetchrow(
         """
         SELECT id, prompt, trigger_source, result, tool_calls,
-               duration_ms, trace_id, cost, success, error, started_at, completed_at
+               duration_ms, trace_id, model, cost, success, error, started_at, completed_at
         FROM sessions
         WHERE id = $1
         """,

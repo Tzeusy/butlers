@@ -1,14 +1,12 @@
 """Tests for the Spawner orchestration layer (butlers-0qp.8, butlers-f3t.7).
 
 Covers:
-- MCP config generation (correct JSON structure, single endpoint)
-- Temp dir cleanup (success and failure paths)
 - Serial dispatch (lock prevents concurrent execution)
 - Credential passthrough (only declared vars included)
-- System prompt handling (present, missing, empty)
 - Session logging wired correctly
 - SpawnerResult construction on success and error
 - Parametrized orchestration tests across all runtime adapters
+- Model passthrough to SDK options and session logging
 
 Orchestration tests use a MockAdapter (runtime-agnostic). Adapter-specific
 unit tests live in test_runtime_adapter.py, test_codex_adapter.py, and
@@ -26,16 +24,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from butlers.config import ButlerConfig
+from butlers.config import ButlerConfig, RuntimeConfig
 from butlers.core.runtimes.base import RuntimeAdapter
 from butlers.core.spawner import (
+    CCSpawner,
     Spawner,
     SpawnerResult,
     _build_env,
-    _build_mcp_config,
-    _cleanup_temp_dir,
-    _read_system_prompt,
-    _write_mcp_config,
 )
 
 # ---------------------------------------------------------------------------
@@ -81,6 +76,8 @@ class MockAdapter(RuntimeAdapter):
         system_prompt: str,
         mcp_servers: dict[str, Any],
         env: dict[str, str],
+        max_turns: int = 20,
+        model: str | None = None,
         cwd: Path | None = None,
         timeout: int | None = None,
     ) -> tuple[str | None, list[dict[str, Any]]]:
@@ -136,6 +133,8 @@ class SequenceMockAdapter(MockAdapter):
         system_prompt: str,
         mcp_servers: dict[str, Any],
         env: dict[str, str],
+        max_turns: int = 20,
+        model: str | None = None,
         cwd: Path | None = None,
         timeout: int | None = None,
     ) -> tuple[str | None, list[dict[str, Any]]]:
@@ -162,6 +161,8 @@ class TrackingMockAdapter(MockAdapter):
         system_prompt: str,
         mcp_servers: dict[str, Any],
         env: dict[str, str],
+        max_turns: int = 20,
+        model: str | None = None,
         cwd: Path | None = None,
         timeout: int | None = None,
     ) -> tuple[str | None, list[dict[str, Any]]]:
@@ -181,121 +182,15 @@ def _make_config(
     port: int = 9100,
     env_required: list[str] | None = None,
     env_optional: list[str] | None = None,
+    model: str | None = None,
 ) -> ButlerConfig:
     return ButlerConfig(
         name=name,
         port=port,
+        runtime=RuntimeConfig(model=model),
         env_required=env_required or [],
         env_optional=env_optional or [],
     )
-
-
-# ---------------------------------------------------------------------------
-# 8.1: MCP config generation
-# ---------------------------------------------------------------------------
-
-
-class TestMcpConfigGeneration:
-    """Tests for MCP config JSON structure and temp dir management."""
-
-    def test_build_mcp_config_structure(self):
-        config = _build_mcp_config("my-butler", 9100)
-        assert "mcpServers" in config
-        assert len(config["mcpServers"]) == 1
-        assert "my-butler" in config["mcpServers"]
-        assert config["mcpServers"]["my-butler"]["url"] == "http://localhost:9100/sse"
-
-    def test_build_mcp_config_different_port(self):
-        config = _build_mcp_config("other-butler", 8888)
-        assert config["mcpServers"]["other-butler"]["url"] == "http://localhost:8888/sse"
-
-    def test_write_mcp_config_creates_temp_dir(self):
-        temp_dir = _write_mcp_config("test-butler", 9100)
-        try:
-            assert temp_dir.exists()
-            assert temp_dir.is_dir()
-            assert "butler_test-butler_" in temp_dir.name
-
-            mcp_json = temp_dir / "mcp.json"
-            assert mcp_json.exists()
-
-            data = json.loads(mcp_json.read_text())
-            assert data["mcpServers"]["test-butler"]["url"] == "http://localhost:9100/sse"
-        finally:
-            _cleanup_temp_dir(temp_dir)
-
-    def test_write_mcp_config_unique_dirs(self):
-        """Each invocation creates a unique temp dir."""
-        dirs = [_write_mcp_config("test-butler", 9100) for _ in range(3)]
-        try:
-            paths = {str(d) for d in dirs}
-            assert len(paths) == 3, "Expected 3 unique temp directories"
-        finally:
-            for d in dirs:
-                _cleanup_temp_dir(d)
-
-
-# ---------------------------------------------------------------------------
-# 8.1 continued: Temp dir cleanup
-# ---------------------------------------------------------------------------
-
-
-class TestTempDirCleanup:
-    """Temp dir is cleaned up after session on both success and failure."""
-
-    async def test_cleanup_on_success(self, tmp_path: Path):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-
-        adapter = MockAdapter(result_text="")
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-        )
-
-        with patch("butlers.core.spawner._write_mcp_config") as mock_write:
-            real_dir = _write_mcp_config("test-butler", 9100)
-            mock_write.return_value = real_dir
-
-            with patch("butlers.core.spawner._cleanup_temp_dir") as mock_cleanup:
-                await spawner.trigger("test", "tick")
-                mock_cleanup.assert_called_once_with(real_dir)
-
-        # Manual cleanup if still exists
-        if real_dir.exists():
-            _cleanup_temp_dir(real_dir)
-
-    async def test_cleanup_on_error(self, tmp_path: Path):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-
-        adapter = MockAdapter(error="adapter invocation failed")
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-        )
-
-        with patch("butlers.core.spawner._write_mcp_config") as mock_write:
-            real_dir = _write_mcp_config("test-butler", 9100)
-            mock_write.return_value = real_dir
-
-            with patch("butlers.core.spawner._cleanup_temp_dir") as mock_cleanup:
-                result = await spawner.trigger("test", "tick")
-                assert result.error is not None
-                mock_cleanup.assert_called_once_with(real_dir)
-
-        if real_dir.exists():
-            _cleanup_temp_dir(real_dir)
-
-    async def test_actual_cleanup_removes_dir(self):
-        temp_dir = _write_mcp_config("cleanup-test", 9100)
-        assert temp_dir.exists()
-        _cleanup_temp_dir(temp_dir)
-        assert not temp_dir.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -308,21 +203,26 @@ class TestSpawnerResult:
 
     def test_default_values(self):
         r = SpawnerResult()
-        assert r.result is None
+        assert r.output is None
         assert r.tool_calls == []
         assert r.error is None
         assert r.duration_ms == 0
+        assert r.model is None
 
     def test_success_result(self):
-        r = SpawnerResult(result="output", tool_calls=[{"name": "t"}], duration_ms=42)
-        assert r.result == "output"
+        r = SpawnerResult(output="output_text", tool_calls=[{"name": "t"}], duration_ms=42)
+        assert r.output == "output_text"
         assert len(r.tool_calls) == 1
         assert r.error is None
 
     def test_error_result(self):
         r = SpawnerResult(error="something broke", duration_ms=10)
-        assert r.result is None
+        assert r.output is None
         assert r.error == "something broke"
+
+    def test_result_with_model(self):
+        r = SpawnerResult(output="output_text", model="claude-opus-4-20250514", duration_ms=42)
+        assert r.model == "claude-opus-4-20250514"
 
 
 class TestSpawnerInvocation:
@@ -341,7 +241,7 @@ class TestSpawnerInvocation:
         )
 
         result = await spawner.trigger("hello", "tick")
-        assert result.result == "Hello from mock!"
+        assert result.output == "Hello from mock!"
         assert result.error is None
         assert result.duration_ms >= 0
 
@@ -361,7 +261,7 @@ class TestSpawnerInvocation:
         )
 
         result = await spawner.trigger("use tools", "trigger_tool")
-        assert result.result == "Done with tools"
+        assert result.output == "Done with tools"
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0]["name"] == "state_get"
         assert result.tool_calls[0]["input"] == {"key": "foo"}
@@ -382,7 +282,7 @@ class TestSpawnerInvocation:
         assert result.error is not None
         assert "RuntimeError" in result.error
         assert "adapter connection failed" in result.error
-        assert result.result is None
+        assert result.output is None
         assert result.duration_ms >= 0
 
     async def test_duration_measured(self, tmp_path: Path):
@@ -509,56 +409,6 @@ class TestCredentialPassthrough:
 
 
 # ---------------------------------------------------------------------------
-# 8.4: System prompt reading
-# ---------------------------------------------------------------------------
-
-
-class TestSystemPrompt:
-    """System prompt reading for spawner."""
-
-    def test_reads_claude_md(self, tmp_path: Path):
-        claude_md = tmp_path / "CLAUDE.md"
-        claude_md.write_text("You are a specialized butler for email management.")
-        prompt = _read_system_prompt(tmp_path, "email-butler")
-        assert prompt == "You are a specialized butler for email management."
-
-    def test_missing_claude_md_uses_default(self, tmp_path: Path):
-        prompt = _read_system_prompt(tmp_path, "my-butler")
-        assert prompt == "You are my-butler, a butler AI assistant."
-
-    def test_empty_claude_md_uses_default(self, tmp_path: Path):
-        claude_md = tmp_path / "CLAUDE.md"
-        claude_md.write_text("")
-        prompt = _read_system_prompt(tmp_path, "my-butler")
-        assert prompt == "You are my-butler, a butler AI assistant."
-
-    def test_whitespace_only_claude_md_uses_default(self, tmp_path: Path):
-        claude_md = tmp_path / "CLAUDE.md"
-        claude_md.write_text("   \n  \n  ")
-        prompt = _read_system_prompt(tmp_path, "my-butler")
-        assert prompt == "You are my-butler, a butler AI assistant."
-
-    async def test_system_prompt_passed_to_adapter(self, tmp_path: Path):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        claude_md = config_dir / "CLAUDE.md"
-        claude_md.write_text("Custom system prompt for testing.")
-        config = _make_config()
-
-        adapter = MockAdapter(result_text="", capture=True)
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-        )
-
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-key"}, clear=False):
-            await spawner.trigger("test", "tick")
-
-        assert adapter.calls[0]["system_prompt"] == "Custom system prompt for testing."
-
-
-# ---------------------------------------------------------------------------
 # 8.5: Serial dispatch with asyncio lock
 # ---------------------------------------------------------------------------
 
@@ -619,7 +469,7 @@ class TestSerialDispatch:
         # Lock should be released — second call should work
         result2 = await spawner.trigger("second", "tick")
         assert result2.error is None
-        assert result2.result == "second call works"
+        assert result2.output == "second call works"
 
 
 # ---------------------------------------------------------------------------
@@ -658,16 +508,22 @@ class TestSessionLogging:
             await spawner.trigger("log me", "schedule")
 
             # session_create called with correct args
-            mock_create.assert_called_once_with(mock_pool, "log me", "schedule")
+            mock_create.assert_called_once()
+            create_args, create_kwargs = mock_create.call_args
+            assert create_args[0] is mock_pool
+            assert create_args[1] == "log me"
+            assert create_args[2] == "schedule"
+            assert create_kwargs.get("model") is None
 
             # session_complete called with result data
             mock_complete.assert_called_once()
-            call_args = mock_complete.call_args
-            assert call_args[0][0] is mock_pool
-            assert call_args[0][1] == fake_session_id
-            assert call_args[0][2] == "Hello from mock!"  # result text
-            assert isinstance(call_args[0][3], list)  # tool_calls
-            assert call_args[0][4] >= 0  # duration_ms
+            args, kwargs = mock_complete.call_args
+            assert args[0] is mock_pool
+            assert args[1] == fake_session_id
+            assert kwargs["output"] == "Hello from mock!"
+            assert isinstance(kwargs["tool_calls"], list)
+            assert kwargs["duration_ms"] >= 0
+            assert kwargs["success"] is True
 
     async def test_session_completed_on_error(self, tmp_path: Path):
         config_dir = tmp_path / "config"
@@ -698,11 +554,13 @@ class TestSessionLogging:
 
             # session_complete called with error info
             mock_complete.assert_called_once()
-            call_args = mock_complete.call_args
-            assert call_args[0][0] is mock_pool
-            assert call_args[0][1] == fake_session_id
-            assert "RuntimeError" in call_args[0][2]  # error message as result
-            assert call_args[0][3] == []  # empty tool_calls on error
+            args, kwargs = mock_complete.call_args
+            assert args[0] is mock_pool
+            assert args[1] == fake_session_id
+            assert kwargs["output"] is None
+            assert kwargs["tool_calls"] == []
+            assert kwargs["success"] is False
+            assert "RuntimeError" in kwargs["error"]
 
     async def test_no_session_logging_without_pool(self, tmp_path: Path):
         """When pool is None, no session logging occurs (no errors either)."""
@@ -720,7 +578,174 @@ class TestSessionLogging:
 
         # Should not raise even without a pool
         result = await spawner.trigger("no pool", "tick")
-        assert result.result == "Hello from mock!"
+        assert result.output == "Hello from mock!"
+
+    async def test_session_logging_includes_model(self, tmp_path: Path):
+        """Session logging passes model through to session_create."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config(model="claude-opus-4-20250514")
+
+        mock_pool = AsyncMock()
+
+        with (
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
+            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock),
+        ):
+            import uuid
+
+            fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000003")
+            mock_create.return_value = fake_session_id
+
+            spawner = CCSpawner(
+                config=config,
+                config_dir=config_dir,
+                pool=mock_pool,
+                sdk_query=_result_sdk_query,
+            )
+
+            await spawner.trigger("model test", "schedule")
+
+            mock_create.assert_called_once()
+            create_args, create_kwargs = mock_create.call_args
+            assert create_args[0] is mock_pool
+            assert create_args[1] == "model test"
+            assert create_args[2] == "schedule"
+            assert create_kwargs["model"] == "claude-opus-4-20250514"
+
+
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# SDK query helpers for legacy compat tests
+# ---------------------------------------------------------------------------
+
+
+async def _result_sdk_query(*, prompt: str, options: Any):
+    """Mock SDK query that returns a successful result."""
+    from claude_code_sdk import ResultMessage
+
+    yield ResultMessage(
+        subtype="result",
+        duration_ms=10,
+        duration_api_ms=8,
+        is_error=False,
+        num_turns=1,
+        session_id="helper-test",
+        total_cost_usd=0.0,
+        usage={},
+        result="Result from helper",
+    )
+
+
+async def _error_sdk_query(*, prompt: str, options: Any):
+    """Mock SDK query that raises an error."""
+    raise RuntimeError("SDK query failed")
+    yield  # makes this an async generator
+
+
+# Model passthrough tests
+# ---------------------------------------------------------------------------
+
+
+class TestModelPassthrough:
+    """Model string from config is passed through to SDK options."""
+
+    async def test_model_passed_to_sdk_options(self, tmp_path: Path):
+        """When model is set in config, it appears in ClaudeCodeOptions."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config(model="claude-sonnet-4-20250514")
+
+        captured_options: list[Any] = []
+
+        async def capturing_sdk(*, prompt: str, options: Any):
+            captured_options.append(options)
+            return
+            yield
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=capturing_sdk,
+        )
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-key"}, clear=False):
+            await spawner.trigger("test model", "tick")
+
+        assert len(captured_options) == 1
+        assert captured_options[0].model == "claude-sonnet-4-20250514"
+
+    async def test_model_none_when_not_configured(self, tmp_path: Path):
+        """When model is not set, ClaudeCodeOptions.model is None (runtime default)."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()  # model defaults to None
+
+        captured_options: list[Any] = []
+
+        async def capturing_sdk(*, prompt: str, options: Any):
+            captured_options.append(options)
+            return
+            yield
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=capturing_sdk,
+        )
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-key"}, clear=False):
+            await spawner.trigger("test default", "tick")
+
+        assert len(captured_options) == 1
+        assert captured_options[0].model is None
+
+    async def test_model_in_spawner_result_on_success(self, tmp_path: Path):
+        """SpawnerResult includes the model used on successful invocation."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config(model="claude-opus-4-20250514")
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=_result_sdk_query,
+        )
+
+        result = await spawner.trigger("test", "tick")
+        assert result.model == "claude-opus-4-20250514"
+
+    async def test_model_in_spawner_result_on_error(self, tmp_path: Path):
+        """SpawnerResult includes the model even on error."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config(model="claude-opus-4-20250514")
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=_error_sdk_query,
+        )
+
+        result = await spawner.trigger("fail", "tick")
+        assert result.error is not None
+        assert result.model == "claude-opus-4-20250514"
+
+    async def test_model_none_in_spawner_result_when_not_configured(self, tmp_path: Path):
+        """SpawnerResult.model is None when not configured."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=_result_sdk_query,
+        )
+
+        result = await spawner.trigger("test", "tick")
+        assert result.model is None
 
 
 # ---------------------------------------------------------------------------
@@ -761,7 +786,7 @@ class TestFullFlow:
         ):
             result = await spawner.trigger("do the thing", "schedule")
 
-        assert result.result == "All done!"
+        assert result.output == "All done!"
         assert result.error is None
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0]["name"] == "state_set"
@@ -835,33 +860,12 @@ class TestParametrizedOrchestration:
         if expected_error:
             assert result.error is not None
             assert expected_error in result.error
-            assert result.result is None
+            assert result.output is None
         else:
             assert result.error is None
-            assert result.result == expected_result
+            assert result.output == expected_result
         assert result.duration_ms >= 0
 
-    async def test_temp_dir_cleaned_up(
-        self, tmp_path: Path, adapter_factory, expected_result, expected_error
-    ):
-        """Temp dir is cleaned up regardless of adapter outcome."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-
-        adapter = adapter_factory()
-        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
-
-        with patch("butlers.core.spawner._write_mcp_config") as mock_write:
-            real_dir = _write_mcp_config("test-butler", 9100)
-            mock_write.return_value = real_dir
-
-            with patch("butlers.core.spawner._cleanup_temp_dir") as mock_cleanup:
-                await spawner.trigger("test", "tick")
-                mock_cleanup.assert_called_once_with(real_dir)
-
-        if real_dir.exists():
-            _cleanup_temp_dir(real_dir)
 
 
 @pytest.mark.parametrize(
@@ -901,20 +905,26 @@ class TestParametrizedSessionLogging:
 
             result = await spawner.trigger("test", "tick")
 
-            mock_create.assert_called_once_with(mock_pool, "test", "tick")
+            mock_create.assert_called_once()
+            create_args, create_kwargs = mock_create.call_args
+            assert create_args[0] is mock_pool
+            assert create_args[1] == "test"
+            assert create_args[2] == "tick"
             mock_complete.assert_called_once()
 
-            call_args = mock_complete.call_args
-            assert call_args[0][0] is mock_pool
-            assert call_args[0][1] == fake_session_id
+            args, kwargs = mock_complete.call_args
+            assert args[0] is mock_pool
+            assert args[1] == fake_session_id
 
             if expect_error:
                 assert result.error is not None
-                assert "RuntimeError" in call_args[0][2]
-                assert call_args[0][3] == []
+                assert kwargs["output"] is None
+                assert kwargs["tool_calls"] == []
+                assert kwargs["success"] is False
             else:
                 assert result.error is None
-                assert call_args[0][4] >= 0
+                assert kwargs["duration_ms"] >= 0
+                assert kwargs["success"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -953,5 +963,50 @@ class TestLegacySdkQueryCompat:
         )
 
         result = await spawner.trigger("hello", "tick")
-        assert result.result == "Hello from legacy!"
+        assert result.output == "Hello from legacy!"
         assert result.error is None
+
+    async def test_full_flow_with_model(self, tmp_path: Path):
+        """Full flow with a model configured passes it through to SDK options."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        claude_md = config_dir / "CLAUDE.md"
+        claude_md.write_text("You are the test butler with a model.")
+
+        config = _make_config(
+            name="model-butler",
+            port=9201,
+            model="claude-sonnet-4-20250514",
+        )
+
+        captured: dict[str, Any] = {}
+
+        async def capturing_sdk(*, prompt: str, options: Any):
+            captured["prompt"] = prompt
+            captured["options"] = options
+            from claude_code_sdk import ResultMessage
+
+            yield ResultMessage(
+                subtype="result",
+                duration_ms=10,
+                duration_api_ms=8,
+                is_error=False,
+                num_turns=1,
+                session_id="model-flow",
+                total_cost_usd=0.005,
+                usage={},
+                result="Model test done!",
+            )
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=capturing_sdk,
+        )
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-flow"}, clear=False):
+            result = await spawner.trigger("model test", "tick")
+
+        assert result.output == "Model test done!"
+        assert result.model == "claude-sonnet-4-20250514"
+        assert captured["options"].model == "claude-sonnet-4-20250514"

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from butlers.config import ButlerConfig, ConfigError, ScheduleConfig, load_config
+from butlers.config import ButlerConfig, ConfigError, RuntimeConfig, ScheduleConfig, load_config
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -20,6 +20,9 @@ description = "Personal assistant butler"
 
 [butler.db]
 name = "jarvis_db"
+
+[butler.runtime]
+model = "claude-sonnet-4-20250514"
 
 [butler.env]
 required = ["OPENAI_API_KEY", "PG_DSN"]
@@ -72,6 +75,9 @@ def test_load_full_config(tmp_path: Path):
     assert cfg.description == "Personal assistant butler"
     assert cfg.db_name == "jarvis_db"
 
+    # Runtime
+    assert cfg.runtime.model == "claude-sonnet-4-20250514"
+
     # Schedules
     assert len(cfg.schedules) == 2
     assert cfg.schedules[0] == ScheduleConfig(
@@ -100,6 +106,7 @@ def test_load_minimal_config(tmp_path: Path):
     assert cfg.name == "alfred"
     assert cfg.port == 9000
     assert cfg.description is None
+    assert cfg.runtime.model is None
     assert cfg.schedules == []
     assert cfg.modules == {}
     assert cfg.env_required == []
@@ -174,6 +181,134 @@ units = "metric"
     assert set(cfg.modules.keys()) == {"calendar", "weather"}
     assert cfg.modules["calendar"] == {"provider": "google"}
     assert cfg.modules["weather"] == {"api_key_env": "WEATHER_KEY", "units": "metric"}
+
+
+# ---------------------------------------------------------------------------
+# Runtime config tests
+# ---------------------------------------------------------------------------
+
+
+class TestRuntimeConfig:
+    """Tests for [butler.runtime] section parsing."""
+
+    def test_model_present(self, tmp_path: Path):
+        """Model string is parsed from [butler.runtime] section."""
+        toml = """\
+[butler]
+name = "modelbot"
+port = 7010
+
+[butler.runtime]
+model = "claude-opus-4-20250514"
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.runtime.model == "claude-opus-4-20250514"
+
+    def test_model_absent(self, tmp_path: Path):
+        """Omitting [butler.runtime] entirely defaults model to None."""
+        toml = """\
+[butler]
+name = "nomodel"
+port = 7011
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.runtime.model is None
+
+    def test_model_empty_string(self, tmp_path: Path):
+        """Empty string model is normalised to None."""
+        toml = """\
+[butler]
+name = "emptymodel"
+port = 7012
+
+[butler.runtime]
+model = ""
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.runtime.model is None
+
+    def test_model_whitespace_only(self, tmp_path: Path):
+        """Whitespace-only model is normalised to None."""
+        toml = """\
+[butler]
+name = "wsmodel"
+port = 7013
+
+[butler.runtime]
+model = "   "
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.runtime.model is None
+
+    def test_runtime_section_without_model(self, tmp_path: Path):
+        """[butler.runtime] present but without model field defaults to None."""
+        toml = """\
+[butler]
+name = "nofield"
+port = 7014
+
+[butler.runtime]
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.runtime.model is None
+
+    def test_model_opaque_string(self, tmp_path: Path):
+        """Model string is opaque — any non-empty value is accepted."""
+        toml = """\
+[butler]
+name = "opaque"
+port = 7015
+
+[butler.runtime]
+model = "gpt-4o-2025-01-01"
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.runtime.model == "gpt-4o-2025-01-01"
+
+    def test_runtime_config_dataclass_defaults(self):
+        """RuntimeConfig defaults to model=None."""
+        rc = RuntimeConfig()
+        assert rc.model is None
+
+    def test_runtime_config_with_model(self):
+        """RuntimeConfig can be constructed with a model string."""
+        rc = RuntimeConfig(model="claude-opus-4-20250514")
+        assert rc.model == "claude-opus-4-20250514"
+
+    def test_backward_compat_no_runtime_section(self, tmp_path: Path):
+        """Existing configs without [butler.runtime] still load correctly."""
+        toml = """\
+[butler]
+name = "legacy"
+port = 7016
+description = "A legacy butler"
+
+[butler.db]
+name = "legacy_db"
+
+[butler.env]
+required = ["API_KEY"]
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.name == "legacy"
+        assert cfg.port == 7016
+        assert cfg.runtime.model is None
+        assert cfg.db_name == "legacy_db"
+        assert cfg.env_required == ["API_KEY"]
 
 
 # ---------------------------------------------------------------------------

@@ -56,6 +56,7 @@ CORE_TABLES_SQL = """
         tool_calls JSONB NOT NULL DEFAULT '[]',
         duration_ms INTEGER,
         trace_id TEXT,
+        model TEXT,
         cost JSONB,
         success BOOLEAN,
         error TEXT,
