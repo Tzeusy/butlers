@@ -101,3 +101,35 @@ git push                # Push to remote
 - Always `bd sync` before ending session
 
 <!-- end-bv-agent-instructions -->
+
+---
+
+## Notes to self
+
+### v1 MVP Status (2026-02-09)
+All 122 beads closed. 449 tests passing on main. Full implementation complete.
+
+### Code Layout
+- `src/butlers/core/` — state.py, scheduler.py, sessions.py, spawner.py, telemetry.py, telemetry_spans.py
+- `src/butlers/modules/` — base.py (ABC), registry.py, telegram.py, email.py
+- `src/butlers/tools/` — switchboard.py, general.py, relationship.py, health.py, heartbeat.py
+- `src/butlers/` — config.py, db.py, daemon.py, migrations.py, cli.py
+- `alembic/versions/{core,switchboard,general,relationship,health}/` — migrations
+- `butlers/{switchboard,general,relationship,health,heartbeat}/` — butler config dirs
+
+### Test Patterns
+- All DB tests use `testcontainers.postgres.PostgresContainer` with `asyncpg.create_pool()`
+- Tables created via direct SQL from migration files (not Alembic runner)
+- `tests/conftest.py` has `SpawnerResult` and `MockSpawner` dataclass/class
+- CLI tests use Click's `CliRunner`
+- Telemetry tests use `InMemorySpanExporter`
+
+### Known Warnings (not bugs)
+- 2 RuntimeWarnings in CLI tests from monkeypatched `asyncio.run` — unawaited coroutines in test mocking
+
+### Quality Gates
+```bash
+uv run ruff check src/ tests/
+uv run ruff format --check src/ tests/
+uv run pytest tests/ -v --ignore=tests/test_db.py --ignore=tests/test_migrations.py
+```
