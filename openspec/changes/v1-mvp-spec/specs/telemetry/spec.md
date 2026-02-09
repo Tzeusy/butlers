@@ -1,6 +1,6 @@
 # Telemetry
 
-The telemetry capability provides distributed tracing across butlers and CC sessions using OpenTelemetry. Every butler daemon initializes a TracerProvider on startup via `init_telemetry(service_name)`, and all MCP tool handlers, CC sessions, scheduler ticks, and inter-butler calls are instrumented with spans. Trace context is propagated across butler boundaries (via `_trace_context` in MCP args) and into CC instances (via the `TRACEPARENT` environment variable). Jaeger all-in-one is used for local dev visualization.
+The telemetry capability provides distributed tracing across butlers and CC sessions using OpenTelemetry. Every butler daemon initializes a TracerProvider on startup via `init_telemetry(service_name)`, and all MCP tool handlers, CC sessions, scheduler ticks, and inter-butler calls are instrumented with spans. Trace context is propagated across butler boundaries (via `_trace_context` in MCP args) and into CC instances (via the `TRACEPARENT` environment variable). The LGTM stack (Alloy gateway, Tempo for traces, Grafana for visualization) is used for local dev trace visualization.
 
 ## Core Components
 
@@ -8,7 +8,7 @@ The telemetry capability provides distributed tracing across butlers and CC sess
 - `tracer = trace.get_tracer("butlers")` — shared tracer instance used by all instrumentation points
 - Span wrappers for every MCP tool handler
 - Trace context propagation across inter-butler MCP calls and CC sessions
-- Jaeger all-in-one for local dev visualization
+- LGTM stack (Alloy OTLP gateway, Tempo for traces, Grafana for visualization) for local dev trace visibility
 
 ## Instrumentation Points
 
@@ -30,9 +30,9 @@ The telemetry capability provides distributed tracing across butlers and CC sess
 
 ## Local Dev Setup
 
-- Jaeger all-in-one Docker image: `jaegertracing/all-in-one:1.62`
-- UI on port 16686, OTLP gRPC on port 4317
-- `COLLECTOR_OTLP_ENABLED=true`
+- LGTM stack: Alloy OTLP gateway and Tempo for trace collection
+- OTLP endpoint: `otel.parrot-hen.ts.net:4318`
+- Grafana Explore with Tempo datasource for trace visualization
 - OTel sampling: 100% in dev, configurable in prod via `OTEL_TRACES_SAMPLER` env var
 
 ## ADDED Requirements
@@ -373,22 +373,22 @@ THEN the spans on the Switchboard side and the spans on the target butler side M
 
 ---
 
-### Requirement: Local dev Jaeger setup
+### Requirement: LGTM stack integration
 
-The local development environment SHALL include a Jaeger all-in-one instance for trace visualization, accessible via Docker.
+The local development environment SHALL include the LGTM stack (Alloy OTLP gateway, Tempo for traces, and Grafana for visualization) for distributed trace collection and visualization.
 
-#### Scenario: Jaeger container runs with correct configuration
+#### Scenario: OTLP gateway accepts telemetry
 
-WHEN the local dev environment is started with the Jaeger container using image `jaegertracing/all-in-one:1.62`
-THEN the Jaeger UI MUST be accessible on port `16686`
-AND the OTLP gRPC endpoint MUST be accessible on port `4317`
-AND the environment variable `COLLECTOR_OTLP_ENABLED` MUST be set to `true`
+WHEN the local dev environment is started with the LGTM stack running
+THEN the Alloy OTLP gateway MUST be accessible on port `4318`
+AND the gateway MUST accept OTLP gRPC telemetry from butler instances
+AND traces MUST be stored in Tempo for later querying
 
-#### Scenario: Butler spans appear in Jaeger
+#### Scenario: Butler spans appear in Grafana Tempo
 
-WHEN a butler daemon is running with `OTEL_EXPORTER_OTLP_ENDPOINT` set to `http://localhost:4317`
+WHEN a butler daemon is running with `OTEL_EXPORTER_OTLP_ENDPOINT` set to `http://otel.parrot-hen.ts.net:4318`
 AND MCP tool calls are made to the butler
-THEN the corresponding spans MUST be visible in the Jaeger UI under the service name matching the butler's name
+THEN the corresponding spans MUST be visible in Grafana Explore with the Tempo datasource under the service name matching the butler's name
 
 ---
 
