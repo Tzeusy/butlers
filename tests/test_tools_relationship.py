@@ -192,6 +192,23 @@ async def pool(postgres_container):
             ON activity_feed (contact_id, created_at)
     """)
 
+    await p.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            title VARCHAR NOT NULL,
+            description TEXT,
+            completed BOOLEAN DEFAULT false,
+            completed_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+    """)
+    await p.execute("""
+        CREATE INDEX IF NOT EXISTS idx_tasks_contact_id ON tasks (contact_id)
+    """)
+    await p.execute("""
+        CREATE INDEX IF NOT EXISTS idx_tasks_completed ON tasks (completed)
+    """)
     yield p
     await db.close()
 
@@ -938,3 +955,194 @@ async def test_activity_feed_limit(pool):
 
     feed = await feed_get(pool, contact_id=c["id"], limit=3)
     assert len(feed) <= 3
+
+
+# ------------------------------------------------------------------
+# Tasks / To-dos
+# ------------------------------------------------------------------
+
+
+async def test_task_create(pool):
+    """task_create inserts a task and returns its dict."""
+    from butlers.tools.relationship import contact_create, task_create
+
+    c = await contact_create(pool, "Task Contact")
+    result = await task_create(pool, c["id"], "Buy groceries", "Milk, eggs, bread")
+    assert result["title"] == "Buy groceries"
+    assert result["description"] == "Milk, eggs, bread"
+    assert result["completed"] is False
+    assert result["completed_at"] is None
+    assert isinstance(result["id"], uuid.UUID)
+    assert result["contact_id"] == c["id"]
+
+
+async def test_task_create_no_description(pool):
+    """task_create works without optional description."""
+    from butlers.tools.relationship import contact_create, task_create
+
+    c = await contact_create(pool, "Task Contact Minimal")
+    result = await task_create(pool, c["id"], "Call dentist")
+    assert result["title"] == "Call dentist"
+    assert result["description"] is None
+    assert result["completed"] is False
+
+
+async def test_task_create_feed_entry(pool):
+    """task_create logs an activity feed entry."""
+    from butlers.tools.relationship import contact_create, feed_get, task_create
+
+    c = await contact_create(pool, "Task Feed Contact")
+    await task_create(pool, c["id"], "Send report")
+    feed = await feed_get(pool, c["id"])
+    task_entries = [e for e in feed if e["type"] == "task_created"]
+    assert len(task_entries) >= 1
+    assert "Send report" in task_entries[0]["description"]
+
+
+async def test_task_list_by_contact(pool):
+    """task_list filters tasks by contact_id."""
+    from butlers.tools.relationship import contact_create, task_create, task_list
+
+    c1 = await contact_create(pool, "Task List Contact A")
+    c2 = await contact_create(pool, "Task List Contact B")
+    await task_create(pool, c1["id"], "Task for A")
+    await task_create(pool, c2["id"], "Task for B")
+
+    tasks_a = await task_list(pool, contact_id=c1["id"])
+    assert any(t["title"] == "Task for A" for t in tasks_a)
+    assert not any(t["title"] == "Task for B" for t in tasks_a)
+
+    tasks_b = await task_list(pool, contact_id=c2["id"])
+    assert any(t["title"] == "Task for B" for t in tasks_b)
+    assert not any(t["title"] == "Task for A" for t in tasks_b)
+
+
+async def test_task_list_all(pool):
+    """task_list without contact_id returns tasks for all contacts."""
+    from butlers.tools.relationship import contact_create, task_create, task_list
+
+    c = await contact_create(pool, "Task List All Contact")
+    await task_create(pool, c["id"], "Global task unique")
+
+    all_tasks = await task_list(pool)
+    assert any(t["title"] == "Global task unique" for t in all_tasks)
+
+
+async def test_task_list_excludes_completed_by_default(pool):
+    """task_list excludes completed tasks by default."""
+    from butlers.tools.relationship import (
+        contact_create,
+        task_complete,
+        task_create,
+        task_list,
+    )
+
+    c = await contact_create(pool, "Task Filter Contact")
+    await task_create(pool, c["id"], "Incomplete task xyz")
+    t2 = await task_create(pool, c["id"], "Completed task xyz")
+    await task_complete(pool, t2["id"])
+
+    tasks = await task_list(pool, contact_id=c["id"])
+    titles = [t["title"] for t in tasks]
+    assert "Incomplete task xyz" in titles
+    assert "Completed task xyz" not in titles
+
+
+async def test_task_list_include_completed(pool):
+    """task_list with include_completed=True returns all tasks."""
+    from butlers.tools.relationship import (
+        contact_create,
+        task_complete,
+        task_create,
+        task_list,
+    )
+
+    c = await contact_create(pool, "Task Include Completed Contact")
+    await task_create(pool, c["id"], "Still open zzz")
+    t2 = await task_create(pool, c["id"], "Already done zzz")
+    await task_complete(pool, t2["id"])
+
+    tasks = await task_list(pool, contact_id=c["id"], include_completed=True)
+    titles = [t["title"] for t in tasks]
+    assert "Still open zzz" in titles
+    assert "Already done zzz" in titles
+
+
+async def test_task_list_includes_contact_name(pool):
+    """task_list results include contact_name from JOIN."""
+    from butlers.tools.relationship import contact_create, task_create, task_list
+
+    c = await contact_create(pool, "Named Contact For Tasks")
+    await task_create(pool, c["id"], "Task with contact name")
+
+    tasks = await task_list(pool, contact_id=c["id"])
+    assert any(t["contact_name"] == "Named Contact For Tasks" for t in tasks)
+
+
+async def test_task_complete(pool):
+    """task_complete marks a task as completed with timestamp."""
+    from butlers.tools.relationship import contact_create, task_complete, task_create
+
+    c = await contact_create(pool, "Task Complete Contact")
+    t = await task_create(pool, c["id"], "Finish report")
+    completed = await task_complete(pool, t["id"])
+    assert completed["completed"] is True
+    assert completed["completed_at"] is not None
+    assert isinstance(completed["completed_at"], datetime)
+
+
+async def test_task_complete_feed_entry(pool):
+    """task_complete logs an activity feed entry."""
+    from butlers.tools.relationship import contact_create, feed_get, task_complete, task_create
+
+    c = await contact_create(pool, "Task Complete Feed Contact")
+    t = await task_create(pool, c["id"], "Review PR")
+    await task_complete(pool, t["id"])
+
+    feed = await feed_get(pool, c["id"])
+    complete_entries = [e for e in feed if e["type"] == "task_completed"]
+    assert len(complete_entries) >= 1
+    assert "Review PR" in complete_entries[0]["description"]
+
+
+async def test_task_complete_not_found(pool):
+    """task_complete raises ValueError for non-existent task."""
+    from butlers.tools.relationship import task_complete
+
+    with pytest.raises(ValueError, match="not found"):
+        await task_complete(pool, uuid.uuid4())
+
+
+async def test_task_delete(pool):
+    """task_delete removes a task from the database."""
+    from butlers.tools.relationship import contact_create, task_create, task_delete, task_list
+
+    c = await contact_create(pool, "Task Delete Contact")
+    t = await task_create(pool, c["id"], "Deletable task")
+
+    await task_delete(pool, t["id"])
+
+    tasks = await task_list(pool, contact_id=c["id"], include_completed=True)
+    assert not any(task["title"] == "Deletable task" for task in tasks)
+
+
+async def test_task_delete_feed_entry(pool):
+    """task_delete logs an activity feed entry."""
+    from butlers.tools.relationship import contact_create, feed_get, task_create, task_delete
+
+    c = await contact_create(pool, "Task Delete Feed Contact")
+    t = await task_create(pool, c["id"], "Task to delete")
+    await task_delete(pool, t["id"])
+
+    feed = await feed_get(pool, c["id"])
+    delete_entries = [e for e in feed if e["type"] == "task_deleted"]
+    assert len(delete_entries) >= 1
+    assert "Task to delete" in delete_entries[0]["description"]
+
+
+async def test_task_delete_not_found(pool):
+    """task_delete raises ValueError for non-existent task."""
+    from butlers.tools.relationship import task_delete
+
+    with pytest.raises(ValueError, match="not found"):
+        await task_delete(pool, uuid.uuid4())
