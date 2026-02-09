@@ -29,6 +29,9 @@ dev = [
     "testcontainers[postgres]",
 ]
 
+[project.scripts]
+butlers = "butlers.cli:cli"
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
