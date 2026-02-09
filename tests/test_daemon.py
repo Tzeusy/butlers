@@ -5,6 +5,7 @@ Uses extensive mocking to avoid real DB, FastMCP, and CC SDK dependencies.
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -717,3 +718,277 @@ class TestModuleCredentials:
         assert module_creds is not None
         assert "stub_a" in module_creds
         assert "STUB_A_TOKEN" in module_creds["stub_a"]
+
+
+class TestSecretDetection:
+    """Verify detect_secrets is called during startup and warnings are logged."""
+
+    async def test_detect_secrets_called_at_startup(
+        self, butler_dir: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """detect_secrets should be called during daemon startup."""
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["CCSpawner"],
+            caplog.at_level(logging.WARNING, logger="butlers.daemon"),
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        # Should not warn for clean config
+        assert not any("may contain an inline secret" in rec.message for rec in caplog.records)
+
+    async def test_detect_secrets_warns_on_suspicious_config(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Secret detection should log warnings for suspicious config values."""
+        # Create a butler.toml with a suspicious description that starts with a secret prefix
+        toml_content = """
+[butler]
+name = "test-butler"
+port = 9100
+description = "sk-1234567890abcdefghij1234567890abcdef"
+
+[butler.db]
+name = "butler_test"
+"""
+        (tmp_path / "butler.toml").write_text(toml_content)
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["CCSpawner"],
+            caplog.at_level(logging.WARNING, logger="butlers.daemon"),
+        ):
+            daemon = ButlerDaemon(tmp_path)
+            await daemon.start()
+
+        # Should warn about the suspicious description
+        warnings = [
+            rec.message for rec in caplog.records if "may contain an inline secret" in rec.message
+        ]
+        assert len(warnings) == 1
+        assert "butler.description" in warnings[0]
+        assert "sk-" in warnings[0]
+
+    async def test_credentials_env_exempt_from_scanning(
+        self, butler_dir_with_modules: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """credentials_env field should be exempt from secret scanning."""
+        # Using butler_dir_with_modules which has modules configured
+        patches = _patch_infra()
+        registry = _make_registry(StubModuleA, StubModuleB)
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["CCSpawner"],
+            caplog.at_level(logging.WARNING, logger="butlers.daemon"),
+        ):
+            daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
+            await daemon.start()
+
+        # Should not warn about credentials_env field (it's a list of env var names)
+        # We're checking that no warnings are generated from module configs
+        warnings = [
+            rec.message for rec in caplog.records if "may contain an inline secret" in rec.message
+        ]
+        assert len(warnings) == 0
+
+    async def test_butler_env_lists_exempt_from_scanning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """[butler.env] required/optional lists should be exempt from scanning."""
+        # Create a butler.toml with butler.env containing token-like strings
+        toml_content = """
+[butler]
+name = "test-butler"
+port = 9100
+description = "A test butler"
+
+[butler.db]
+name = "butler_test"
+
+[butler.env]
+required = ["ANTHROPIC_API_KEY", "SECRET_TOKEN"]
+optional = ["OPTIONAL_KEY"]
+"""
+        (tmp_path / "butler.toml").write_text(toml_content)
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["CCSpawner"],
+            caplog.at_level(logging.WARNING, logger="butlers.daemon"),
+        ):
+            daemon = ButlerDaemon(tmp_path)
+            await daemon.start()
+
+        # Should not warn about butler.env lists (they are env var names, not values)
+        warnings = [
+            rec.message for rec in caplog.records if "may contain an inline secret" in rec.message
+        ]
+        assert len(warnings) == 0
+
+    async def test_multiple_secrets_detected(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Multiple suspicious config values should produce multiple warnings."""
+        # Create a butler.toml with multiple suspicious values
+        toml_content = """
+[butler]
+name = "test-butler"
+port = 9100
+description = "sk-1234567890abcdefghij1234567890abcdef"
+
+[butler.db]
+name = "ghp_1234567890abcdefghij1234567890abcdef"
+"""
+        (tmp_path / "butler.toml").write_text(toml_content)
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["CCSpawner"],
+            caplog.at_level(logging.WARNING, logger="butlers.daemon"),
+        ):
+            daemon = ButlerDaemon(tmp_path)
+            await daemon.start()
+
+        # Should warn about both suspicious values
+        warnings = [
+            rec.message for rec in caplog.records if "may contain an inline secret" in rec.message
+        ]
+        assert len(warnings) == 2
+        assert any("butler.description" in w for w in warnings)
+        assert any("butler.db.name" in w for w in warnings)
+
+
+class TestFlattenConfigForSecretScan:
+    """Test the _flatten_config_for_secret_scan helper function."""
+
+    def test_flatten_basic_config(self, butler_dir: Path) -> None:
+        """Flatten a basic config into a flat dict."""
+        from butlers.config import load_config
+        from butlers.daemon import _flatten_config_for_secret_scan
+
+        config = load_config(butler_dir)
+        flat = _flatten_config_for_secret_scan(config)
+
+        assert flat["butler.name"] == "test-butler"
+        assert flat["butler.port"] == 9100
+        assert flat["butler.description"] == "A test butler"
+        assert flat["butler.db.name"] == "butler_test"
+
+    def test_flatten_schedules(self, butler_dir: Path) -> None:
+        """Schedules should be flattened with array indices."""
+        from butlers.config import load_config
+        from butlers.daemon import _flatten_config_for_secret_scan
+
+        config = load_config(butler_dir)
+        flat = _flatten_config_for_secret_scan(config)
+
+        assert flat["butler.schedule[0].name"] == "daily-check"
+        assert flat["butler.schedule[0].cron"] == "0 9 * * *"
+        assert flat["butler.schedule[0].prompt"] == "Do the daily check"
+
+    def test_flatten_module_configs(self, tmp_path: Path) -> None:
+        """Module configs should be flattened."""
+        toml_content = """
+[butler]
+name = "test-butler"
+port = 9100
+
+[butler.db]
+name = "butler_test"
+
+[modules.email]
+smtp_server = "smtp.example.com"
+smtp_port = "587"
+"""
+        (tmp_path / "butler.toml").write_text(toml_content)
+        from butlers.config import load_config
+        from butlers.daemon import _flatten_config_for_secret_scan
+
+        config = load_config(tmp_path)
+        flat = _flatten_config_for_secret_scan(config)
+
+        assert flat["modules.email.smtp_server"] == "smtp.example.com"
+        assert flat["modules.email.smtp_port"] == "587"
+
+    def test_flatten_excludes_credentials_env(self, tmp_path: Path) -> None:
+        """credentials_env field should be excluded from flattened output."""
+        toml_content = """
+[butler]
+name = "test-butler"
+port = 9100
+
+[butler.db]
+name = "butler_test"
+
+[modules.email]
+credentials_env = ["EMAIL_TOKEN", "API_KEY"]
+smtp_server = "smtp.example.com"
+"""
+        (tmp_path / "butler.toml").write_text(toml_content)
+        from butlers.config import load_config
+        from butlers.daemon import _flatten_config_for_secret_scan
+
+        config = load_config(tmp_path)
+        flat = _flatten_config_for_secret_scan(config)
+
+        # credentials_env should not be in flattened output
+        assert "modules.email.credentials_env" not in flat
+        # But other module config should be
+        assert flat["modules.email.smtp_server"] == "smtp.example.com"
+
+    def test_flatten_no_env_lists_in_output(self, tmp_path: Path) -> None:
+        """butler.env lists should not be in flattened output."""
+        toml_content = """
+[butler]
+name = "test-butler"
+port = 9100
+
+[butler.db]
+name = "butler_test"
+
+[butler.env]
+required = ["ANTHROPIC_API_KEY"]
+optional = ["OPTIONAL_KEY"]
+"""
+        (tmp_path / "butler.toml").write_text(toml_content)
+        from butlers.config import load_config
+        from butlers.daemon import _flatten_config_for_secret_scan
+
+        config = load_config(tmp_path)
+        flat = _flatten_config_for_secret_scan(config)
+
+        # env lists should not be in flattened output (they are just env var names)
+        assert "butler.env.required" not in flat
+        assert "butler.env.optional" not in flat
