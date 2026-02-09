@@ -236,7 +236,7 @@ async def schedule_update(pool: asyncpg.Pool, task_id: uuid.UUID, **fields) -> N
     if existing is None:
         raise ValueError(f"Task {task_id} not found")
 
-    # Build dynamic UPDATE
+    # Build dynamic UPDATE with all fields including next_run_at if cron changed
     set_clauses = []
     params: list[Any] = [task_id]
     idx = 2
@@ -244,19 +244,19 @@ async def schedule_update(pool: asyncpg.Pool, task_id: uuid.UUID, **fields) -> N
         set_clauses.append(f"{key} = ${idx}")
         params.append(value)
         idx += 1
-    set_clauses.append("updated_at = now()")
 
-    query = f"UPDATE scheduled_tasks SET {', '.join(set_clauses)} WHERE id = $1"
-    await pool.execute(query, *params)
-
-    # Recompute next_run_at if cron changed
+    # If cron changed, compute and include next_run_at in the same UPDATE
     if "cron" in fields:
         next_run_at = _next_run(fields["cron"])
-        await pool.execute(
-            "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
-            task_id,
-            next_run_at,
-        )
+        set_clauses.append(f"next_run_at = ${idx}")
+        params.append(next_run_at)
+        idx += 1
+
+    set_clauses.append("updated_at = now()")
+
+    # Single atomic UPDATE statement
+    query = f"UPDATE scheduled_tasks SET {', '.join(set_clauses)} WHERE id = $1"
+    await pool.execute(query, *params)
 
     logger.info("Updated schedule %s: %s", task_id, list(fields.keys()))
 
