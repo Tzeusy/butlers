@@ -11,8 +11,8 @@ from butlers.core.runtimes import RuntimeAdapter, get_adapter, register_adapter
 from butlers.core.runtimes.base import (
     ClaudeCodeAdapter,
     CodexAdapter,
-    GeminiAdapter,
 )
+from butlers.core.runtimes.gemini import GeminiAdapter
 
 # ---------------------------------------------------------------------------
 # Test fixtures — concrete and partial subclasses
@@ -226,7 +226,7 @@ def test_stub_adapters_instantiate():
 
 async def test_stub_invoke_raises_not_implemented():
     """Stub adapters raise NotImplementedError on invoke()."""
-    for adapter_cls in (ClaudeCodeAdapter, CodexAdapter, GeminiAdapter):
+    for adapter_cls in (ClaudeCodeAdapter, CodexAdapter):
         adapter = adapter_cls()
         with pytest.raises(NotImplementedError):
             await adapter.invoke(
@@ -239,7 +239,7 @@ async def test_stub_invoke_raises_not_implemented():
 
 def test_stub_build_config_raises_not_implemented(tmp_path: Path):
     """Stub adapters raise NotImplementedError on build_config_file()."""
-    for adapter_cls in (ClaudeCodeAdapter, CodexAdapter, GeminiAdapter):
+    for adapter_cls in (ClaudeCodeAdapter, CodexAdapter):
         adapter = adapter_cls()
         with pytest.raises(NotImplementedError):
             adapter.build_config_file(mcp_servers={}, tmp_dir=tmp_path)
@@ -247,7 +247,7 @@ def test_stub_build_config_raises_not_implemented(tmp_path: Path):
 
 def test_stub_parse_prompt_raises_not_implemented(tmp_path: Path):
     """Stub adapters raise NotImplementedError on parse_system_prompt_file()."""
-    for adapter_cls in (ClaudeCodeAdapter, CodexAdapter, GeminiAdapter):
+    for adapter_cls in (ClaudeCodeAdapter, CodexAdapter):
         adapter = adapter_cls()
         with pytest.raises(NotImplementedError):
             adapter.parse_system_prompt_file(config_dir=tmp_path)
