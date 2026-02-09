@@ -305,7 +305,7 @@ async def test_classify_message_returns_known_butler(pool):
 
     @dataclass
     class FakeResult:
-        result: str = "health"
+        output: str = "health"
 
     async def fake_dispatch(**kwargs):
         return FakeResult()
@@ -337,7 +337,7 @@ async def test_classify_message_defaults_for_unknown_name(pool):
 
     @dataclass
     class FakeResult:
-        result: str = "nonexistent_butler"
+        output: str = "nonexistent_butler"
 
     async def bad_dispatch(**kwargs):
         return FakeResult()
