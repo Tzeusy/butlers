@@ -137,33 +137,8 @@ def get_adapter(type_str: str) -> type[RuntimeAdapter]:
 
 
 # ---------------------------------------------------------------------------
-# Placeholder / stub adapters — real implementations come later
+# Stub adapters — real implementations in separate modules
 # ---------------------------------------------------------------------------
-
-
-class ClaudeCodeAdapter(RuntimeAdapter):
-    """Stub adapter for Claude Code runtime."""
-
-    async def invoke(
-        self,
-        prompt: str,
-        system_prompt: str,
-        mcp_servers: dict[str, Any],
-        env: dict[str, str],
-        cwd: Path | None = None,
-        timeout: int | None = None,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
-        raise NotImplementedError("ClaudeCodeAdapter.invoke not yet implemented")
-
-    def build_config_file(
-        self,
-        mcp_servers: dict[str, Any],
-        tmp_dir: Path,
-    ) -> Path:
-        raise NotImplementedError("ClaudeCodeAdapter.build_config_file not yet implemented")
-
-    def parse_system_prompt_file(self, config_dir: Path) -> str:
-        raise NotImplementedError("ClaudeCodeAdapter.parse_system_prompt_file not yet implemented")
 
 
 class CodexAdapter(RuntimeAdapter):
@@ -217,6 +192,5 @@ class GeminiAdapter(RuntimeAdapter):
 
 
 # Register the built-in stub adapters
-register_adapter("claude-code", ClaudeCodeAdapter)
 register_adapter("codex", CodexAdapter)
 register_adapter("gemini", GeminiAdapter)
