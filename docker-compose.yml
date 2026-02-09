@@ -3,7 +3,7 @@
 # USAGE:
 #
 # Development mode (local butlers with containerized DB and observability):
-#   docker compose up -d postgres jaeger
+#   docker compose up -d postgres
 #   butlers up
 #
 # Production mode (all services containerized):
@@ -17,9 +17,8 @@
 #   - relationship: 8102
 #   - health: 8103
 #   - heartbeat: 8199
-#   - jaeger UI: 16686
 #
-# Observability: Jaeger tracing UI at http://localhost:16686
+# Observability: Grafana/Tempo tracing via LGTM stack (Alloy OTLP endpoint)
 
 services:
   # PostgreSQL database server
@@ -39,15 +38,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Jaeger all-in-one for distributed tracing
-  jaeger:
-    image: jaegertracing/all-in-one:1.62
-    ports:
-      - "16686:16686"  # Jaeger UI
-      - "4317:4317"    # OTLP gRPC receiver
-    environment:
-      - COLLECTOR_OTLP_ENABLED=true
-
   # Switchboard butler - message router
   switchboard:
     build:
@@ -64,7 +54,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_USER=butlers
       - POSTGRES_PASSWORD=butlers
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel.parrot-hen.ts.net:4318
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,7 +75,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_USER=butlers
       - POSTGRES_PASSWORD=butlers
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel.parrot-hen.ts.net:4318
     depends_on:
       postgres:
         condition: service_healthy
@@ -106,7 +96,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_USER=butlers
       - POSTGRES_PASSWORD=butlers
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel.parrot-hen.ts.net:4318
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,7 +117,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_USER=butlers
       - POSTGRES_PASSWORD=butlers
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel.parrot-hen.ts.net:4318
     depends_on:
       postgres:
         condition: service_healthy
@@ -148,7 +138,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_USER=butlers
       - POSTGRES_PASSWORD=butlers
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel.parrot-hen.ts.net:4318
     depends_on:
       postgres:
         condition: service_healthy
