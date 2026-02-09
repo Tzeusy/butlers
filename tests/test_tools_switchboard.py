@@ -344,3 +344,229 @@ async def test_classify_message_defaults_for_unknown_name(pool):
 
     name = await classify_message(pool, "test", bad_dispatch)
     assert name == "general"
+
+
+# ------------------------------------------------------------------
+# Telemetry spans
+# ------------------------------------------------------------------
+
+
+async def test_route_creates_switchboard_route_span(pool):
+    """route creates a switchboard.route span with target and tool_name attributes."""
+    from unittest.mock import MagicMock, patch
+
+    from butlers.tools.switchboard import register_butler, route
+
+    await register_butler(pool, "telemetry_target", "http://localhost:8600/sse")
+
+    mock_span = MagicMock()
+    mock_tracer = MagicMock()
+    mock_tracer.start_as_current_span.return_value.__enter__.return_value = mock_span
+
+    async def ok_call(endpoint_url, tool_name, args):
+        return "success"
+
+    with patch("butlers.tools.switchboard.tracer", mock_tracer):
+        await route(pool, "telemetry_target", "test_tool", {}, call_fn=ok_call)
+
+    # Verify span was created
+    mock_tracer.start_as_current_span.assert_called_once_with("switchboard.route")
+
+    # Verify attributes were set
+    calls = mock_span.set_attribute.call_args_list
+    attrs = {call[0][0]: call[0][1] for call in calls}
+    assert attrs["target"] == "telemetry_target"
+    assert attrs["tool_name"] == "test_tool"
+    assert "duration_ms" in attrs
+
+
+async def test_route_span_records_error_on_failure(pool):
+    """route span records exception and sets ERROR status on failure."""
+    from unittest.mock import MagicMock, patch
+
+    from butlers.tools.switchboard import register_butler, route
+
+    await register_butler(pool, "failing_target", "http://localhost:8700/sse")
+
+    mock_span = MagicMock()
+    mock_tracer = MagicMock()
+    mock_tracer.start_as_current_span.return_value.__enter__.return_value = mock_span
+
+    async def failing_call(endpoint_url, tool_name, args):
+        raise ValueError("Test error")
+
+    with patch("butlers.tools.switchboard.tracer", mock_tracer):
+        await route(pool, "failing_target", "fail_tool", {}, call_fn=failing_call)
+
+    # Verify error was recorded
+    mock_span.record_exception.assert_called_once()
+    mock_span.set_status.assert_called()
+    status_call = mock_span.set_status.call_args_list[-1]
+    assert "ValueError" in str(status_call)
+
+
+async def test_route_span_records_not_found_error(pool):
+    """route span sets ERROR status when butler not found."""
+    from unittest.mock import MagicMock, patch
+
+    from butlers.tools.switchboard import route
+
+    await pool.execute("DELETE FROM butler_registry")
+
+    mock_span = MagicMock()
+    mock_tracer = MagicMock()
+    mock_tracer.start_as_current_span.return_value.__enter__.return_value = mock_span
+
+    with patch("butlers.tools.switchboard.tracer", mock_tracer):
+        await route(pool, "nonexistent", "some_tool", {})
+
+    # Verify error status was set
+    mock_span.set_status.assert_called()
+    status_call = mock_span.set_status.call_args
+    assert "not found" in str(status_call).lower()
+
+
+async def test_classify_message_creates_receive_span(pool):
+    """classify_message creates a switchboard.receive span with channel and source_id."""
+    from unittest.mock import MagicMock, patch
+
+    from butlers.tools.switchboard import classify_message, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await register_butler(pool, "health", "http://localhost:8101/sse")
+
+    @dataclass
+    class FakeResult:
+        result: str = "health"
+
+    async def fake_dispatch(**kwargs):
+        return FakeResult()
+
+    mock_span = MagicMock()
+    mock_tracer = MagicMock()
+    mock_tracer.start_as_current_span.return_value.__enter__.return_value = mock_span
+
+    with patch("butlers.tools.switchboard.tracer", mock_tracer):
+        await classify_message(pool, "test message", fake_dispatch)
+
+    # Verify receive span was created
+    calls = mock_tracer.start_as_current_span.call_args_list
+    receive_call = calls[0]
+    assert receive_call[0][0] == "switchboard.receive"
+
+    # Verify attributes were set on receive span
+    attr_calls = mock_span.set_attribute.call_args_list
+    attrs = {call[0][0]: call[0][1] for call in attr_calls}
+    assert "channel" in attrs
+    assert "source_id" in attrs
+
+
+async def test_classify_message_creates_classify_span(pool):
+    """classify_message creates a child switchboard.classify span with routed_to."""
+    from unittest.mock import MagicMock, patch
+
+    from butlers.tools.switchboard import classify_message, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await register_butler(pool, "health", "http://localhost:8101/sse")
+
+    @dataclass
+    class FakeResult:
+        result: str = "health"
+
+    async def fake_dispatch(**kwargs):
+        return FakeResult()
+
+    mock_classify_span = MagicMock()
+    mock_receive_span = MagicMock()
+    mock_tracer = MagicMock()
+
+    # Mock to return different spans for receive and classify
+    def span_factory(name):
+        if name == "switchboard.receive":
+            return mock_receive_span
+        elif name == "switchboard.classify":
+            return mock_classify_span
+        return MagicMock()
+
+    mock_tracer.start_as_current_span.side_effect = lambda name: MagicMock(
+        __enter__=lambda self: span_factory(name), __exit__=lambda *args: None
+    )
+
+    with patch("butlers.tools.switchboard.tracer", mock_tracer):
+        await classify_message(pool, "test message", fake_dispatch)
+
+    # Verify classify span was created
+    calls = [call[0][0] for call in mock_tracer.start_as_current_span.call_args_list]
+    assert "switchboard.classify" in calls
+
+    # Verify routed_to attribute was set on classify span
+    mock_classify_span.set_attribute.assert_called_once_with("routed_to", "health")
+
+
+async def test_classify_message_classify_span_on_fallback(pool):
+    """classify_message creates classify span with 'general' when classification fails."""
+    from unittest.mock import MagicMock, patch
+
+    from butlers.tools.switchboard import classify_message, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await register_butler(pool, "general", "http://localhost:8102/sse")
+
+    async def broken_dispatch(**kwargs):
+        raise RuntimeError("classification error")
+
+    mock_classify_span = MagicMock()
+    mock_receive_span = MagicMock()
+    mock_tracer = MagicMock()
+
+    def span_factory(name):
+        if name == "switchboard.receive":
+            return mock_receive_span
+        elif name == "switchboard.classify":
+            return mock_classify_span
+        return MagicMock()
+
+    mock_tracer.start_as_current_span.side_effect = lambda name: MagicMock(
+        __enter__=lambda self: span_factory(name), __exit__=lambda *args: None
+    )
+
+    with patch("butlers.tools.switchboard.tracer", mock_tracer):
+        await classify_message(pool, "test", broken_dispatch)
+
+    # Verify classify span was created with general fallback
+    mock_classify_span.set_attribute.assert_called_once_with("routed_to", "general")
+
+
+async def test_route_injects_trace_context(pool):
+    """route injects trace context into inter-butler MCP call args."""
+    from unittest.mock import MagicMock, patch
+
+    from butlers.tools.switchboard import register_butler, route
+
+    await register_butler(pool, "trace_target", "http://localhost:8800/sse")
+
+    captured_args = {}
+
+    async def capture_call(endpoint_url, tool_name, args):
+        captured_args.update(args)
+        return "ok"
+
+    mock_tracer = MagicMock()
+    mock_span = MagicMock()
+    mock_tracer.start_as_current_span.return_value.__enter__.return_value = mock_span
+
+    with (
+        patch("butlers.tools.switchboard.tracer", mock_tracer),
+        patch(
+            "butlers.tools.switchboard.inject_trace_context",
+            return_value={"traceparent": "00-abc-def-01"},
+        ),
+    ):
+        await route(pool, "trace_target", "traced_tool", {"key": "value"}, call_fn=capture_call)
+
+    # Verify trace context was injected
+    assert "_trace_context" in captured_args
+    assert captured_args["_trace_context"]["traceparent"] == "00-abc-def-01"
+    # Original args should still be present
+    assert captured_args["key"] == "value"

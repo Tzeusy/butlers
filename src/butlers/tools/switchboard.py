@@ -9,8 +9,12 @@ from pathlib import Path
 from typing import Any
 
 import asyncpg
+from opentelemetry import trace
+
+from butlers.core.telemetry import inject_trace_context
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer("butlers.switchboard")
 
 
 async def register_butler(
@@ -101,35 +105,48 @@ async def route(
         ``async (endpoint_url, tool_name, args) -> Any``.
         When *None*, the default MCP client is used.
     """
-    t0 = time.monotonic()
+    with tracer.start_as_current_span("switchboard.route") as span:
+        span.set_attribute("target", target_butler)
+        span.set_attribute("tool_name", tool_name)
 
-    # Look up target
-    row = await pool.fetchrow(
-        "SELECT endpoint_url FROM butler_registry WHERE name = $1", target_butler
-    )
-    if row is None:
-        await _log_routing(
-            pool, source_butler, target_butler, tool_name, False, 0, "Butler not found"
+        t0 = time.monotonic()
+
+        # Look up target
+        row = await pool.fetchrow(
+            "SELECT endpoint_url FROM butler_registry WHERE name = $1", target_butler
         )
-        return {"error": f"Butler '{target_butler}' not found in registry"}
+        if row is None:
+            await _log_routing(
+                pool, source_butler, target_butler, tool_name, False, 0, "Butler not found"
+            )
+            span.set_status(trace.StatusCode.ERROR, "Butler not found")
+            return {"error": f"Butler '{target_butler}' not found in registry"}
 
-    endpoint_url = row["endpoint_url"]
+        endpoint_url = row["endpoint_url"]
 
-    try:
-        if call_fn is not None:
-            result = await call_fn(endpoint_url, tool_name, args)
-        else:
-            result = await _call_butler_tool(endpoint_url, tool_name, args)
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        await _log_routing(pool, source_butler, target_butler, tool_name, True, duration_ms, None)
-        return {"result": result}
-    except Exception as exc:
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        error_msg = f"{type(exc).__name__}: {exc}"
-        await _log_routing(
-            pool, source_butler, target_butler, tool_name, False, duration_ms, error_msg
-        )
-        return {"error": error_msg}
+        try:
+            # Inject trace context into args for inter-butler calls
+            args_with_trace = {**args, "_trace_context": inject_trace_context()}
+
+            if call_fn is not None:
+                result = await call_fn(endpoint_url, tool_name, args_with_trace)
+            else:
+                result = await _call_butler_tool(endpoint_url, tool_name, args_with_trace)
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            await _log_routing(
+                pool, source_butler, target_butler, tool_name, True, duration_ms, None
+            )
+            span.set_attribute("duration_ms", duration_ms)
+            return {"result": result}
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            error_msg = f"{type(exc).__name__}: {exc}"
+            await _log_routing(
+                pool, source_butler, target_butler, tool_name, False, duration_ms, error_msg
+            )
+            span.set_status(trace.StatusCode.ERROR, error_msg)
+            span.record_exception(exc)
+            return {"error": error_msg}
 
 
 async def _call_butler_tool(endpoint_url: str, tool_name: str, args: dict[str, Any]) -> Any:
@@ -179,28 +196,40 @@ async def classify_message(
     which butler should handle the message. Returns the butler name.
     Defaults to ``'general'`` if classification fails.
     """
-    butlers = await list_butlers(pool)
-    butler_list = "\n".join(
-        f"- {b['name']}: {b.get('description') or 'No description'}" for b in butlers
-    )
+    with tracer.start_as_current_span("switchboard.receive") as receive_span:
+        receive_span.set_attribute("channel", "mcp")  # Default channel
+        receive_span.set_attribute("source_id", "external")  # Default source
 
-    prompt = (
-        f"Classify this message to the appropriate butler.\n"
-        f"Available butlers:\n{butler_list}\n\n"
-        f"Message: {message}\n\n"
-        f"Respond with ONLY the butler name."
-    )
+        butlers = await list_butlers(pool)
+        butler_list = "\n".join(
+            f"- {b['name']}: {b.get('description') or 'No description'}" for b in butlers
+        )
 
-    try:
-        result = await dispatch_fn(prompt=prompt, trigger_source="tick")
-        # Parse butler name from result
-        if result and hasattr(result, "result") and result.result:
-            name = result.result.strip().lower()
-            # Validate it's a known butler
-            known = {b["name"] for b in butlers}
-            if name in known:
-                return name
-    except Exception:
-        logger.exception("Classification failed")
+        prompt = (
+            f"Classify this message to the appropriate butler.\n"
+            f"Available butlers:\n{butler_list}\n\n"
+            f"Message: {message}\n\n"
+            f"Respond with ONLY the butler name."
+        )
 
-    return "general"
+        try:
+            result = await dispatch_fn(prompt=prompt, trigger_source="tick")
+            # Parse butler name from result
+            if result and hasattr(result, "result") and result.result:
+                name = result.result.strip().lower()
+                # Validate it's a known butler
+                known = {b["name"] for b in butlers}
+                if name in known:
+                    # Create classify span as child of receive span
+                    with tracer.start_as_current_span("switchboard.classify") as classify_span:
+                        classify_span.set_attribute("routed_to", name)
+                    return name
+        except Exception:
+            logger.exception("Classification failed")
+            receive_span.record_exception(Exception("Classification failed"))
+            receive_span.set_status(trace.StatusCode.ERROR, "Classification failed")
+
+        # Default fallback
+        with tracer.start_as_current_span("switchboard.classify") as classify_span:
+            classify_span.set_attribute("routed_to", "general")
+        return "general"
