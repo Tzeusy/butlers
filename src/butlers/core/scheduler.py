@@ -99,7 +99,7 @@ async def tick(pool: asyncpg.Pool, dispatch_fn) -> int:
     """Evaluate due tasks and dispatch them.
 
     Queries ``scheduled_tasks`` WHERE ``enabled=true AND next_run_at <= now()``.
-    For each due task, calls ``dispatch_fn(prompt=..., trigger_source="schedule")``.
+    For each due task, calls ``dispatch_fn(prompt=..., trigger_source="schedule:<task-name>")``.
     After dispatch, updates ``next_run_at`` and ``last_run_at``.
     If dispatch fails, logs the error but continues to the next task.
 
@@ -129,7 +129,7 @@ async def tick(pool: asyncpg.Pool, dispatch_fn) -> int:
         cron = row["cron"]
 
         try:
-            await dispatch_fn(prompt=prompt, trigger_source="schedule")
+            await dispatch_fn(prompt=prompt, trigger_source=f"schedule:{name}")
             dispatched += 1
             logger.info("Dispatched scheduled task: %s", name)
         except Exception:

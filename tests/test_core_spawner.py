@@ -282,7 +282,7 @@ class TestCCSdkInvocation:
             sdk_query=_tool_use_sdk_query,
         )
 
-        result = await spawner.trigger("use tools", "trigger_tool")
+        result = await spawner.trigger("use tools", "trigger")
         assert result.result == "Done with tools"
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0]["name"] == "state_get"

@@ -227,7 +227,7 @@ class TestButlerStartupIntegration:
         )
 
         # Create a session
-        session_id = await session_create(pool, "Hello butler", "trigger_tool", trace_id="abc123")
+        session_id = await session_create(pool, "Hello butler", "trigger", trace_id="abc123")
         assert isinstance(session_id, uuid.UUID)
 
         # List sessions
@@ -240,7 +240,7 @@ class TestButlerStartupIntegration:
         session = await sessions_get(pool, session_id)
         assert session is not None
         assert session["prompt"] == "Hello butler"
-        assert session["trigger_source"] == "trigger_tool"
+        assert session["trigger_source"] == "trigger"
         assert session["trace_id"] == "abc123"
         assert session["completed_at"] is None
 
@@ -270,7 +270,7 @@ class TestButlerStartupIntegration:
         # Use all three subsystems on the same pool
         await state_set(pool, "integration.status", "running")
         task_id = await schedule_create(pool, "integ-task", "0 9 * * *", "integration prompt")
-        session_id = await session_create(pool, "integration test", "trigger_tool")
+        session_id = await session_create(pool, "integration test", "trigger")
 
         # Verify all operations succeeded
         val = await state_get(pool, "integration.status")
@@ -384,7 +384,7 @@ class TestSchedulerTickIntegration:
         assert count == 1
         assert len(dispatch_calls) == 1
         assert dispatch_calls[0]["prompt"] == "Process overdue items"
-        assert dispatch_calls[0]["trigger_source"] == "schedule"
+        assert dispatch_calls[0]["trigger_source"] == "schedule:due-task"
 
         # Verify next_run_at was advanced to the future
         row = await pool.fetchrow(
@@ -436,7 +436,7 @@ class TestSchedulerTickIntegration:
         session = await sessions_get(pool, session_ids[0])
         assert session is not None
         assert session["prompt"] == "Generate report"
-        assert session["trigger_source"] == "schedule"
+        assert session["trigger_source"] == "schedule:log-test-task"
         assert session["result"] == "Report generated"
         assert session["duration_ms"] == 500
         assert session["completed_at"] is not None
