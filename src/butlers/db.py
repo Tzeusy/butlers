@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from urllib.parse import urlparse
 
 import asyncpg
 
@@ -91,13 +92,30 @@ class Database:
     def from_env(cls, db_name: str) -> Database:
         """Create Database instance from environment variables.
 
-        Reads POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER, and
-        POSTGRES_PASSWORD from the environment, falling back to defaults.
+        Checks DATABASE_URL first (spec requirement), then falls back to
+        individual POSTGRES_* vars for backward compatibility.
+
+        DATABASE_URL format: postgres://user:password@host:port/database
+        Default: postgres://butlers:butlers@localhost/postgres
         """
+        database_url = os.environ.get("DATABASE_URL")
+
+        if database_url:
+            # Parse DATABASE_URL (postgres://user:password@host:port/database)
+            parsed = urlparse(database_url)
+            return cls(
+                db_name=db_name,
+                host=parsed.hostname or "localhost",
+                port=parsed.port or 5432,
+                user=parsed.username or "butlers",
+                password=parsed.password or "butlers",
+            )
+
+        # Fall back to individual POSTGRES_* vars for backward compatibility
         return cls(
             db_name=db_name,
             host=os.environ.get("POSTGRES_HOST", "localhost"),
             port=int(os.environ.get("POSTGRES_PORT", "5432")),
-            user=os.environ.get("POSTGRES_USER", "postgres"),
-            password=os.environ.get("POSTGRES_PASSWORD", "postgres"),
+            user=os.environ.get("POSTGRES_USER", "butlers"),
+            password=os.environ.get("POSTGRES_PASSWORD", "butlers"),
         )
