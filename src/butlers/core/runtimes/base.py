@@ -1,0 +1,222 @@
+"""RuntimeAdapter ABC and adapter registry.
+
+Defines the abstract interface that all runtime adapters must implement,
+plus a registry/factory function that maps runtime type strings
+(e.g. 'claude-code', 'codex', 'gemini') to adapter classes.
+"""
+
+from __future__ import annotations
+
+import abc
+from pathlib import Path
+from typing import Any
+
+
+class RuntimeAdapter(abc.ABC):
+    """Abstract base class for runtime adapters.
+
+    A runtime adapter encapsulates how a specific AI runtime (Claude Code,
+    Codex, Gemini CLI, etc.) is invoked. The spawner delegates to the
+    adapter so that butler core stays runtime-agnostic.
+    """
+
+    @abc.abstractmethod
+    async def invoke(
+        self,
+        prompt: str,
+        system_prompt: str,
+        mcp_servers: dict[str, Any],
+        env: dict[str, str],
+        cwd: Path | None = None,
+        timeout: int | None = None,
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        """Invoke the runtime with the given prompt and configuration.
+
+        Parameters
+        ----------
+        prompt:
+            The user prompt to send to the runtime.
+        system_prompt:
+            System-level instructions for the runtime.
+        mcp_servers:
+            MCP server configurations the runtime should connect to.
+        env:
+            Environment variables to pass to the runtime process.
+        cwd:
+            Working directory for the runtime process.
+        timeout:
+            Maximum execution time in seconds.
+
+        Returns
+        -------
+        tuple[str | None, list[dict[str, Any]]]
+            A tuple of (result_text, tool_calls).
+        """
+        ...
+
+    @abc.abstractmethod
+    def build_config_file(
+        self,
+        mcp_servers: dict[str, Any],
+        tmp_dir: Path,
+    ) -> Path:
+        """Write a runtime-specific config file into tmp_dir.
+
+        Different runtimes may require different config file formats
+        (e.g. mcp.json for Claude Code, a YAML file for others).
+
+        Parameters
+        ----------
+        mcp_servers:
+            MCP server configurations to include in the config file.
+        tmp_dir:
+            Temporary directory to write the config file into.
+
+        Returns
+        -------
+        Path
+            Path to the generated config file.
+        """
+        ...
+
+    @abc.abstractmethod
+    def parse_system_prompt_file(self, config_dir: Path) -> str:
+        """Read the system prompt from the butler's config directory.
+
+        Different runtimes may use different filenames or formats
+        (e.g. CLAUDE.md for Claude Code, AGENTS.md or equivalent for others).
+
+        Parameters
+        ----------
+        config_dir:
+            Path to the butler's config directory.
+
+        Returns
+        -------
+        str
+            The parsed system prompt text.
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Adapter registry
+# ---------------------------------------------------------------------------
+
+_ADAPTER_REGISTRY: dict[str, type[RuntimeAdapter]] = {}
+
+
+def register_adapter(type_str: str, adapter_cls: type[RuntimeAdapter]) -> None:
+    """Register a runtime adapter class under the given type string."""
+    _ADAPTER_REGISTRY[type_str] = adapter_cls
+
+
+def get_adapter(type_str: str) -> type[RuntimeAdapter]:
+    """Look up an adapter class by runtime type string.
+
+    Parameters
+    ----------
+    type_str:
+        One of the registered runtime type strings
+        (e.g. 'claude-code', 'codex', 'gemini').
+
+    Returns
+    -------
+    type[RuntimeAdapter]
+        The adapter class (not an instance).
+
+    Raises
+    ------
+    ValueError
+        If no adapter is registered for the given type string.
+    """
+    if type_str not in _ADAPTER_REGISTRY:
+        available = ", ".join(sorted(_ADAPTER_REGISTRY)) or "(none)"
+        raise ValueError(f"Unknown runtime type {type_str!r}. Available adapters: {available}")
+    return _ADAPTER_REGISTRY[type_str]
+
+
+# ---------------------------------------------------------------------------
+# Placeholder / stub adapters — real implementations come later
+# ---------------------------------------------------------------------------
+
+
+class ClaudeCodeAdapter(RuntimeAdapter):
+    """Stub adapter for Claude Code runtime."""
+
+    async def invoke(
+        self,
+        prompt: str,
+        system_prompt: str,
+        mcp_servers: dict[str, Any],
+        env: dict[str, str],
+        cwd: Path | None = None,
+        timeout: int | None = None,
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        raise NotImplementedError("ClaudeCodeAdapter.invoke not yet implemented")
+
+    def build_config_file(
+        self,
+        mcp_servers: dict[str, Any],
+        tmp_dir: Path,
+    ) -> Path:
+        raise NotImplementedError("ClaudeCodeAdapter.build_config_file not yet implemented")
+
+    def parse_system_prompt_file(self, config_dir: Path) -> str:
+        raise NotImplementedError("ClaudeCodeAdapter.parse_system_prompt_file not yet implemented")
+
+
+class CodexAdapter(RuntimeAdapter):
+    """Stub adapter for OpenAI Codex runtime."""
+
+    async def invoke(
+        self,
+        prompt: str,
+        system_prompt: str,
+        mcp_servers: dict[str, Any],
+        env: dict[str, str],
+        cwd: Path | None = None,
+        timeout: int | None = None,
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        raise NotImplementedError("CodexAdapter.invoke not yet implemented")
+
+    def build_config_file(
+        self,
+        mcp_servers: dict[str, Any],
+        tmp_dir: Path,
+    ) -> Path:
+        raise NotImplementedError("CodexAdapter.build_config_file not yet implemented")
+
+    def parse_system_prompt_file(self, config_dir: Path) -> str:
+        raise NotImplementedError("CodexAdapter.parse_system_prompt_file not yet implemented")
+
+
+class GeminiAdapter(RuntimeAdapter):
+    """Stub adapter for Google Gemini runtime."""
+
+    async def invoke(
+        self,
+        prompt: str,
+        system_prompt: str,
+        mcp_servers: dict[str, Any],
+        env: dict[str, str],
+        cwd: Path | None = None,
+        timeout: int | None = None,
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        raise NotImplementedError("GeminiAdapter.invoke not yet implemented")
+
+    def build_config_file(
+        self,
+        mcp_servers: dict[str, Any],
+        tmp_dir: Path,
+    ) -> Path:
+        raise NotImplementedError("GeminiAdapter.build_config_file not yet implemented")
+
+    def parse_system_prompt_file(self, config_dir: Path) -> str:
+        raise NotImplementedError("GeminiAdapter.parse_system_prompt_file not yet implemented")
+
+
+# Register the built-in stub adapters
+register_adapter("claude-code", ClaudeCodeAdapter)
+register_adapter("codex", CodexAdapter)
+register_adapter("gemini", GeminiAdapter)
