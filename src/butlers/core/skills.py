@@ -23,7 +23,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PROMPT_TEMPLATE = "You are {butler_name}, a butler AI assistant."
+_DEFAULT_PROMPT_TEMPLATE = "You are the {butler_name} butler."
 
 # Kebab-case validation pattern: starts with lowercase letter, followed by lowercase letters/digits,
 # optionally followed by groups of hyphen + lowercase letters/digits

@@ -26,14 +26,14 @@ def test_read_system_prompt_returns_file_content(tmp_path: Path) -> None:
 def test_read_system_prompt_missing_file_returns_default(tmp_path: Path) -> None:
     """When CLAUDE.md does not exist, a default prompt containing the butler name is returned."""
     result = read_system_prompt(tmp_path, "jarvis")
-    assert result == "You are jarvis, a butler AI assistant."
+    assert result == "You are the jarvis butler."
 
 
 def test_read_system_prompt_empty_file_returns_default(tmp_path: Path) -> None:
     """When CLAUDE.md exists but is empty (or whitespace-only), the default prompt is returned."""
     (tmp_path / "CLAUDE.md").write_text("   \n  ", encoding="utf-8")
     result = read_system_prompt(tmp_path, "alfred")
-    assert result == "You are alfred, a butler AI assistant."
+    assert result == "You are the alfred butler."
 
 
 # ---------------------------------------------------------------------------

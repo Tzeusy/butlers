@@ -20,6 +20,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from butlers.config import ButlerConfig
+from butlers.core.skills import read_system_prompt
 from butlers.core.spawner import (
     CCSpawner,
     Spawner,
@@ -27,7 +28,6 @@ from butlers.core.spawner import (
     _build_env,
     _build_mcp_config,
     _cleanup_temp_dir,
-    _read_system_prompt,
     _write_mcp_config,
 )
 
@@ -454,24 +454,24 @@ class TestSystemPrompt:
     def test_reads_claude_md(self, tmp_path: Path):
         claude_md = tmp_path / "CLAUDE.md"
         claude_md.write_text("You are a specialized butler for email management.")
-        prompt = _read_system_prompt(tmp_path, "email-butler")
+        prompt = read_system_prompt(tmp_path, "email-butler")
         assert prompt == "You are a specialized butler for email management."
 
     def test_missing_claude_md_uses_default(self, tmp_path: Path):
-        prompt = _read_system_prompt(tmp_path, "my-butler")
-        assert prompt == "You are my-butler, a butler AI assistant."
+        prompt = read_system_prompt(tmp_path, "my-butler")
+        assert prompt == "You are the my-butler butler."
 
     def test_empty_claude_md_uses_default(self, tmp_path: Path):
         claude_md = tmp_path / "CLAUDE.md"
         claude_md.write_text("")
-        prompt = _read_system_prompt(tmp_path, "my-butler")
-        assert prompt == "You are my-butler, a butler AI assistant."
+        prompt = read_system_prompt(tmp_path, "my-butler")
+        assert prompt == "You are the my-butler butler."
 
     def test_whitespace_only_claude_md_uses_default(self, tmp_path: Path):
         claude_md = tmp_path / "CLAUDE.md"
         claude_md.write_text("   \n  \n  ")
-        prompt = _read_system_prompt(tmp_path, "my-butler")
-        assert prompt == "You are my-butler, a butler AI assistant."
+        prompt = read_system_prompt(tmp_path, "my-butler")
+        assert prompt == "You are the my-butler butler."
 
     async def test_system_prompt_passed_to_sdk(self, tmp_path: Path):
         config_dir = tmp_path / "config"

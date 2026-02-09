@@ -28,6 +28,7 @@ from opentelemetry import trace
 from butlers.config import ButlerConfig
 from butlers.core.runtimes.base import RuntimeAdapter
 from butlers.core.sessions import session_complete, session_create
+from butlers.core.skills import read_system_prompt
 from butlers.core.telemetry import get_traceparent_env
 
 logger = logging.getLogger(__name__)
@@ -79,24 +80,6 @@ def _cleanup_temp_dir(temp_dir: Path) -> None:
         shutil.rmtree(temp_dir)
     except OSError:
         logger.warning("Failed to clean up temp dir: %s", temp_dir, exc_info=True)
-
-
-def _read_system_prompt(config_dir: Path, butler_name: str) -> str:
-    """Read CLAUDE.md from the butler's config dir.
-
-    Returns the file contents, or a default prompt if the file is missing or empty.
-    """
-    default_prompt = f"You are {butler_name}, a butler AI assistant."
-    claude_md = config_dir / "CLAUDE.md"
-
-    if not claude_md.exists():
-        return default_prompt
-
-    content = claude_md.read_text().strip()
-    if not content:
-        return default_prompt
-
-    return content
 
 
 def _build_env(
@@ -339,7 +322,7 @@ class Spawner:
             temp_dir = _write_mcp_config(self._config.name, self._config.port)
 
             # Read system prompt
-            system_prompt = _read_system_prompt(self._config_dir, self._config.name)
+            system_prompt = read_system_prompt(self._config_dir, self._config.name)
 
             # Build credential env
             env = _build_env(self._config, self._module_credentials_env)
