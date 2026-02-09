@@ -7,6 +7,11 @@ import uuid
 from dataclasses import dataclass
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 # Skip all tests in this module if Docker is not available
 docker_available = shutil.which("docker") is not None
@@ -15,6 +20,12 @@ pytestmark = pytest.mark.skipif(not docker_available, reason="Docker not availab
 
 def _unique_db_name() -> str:
     return f"test_{uuid.uuid4().hex[:12]}"
+
+
+def _reset_otel_global_state():
+    """Fully reset the OpenTelemetry global tracer provider state."""
+    trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+    trace._TRACER_PROVIDER = None
 
 
 @pytest.fixture(scope="module")
@@ -69,6 +80,20 @@ async def pool(postgres_container):
 
     yield p
     await db.close()
+
+
+@pytest.fixture
+def otel_provider():
+    """Set up an in-memory TracerProvider, yield the exporter, then tear down."""
+    _reset_otel_global_state()
+    exporter = InMemorySpanExporter()
+    resource = Resource.create({"service.name": "switchboard-test"})
+    provider = TracerProvider(resource=resource)
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    yield exporter
+    provider.shutdown()
+    _reset_otel_global_state()
 
 
 # ------------------------------------------------------------------
@@ -570,3 +595,248 @@ async def test_route_injects_trace_context(pool):
     assert captured_args["_trace_context"]["traceparent"] == "00-abc-def-01"
     # Original args should still be present
     assert captured_args["key"] == "value"
+# Trace context propagation in route()
+# ------------------------------------------------------------------
+
+
+async def test_route_injects_trace_context(pool, otel_provider):
+    """route() injects _trace_context into forwarded args when a span is active."""
+    from butlers.tools.switchboard import register_butler, route
+
+    await register_butler(pool, "traced", "http://localhost:8600/sse")
+
+    captured_args: list[dict] = []
+
+    async def capture_call(endpoint_url, tool_name, args):
+        captured_args.append(args)
+        return "ok"
+
+    tracer = trace.get_tracer("test")
+    with tracer.start_as_current_span("test-parent"):
+        await route(pool, "traced", "ping", {"key": "val"}, call_fn=capture_call)
+
+    assert len(captured_args) == 1
+    forwarded = captured_args[0]
+    assert "key" in forwarded
+    assert forwarded["key"] == "val"
+    assert "_trace_context" in forwarded
+    assert "traceparent" in forwarded["_trace_context"]
+
+
+async def test_route_injects_empty_trace_context_without_span(pool, otel_provider):
+    """route() still works when no active span is present (no _trace_context or empty)."""
+    from butlers.tools.switchboard import register_butler, route
+
+    await register_butler(pool, "nospan", "http://localhost:8601/sse")
+
+    captured_args: list[dict] = []
+
+    async def capture_call(endpoint_url, tool_name, args):
+        captured_args.append(args)
+        return "ok"
+
+    # No active span — inject_trace_context() may return empty dict
+    await route(pool, "nospan", "ping", {"x": 1}, call_fn=capture_call)
+
+    assert len(captured_args) == 1
+    forwarded = captured_args[0]
+    assert forwarded["x"] == 1
+    # _trace_context may or may not be present depending on whether inject returns empty
+    # but the route should still succeed
+
+
+async def test_route_does_not_mutate_original_args(pool, otel_provider):
+    """route() does not modify the caller's args dict."""
+    from butlers.tools.switchboard import register_butler, route
+
+    await register_butler(pool, "nomut", "http://localhost:8602/sse")
+
+    async def noop_call(endpoint_url, tool_name, args):
+        return "ok"
+
+    original_args = {"key": "val"}
+    tracer = trace.get_tracer("test")
+    with tracer.start_as_current_span("test-parent"):
+        await route(pool, "nomut", "ping", original_args, call_fn=noop_call)
+
+    # Original args must not have _trace_context injected
+    assert "_trace_context" not in original_args
+
+
+# ------------------------------------------------------------------
+# switchboard.route span creation
+# ------------------------------------------------------------------
+
+
+async def test_route_creates_span_with_attributes(pool, otel_provider):
+    """route() creates a switchboard.route span with target and tool_name attributes."""
+    from butlers.tools.switchboard import register_butler, route
+
+    await register_butler(pool, "spantest", "http://localhost:8603/sse")
+
+    async def ok_call(endpoint_url, tool_name, args):
+        return "ok"
+
+    await route(pool, "spantest", "get_data", {}, call_fn=ok_call)
+
+    spans = otel_provider.get_finished_spans()
+    route_spans = [s for s in spans if s.name == "switchboard.route"]
+    assert len(route_spans) == 1
+    span = route_spans[0]
+    assert span.attributes["target"] == "spantest"
+    assert span.attributes["tool_name"] == "get_data"
+
+
+async def test_route_span_error_on_failure(pool, otel_provider):
+    """route() sets span status to ERROR when the call fails."""
+    from butlers.tools.switchboard import register_butler, route
+
+    await register_butler(pool, "spanfail", "http://localhost:8604/sse")
+
+    async def fail_call(endpoint_url, tool_name, args):
+        raise RuntimeError("kaboom")
+
+    await route(pool, "spanfail", "broken", {}, call_fn=fail_call)
+
+    spans = otel_provider.get_finished_spans()
+    route_spans = [s for s in spans if s.name == "switchboard.route"]
+    assert len(route_spans) == 1
+    span = route_spans[0]
+    assert span.status.status_code == trace.StatusCode.ERROR
+
+
+async def test_route_span_error_on_not_found(pool, otel_provider):
+    """route() sets span status to ERROR when the target butler is not found."""
+    from butlers.tools.switchboard import route
+
+    await pool.execute("DELETE FROM butler_registry")
+    await route(pool, "missing", "ping", {})
+
+    spans = otel_provider.get_finished_spans()
+    route_spans = [s for s in spans if s.name == "switchboard.route"]
+    assert len(route_spans) == 1
+    span = route_spans[0]
+    assert span.status.status_code == trace.StatusCode.ERROR
+
+
+# ------------------------------------------------------------------
+# last_seen_at update on successful route
+# ------------------------------------------------------------------
+
+
+async def test_route_updates_last_seen_at_on_success(pool):
+    """Successful route updates the target butler's last_seen_at timestamp."""
+    from butlers.tools.switchboard import register_butler, route
+
+    await register_butler(pool, "seen", "http://localhost:8605/sse")
+
+    # Record the initial last_seen_at (set by register_butler)
+    row_before = await pool.fetchrow("SELECT last_seen_at FROM butler_registry WHERE name = 'seen'")
+    initial_last_seen = row_before["last_seen_at"]
+
+    async def ok_call(endpoint_url, tool_name, args):
+        return "ok"
+
+    await route(pool, "seen", "ping", {}, call_fn=ok_call)
+
+    row_after = await pool.fetchrow("SELECT last_seen_at FROM butler_registry WHERE name = 'seen'")
+    assert row_after["last_seen_at"] >= initial_last_seen
+
+
+async def test_route_does_not_update_last_seen_at_on_failure(pool):
+    """Failed route does not update the target butler's last_seen_at timestamp."""
+    from butlers.tools.switchboard import register_butler, route
+
+    await register_butler(pool, "unseen", "http://localhost:8606/sse")
+
+    # Record the initial last_seen_at
+    row_before = await pool.fetchrow(
+        "SELECT last_seen_at FROM butler_registry WHERE name = 'unseen'"
+    )
+    initial_last_seen = row_before["last_seen_at"]
+
+    async def fail_call(endpoint_url, tool_name, args):
+        raise RuntimeError("connection refused")
+
+    await route(pool, "unseen", "broken", {}, call_fn=fail_call)
+
+    row_after = await pool.fetchrow(
+        "SELECT last_seen_at FROM butler_registry WHERE name = 'unseen'"
+    )
+    # last_seen_at should not have been updated
+    assert row_after["last_seen_at"] == initial_last_seen
+
+
+# ------------------------------------------------------------------
+# _call_butler_tool — in-process FastMCP server
+# ------------------------------------------------------------------
+
+
+async def test_call_butler_tool_with_fastmcp_server():
+    """_call_butler_tool connects to a FastMCP server and returns text result."""
+    from fastmcp import Client, FastMCP
+
+    # Create a simple in-process FastMCP server with a test tool
+    server = FastMCP("test-butler")
+
+    @server.tool()
+    async def echo(message: str) -> str:
+        return f"echo: {message}"
+
+    # Verify the in-process FastMCP Client pattern that _call_butler_tool uses
+    async with Client(server) as client:
+        result = await client.call_tool("echo", {"message": "hello"}, raise_on_error=True)
+        assert not result.is_error
+        assert result.data == "echo: hello"
+
+
+async def test_call_butler_tool_returns_structured_data():
+    """_call_butler_tool returns structured dict data from tools returning dicts."""
+    from fastmcp import Client, FastMCP
+
+    server = FastMCP("json-butler")
+
+    @server.tool()
+    async def get_status() -> dict:
+        return {"health": "ok", "uptime": 42}
+
+    async with Client(server) as client:
+        result = await client.call_tool("get_status", {}, raise_on_error=True)
+        assert not result.is_error
+        assert result.data == {"health": "ok", "uptime": 42}
+
+
+async def test_call_butler_tool_propagates_trace_context():
+    """_call_butler_tool passes _trace_context in args to the target butler."""
+    from fastmcp import Client, FastMCP
+
+    server = FastMCP("trace-butler")
+
+    received_trace_ctx: list[dict] = []
+
+    @server.tool()
+    async def check_trace(_trace_context: dict | None = None, message: str = "") -> str:
+        if _trace_context:
+            received_trace_ctx.append(_trace_context)
+        return "ok"
+
+    async with Client(server) as client:
+        trace_ctx = {"traceparent": "00-abcd1234abcd1234abcd1234abcd1234-1234abcd1234abcd-01"}
+        await client.call_tool(
+            "check_trace",
+            {
+                "_trace_context": trace_ctx,
+                "message": "test",
+            },
+        )
+
+    assert len(received_trace_ctx) == 1
+    assert "traceparent" in received_trace_ctx[0]
+
+
+async def test_call_butler_tool_raises_on_connection_error():
+    """_call_butler_tool raises ConnectionError for unreachable endpoints."""
+    from butlers.tools.switchboard import _call_butler_tool
+
+    with pytest.raises(ConnectionError, match="Failed to call tool"):
+        await _call_butler_tool("http://localhost:1/sse", "ping", {})

@@ -16,6 +16,8 @@ from butlers.core.telemetry import inject_trace_context
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("butlers.switchboard")
 
+_TRACER_NAME = "butlers"
+
 
 async def register_butler(
     pool: asyncpg.Pool,
@@ -88,6 +90,11 @@ async def route(
     Looks up the target butler in the registry, connects via SSE MCP client,
     calls the specified tool, logs the routing, and returns the result.
 
+    Creates a ``switchboard.route`` span with ``target`` and ``tool_name``
+    attributes, and injects W3C trace context into the forwarded tool call
+    args as ``_trace_context``.  On success, updates the target butler's
+    ``last_seen_at`` timestamp.
+
     Parameters
     ----------
     pool:
@@ -105,10 +112,10 @@ async def route(
         ``async (endpoint_url, tool_name, args) -> Any``.
         When *None*, the default MCP client is used.
     """
-    with tracer.start_as_current_span("switchboard.route") as span:
-        span.set_attribute("target", target_butler)
-        span.set_attribute("tool_name", tool_name)
-
+with tracer.start_as_current_span(
+        "switchboard.route",
+        attributes={"target": target_butler, "tool_name": tool_name},
+    ) as span:
         t0 = time.monotonic()
 
         # Look up target
@@ -116,48 +123,71 @@ async def route(
             "SELECT endpoint_url FROM butler_registry WHERE name = $1", target_butler
         )
         if row is None:
+span.set_status(trace.StatusCode.ERROR, "Butler not found")
             await _log_routing(
                 pool, source_butler, target_butler, tool_name, False, 0, "Butler not found"
             )
-            span.set_status(trace.StatusCode.ERROR, "Butler not found")
             return {"error": f"Butler '{target_butler}' not found in registry"}
 
         endpoint_url = row["endpoint_url"]
 
-        try:
-            # Inject trace context into args for inter-butler calls
-            args_with_trace = {**args, "_trace_context": inject_trace_context()}
+# Inject W3C trace context into args for propagation
+        trace_ctx = inject_trace_context()
+        forwarded_args = {**args}
+        if trace_ctx:
+            forwarded_args["_trace_context"] = trace_ctx
 
+        try:
             if call_fn is not None:
-                result = await call_fn(endpoint_url, tool_name, args_with_trace)
+                result = await call_fn(endpoint_url, tool_name, forwarded_args)
             else:
-                result = await _call_butler_tool(endpoint_url, tool_name, args_with_trace)
+                result = await _call_butler_tool(endpoint_url, tool_name, forwarded_args)
             duration_ms = int((time.monotonic() - t0) * 1000)
             await _log_routing(
                 pool, source_butler, target_butler, tool_name, True, duration_ms, None
             )
-            span.set_attribute("duration_ms", duration_ms)
+span.set_attribute("duration_ms", duration_ms)
+            # Update last_seen_at on success
+            await pool.execute(
+                "UPDATE butler_registry SET last_seen_at = now() WHERE name = $1",
+                target_butler,
+            )
             return {"result": result}
         except Exception as exc:
             duration_ms = int((time.monotonic() - t0) * 1000)
             error_msg = f"{type(exc).__name__}: {exc}"
+span.set_status(trace.StatusCode.ERROR, error_msg)
+            span.record_exception(exc)
             await _log_routing(
                 pool, source_butler, target_butler, tool_name, False, duration_ms, error_msg
             )
-            span.set_status(trace.StatusCode.ERROR, error_msg)
-            span.record_exception(exc)
             return {"error": error_msg}
 
 
 async def _call_butler_tool(endpoint_url: str, tool_name: str, args: dict[str, Any]) -> Any:
     """Call a tool on another butler via MCP SSE client.
 
-    In production this would use the MCP SDK client; for now it raises
-    NotImplementedError to signal that real MCP integration is pending.
+    Connects to the target butler's MCP server using FastMCP's Client,
+    calls the specified tool, and returns the result.  The caller is
+    responsible for injecting ``_trace_context`` into *args* before
+    calling this function.
+
+    FastMCP's ``Client.call_tool()`` returns a ``CallToolResult`` with a
+    ``data`` property that automatically extracts structured content or
+    parses text content.  We use this for the return value.
     """
-    raise NotImplementedError(
-        f"MCP client call to {endpoint_url} tool {tool_name} — requires MCP client SDK integration"
-    )
+    from fastmcp import Client
+
+    try:
+        async with Client(endpoint_url) as client:
+            result = await client.call_tool(tool_name, args, raise_on_error=True)
+    except Exception as exc:
+        raise ConnectionError(
+            f"Failed to call tool '{tool_name}' on {endpoint_url}: {exc}"
+        ) from exc
+
+    # FastMCP's CallToolResult.data extracts structured content or parses text
+    return result.data
 
 
 async def _log_routing(
