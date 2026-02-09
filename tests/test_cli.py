@@ -87,6 +87,17 @@ class TestInitCommand:
         toml_text = (butler_dir / "butler.toml").read_text()
         assert 'name = "mybot"' in toml_text
         assert "port = 9100" in toml_text
+
+    def test_init_uses_default_port(self, runner, tmp_path):
+        """Test that init works without --port flag, using default 8100."""
+        butlers_dir = tmp_path / "butlers"
+        result = runner.invoke(cli, ["init", "mybot", "--dir", str(butlers_dir)])
+        assert result.exit_code == 0
+        assert "Created butler scaffold" in result.output
+
+        butler_dir = butlers_dir / "mybot"
+        toml_text = (butler_dir / "butler.toml").read_text()
+        assert "port = 8100" in toml_text
         assert 'name = "butler_mybot"' in toml_text
 
     def test_init_existing_dir_fails(self, runner, tmp_path):
