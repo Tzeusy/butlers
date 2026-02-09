@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 import asyncpg
+from opentelemetry import trace
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,9 @@ async def tick_all_butlers(
     3. Calls tick_fn for each remaining butler
     4. Catches exceptions per butler so one failure doesn't stop others
     5. Returns a summary of successful ticks and failures
+
+    Creates a ``heartbeat.cycle`` span with attributes ``butlers_ticked`` (total number
+    of butlers ticked, excluding heartbeat) and ``failures`` (count of failed ticks).
 
     Parameters
     ----------
@@ -44,37 +48,47 @@ async def tick_all_butlers(
         - failed: list[dict], each with "name" and "error" keys
 
     """
-    # Get all registered butlers
-    try:
-        butlers = await list_butlers_fn()
-    except Exception as exc:
-        logger.exception("Failed to list butlers")
-        return {
-            "total": 0,
-            "successful": [],
-            "failed": [{"name": "list_butlers", "error": f"{type(exc).__name__}: {exc}"}],
-        }
-
-    # Filter out heartbeat itself
-    target_butlers = [b for b in butlers if b.get("name") != "heartbeat"]
-
-    successful: list[str] = []
-    failed: list[dict[str, str]] = []
-
-    # Tick each butler
-    for butler in target_butlers:
-        name = butler.get("name", "unknown")
+    tracer = trace.get_tracer("butlers")
+    with tracer.start_as_current_span("heartbeat.cycle") as span:
+        # Get all registered butlers
         try:
-            await tick_fn(name)
-            successful.append(name)
-            logger.info("Ticked butler: %s", name)
+            butlers = await list_butlers_fn()
         except Exception as exc:
-            error_msg = f"{type(exc).__name__}: {exc}"
-            failed.append({"name": name, "error": error_msg})
-            logger.warning("Failed to tick butler %s: %s", name, error_msg)
+            logger.exception("Failed to list butlers")
+            span.set_attribute("butlers_ticked", 0)
+            span.set_attribute("failures", 1)
+            return {
+                "total": 0,
+                "successful": [],
+                "failed": [{"name": "list_butlers", "error": f"{type(exc).__name__}: {exc}"}],
+            }
 
-    return {
-        "total": len(target_butlers),
-        "successful": successful,
-        "failed": failed,
-    }
+        # Filter out heartbeat itself
+        target_butlers = [b for b in butlers if b.get("name") != "heartbeat"]
+
+        successful: list[str] = []
+        failed: list[dict[str, str]] = []
+
+        # Tick each butler
+        for butler in target_butlers:
+            name = butler.get("name", "unknown")
+            try:
+                await tick_fn(name)
+                successful.append(name)
+                logger.info("Ticked butler: %s", name)
+            except Exception as exc:
+                error_msg = f"{type(exc).__name__}: {exc}"
+                failed.append({"name": name, "error": error_msg})
+                logger.warning("Failed to tick butler %s: %s", name, error_msg)
+
+        butlers_ticked = len(target_butlers)
+        failures = len(failed)
+
+        span.set_attribute("butlers_ticked", butlers_ticked)
+        span.set_attribute("failures", failures)
+
+        return {
+            "total": butlers_ticked,
+            "successful": successful,
+            "failed": failed,
+        }

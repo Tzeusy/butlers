@@ -466,3 +466,102 @@ async def test_delete_nonexistent_raises(pool):
 
     with pytest.raises(ValueError, match="not found"):
         await schedule_delete(pool, uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# Telemetry — butler.tick span
+# ---------------------------------------------------------------------------
+
+
+def _reset_otel_global_state():
+    """Fully reset the OpenTelemetry global tracer provider state."""
+    from opentelemetry import trace
+
+    trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+    trace._TRACER_PROVIDER = None
+
+
+@pytest.fixture
+def otel_provider():
+    """Set up an in-memory TracerProvider for tick span tests, then tear down."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    _reset_otel_global_state()
+    exporter = InMemorySpanExporter()
+    resource = Resource.create({"service.name": "butler-test"})
+    provider = TracerProvider(resource=resource)
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    yield exporter
+    provider.shutdown()
+    _reset_otel_global_state()
+
+
+async def test_tick_creates_span_with_tasks_due_and_tasks_run(pool, otel_provider):
+    """tick() creates butler.tick span with tasks_due and tasks_run attributes."""
+    from butlers.core.scheduler import schedule_create, tick
+
+    # Create 3 due tasks
+    for i in range(3):
+        task_id = await schedule_create(pool, f"due-{i}", "*/1 * * * *", f"prompt {i}")
+        await pool.execute(
+            "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
+            task_id,
+            datetime.now(UTC) - timedelta(minutes=5),
+        )
+
+    dispatch = _Dispatch()
+    await tick(pool, dispatch)
+
+    spans = otel_provider.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "butler.tick"
+    assert span.attributes["tasks_due"] == 3
+    assert span.attributes["tasks_run"] == 3
+
+
+async def test_tick_span_with_no_due_tasks(pool, otel_provider):
+    """tick() creates butler.tick span with tasks_due=0 when no tasks are due."""
+    from butlers.core.scheduler import schedule_create, tick
+
+    # Create a task far in the future
+    await schedule_create(pool, "future", "0 0 1 1 *", "future")
+
+    dispatch = _Dispatch()
+    await tick(pool, dispatch)
+
+    spans = otel_provider.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "butler.tick"
+    assert span.attributes["tasks_due"] == 0
+    assert span.attributes["tasks_run"] == 0
+
+
+async def test_tick_span_counts_only_successful_dispatches(pool, otel_provider):
+    """tick() span tasks_run reflects only successful dispatches."""
+    from butlers.core.scheduler import schedule_create, tick
+
+    # Create two due tasks, one will fail
+    id1 = await schedule_create(pool, "fail", "*/1 * * * *", "fail-prompt")
+    id2 = await schedule_create(pool, "ok", "*/1 * * * *", "ok-prompt")
+    for tid in (id1, id2):
+        await pool.execute(
+            "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
+            tid,
+            datetime.now(UTC) - timedelta(minutes=5),
+        )
+
+    dispatch = _Dispatch(fail_on={"fail-prompt"})
+    await tick(pool, dispatch)
+
+    spans = otel_provider.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes["tasks_due"] == 2
+    assert span.attributes["tasks_run"] == 1  # Only the successful one
