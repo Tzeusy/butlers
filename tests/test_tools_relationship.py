@@ -192,6 +192,27 @@ async def pool(postgres_container):
             ON activity_feed (contact_id, created_at)
     """)
 
+    await p.execute("""
+        CREATE TABLE IF NOT EXISTS addresses (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            label VARCHAR NOT NULL DEFAULT 'Home',
+            line_1 TEXT NOT NULL,
+            line_2 TEXT,
+            city VARCHAR,
+            province VARCHAR,
+            postal_code VARCHAR,
+            country VARCHAR(2),
+            is_current BOOLEAN NOT NULL DEFAULT false,
+            created_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+    """)
+    await p.execute("""
+        CREATE INDEX IF NOT EXISTS idx_addresses_contact_id
+            ON addresses (contact_id)
+    """)
+
     yield p
     await db.close()
 
@@ -938,3 +959,291 @@ async def test_activity_feed_limit(pool):
 
     feed = await feed_get(pool, contact_id=c["id"], limit=3)
     assert len(feed) <= 3
+
+
+# ------------------------------------------------------------------
+# Addresses
+# ------------------------------------------------------------------
+
+
+async def test_address_add(pool):
+    """address_add creates an address for a contact."""
+    from butlers.tools.relationship import address_add, contact_create
+
+    c = await contact_create(pool, "Address-Person")
+    addr = await address_add(
+        pool,
+        c["id"],
+        line_1="123 Main St",
+        label="Home",
+        city="Springfield",
+        province="IL",
+        postal_code="62704",
+        country="US",
+    )
+    assert addr["contact_id"] == c["id"]
+    assert addr["line_1"] == "123 Main St"
+    assert addr["label"] == "Home"
+    assert addr["city"] == "Springfield"
+    assert addr["province"] == "IL"
+    assert addr["postal_code"] == "62704"
+    assert addr["country"] == "US"
+    assert addr["is_current"] is False
+    assert addr["id"] is not None
+
+
+async def test_address_add_minimal(pool):
+    """address_add works with only required fields."""
+    from butlers.tools.relationship import address_add, contact_create
+
+    c = await contact_create(pool, "Address-Minimal")
+    addr = await address_add(pool, c["id"], line_1="PO Box 42")
+    assert addr["line_1"] == "PO Box 42"
+    assert addr["label"] == "Home"  # default
+    assert addr["city"] is None
+    assert addr["country"] is None
+    assert addr["is_current"] is False
+
+
+async def test_address_add_with_line_2(pool):
+    """address_add stores line_2 (apartment/suite)."""
+    from butlers.tools.relationship import address_add, contact_create
+
+    c = await contact_create(pool, "Address-Line2")
+    addr = await address_add(pool, c["id"], line_1="456 Oak Ave", line_2="Apt 7B")
+    assert addr["line_2"] == "Apt 7B"
+
+
+async def test_address_add_is_current(pool):
+    """address_add with is_current=True sets the flag."""
+    from butlers.tools.relationship import address_add, contact_create
+
+    c = await contact_create(pool, "Address-Current")
+    addr = await address_add(pool, c["id"], line_1="1 Current Rd", is_current=True)
+    assert addr["is_current"] is True
+
+
+async def test_address_add_current_clears_others(pool):
+    """Adding a new current address clears is_current on existing addresses."""
+    from butlers.tools.relationship import address_add, address_list, contact_create
+
+    c = await contact_create(pool, "Address-ClearCurrent")
+    await address_add(pool, c["id"], line_1="Old Current", is_current=True)
+    addr2 = await address_add(pool, c["id"], line_1="New Current", is_current=True)
+
+    addrs = await address_list(pool, c["id"])
+    current_addrs = [a for a in addrs if a["is_current"]]
+    assert len(current_addrs) == 1
+    assert current_addrs[0]["id"] == addr2["id"]
+
+
+async def test_address_add_invalid_country(pool):
+    """address_add rejects country codes that are not 2 characters."""
+    from butlers.tools.relationship import address_add, contact_create
+
+    c = await contact_create(pool, "Address-BadCountry")
+    with pytest.raises(ValueError, match="2-letter ISO 3166-1"):
+        await address_add(pool, c["id"], line_1="1 Bad St", country="USA")
+
+
+async def test_address_list(pool):
+    """address_list returns all addresses for a contact."""
+    from butlers.tools.relationship import address_add, address_list, contact_create
+
+    c = await contact_create(pool, "Address-ListPerson")
+    await address_add(pool, c["id"], line_1="Home Address", label="Home")
+    await address_add(pool, c["id"], line_1="Work Address", label="Work")
+
+    addrs = await address_list(pool, c["id"])
+    assert len(addrs) == 2
+    lines = [a["line_1"] for a in addrs]
+    assert "Home Address" in lines
+    assert "Work Address" in lines
+
+
+async def test_address_list_current_first(pool):
+    """address_list returns the current address first."""
+    from butlers.tools.relationship import address_add, address_list, contact_create
+
+    c = await contact_create(pool, "Address-OrderPerson")
+    await address_add(pool, c["id"], line_1="Not Current", label="Other")
+    await address_add(pool, c["id"], line_1="Is Current", label="Home", is_current=True)
+
+    addrs = await address_list(pool, c["id"])
+    assert addrs[0]["line_1"] == "Is Current"
+    assert addrs[0]["is_current"] is True
+
+
+async def test_address_list_empty(pool):
+    """address_list returns empty list for contact with no addresses."""
+    from butlers.tools.relationship import address_list, contact_create
+
+    c = await contact_create(pool, "Address-NoneYet")
+    addrs = await address_list(pool, c["id"])
+    assert addrs == []
+
+
+async def test_address_update(pool):
+    """address_update modifies address fields."""
+    from butlers.tools.relationship import address_add, address_update, contact_create
+
+    c = await contact_create(pool, "Address-UpdatePerson")
+    addr = await address_add(pool, c["id"], line_1="Old Street", city="OldCity")
+
+    updated = await address_update(
+        pool, addr["id"], line_1="New Street", city="NewCity", province="CA"
+    )
+    assert updated["line_1"] == "New Street"
+    assert updated["city"] == "NewCity"
+    assert updated["province"] == "CA"
+    assert updated["id"] == addr["id"]
+
+
+async def test_address_update_set_current(pool):
+    """address_update with is_current=True clears other current addresses."""
+    from butlers.tools.relationship import (
+        address_add,
+        address_list,
+        address_update,
+        contact_create,
+    )
+
+    c = await contact_create(pool, "Address-UpdateCurrent")
+    await address_add(pool, c["id"], line_1="First", is_current=True)
+    addr2 = await address_add(pool, c["id"], line_1="Second")
+
+    await address_update(pool, addr2["id"], is_current=True)
+
+    addrs = await address_list(pool, c["id"])
+    current_addrs = [a for a in addrs if a["is_current"]]
+    assert len(current_addrs) == 1
+    assert current_addrs[0]["id"] == addr2["id"]
+
+
+async def test_address_update_not_found(pool):
+    """address_update raises ValueError for nonexistent address."""
+    from butlers.tools.relationship import address_update
+
+    fake_id = uuid.uuid4()
+    with pytest.raises(ValueError, match="not found"):
+        await address_update(pool, fake_id, line_1="Nope")
+
+
+async def test_address_update_invalid_country(pool):
+    """address_update rejects invalid country code."""
+    from butlers.tools.relationship import address_add, address_update, contact_create
+
+    c = await contact_create(pool, "Address-UpdateBadCountry")
+    addr = await address_add(pool, c["id"], line_1="1 Good St", country="US")
+
+    with pytest.raises(ValueError, match="2-letter ISO 3166-1"):
+        await address_update(pool, addr["id"], country="United States")
+
+
+async def test_address_remove(pool):
+    """address_remove deletes the address."""
+    from butlers.tools.relationship import (
+        address_add,
+        address_list,
+        address_remove,
+        contact_create,
+    )
+
+    c = await contact_create(pool, "Address-RemovePerson")
+    addr = await address_add(pool, c["id"], line_1="Temporary St")
+
+    await address_remove(pool, addr["id"])
+
+    addrs = await address_list(pool, c["id"])
+    assert len(addrs) == 0
+
+
+async def test_address_remove_not_found(pool):
+    """address_remove raises ValueError for nonexistent address."""
+    from butlers.tools.relationship import address_remove
+
+    fake_id = uuid.uuid4()
+    with pytest.raises(ValueError, match="not found"):
+        await address_remove(pool, fake_id)
+
+
+async def test_address_multiple_per_contact(pool):
+    """A contact can have multiple addresses with different labels."""
+    from butlers.tools.relationship import address_add, address_list, contact_create
+
+    c = await contact_create(pool, "Address-Multi")
+    await address_add(pool, c["id"], line_1="Home St", label="Home")
+    await address_add(pool, c["id"], line_1="Work Blvd", label="Work")
+    await address_add(pool, c["id"], line_1="Other Ln", label="Other")
+
+    addrs = await address_list(pool, c["id"])
+    assert len(addrs) == 3
+    labels = {a["label"] for a in addrs}
+    assert labels == {"Home", "Work", "Other"}
+
+
+async def test_address_activity_feed_add(pool):
+    """address_add logs to the activity feed."""
+    from butlers.tools.relationship import address_add, contact_create, feed_get
+
+    c = await contact_create(pool, "Address-FeedAdd")
+    await address_add(pool, c["id"], line_1="Feed St", city="FeedCity", country="US")
+
+    feed = await feed_get(pool, contact_id=c["id"])
+    types = [f["type"] for f in feed]
+    assert "address_added" in types
+    addr_entry = next(f for f in feed if f["type"] == "address_added")
+    assert "Feed St" in addr_entry["description"]
+    assert "FeedCity" in addr_entry["description"]
+
+
+async def test_address_activity_feed_update(pool):
+    """address_update logs to the activity feed."""
+    from butlers.tools.relationship import (
+        address_add,
+        address_update,
+        contact_create,
+        feed_get,
+    )
+
+    c = await contact_create(pool, "Address-FeedUpdate")
+    addr = await address_add(pool, c["id"], line_1="Before St")
+    await address_update(pool, addr["id"], line_1="After St")
+
+    feed = await feed_get(pool, contact_id=c["id"])
+    types = [f["type"] for f in feed]
+    assert "address_updated" in types
+
+
+async def test_address_activity_feed_remove(pool):
+    """address_remove logs to the activity feed."""
+    from butlers.tools.relationship import (
+        address_add,
+        address_remove,
+        contact_create,
+        feed_get,
+    )
+
+    c = await contact_create(pool, "Address-FeedRemove")
+    addr = await address_add(pool, c["id"], line_1="Gone St", label="Work")
+    await address_remove(pool, addr["id"])
+
+    feed = await feed_get(pool, contact_id=c["id"])
+    types = [f["type"] for f in feed]
+    assert "address_removed" in types
+    remove_entry = next(f for f in feed if f["type"] == "address_removed")
+    assert "Work" in remove_entry["description"]
+
+
+async def test_address_cascade_on_contact_delete(pool):
+    """Addresses are deleted when the parent contact is deleted."""
+    from butlers.tools.relationship import address_add, contact_create
+
+    c = await contact_create(pool, "Address-Cascade")
+    await address_add(pool, c["id"], line_1="Cascade St")
+
+    # Direct delete (not using archive, which is soft-delete)
+    await pool.execute("DELETE FROM contacts WHERE id = $1", c["id"])
+
+    count = await pool.fetchval("SELECT COUNT(*) FROM addresses WHERE contact_id = $1", c["id"])
+    assert count == 0
