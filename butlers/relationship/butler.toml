@@ -1,7 +1,25 @@
 [butler]
 name = "relationship"
 port = 8102
-description = "Personal CRM assistant for managing contacts and relationships"
+description = "Personal CRM. Manages contacts, relationships, important dates, interactions, gifts, and reminders."
 
 [butler.db]
 name = "butler_relationship"
+
+[[butler.schedule]]
+name = "upcoming-dates-check"
+cron = "0 8 * * *"
+prompt = """
+Check for important dates in the next 7 days (birthdays, anniversaries).
+For each, draft a reminder message and store it in state for the Switchboard
+to deliver via Telegram.
+"""
+
+[[butler.schedule]]
+name = "relationship-maintenance"
+cron = "0 9 * * 1"
+prompt = """
+Review contacts I haven't interacted with in 30+ days.
+Suggest 3 people I should reach out to this week, with context
+on our last interaction and any upcoming dates.
+"""

@@ -5,3 +5,42 @@ description = "Health tracking assistant for measurements, medications, diet, an
 
 [butler.db]
 name = "butler_health"
+
+[[butler.schedule]]
+name = "medication-reminder-morning"
+cron = "0 8 * * *"
+prompt = """
+Check for active medications with scheduled times between 8:00 AM and 10:00 AM.
+For each medication, verify whether a dose has been logged for today covering that time window.
+Report any medications that are due but not yet logged.
+"""
+
+[[butler.schedule]]
+name = "medication-reminder-noon"
+cron = "0 12 * * *"
+prompt = """
+Check for active medications with scheduled times between 12:00 PM and 2:00 PM.
+For each medication, verify whether a dose has been logged for today covering that time window.
+Report any medications that are due but not yet logged.
+"""
+
+[[butler.schedule]]
+name = "medication-reminder-evening"
+cron = "0 20 * * *"
+prompt = """
+Check for active medications with scheduled times between 8:00 PM and 10:00 PM.
+For each medication, verify whether a dose has been logged for today covering that time window.
+Report any medications that are due but not yet logged.
+"""
+
+[[butler.schedule]]
+name = "weekly-health-summary"
+cron = "0 9 * * 0"
+prompt = """
+Generate a comprehensive weekly health summary including:
+- Weight trend over the past week (if weight measurements exist)
+- Medication adherence rates for each active medication over the past week
+- Symptom frequency and patterns over the past week
+- Any notable changes or patterns identified from the data
+Use the health_summary and trend_report tools to compile this data.
+"""
