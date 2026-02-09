@@ -907,62 +907,6 @@ async def loan_list(pool: asyncpg.Pool, contact_id: uuid.UUID) -> list[dict[str,
 
 
 # ------------------------------------------------------------------
-# Life events
-# ------------------------------------------------------------------
-
-
-async def life_event_log(
-    pool: asyncpg.Pool,
-    contact_id: uuid.UUID,
-    type: str,
-    description: str | None = None,
-    occurred_at: datetime | None = None,
-) -> dict[str, Any]:
-    """Log a life event for a contact. Skips duplicate contact+type+date."""
-    effective_time = occurred_at or datetime.now(UTC)
-    # Idempotency guard: check for existing duplicate on same contact+type+date
-    existing = await pool.fetchrow(
-        """
-        SELECT id FROM life_events
-        WHERE contact_id = $1 AND type = $2 AND DATE(occurred_at) = DATE($3)
-        """,
-        contact_id,
-        type,
-        effective_time,
-    )
-    if existing is not None:
-        return {"skipped": "duplicate", "existing_id": str(existing["id"])}
-
-    row = await pool.fetchrow(
-        """
-        INSERT INTO life_events (contact_id, type, description, occurred_at)
-        VALUES ($1, $2, $3, $4)
-        RETURNING *
-        """,
-        contact_id,
-        type,
-        description,
-        effective_time,
-    )
-    result = dict(row)
-    await _log_activity(pool, contact_id, "life_event_logged", f"Logged life event: '{type}'")
-    return result
-
-
-async def life_event_list(pool: asyncpg.Pool, contact_id: uuid.UUID) -> list[dict[str, Any]]:
-    """List life events for a contact, most recent first."""
-    rows = await pool.fetch(
-        """
-        SELECT * FROM life_events
-        WHERE contact_id = $1
-        ORDER BY occurred_at DESC
-        """,
-        contact_id,
-    )
-    return [dict(row) for row in rows]
-
-
-# ------------------------------------------------------------------
 # Groups
 # ------------------------------------------------------------------
 
@@ -1307,6 +1251,66 @@ async def address_list(pool: asyncpg.Pool, contact_id: uuid.UUID) -> list[dict[s
         ORDER BY is_current DESC, created_at
         """,
         contact_id,
+    )
+    return [dict(row) for row in rows]
+
+
+# ------------------------------------------------------------------
+# Tasks / To-dos
+# ------------------------------------------------------------------
+
+
+async def task_create(
+    pool: asyncpg.Pool,
+    contact_id: uuid.UUID,
+    title: str,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Create a task/to-do scoped to a contact."""
+    row = await pool.fetchrow(
+        """
+        INSERT INTO tasks (contact_id, title, description)
+        VALUES ($1, $2, $3)
+        RETURNING *
+        """,
+        contact_id,
+        title,
+        description,
+    )
+    result = dict(row)
+    await _log_activity(pool, contact_id, "task_created", f"Created task: '{title}'")
+    return result
+
+
+async def task_list(
+    pool: asyncpg.Pool,
+    contact_id: uuid.UUID | None = None,
+    include_completed: bool = False,
+) -> list[dict[str, Any]]:
+    """List tasks, optionally filtered by contact and completion status."""
+    conditions: list[str] = []
+    args: list[Any] = []
+    idx = 1
+
+    if contact_id is not None:
+        conditions.append(f"t.contact_id = ${idx}")
+        args.append(contact_id)
+        idx += 1
+
+    if not include_completed:
+        conditions.append("t.completed = false")
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    rows = await pool.fetch(
+        f"""
+        SELECT t.*, c.name as contact_name
+        FROM tasks t
+        JOIN contacts c ON t.contact_id = c.id
+        {where}
+        ORDER BY t.created_at DESC
+        """,
+        *args,
     )
     return [dict(row) for row in rows]
 
@@ -2040,3 +2044,34 @@ async def _boost_by_context(
                     break
 
     return candidates
+
+
+async def task_complete(pool: asyncpg.Pool, task_id: uuid.UUID) -> dict[str, Any]:
+    """Mark a task as completed."""
+    row = await pool.fetchrow(
+        """
+        UPDATE tasks SET completed = true, completed_at = now()
+        WHERE id = $1
+        RETURNING *
+        """,
+        task_id,
+    )
+    if row is None:
+        raise ValueError(f"Task {task_id} not found")
+    result = dict(row)
+    await _log_activity(
+        pool, result["contact_id"], "task_completed", f"Completed task: '{row['title']}'"
+    )
+    return result
+
+
+async def task_delete(pool: asyncpg.Pool, task_id: uuid.UUID) -> None:
+    """Delete a task."""
+    row = await pool.fetchrow(
+        "DELETE FROM tasks WHERE id = $1 RETURNING contact_id, title",
+        task_id,
+    )
+    if row is None:
+        raise ValueError(f"Task {task_id} not found")
+    await _log_activity(pool, row["contact_id"], "task_deleted", f"Deleted task: '{row['title']}'")
+
