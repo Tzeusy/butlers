@@ -210,6 +210,8 @@ async def schedule_update(pool: asyncpg.Pool, task_id: uuid.UUID, **fields) -> N
 
     Allowed fields: ``name``, ``cron``, ``prompt``, ``enabled``.
     If ``cron`` is updated, recomputes ``next_run_at``.
+    If ``enabled`` is set to ``true``, recomputes ``next_run_at``.
+    If ``enabled`` is set to ``false``, sets ``next_run_at`` to ``NULL``.
 
     Args:
         pool: asyncpg connection pool.
@@ -231,8 +233,10 @@ async def schedule_update(pool: asyncpg.Pool, task_id: uuid.UUID, **fields) -> N
     if "cron" in fields and not croniter.is_valid(fields["cron"]):
         raise ValueError(f"Invalid cron expression: {fields['cron']!r}")
 
-    # Check task exists
-    existing = await pool.fetchrow("SELECT id FROM scheduled_tasks WHERE id = $1", task_id)
+    # Check task exists and fetch current state
+    existing = await pool.fetchrow(
+        "SELECT id, cron, enabled FROM scheduled_tasks WHERE id = $1", task_id
+    )
     if existing is None:
         raise ValueError(f"Task {task_id} not found")
 
@@ -249,8 +253,27 @@ async def schedule_update(pool: asyncpg.Pool, task_id: uuid.UUID, **fields) -> N
     query = f"UPDATE scheduled_tasks SET {', '.join(set_clauses)} WHERE id = $1"
     await pool.execute(query, *params)
 
-    # Recompute next_run_at if cron changed
-    if "cron" in fields:
+    # Determine the cron expression to use for next_run_at computation
+    cron = fields.get("cron", existing["cron"])
+
+    # Handle next_run_at based on enabled toggle or cron change
+    if "enabled" in fields:
+        if fields["enabled"]:
+            # Enabling: recompute next_run_at from current cron
+            next_run_at = _next_run(cron)
+            await pool.execute(
+                "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
+                task_id,
+                next_run_at,
+            )
+        else:
+            # Disabling: set next_run_at to NULL
+            await pool.execute(
+                "UPDATE scheduled_tasks SET next_run_at = NULL WHERE id = $1",
+                task_id,
+            )
+    elif "cron" in fields:
+        # Cron changed (and enabled not explicitly set): recompute next_run_at
         next_run_at = _next_run(fields["cron"])
         await pool.execute(
             "UPDATE scheduled_tasks SET next_run_at = $2 WHERE id = $1",
