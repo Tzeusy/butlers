@@ -29,17 +29,19 @@ from typing import Any
 from fastmcp import FastMCP
 
 from butlers.config import ButlerConfig, load_config
-from butlers.core.scheduler import (
-    schedule_create,
-    schedule_delete,
-    schedule_list,
-    schedule_update,
-    sync_schedules,
-    tick,
-)
-from butlers.core.sessions import sessions_get, sessions_list
+from butlers.core.scheduler import schedule_create as _schedule_create
+from butlers.core.scheduler import schedule_delete as _schedule_delete
+from butlers.core.scheduler import schedule_list as _schedule_list
+from butlers.core.scheduler import schedule_update as _schedule_update
+from butlers.core.scheduler import sync_schedules
+from butlers.core.scheduler import tick as _tick
+from butlers.core.sessions import sessions_get as _sessions_get
+from butlers.core.sessions import sessions_list as _sessions_list
 from butlers.core.spawner import CCSpawner
-from butlers.core.state import state_delete, state_get, state_list, state_set
+from butlers.core.state import state_delete as _state_delete
+from butlers.core.state import state_get as _state_get
+from butlers.core.state import state_list as _state_list
+from butlers.core.state import state_set as _state_set
 from butlers.core.telemetry import init_telemetry
 from butlers.credentials import validate_credentials
 from butlers.db import Database
@@ -186,75 +188,75 @@ class ButlerDaemon:
             }
 
         @mcp.tool()
-        async def tick_now() -> dict:
+        async def tick() -> dict:
             """Evaluate due scheduled tasks and dispatch them now."""
-            count = await tick(pool, spawner.trigger)
+            count = await _tick(pool, spawner.trigger)
             return {"dispatched": count}
 
         # State tools
         @mcp.tool()
-        async def get_state(key: str) -> dict:
+        async def state_get(key: str) -> dict:
             """Get a value from the state store."""
-            value = await state_get(pool, key)
+            value = await _state_get(pool, key)
             return {"key": key, "value": value}
 
         @mcp.tool()
-        async def set_state(key: str, value: Any) -> dict:
+        async def state_set(key: str, value: Any) -> dict:
             """Set a value in the state store."""
-            await state_set(pool, key, value)
+            await _state_set(pool, key, value)
             return {"key": key, "status": "ok"}
 
         @mcp.tool()
-        async def delete_state(key: str) -> dict:
+        async def state_delete(key: str) -> dict:
             """Delete a key from the state store."""
-            await state_delete(pool, key)
+            await _state_delete(pool, key)
             return {"key": key, "status": "deleted"}
 
         @mcp.tool()
-        async def list_state(prefix: str | None = None) -> list[dict]:
+        async def state_list(prefix: str | None = None) -> list[dict]:
             """List all entries in the state store, optionally filtered by prefix."""
-            return await state_list(pool, prefix)
+            return await _state_list(pool, prefix)
 
         # Schedule tools
         @mcp.tool()
-        async def list_schedules() -> list[dict]:
+        async def schedule_list() -> list[dict]:
             """List all scheduled tasks."""
-            tasks = await schedule_list(pool)
+            tasks = await _schedule_list(pool)
             for t in tasks:
                 t["id"] = str(t["id"])
             return tasks
 
         @mcp.tool()
-        async def create_schedule(name: str, cron: str, prompt: str) -> dict:
+        async def schedule_create(name: str, cron: str, prompt: str) -> dict:
             """Create a new runtime scheduled task."""
-            task_id = await schedule_create(pool, name, cron, prompt)
+            task_id = await _schedule_create(pool, name, cron, prompt)
             return {"id": str(task_id), "status": "created"}
 
         @mcp.tool()
-        async def update_schedule(task_id: str, **fields) -> dict:
+        async def schedule_update(task_id: str, **fields) -> dict:
             """Update a scheduled task."""
-            await schedule_update(pool, uuid.UUID(task_id), **fields)
+            await _schedule_update(pool, uuid.UUID(task_id), **fields)
             return {"id": task_id, "status": "updated"}
 
         @mcp.tool()
-        async def delete_schedule(task_id: str) -> dict:
+        async def schedule_delete(task_id: str) -> dict:
             """Delete a runtime scheduled task."""
-            await schedule_delete(pool, uuid.UUID(task_id))
+            await _schedule_delete(pool, uuid.UUID(task_id))
             return {"id": task_id, "status": "deleted"}
 
         # Session tools
         @mcp.tool()
-        async def list_sessions(limit: int = 20, offset: int = 0) -> list[dict]:
+        async def sessions_list(limit: int = 20, offset: int = 0) -> list[dict]:
             """List sessions ordered by most recent first."""
-            sessions = await sessions_list(pool, limit, offset)
+            sessions = await _sessions_list(pool, limit, offset)
             for s in sessions:
                 s["id"] = str(s["id"])
             return sessions
 
         @mcp.tool()
-        async def get_session(session_id: str) -> dict | None:
+        async def sessions_get(session_id: str) -> dict | None:
             """Get a session by ID."""
-            session = await sessions_get(pool, uuid.UUID(session_id))
+            session = await _sessions_get(pool, uuid.UUID(session_id))
             if session:
                 session["id"] = str(session["id"])
             return session
