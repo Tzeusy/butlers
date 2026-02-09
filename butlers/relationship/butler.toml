@@ -1,0 +1,7 @@
+[butler]
+name = "relationship"
+port = 8102
+description = "Personal CRM assistant for managing contacts and relationships"
+
+[butler.db]
+name = "butler_relationship"
