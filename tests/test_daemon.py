@@ -112,6 +112,18 @@ class StubModuleB(Module):
 # ---------------------------------------------------------------------------
 
 
+def _toml_value(v: Any) -> str:
+    """Format a Python value as a TOML literal."""
+    if isinstance(v, str):
+        return f'"{v}"'
+    if isinstance(v, list):
+        items = ", ".join(f'"{i}"' if isinstance(i, str) else str(i) for i in v)
+        return f"[{items}]"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return str(v)
+
+
 def _make_butler_toml(tmp_path: Path, modules: dict | None = None) -> Path:
     """Write a minimal butler.toml in tmp_path and return the directory."""
     modules = modules or {}
@@ -132,10 +144,7 @@ def _make_butler_toml(tmp_path: Path, modules: dict | None = None) -> Path:
     for mod_name, mod_cfg in modules.items():
         toml_lines.append(f"\n[modules.{mod_name}]")
         for k, v in mod_cfg.items():
-            if isinstance(v, str):
-                toml_lines.append(f'{k} = "{v}"')
-            else:
-                toml_lines.append(f"{k} = {v}")
+            toml_lines.append(f"{k} = {_toml_value(v)}")
     (tmp_path / "butler.toml").write_text("\n".join(toml_lines))
     return tmp_path
 
@@ -1011,12 +1020,24 @@ class TestSecretDetection:
         self, butler_dir: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """detect_secrets should be called during daemon startup."""
+class TestModuleCredentialsTomlSource:
+    """Verify credentials_env is read from TOML config with class fallback."""
+
+    async def test_toml_credentials_used_over_class(self, tmp_path: Path) -> None:
+        """When butler.toml declares credentials_env, it takes priority over the class."""
+        # TOML declares different creds than what StubModuleA's class property returns
+        butler_dir = _make_butler_toml(
+            tmp_path,
+            modules={"stub_a": {"credentials_env": ["TOML_TOKEN_A", "TOML_SECRET_A"]}},
+        )
+        registry = _make_registry(StubModuleA)
         patches = _patch_infra()
 
         with (
             patches["db_from_env"],
             patches["run_migrations"],
             patches["validate_credentials"],
+            patches["validate_credentials"] as mock_validate,
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
@@ -1074,11 +1095,31 @@ name = "butler_test"
         # Using butler_dir_with_modules which has modules configured
         patches = _patch_infra()
         registry = _make_registry(StubModuleA, StubModuleB)
+        ):
+            daemon = ButlerDaemon(butler_dir, registry=registry)
+            await daemon.start()
+
+        mock_validate.assert_called_once()
+        call_kwargs = mock_validate.call_args
+        module_creds = call_kwargs.kwargs.get(
+            "module_credentials", call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None
+        )
+        assert module_creds is not None
+        assert "stub_a" in module_creds
+        # TOML-declared creds should be used, NOT the class property ["STUB_A_TOKEN"]
+        assert module_creds["stub_a"] == ["TOML_TOKEN_A", "TOML_SECRET_A"]
+        assert "STUB_A_TOKEN" not in module_creds["stub_a"]
+
+    async def test_class_credentials_fallback(self, butler_dir_with_modules: Path) -> None:
+        """When TOML does not declare credentials_env, fall back to class property."""
+        registry = _make_registry(StubModuleA, StubModuleB)
+        patches = _patch_infra()
 
         with (
             patches["db_from_env"],
             patches["run_migrations"],
             patches["validate_credentials"],
+            patches["validate_credentials"] as mock_validate,
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
@@ -1114,6 +1155,92 @@ required = ["ANTHROPIC_API_KEY", "SECRET_TOKEN"]
 optional = ["OPTIONAL_KEY"]
 """
         (tmp_path / "butler.toml").write_text(toml_content)
+        mock_validate.assert_called_once()
+        call_kwargs = mock_validate.call_args
+        module_creds = call_kwargs.kwargs.get(
+            "module_credentials", call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None
+        )
+        assert module_creds is not None
+        # stub_a has credentials_env class property → should be used as fallback
+        assert "stub_a" in module_creds
+        assert module_creds["stub_a"] == ["STUB_A_TOKEN"]
+        # stub_b has no credentials_env → should not appear
+        assert "stub_b" not in module_creds
+
+    async def test_toml_empty_credentials_no_fallback(self, tmp_path: Path) -> None:
+        """When TOML declares credentials_env as empty list, no fallback to class."""
+        butler_dir = _make_butler_toml(
+            tmp_path,
+            modules={"stub_a": {"credentials_env": []}},
+        )
+        registry = _make_registry(StubModuleA)
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"] as mock_validate,
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["CCSpawner"],
+        ):
+            daemon = ButlerDaemon(butler_dir, registry=registry)
+            await daemon.start()
+
+        mock_validate.assert_called_once()
+        call_kwargs = mock_validate.call_args
+        module_creds = call_kwargs.kwargs.get(
+            "module_credentials", call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None
+        )
+        assert module_creds is not None
+        # TOML declares empty list — should be used (not fall back to class)
+        assert "stub_a" in module_creds
+        assert module_creds["stub_a"] == []
+
+    async def test_mixed_toml_and_class_credentials(self, tmp_path: Path) -> None:
+        """One module uses TOML creds, another falls back to class property."""
+        # stub_a: TOML overrides, stub_b: no class credentials_env, no TOML
+        butler_dir = _make_butler_toml(
+            tmp_path,
+            modules={
+                "stub_a": {"credentials_env": ["CUSTOM_TOKEN"]},
+                "stub_b": {},
+            },
+        )
+        registry = _make_registry(StubModuleA, StubModuleB)
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"] as mock_validate,
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["CCSpawner"],
+        ):
+            daemon = ButlerDaemon(butler_dir, registry=registry)
+            await daemon.start()
+
+        mock_validate.assert_called_once()
+        call_kwargs = mock_validate.call_args
+        module_creds = call_kwargs.kwargs.get(
+            "module_credentials", call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None
+        )
+        assert module_creds is not None
+        # stub_a: TOML-declared
+        assert module_creds["stub_a"] == ["CUSTOM_TOKEN"]
+        # stub_b: no class credentials_env property, no TOML → absent
+        assert "stub_b" not in module_creds
+
+    async def test_toml_credentials_passed_to_spawner(self, tmp_path: Path) -> None:
+        """TOML-declared credentials are forwarded to CCSpawner."""
+        butler_dir = _make_butler_toml(
+            tmp_path,
+            modules={"stub_a": {"credentials_env": ["TOML_KEY"]}},
+        )
+        registry = _make_registry(StubModuleA)
         patches = _patch_infra()
 
         with (
@@ -1276,3 +1403,11 @@ optional = ["OPTIONAL_KEY"]
         # env lists should not be in flattened output (they are just env var names)
         assert "butler.env.required" not in flat
         assert "butler.env.optional" not in flat
+            patches["CCSpawner"] as mock_spawner_cls,
+        ):
+            daemon = ButlerDaemon(butler_dir, registry=registry)
+            await daemon.start()
+
+        mock_spawner_cls.assert_called_once()
+        spawner_kwargs = mock_spawner_cls.call_args.kwargs
+        assert spawner_kwargs["module_credentials_env"] == {"stub_a": ["TOML_KEY"]}
