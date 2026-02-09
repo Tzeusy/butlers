@@ -344,3 +344,238 @@ async def test_classify_message_defaults_for_unknown_name(pool):
 
     name = await classify_message(pool, "test", bad_dispatch)
     assert name == "general"
+
+
+# ------------------------------------------------------------------
+# dispatch_decomposed
+# ------------------------------------------------------------------
+
+
+async def test_dispatch_decomposed_single_target(pool):
+    """dispatch_decomposed dispatches exactly one route() call for a single target."""
+    from butlers.tools.switchboard import dispatch_decomposed, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await pool.execute("DELETE FROM routing_log")
+    await register_butler(pool, "health", "http://localhost:8101/sse", "Health butler")
+
+    async def mock_call(endpoint_url, tool_name, args):
+        return {"status": "handled", "butler": "health"}
+
+    results = await dispatch_decomposed(
+        pool,
+        targets=[{"butler": "health", "prompt": "I have a headache"}],
+        source_channel="telegram",
+        call_fn=mock_call,
+    )
+
+    assert len(results) == 1
+    assert results[0]["butler"] == "health"
+    assert results[0]["result"] == {"status": "handled", "butler": "health"}
+    assert results[0]["error"] is None
+
+    # Verify exactly one routing_log entry
+    rows = await pool.fetch("SELECT * FROM routing_log")
+    assert len(rows) == 1
+    assert rows[0]["target_butler"] == "health"
+    assert rows[0]["success"] is True
+
+
+async def test_dispatch_decomposed_multiple_targets(pool):
+    """dispatch_decomposed dispatches route() for each target sequentially."""
+    from butlers.tools.switchboard import dispatch_decomposed, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await pool.execute("DELETE FROM routing_log")
+    await register_butler(pool, "health", "http://localhost:8101/sse")
+    await register_butler(pool, "general", "http://localhost:8102/sse")
+
+    call_order: list[str] = []
+
+    async def mock_call(endpoint_url, tool_name, args):
+        # Track call order by endpoint
+        call_order.append(endpoint_url)
+        return {"handled": True}
+
+    results = await dispatch_decomposed(
+        pool,
+        targets=[
+            {"butler": "health", "prompt": "Check my vitals"},
+            {"butler": "general", "prompt": "What time is it?"},
+        ],
+        call_fn=mock_call,
+    )
+
+    assert len(results) == 2
+    assert results[0]["butler"] == "health"
+    assert results[0]["error"] is None
+    assert results[1]["butler"] == "general"
+    assert results[1]["error"] is None
+
+    # Verify sequential call order
+    assert call_order == [
+        "http://localhost:8101/sse",
+        "http://localhost:8102/sse",
+    ]
+
+    # Verify two routing_log entries
+    rows = await pool.fetch("SELECT * FROM routing_log ORDER BY created_at")
+    assert len(rows) == 2
+    assert rows[0]["target_butler"] == "health"
+    assert rows[1]["target_butler"] == "general"
+
+
+async def test_dispatch_decomposed_error_does_not_block_others(pool):
+    """A failure in one sub-route does not prevent subsequent sub-routes."""
+    from butlers.tools.switchboard import dispatch_decomposed, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await pool.execute("DELETE FROM routing_log")
+    await register_butler(pool, "failing", "http://localhost:8200/sse")
+    await register_butler(pool, "working", "http://localhost:8201/sse")
+
+    async def mock_call(endpoint_url, tool_name, args):
+        if "8200" in endpoint_url:
+            raise ConnectionError("Connection refused")
+        return {"ok": True}
+
+    results = await dispatch_decomposed(
+        pool,
+        targets=[
+            {"butler": "failing", "prompt": "This will fail"},
+            {"butler": "working", "prompt": "This should still work"},
+        ],
+        call_fn=mock_call,
+    )
+
+    assert len(results) == 2
+
+    # First target failed
+    assert results[0]["butler"] == "failing"
+    assert results[0]["result"] is None
+    assert "ConnectionError" in results[0]["error"]
+
+    # Second target succeeded despite first failure
+    assert results[1]["butler"] == "working"
+    assert results[1]["result"] == {"ok": True}
+    assert results[1]["error"] is None
+
+    # Both logged independently
+    rows = await pool.fetch("SELECT * FROM routing_log ORDER BY created_at")
+    assert len(rows) == 2
+    assert rows[0]["target_butler"] == "failing"
+    assert rows[0]["success"] is False
+    assert rows[1]["target_butler"] == "working"
+    assert rows[1]["success"] is True
+
+
+async def test_dispatch_decomposed_unknown_butler_in_targets(pool):
+    """dispatch_decomposed handles unknown butlers gracefully without blocking others."""
+    from butlers.tools.switchboard import dispatch_decomposed, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await pool.execute("DELETE FROM routing_log")
+    await register_butler(pool, "known", "http://localhost:8300/sse")
+
+    async def mock_call(endpoint_url, tool_name, args):
+        return {"ok": True}
+
+    results = await dispatch_decomposed(
+        pool,
+        targets=[
+            {"butler": "ghost", "prompt": "No butler here"},
+            {"butler": "known", "prompt": "This works"},
+        ],
+        call_fn=mock_call,
+    )
+
+    assert len(results) == 2
+
+    # Unknown butler gets an error
+    assert results[0]["butler"] == "ghost"
+    assert results[0]["result"] is None
+    assert "not found" in results[0]["error"]
+
+    # Known butler succeeds
+    assert results[1]["butler"] == "known"
+    assert results[1]["result"] == {"ok": True}
+    assert results[1]["error"] is None
+
+
+async def test_dispatch_decomposed_empty_targets(pool):
+    """dispatch_decomposed returns empty list for empty targets."""
+    from butlers.tools.switchboard import dispatch_decomposed
+
+    results = await dispatch_decomposed(pool, targets=[])
+    assert results == []
+
+
+async def test_dispatch_decomposed_each_route_independently_logged(pool):
+    """Each route() call in dispatch_decomposed creates its own routing_log entry."""
+    from butlers.tools.switchboard import dispatch_decomposed, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await pool.execute("DELETE FROM routing_log")
+    await register_butler(pool, "a", "http://localhost:8401/sse")
+    await register_butler(pool, "b", "http://localhost:8402/sse")
+    await register_butler(pool, "c", "http://localhost:8403/sse")
+
+    async def mock_call(endpoint_url, tool_name, args):
+        if "8402" in endpoint_url:
+            raise ValueError("b exploded")
+        return {"ok": True}
+
+    await dispatch_decomposed(
+        pool,
+        targets=[
+            {"butler": "a", "prompt": "msg a"},
+            {"butler": "b", "prompt": "msg b"},
+            {"butler": "c", "prompt": "msg c"},
+        ],
+        source_channel="api",
+        call_fn=mock_call,
+    )
+
+    rows = await pool.fetch("SELECT * FROM routing_log ORDER BY created_at")
+    assert len(rows) == 3
+
+    # Verify each log entry
+    assert rows[0]["target_butler"] == "a"
+    assert rows[0]["success"] is True
+    assert rows[0]["source_butler"] == "api"
+
+    assert rows[1]["target_butler"] == "b"
+    assert rows[1]["success"] is False
+    assert "b exploded" in rows[1]["error"]
+    assert rows[1]["source_butler"] == "api"
+
+    assert rows[2]["target_butler"] == "c"
+    assert rows[2]["success"] is True
+    assert rows[2]["source_butler"] == "api"
+
+
+async def test_dispatch_decomposed_passes_source_id(pool):
+    """dispatch_decomposed passes source_id through to route() args."""
+    from butlers.tools.switchboard import dispatch_decomposed, register_butler
+
+    await pool.execute("DELETE FROM butler_registry")
+    await pool.execute("DELETE FROM routing_log")
+    await register_butler(pool, "target", "http://localhost:8500/sse")
+
+    captured_args: list[dict] = []
+
+    async def mock_call(endpoint_url, tool_name, args):
+        captured_args.append(args)
+        return {"ok": True}
+
+    await dispatch_decomposed(
+        pool,
+        targets=[{"butler": "target", "prompt": "hello"}],
+        source_channel="telegram",
+        source_id="msg-12345",
+        call_fn=mock_call,
+    )
+
+    assert len(captured_args) == 1
+    assert captured_args[0]["prompt"] == "hello"
+    assert captured_args[0]["source_id"] == "msg-12345"
