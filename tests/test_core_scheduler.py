@@ -661,3 +661,62 @@ async def test_unique_constraint_in_migration(pool):
             "test2",
             "runtime",
         )
+# schedule_update — enabled toggle handling [butlers-06j.9]
+# ---------------------------------------------------------------------------
+
+
+async def test_update_enabled_true_recomputes_next_run(pool):
+    """Enabling a disabled task recomputes next_run_at from current time."""
+    from butlers.core.scheduler import schedule_create, schedule_update
+
+    task_id = await schedule_create(pool, "enable-me", "*/5 * * * *", "test")
+    # Disable and clear next_run_at
+    await pool.execute(
+        "UPDATE scheduled_tasks SET enabled = false, next_run_at = NULL WHERE id = $1",
+        task_id,
+    )
+
+    # Re-enable via schedule_update
+    await schedule_update(pool, task_id, enabled=True)
+
+    row = await pool.fetchrow(
+        "SELECT enabled, next_run_at FROM scheduled_tasks WHERE id = $1", task_id
+    )
+    assert row["enabled"] is True
+    # next_run_at should now be computed and in the future
+    assert row["next_run_at"] is not None
+    assert row["next_run_at"] > datetime.now(UTC) - timedelta(seconds=5)
+
+
+async def test_update_enabled_false_nullifies_next_run(pool):
+    """Disabling a task sets next_run_at to NULL."""
+    from butlers.core.scheduler import schedule_create, schedule_update
+
+    task_id = await schedule_create(pool, "disable-me", "*/5 * * * *", "test")
+    # Verify it starts with a next_run_at
+    row = await pool.fetchrow("SELECT next_run_at FROM scheduled_tasks WHERE id = $1", task_id)
+    assert row["next_run_at"] is not None
+
+    # Disable
+    await schedule_update(pool, task_id, enabled=False)
+
+    row = await pool.fetchrow(
+        "SELECT enabled, next_run_at FROM scheduled_tasks WHERE id = $1", task_id
+    )
+    assert row["enabled"] is False
+    assert row["next_run_at"] is None
+
+
+async def test_update_cron_still_recomputes_next_run(pool):
+    """Changing cron still recomputes next_run_at (existing behavior preserved)."""
+    from butlers.core.scheduler import schedule_create, schedule_update
+
+    task_id = await schedule_create(pool, "cron-change", "0 0 1 1 *", "yearly")
+    old_row = await pool.fetchrow("SELECT next_run_at FROM scheduled_tasks WHERE id = $1", task_id)
+
+    await schedule_update(pool, task_id, cron="*/1 * * * *")
+    new_row = await pool.fetchrow("SELECT next_run_at FROM scheduled_tasks WHERE id = $1", task_id)
+
+    # next_run_at should be recomputed and different
+    assert new_row["next_run_at"] != old_row["next_run_at"]
+    assert new_row["next_run_at"] > datetime.now(UTC) - timedelta(seconds=5)
