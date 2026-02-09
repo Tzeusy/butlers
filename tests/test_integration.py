@@ -511,6 +511,19 @@ class TestSchedulerTickIntegration:
 class TestSwitchboardRoutingIntegration:
     """Integration test for switchboard butler registry and routing with real DB."""
 
+    @pytest.fixture(autouse=True)
+    def otel_provider(self):
+        """Set up an in-memory TracerProvider so route() can inject trace context."""
+        _reset_otel_global_state()
+        exporter = InMemorySpanExporter()
+        resource = Resource.create({"service.name": "switchboard-test"})
+        provider = TracerProvider(resource=resource)
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        trace.set_tracer_provider(provider)
+        yield exporter
+        provider.shutdown()
+        _reset_otel_global_state()
+
     @pytest.fixture
     async def pool(self, postgres_container):
         """Create a fresh DB with switchboard tables."""
@@ -564,7 +577,7 @@ class TestSwitchboardRoutingIntegration:
         # Verify call_fn received correct arguments
         assert len(call_log) == 1
         assert call_log[0]["endpoint_url"] == "http://localhost:9200/sse"
-assert call_log[0]["tool_name"] == "state_get"
+        assert call_log[0]["tool_name"] == "state_get"
         assert call_log[0]["args"]["key"] == "test"
         assert "_trace_context" in call_log[0]["args"]  # Trace context injected
 

@@ -36,6 +36,7 @@ class RuntimeAdapter(abc.ABC):
         system_prompt: str,
         mcp_servers: dict[str, Any],
         env: dict[str, str],
+        max_turns: int = 20,
         cwd: Path | None = None,
         timeout: int | None = None,
     ) -> tuple[str | None, list[dict[str, Any]]]:
@@ -163,6 +164,7 @@ class GeminiAdapter(RuntimeAdapter):
         system_prompt: str,
         mcp_servers: dict[str, Any],
         env: dict[str, str],
+        max_turns: int = 20,
         cwd: Path | None = None,
         timeout: int | None = None,
     ) -> tuple[str | None, list[dict[str, Any]]]:

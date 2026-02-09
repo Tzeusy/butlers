@@ -153,7 +153,7 @@ class ButlerDaemon:
         self._modules: list[Module] = []
         self._module_configs: dict[str, Any] = {}
         self._started_at: float | None = None
-self._accepting_connections = False
+        self._accepting_connections = False
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
 
@@ -259,7 +259,7 @@ self._accepting_connections = False
         # 12. Register module MCP tools
         await self._register_module_tools()
 
-# 13. Start FastMCP SSE server on configured port
+        # 13. Start FastMCP SSE server on configured port
         await self._start_mcp_server()
 
         # Mark as accepting connections and record startup time
@@ -363,7 +363,7 @@ self._accepting_connections = False
             }
 
         @mcp.tool()
-async def trigger(prompt: str, context: str | None = None) -> dict:
+        async def trigger(prompt: str, context: str | None = None) -> dict:
             """Trigger the spawner with a prompt.
 
             Parameters
@@ -384,14 +384,14 @@ async def trigger(prompt: str, context: str | None = None) -> dict:
             }
 
         @mcp.tool()
-async def tick() -> dict:
+        async def tick() -> dict:
             """Evaluate due scheduled tasks and dispatch them now."""
             count = await _tick(pool, spawner.trigger)
             return {"dispatched": count}
 
         # State tools
         @mcp.tool()
-async def state_get(key: str, _trace_context: dict | None = None) -> dict:
+        async def state_get(key: str, _trace_context: dict | None = None) -> dict:
             """Get a value from the state store."""
             parent_ctx = extract_trace_context(_trace_context) if _trace_context else None
             tracer = trace.get_tracer("butlers")
@@ -449,26 +449,26 @@ async def state_get(key: str, _trace_context: dict | None = None) -> dict:
             return tasks
 
         @mcp.tool()
-async def schedule_create(name: str, cron: str, prompt: str) -> dict:
+        async def schedule_create(name: str, cron: str, prompt: str) -> dict:
             """Create a new runtime scheduled task."""
             task_id = await _schedule_create(pool, name, cron, prompt)
             return {"id": str(task_id), "status": "created"}
 
         @mcp.tool()
-async def schedule_update(task_id: str, **fields) -> dict:
+        async def schedule_update(task_id: str, **fields) -> dict:
             """Update a scheduled task."""
             await _schedule_update(pool, uuid.UUID(task_id), **fields)
             return {"id": task_id, "status": "updated"}
 
         @mcp.tool()
-async def schedule_delete(task_id: str) -> dict:
+        async def schedule_delete(task_id: str) -> dict:
             """Delete a runtime scheduled task."""
             await _schedule_delete(pool, uuid.UUID(task_id))
             return {"id": task_id, "status": "deleted"}
 
         # Session tools
         @mcp.tool()
-async def sessions_list(limit: int = 20, offset: int = 0) -> list[dict]:
+        async def sessions_list(limit: int = 20, offset: int = 0) -> list[dict]:
             """List sessions ordered by most recent first."""
             sessions = await _sessions_list(pool, limit, offset)
             for s in sessions:
@@ -476,7 +476,7 @@ async def sessions_list(limit: int = 20, offset: int = 0) -> list[dict]:
             return sessions
 
         @mcp.tool()
-async def sessions_get(session_id: str) -> dict | None:
+        async def sessions_get(session_id: str) -> dict | None:
             """Get a session by ID."""
             session = await _sessions_get(pool, uuid.UUID(session_id))
             if session:
@@ -500,8 +500,14 @@ async def sessions_get(session_id: str) -> dict | None:
             or type mismatches).
         """
         validated: dict[str, Any] = {}
+        # Keys consumed at the butler level (not part of module schemas)
+        _BUTLER_LEVEL_KEYS = {"credentials_env"}
         for mod in self._modules:
-            raw_config = self.config.modules.get(mod.name, {})
+            raw_config = {
+                k: v
+                for k, v in self.config.modules.get(mod.name, {}).items()
+                if k not in _BUTLER_LEVEL_KEYS
+            }
             schema = mod.config_schema
             if schema is None:
                 validated[mod.name] = raw_config
@@ -533,13 +539,13 @@ async def sessions_get(session_id: str) -> dict | None:
         """
         wrapped_mcp = _SpanWrappingMCP(self.mcp, self.config.name)
         for mod in self._modules:
-validated_config = self._module_configs.get(mod.name)
+            validated_config = self._module_configs.get(mod.name)
             await mod.register_tools(wrapped_mcp, validated_config, self.db)
 
     async def shutdown(self) -> None:
         """Graceful shutdown.
 
-1. Stop MCP server
+        1. Stop MCP server
         2. Stop accepting new triggers and drain in-flight CC sessions
         3. Module on_shutdown in reverse topological order
         4. Close DB pool
@@ -549,7 +555,7 @@ validated_config = self._module_configs.get(mod.name)
             self.config.name if self.config else "unknown",
         )
 
-# 1. Stop MCP server
+        # 1. Stop MCP server
         if self._server is not None:
             self._server.should_exit = True
         if self._server_task is not None:

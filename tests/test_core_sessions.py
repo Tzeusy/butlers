@@ -250,7 +250,7 @@ async def test_failed_session_has_success_false_error_set_result_null(pool):
     """Failed sessions have success=false, error=<message>, result=NULL."""
     from butlers.core.sessions import session_complete, session_create, sessions_get
 
-    sid = await session_create(pool, prompt="fail test", trigger_source="schedule")
+    sid = await session_create(pool, prompt="fail test", trigger_source="schedule:test-task")
     await session_complete(
         pool,
         sid,

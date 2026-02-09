@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Any
 
 import asyncpg
+from opentelemetry import trace
+
+from butlers.core.telemetry import inject_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -102,45 +105,64 @@ async def route(
         ``async (endpoint_url, tool_name, args) -> Any``.
         When *None*, the default MCP client is used.
     """
-    t0 = time.monotonic()
+    tracer = trace.get_tracer("butlers")
+    with tracer.start_as_current_span("switchboard.route") as span:
+        span.set_attribute("target", target_butler)
+        span.set_attribute("tool_name", tool_name)
 
-    # Look up target
-    row = await pool.fetchrow(
-        "SELECT endpoint_url FROM butler_registry WHERE name = $1", target_butler
-    )
-    if row is None:
-        await _log_routing(
-            pool, source_butler, target_butler, tool_name, False, 0, "Butler not found"
+        t0 = time.monotonic()
+
+        # Look up target
+        row = await pool.fetchrow(
+            "SELECT endpoint_url FROM butler_registry WHERE name = $1", target_butler
         )
-        return {"error": f"Butler '{target_butler}' not found in registry"}
+        if row is None:
+            span.set_status(trace.StatusCode.ERROR, "Butler not found")
+            await _log_routing(
+                pool, source_butler, target_butler, tool_name, False, 0, "Butler not found"
+            )
+            return {"error": f"Butler '{target_butler}' not found in registry"}
 
-    endpoint_url = row["endpoint_url"]
+        endpoint_url = row["endpoint_url"]
 
-    try:
-        if call_fn is not None:
-            result = await call_fn(endpoint_url, tool_name, args)
-        else:
-            result = await _call_butler_tool(endpoint_url, tool_name, args)
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        await _log_routing(pool, source_butler, target_butler, tool_name, True, duration_ms, None)
-        return {"result": result}
-    except Exception as exc:
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        error_msg = f"{type(exc).__name__}: {exc}"
-        await _log_routing(
-            pool, source_butler, target_butler, tool_name, False, duration_ms, error_msg
-        )
-        return {"error": error_msg}
+        # Inject trace context into args
+        trace_context = inject_trace_context()
+        if trace_context:
+            args = {**args, "_trace_context": trace_context}
+
+        try:
+            if call_fn is not None:
+                result = await call_fn(endpoint_url, tool_name, args)
+            else:
+                result = await _call_butler_tool(endpoint_url, tool_name, args)
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            await _log_routing(
+                pool, source_butler, target_butler, tool_name, True, duration_ms, None
+            )
+            # Update last_seen_at on successful route
+            await pool.execute(
+                "UPDATE butler_registry SET last_seen_at = now() WHERE name = $1",
+                target_butler,
+            )
+            return {"result": result}
+        except Exception as exc:
+            span.set_status(trace.StatusCode.ERROR, str(exc))
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            error_msg = f"{type(exc).__name__}: {exc}"
+            await _log_routing(
+                pool, source_butler, target_butler, tool_name, False, duration_ms, error_msg
+            )
+            return {"error": error_msg}
 
 
 async def _call_butler_tool(endpoint_url: str, tool_name: str, args: dict[str, Any]) -> Any:
     """Call a tool on another butler via MCP SSE client.
 
     In production this would use the MCP SDK client; for now it raises
-    NotImplementedError to signal that real MCP integration is pending.
+    ConnectionError to signal that real MCP integration is pending.
     """
-    raise NotImplementedError(
-        f"MCP client call to {endpoint_url} tool {tool_name} — requires MCP client SDK integration"
+    raise ConnectionError(
+        f"Failed to call tool {tool_name} on {endpoint_url} — requires MCP client SDK integration"
     )
 
 

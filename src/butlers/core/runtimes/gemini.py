@@ -230,6 +230,10 @@ class GeminiAdapter(RuntimeAdapter):
     def __init__(self, gemini_binary: str | None = None) -> None:
         self._gemini_binary = gemini_binary
 
+    @property
+    def binary_name(self) -> str:
+        return "gemini"
+
     def _get_binary(self) -> str:
         """Get the gemini binary path, auto-detecting if needed."""
         if self._gemini_binary is not None:
@@ -242,6 +246,7 @@ class GeminiAdapter(RuntimeAdapter):
         system_prompt: str,
         mcp_servers: dict[str, Any],
         env: dict[str, str],
+        max_turns: int = 20,
         cwd: Path | None = None,
         timeout: int | None = None,
     ) -> tuple[str | None, list[dict[str, Any]]]:

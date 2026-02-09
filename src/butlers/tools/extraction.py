@@ -465,7 +465,12 @@ async def handle_message_with_extraction(
     from butlers.tools.switchboard import classify_message
 
     async def _classify() -> str:
-        return await classify_message(pool, message, classify_dispatch_fn)
+        result = await classify_message(pool, message, classify_dispatch_fn)
+        # classify_message returns list[dict] with {butler, prompt} entries;
+        # extract the primary target butler name from the first entry.
+        if result and isinstance(result, list) and len(result) > 0:
+            return result[0].get("butler", "general")
+        return "general"
 
     async def _extract() -> list[Extraction]:
         try:

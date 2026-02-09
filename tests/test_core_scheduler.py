@@ -769,8 +769,8 @@ async def test_update_multiple_fields_with_cron_is_atomic(pool):
     assert updated["cron"] == "*/5 * * * *"
     assert updated["prompt"] == "new prompt"
     assert updated["enabled"] is False
-    # next_run_at should be computed from the new cron
-    assert updated["next_run_at"] is not None
+    # next_run_at should be NULL when task is disabled
+    assert updated["next_run_at"] is None
 # Telemetry — butler.tick span
 # ---------------------------------------------------------------------------
 

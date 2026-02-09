@@ -191,6 +191,10 @@ class CodexAdapter(RuntimeAdapter):
     def __init__(self, codex_binary: str | None = None) -> None:
         self._codex_binary = codex_binary
 
+    @property
+    def binary_name(self) -> str:
+        return "codex"
+
     def _get_binary(self) -> str:
         """Get the codex binary path, auto-detecting if needed."""
         if self._codex_binary is not None:
@@ -203,6 +207,7 @@ class CodexAdapter(RuntimeAdapter):
         system_prompt: str,
         mcp_servers: dict[str, Any],
         env: dict[str, str],
+        max_turns: int = 20,
         cwd: Path | None = None,
         timeout: int | None = None,
     ) -> tuple[str | None, list[dict[str, Any]]]:

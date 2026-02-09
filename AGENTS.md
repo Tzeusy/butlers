@@ -106,6 +106,9 @@ git push                # Push to remote
 
 ## Notes to self
 
+### Manifesto-driven design
+Each butler has a `MANIFESTO.md` that defines its public identity and value proposition. Features, tools, and UX decisions for a butler should be deeply aligned with its manifesto. The manifesto is the source of truth for *what this butler is for* — CLAUDE.md is *how it behaves*, butler.toml is *what it runs*. When proposing new features or evaluating scope, check the manifesto first.
+
 ### v1 MVP Status (2026-02-09)
 All 122 beads closed. 449 tests passing on main. Full implementation complete.
 

@@ -1242,7 +1242,7 @@ async def test_extraction_log_list_filter_by_type(pool_with_extraction):
 
 async def test_extraction_log_list_filter_by_time(pool_with_extraction):
     """extraction_log_list filters by since timestamp."""
-    from datetime import datetime, timedelta
+    from datetime import UTC, datetime, timedelta
 
     from butlers.tools.switchboard import extraction_log_list, log_extraction
 

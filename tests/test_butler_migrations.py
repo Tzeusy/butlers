@@ -151,6 +151,10 @@ def _patch_infra():
     mock_db.port = 5432
     mock_db.db_name = "butler_test"
 
+    mock_adapter = MagicMock()
+    mock_adapter.binary_name = "claude"
+    mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
     return {
         "db_from_env": patch("butlers.daemon.Database.from_env", return_value=mock_db),
         "run_migrations": patch("butlers.daemon.run_migrations", new_callable=AsyncMock),
@@ -159,7 +163,10 @@ def _patch_infra():
         "init_telemetry": patch("butlers.daemon.init_telemetry"),
         "sync_schedules": patch("butlers.daemon.sync_schedules", new_callable=AsyncMock),
         "FastMCP": patch("butlers.daemon.FastMCP"),
-        "CCSpawner": patch("butlers.daemon.CCSpawner"),
+        "Spawner": patch("butlers.daemon.Spawner", return_value=MagicMock()),
+        "get_adapter": patch("butlers.daemon.get_adapter", return_value=mock_adapter_cls),
+        "shutil_which": patch("butlers.daemon.shutil.which", return_value="/usr/bin/claude"),
+        "start_mcp_server": patch.object(ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock),
         "mock_db": mock_db,
         "mock_pool": mock_pool,
     }
@@ -186,7 +193,10 @@ class TestButlerSpecificMigrationInDaemon:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             mock_has_chain.return_value = True
 
@@ -218,7 +228,10 @@ class TestButlerSpecificMigrationInDaemon:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             mock_has_chain.return_value = False
 
@@ -246,7 +259,10 @@ class TestButlerSpecificMigrationInDaemon:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             mock_has_chain.return_value = False
 
@@ -270,7 +286,10 @@ class TestButlerSpecificMigrationInDaemon:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             mock_has_chain.return_value = True
 

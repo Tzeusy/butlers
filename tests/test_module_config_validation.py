@@ -187,6 +187,8 @@ def _patch_infra():
     mock_db.port = 5432
     mock_db.db_name = "butler_test"
 
+    mock_spawner = MagicMock()
+
     return {
         "db_from_env": patch("butlers.daemon.Database.from_env", return_value=mock_db),
         "run_migrations": patch("butlers.daemon.run_migrations", new_callable=AsyncMock),
@@ -194,9 +196,18 @@ def _patch_infra():
         "init_telemetry": patch("butlers.daemon.init_telemetry"),
         "sync_schedules": patch("butlers.daemon.sync_schedules", new_callable=AsyncMock),
         "FastMCP": patch("butlers.daemon.FastMCP"),
-        "CCSpawner": patch("butlers.daemon.CCSpawner"),
+        "Spawner": patch("butlers.daemon.Spawner", return_value=mock_spawner),
+        "get_adapter": patch(
+            "butlers.daemon.get_adapter",
+            return_value=type("MockAdapter", (), {"binary_name": "claude"}),
+        ),
+        "shutil_which": patch("butlers.daemon.shutil.which", return_value="/usr/bin/claude"),
+        "start_mcp_server": patch.object(
+            ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock
+        ),
         "mock_db": mock_db,
         "mock_pool": mock_pool,
+        "mock_spawner": mock_spawner,
     }
 
 
@@ -223,7 +234,10 @@ class TestValidConfigPasses:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -246,7 +260,10 @@ class TestValidConfigPasses:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -269,7 +286,10 @@ class TestValidConfigPasses:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -296,7 +316,10 @@ class TestMissingRequiredField:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             with pytest.raises(ModuleConfigError, match="strict_mod"):
@@ -315,7 +338,10 @@ class TestMissingRequiredField:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             with pytest.raises(ModuleConfigError, match="api_key"):
@@ -341,7 +367,10 @@ class TestExtraFieldRejected:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             with pytest.raises(ModuleConfigError, match="strict_mod"):
@@ -363,7 +392,10 @@ class TestExtraFieldRejected:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             with pytest.raises(ModuleConfigError, match="bogus"):
@@ -389,7 +421,10 @@ class TestTypeMismatch:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             with pytest.raises(ModuleConfigError, match="strict_mod"):
@@ -415,7 +450,10 @@ class TestNoSchemaFallback:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -440,7 +478,10 @@ class TestNoSchemaFallback:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()  # Should not raise
@@ -454,7 +495,7 @@ class TestValidationPreventsStartup:
     """Config validation failure should prevent subsequent startup steps."""
 
     async def test_validation_failure_prevents_spawner_creation(self, tmp_path: Path) -> None:
-        """If config validation fails, CCSpawner should not be created."""
+        """If config validation fails, Spawner should not be created."""
         butler_dir = _make_butler_toml(
             tmp_path,
             modules={"strict_mod": {}},  # Missing api_key
@@ -469,7 +510,10 @@ class TestValidationPreventsStartup:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"] as mock_spawner_cls,
+            patches["Spawner"] as mock_spawner_cls,
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             with pytest.raises(ModuleConfigError):

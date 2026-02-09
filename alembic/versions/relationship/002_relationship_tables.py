@@ -1,8 +1,8 @@
-"""life_events_table
+"""add relationship tables: contact_info, addresses, life_events
 
 Revision ID: 002
 Revises: 001
-Create Date: 2026-02-10 00:00:00.000000
+Create Date: 2026-02-09 00:00:00.000000
 
 """
 
@@ -18,6 +18,50 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Create contact_info table
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS contact_info (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            type VARCHAR NOT NULL,
+            value TEXT NOT NULL,
+            label VARCHAR,
+            is_primary BOOLEAN DEFAULT false,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+    """)
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS idx_contact_info_type_value
+            ON contact_info (type, value)
+    """)
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS idx_contact_info_contact_id
+            ON contact_info (contact_id)
+    """)
+
+    # Create addresses table
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS addresses (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            label VARCHAR NOT NULL DEFAULT 'Home',
+            line_1 TEXT NOT NULL,
+            line_2 TEXT,
+            city VARCHAR,
+            province VARCHAR,
+            postal_code VARCHAR,
+            country VARCHAR(2),
+            is_current BOOLEAN NOT NULL DEFAULT false,
+            created_at TIMESTAMPTZ DEFAULT now(),
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )
+    """)
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS idx_addresses_contact_id
+            ON addresses (contact_id)
+    """)
+
+    # Create life event tables
     # Life event categories (Career, Personal, Social)
     op.execute("""
         CREATE TABLE IF NOT EXISTS life_event_categories (
@@ -116,6 +160,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Drop tables in reverse order of creation
     op.execute("DROP TABLE IF EXISTS life_events")
     op.execute("DROP TABLE IF EXISTS life_event_types")
     op.execute("DROP TABLE IF EXISTS life_event_categories")
+    op.execute("DROP TABLE IF EXISTS addresses")
+    op.execute("DROP TABLE IF EXISTS contact_info")

@@ -19,7 +19,7 @@ import pytest
 from pydantic import BaseModel
 
 from butlers.config import load_config
-from butlers.core.spawner import CCSpawner
+from butlers.core.spawner import Spawner
 from butlers.daemon import ButlerDaemon
 from butlers.modules.base import Module
 from butlers.modules.registry import ModuleRegistry
@@ -187,6 +187,10 @@ def _patch_infra():
     mock_db.port = 5432
     mock_db.db_name = "butler_test"
 
+    mock_spawner = MagicMock()
+    mock_spawner.stop_accepting = MagicMock()
+    mock_spawner.drain = AsyncMock()
+
     return {
         "db_from_env": patch("butlers.daemon.Database.from_env", return_value=mock_db),
         "run_migrations": patch("butlers.daemon.run_migrations", new_callable=AsyncMock),
@@ -194,9 +198,18 @@ def _patch_infra():
         "init_telemetry": patch("butlers.daemon.init_telemetry"),
         "sync_schedules": patch("butlers.daemon.sync_schedules", new_callable=AsyncMock),
         "FastMCP": patch("butlers.daemon.FastMCP"),
-        "CCSpawner": patch("butlers.daemon.CCSpawner"),
+        "Spawner": patch("butlers.daemon.Spawner", return_value=mock_spawner),
+        "get_adapter": patch(
+            "butlers.daemon.get_adapter",
+            return_value=type("MockAdapter", (), {"binary_name": "claude"}),
+        ),
+        "shutil_which": patch("butlers.daemon.shutil.which", return_value="/usr/bin/claude"),
+        "start_mcp_server": patch.object(
+            ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock
+        ),
         "mock_db": mock_db,
         "mock_pool": mock_pool,
+        "mock_spawner": mock_spawner,
     }
 
 
@@ -233,14 +246,14 @@ class TestShutdownTimeoutConfig:
 
 
 class TestSpawnerDraining:
-    """Test CCSpawner session tracking and drain behavior."""
+    """Test Spawner session tracking and drain behavior."""
 
-    def _make_spawner(self, sdk_query=None) -> CCSpawner:
+    def _make_spawner(self, sdk_query=None) -> Spawner:
         """Create a spawner with no pool (no DB logging)."""
         from butlers.config import ButlerConfig
 
         config = ButlerConfig(name="test", port=9100)
-        return CCSpawner(
+        return Spawner(
             config=config,
             config_dir=Path("/tmp/nonexistent"),
             pool=None,
@@ -359,10 +372,6 @@ class TestDaemonGracefulShutdown:
         butler_dir = _make_butler_toml(tmp_path)
         patches = _patch_infra()
 
-        mock_spawner = MagicMock()
-        mock_spawner.stop_accepting = MagicMock()
-        mock_spawner.drain = AsyncMock()
-
         with (
             patches["db_from_env"],
             patches["run_migrations"],
@@ -370,7 +379,10 @@ class TestDaemonGracefulShutdown:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patch("butlers.daemon.CCSpawner", return_value=mock_spawner),
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -386,10 +398,6 @@ class TestDaemonGracefulShutdown:
         butler_dir = _make_butler_toml(tmp_path)
         patches = _patch_infra()
 
-        mock_spawner = MagicMock()
-        mock_spawner.stop_accepting = MagicMock()
-        mock_spawner.drain = AsyncMock()
-
         with (
             patches["db_from_env"],
             patches["run_migrations"],
@@ -397,13 +405,17 @@ class TestDaemonGracefulShutdown:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patch("butlers.daemon.CCSpawner", return_value=mock_spawner),
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
 
         await daemon.shutdown()
 
+        mock_spawner = patches["mock_spawner"]
         mock_spawner.stop_accepting.assert_called_once()
         mock_spawner.drain.assert_awaited_once()
 
@@ -412,10 +424,6 @@ class TestDaemonGracefulShutdown:
         butler_dir = _make_butler_toml(tmp_path, shutdown_timeout_s=15.0)
         patches = _patch_infra()
 
-        mock_spawner = MagicMock()
-        mock_spawner.stop_accepting = MagicMock()
-        mock_spawner.drain = AsyncMock()
-
         with (
             patches["db_from_env"],
             patches["run_migrations"],
@@ -423,13 +431,17 @@ class TestDaemonGracefulShutdown:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patch("butlers.daemon.CCSpawner", return_value=mock_spawner),
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
 
         await daemon.shutdown()
 
+        mock_spawner = patches["mock_spawner"]
         mock_spawner.drain.assert_awaited_once_with(timeout=15.0)
 
     async def test_shutdown_order(self, tmp_path: Path) -> None:
@@ -444,7 +456,7 @@ class TestDaemonGracefulShutdown:
 
         call_order: list[str] = []
 
-        mock_spawner = MagicMock()
+        mock_spawner = patches["mock_spawner"]
         mock_spawner.stop_accepting = MagicMock(
             side_effect=lambda: call_order.append("stop_accepting")
         )
@@ -457,7 +469,10 @@ class TestDaemonGracefulShutdown:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patch("butlers.daemon.CCSpawner", return_value=mock_spawner),
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -520,7 +535,10 @@ class TestStartupFailureCleanup:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             with pytest.raises(RuntimeError, match="Module startup failed"):
@@ -552,7 +570,10 @@ class TestStartupFailureCleanup:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             with pytest.raises(RuntimeError, match="Module startup failed"):
@@ -581,7 +602,10 @@ class TestStartupFailureCleanup:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
 
@@ -638,7 +662,10 @@ class TestStartupFailureCleanup:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             with pytest.raises(RuntimeError, match="first module fails"):

@@ -1078,24 +1078,12 @@ class TestSecretDetection:
         self, butler_dir: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """detect_secrets should be called during daemon startup."""
-class TestModuleCredentialsTomlSource:
-    """Verify credentials_env is read from TOML config with class fallback."""
-
-    async def test_toml_credentials_used_over_class(self, tmp_path: Path) -> None:
-        """When butler.toml declares credentials_env, it takes priority over the class."""
-        # TOML declares different creds than what StubModuleA's class property returns
-        butler_dir = _make_butler_toml(
-            tmp_path,
-            modules={"stub_a": {"credentials_env": ["TOML_TOKEN_A", "TOML_SECRET_A"]}},
-        )
-        registry = _make_registry(StubModuleA)
         patches = _patch_infra()
 
         with (
             patches["db_from_env"],
             patches["run_migrations"],
             patches["validate_credentials"],
-            patches["validate_credentials"] as mock_validate,
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
@@ -1154,9 +1142,97 @@ name = "butler_test"
         self, butler_dir_with_modules: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """credentials_env field should be exempt from secret scanning."""
-        # Using butler_dir_with_modules which has modules configured
         patches = _patch_infra()
         registry = _make_registry(StubModuleA, StubModuleB)
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            caplog.at_level(logging.WARNING, logger="butlers.daemon"),
+        ):
+            daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
+            await daemon.start()
+
+        # Should not warn about credentials_env field (it's a list of env var names)
+        warnings = [
+            rec.message for rec in caplog.records if "may contain an inline secret" in rec.message
+        ]
+        assert len(warnings) == 0
+
+    async def test_butler_env_lists_exempt_from_scanning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """[butler.env] required/optional lists should be exempt from scanning."""
+        toml_content = """
+[butler]
+name = "test-butler"
+port = 9100
+description = "A test butler"
+
+[butler.db]
+name = "butler_test"
+
+[butler.env]
+required = ["ANTHROPIC_API_KEY", "SECRET_TOKEN"]
+optional = ["OPTIONAL_KEY"]
+"""
+        (tmp_path / "butler.toml").write_text(toml_content)
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            caplog.at_level(logging.WARNING, logger="butlers.daemon"),
+        ):
+            daemon = ButlerDaemon(tmp_path)
+            await daemon.start()
+
+        # Should not warn about butler.env lists (they are env var names, not values)
+        warnings = [
+            rec.message for rec in caplog.records if "may contain an inline secret" in rec.message
+        ]
+        assert len(warnings) == 0
+
+
+class TestModuleCredentialsTomlSource:
+    """Verify credentials_env is read from TOML config with class fallback."""
+
+    async def test_toml_credentials_override_class(self, tmp_path: Path) -> None:
+        """When TOML declares credentials_env, it overrides the class property."""
+        butler_dir = _make_butler_toml(
+            tmp_path,
+            modules={
+                "stub_a": {"credentials_env": ["TOML_TOKEN_A", "TOML_SECRET_A"]},
+                "stub_b": {},
+            },
+        )
+        registry = _make_registry(StubModuleA, StubModuleB)
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"] as mock_validate,
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -1180,7 +1256,6 @@ name = "butler_test"
         with (
             patches["db_from_env"],
             patches["run_migrations"],
-            patches["validate_credentials"],
             patches["validate_credentials"] as mock_validate,
             patches["init_telemetry"],
             patches["sync_schedules"],
@@ -1188,37 +1263,10 @@ name = "butler_test"
             patches["Spawner"],
             patches["get_adapter"],
             patches["shutil_which"],
-            caplog.at_level(logging.WARNING, logger="butlers.daemon"),
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
 
-        # Should not warn about credentials_env field (it's a list of env var names)
-        # We're checking that no warnings are generated from module configs
-        warnings = [
-            rec.message for rec in caplog.records if "may contain an inline secret" in rec.message
-        ]
-        assert len(warnings) == 0
-
-    async def test_butler_env_lists_exempt_from_scanning(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """[butler.env] required/optional lists should be exempt from scanning."""
-        # Create a butler.toml with butler.env containing token-like strings
-        toml_content = """
-[butler]
-name = "test-butler"
-port = 9100
-description = "A test butler"
-
-[butler.db]
-name = "butler_test"
-
-[butler.env]
-required = ["ANTHROPIC_API_KEY", "SECRET_TOKEN"]
-optional = ["OPTIONAL_KEY"]
-"""
-        (tmp_path / "butler.toml").write_text(toml_content)
         mock_validate.assert_called_once()
         call_kwargs = mock_validate.call_args
         module_creds = call_kwargs.kwargs.get(
@@ -1318,19 +1366,16 @@ optional = ["OPTIONAL_KEY"]
             patches["init_telemetry"],
             patches["sync_schedules"],
             patches["FastMCP"],
-            patches["Spawner"],
+            patches["Spawner"] as mock_spawner_cls,
             patches["get_adapter"],
             patches["shutil_which"],
-            caplog.at_level(logging.WARNING, logger="butlers.daemon"),
         ):
-            daemon = ButlerDaemon(tmp_path)
+            daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
 
-        # Should not warn about butler.env lists (they are env var names, not values)
-        warnings = [
-            rec.message for rec in caplog.records if "may contain an inline secret" in rec.message
-        ]
-        assert len(warnings) == 0
+        mock_spawner_cls.assert_called_once()
+        spawner_kwargs = mock_spawner_cls.call_args.kwargs
+        assert spawner_kwargs["module_credentials_env"] == {"stub_a": ["TOML_KEY"]}
 
     async def test_multiple_secrets_detected(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -1475,17 +1520,22 @@ optional = ["OPTIONAL_KEY"]
         # env lists should not be in flattened output (they are just env var names)
         assert "butler.env.required" not in flat
         assert "butler.env.optional" not in flat
-            patches["Spawner"] as mock_spawner_cls,
-            patches["get_adapter"],
-            patches["shutil_which"],
-        ):
-            daemon = ButlerDaemon(butler_dir, registry=registry)
-            await daemon.start()
 
-        mock_spawner_cls.assert_called_once()
-        spawner_kwargs = mock_spawner_cls.call_args.kwargs
-        assert spawner_kwargs["module_credentials_env"] == {"stub_a": ["TOML_KEY"]}
 
+class TestRuntimeAdapterPassedToSpawner:
+    """Verify runtime adapter is passed to Spawner during startup."""
+
+    async def test_runtime_adapter_passed_to_spawner(self, butler_dir: Path) -> None:
+        """Spawner should receive the runtime adapter instance."""
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
             patches["Spawner"] as mock_spawner_cls,
             patches["get_adapter"],
             patches["shutil_which"],

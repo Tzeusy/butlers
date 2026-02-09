@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, patch
 
 from butlers.config import ButlerConfig
 from butlers.core.spawner import (
+    CCSpawner,
     Spawner,
     SpawnerResult,
     _build_env,

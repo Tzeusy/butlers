@@ -777,7 +777,9 @@ class TestHandleMessageWithExtraction:
         )
 
         async def classify_dispatch(**kwargs):
-            return FakeSpawnerResult(result="relationship")
+            return FakeSpawnerResult(
+                result='[{"butler": "relationship", "prompt": "I met Iris today, she\'s lovely"}]'
+            )
 
         extract_response = _single_extraction(tool_args={"name": "Iris"})
 
@@ -813,7 +815,9 @@ class TestHandleMessageWithExtraction:
         )
 
         async def classify_dispatch(**kwargs):
-            return FakeSpawnerResult(result="general")
+            return FakeSpawnerResult(
+                result='[{"butler": "general", "prompt": "Hello world"}]'
+            )
 
         async def extract_dispatch(**kwargs):
             raise RuntimeError("Extraction CC crashed")

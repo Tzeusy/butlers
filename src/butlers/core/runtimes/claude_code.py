@@ -50,6 +50,7 @@ class ClaudeCodeAdapter(RuntimeAdapter):
         system_prompt: str,
         mcp_servers: dict[str, Any],
         env: dict[str, str],
+        max_turns: int = 20,
         cwd: Path | None = None,
         timeout: int | None = None,
     ) -> tuple[str | None, list[dict[str, Any]]]:
@@ -81,6 +82,8 @@ class ClaudeCodeAdapter(RuntimeAdapter):
             mcp_servers=sdk_mcp_servers,
             permission_mode="bypassPermissions",
             env=env,
+            max_turns=max_turns,
+            cwd=str(cwd) if cwd else None,
         )
 
         result_text: str | None = None

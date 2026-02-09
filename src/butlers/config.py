@@ -13,10 +13,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from butlers.core.runtimes import get_adapter
+
 # Pattern matching ${VAR_NAME} — supports alphanumeric + underscore variable names.
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-
-from butlers.core.runtimes import get_adapter
 
 
 class ConfigError(Exception):
@@ -52,6 +52,7 @@ class ButlerConfig:
     env_required: list[str] = field(default_factory=list)
     env_optional: list[str] = field(default_factory=list)
     shutdown_timeout_s: float = 30.0
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
 
 def resolve_env_vars(value: Any) -> Any:
@@ -114,7 +115,6 @@ def _resolve_string(s: str) -> str:
         )
 
     return result
-    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
 
 def load_config(config_dir: Path) -> ButlerConfig:

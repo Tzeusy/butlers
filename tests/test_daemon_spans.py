@@ -161,15 +161,21 @@ def _patch_infra():
     mock_trigger_result.duration_ms = 100
     mock_spawner.trigger = AsyncMock(return_value=mock_trigger_result)
 
-    mock_spawner_cls = MagicMock(return_value=mock_spawner)
-
     return {
         "db_from_env": patch("butlers.daemon.Database.from_env", return_value=mock_db),
         "run_migrations": patch("butlers.daemon.run_migrations", new_callable=AsyncMock),
         "validate_credentials": patch("butlers.daemon.validate_credentials"),
         "init_telemetry": patch("butlers.daemon.init_telemetry"),
         "sync_schedules": patch("butlers.daemon.sync_schedules", new_callable=AsyncMock),
-        "CCSpawner": patch("butlers.daemon.CCSpawner", mock_spawner_cls),
+        "Spawner": patch("butlers.daemon.Spawner", return_value=mock_spawner),
+        "get_adapter": patch(
+            "butlers.daemon.get_adapter",
+            return_value=type("MockAdapter", (), {"binary_name": "claude"}),
+        ),
+        "shutil_which": patch("butlers.daemon.shutil.which", return_value="/usr/bin/claude"),
+        "start_mcp_server": patch.object(
+            ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock
+        ),
         "mock_db": mock_db,
         "mock_pool": mock_pool,
         "mock_spawner": mock_spawner,
@@ -186,18 +192,10 @@ class TestCoreToolSpans:
 
     EXPECTED_TOOLS = {
         "status",
-        "trigger",
-        "tick_now",
-        "get_state",
-        "set_state",
-        "delete_state",
-        "list_state",
-        "list_schedules",
-        "create_schedule",
-        "update_schedule",
-        "delete_schedule",
-        "list_sessions",
-        "get_session",
+        "state_get",
+        "state_set",
+        "state_delete",
+        "state_list",
     }
 
     async def _start_daemon_capture_tools(
@@ -226,7 +224,10 @@ class TestCoreToolSpans:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patch("butlers.daemon.FastMCP", return_value=mock_mcp),
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -249,24 +250,24 @@ class TestCoreToolSpans:
         butler_dir = _make_butler_toml(tmp_path)
         daemon, tools = await self._start_daemon_capture_tools(butler_dir)
 
-        with patch("butlers.daemon.state_get", new_callable=AsyncMock, return_value="val"):
-            await tools["get_state"](key="test-key")
+        with patch("butlers.daemon._state_get", new_callable=AsyncMock, return_value="val"):
+            await tools["state_get"](key="test-key")
 
         spans = otel_provider.get_finished_spans()
         assert len(spans) == 1
-        assert spans[0].name == "butler.tool.get_state"
+        assert spans[0].name == "butler.tool.state_get"
         assert spans[0].attributes["butler.name"] == "test-butler"
 
     async def test_set_state_creates_span(self, tmp_path, otel_provider):
         butler_dir = _make_butler_toml(tmp_path)
         daemon, tools = await self._start_daemon_capture_tools(butler_dir)
 
-        with patch("butlers.daemon.state_set", new_callable=AsyncMock):
-            await tools["set_state"](key="k", value="v")
+        with patch("butlers.daemon._state_set", new_callable=AsyncMock):
+            await tools["state_set"](key="k", value="v")
 
         spans = otel_provider.get_finished_spans()
         assert len(spans) == 1
-        assert spans[0].name == "butler.tool.set_state"
+        assert spans[0].name == "butler.tool.state_set"
         assert spans[0].attributes["butler.name"] == "test-butler"
 
     async def test_all_core_tools_have_span_names(self, tmp_path, otel_provider):
@@ -279,35 +280,35 @@ class TestCoreToolSpans:
         tool_kwargs = {
             "status": {},
             "trigger": {"prompt": "test"},
-            "tick_now": {},
-            "get_state": {"key": "k"},
-            "set_state": {"key": "k", "value": "v"},
-            "delete_state": {"key": "k"},
-            "list_state": {},
-            "list_schedules": {},
-            "create_schedule": {"name": "n", "cron": "* * * * *", "prompt": "p"},
-            "update_schedule": {"task_id": "00000000-0000-0000-0000-000000000001"},
-            "delete_schedule": {"task_id": "00000000-0000-0000-0000-000000000001"},
-            "list_sessions": {},
-            "get_session": {"session_id": "00000000-0000-0000-0000-000000000001"},
+            "tick": {},
+            "state_get": {"key": "k"},
+            "state_set": {"key": "k", "value": "v"},
+            "state_delete": {"key": "k"},
+            "state_list": {},
+            "schedule_list": {},
+            "schedule_create": {"name": "n", "cron": "* * * * *", "prompt": "p"},
+            "schedule_update": {"task_id": "00000000-0000-0000-0000-000000000001"},
+            "schedule_delete": {"task_id": "00000000-0000-0000-0000-000000000001"},
+            "sessions_list": {},
+            "sessions_get": {"session_id": "00000000-0000-0000-0000-000000000001"},
         }
 
         with (
-            patch("butlers.daemon.state_get", new_callable=AsyncMock, return_value="v"),
-            patch("butlers.daemon.state_set", new_callable=AsyncMock),
-            patch("butlers.daemon.state_delete", new_callable=AsyncMock),
-            patch("butlers.daemon.state_list", new_callable=AsyncMock, return_value=[]),
-            patch("butlers.daemon.schedule_list", new_callable=AsyncMock, return_value=[]),
+            patch("butlers.daemon._state_get", new_callable=AsyncMock, return_value="v"),
+            patch("butlers.daemon._state_set", new_callable=AsyncMock),
+            patch("butlers.daemon._state_delete", new_callable=AsyncMock),
+            patch("butlers.daemon._state_list", new_callable=AsyncMock, return_value=[]),
+            patch("butlers.daemon._schedule_list", new_callable=AsyncMock, return_value=[]),
             patch(
-                "butlers.daemon.schedule_create",
+                "butlers.daemon._schedule_create",
                 new_callable=AsyncMock,
                 return_value="00000000-0000-0000-0000-000000000001",
             ),
-            patch("butlers.daemon.schedule_update", new_callable=AsyncMock),
-            patch("butlers.daemon.schedule_delete", new_callable=AsyncMock),
-            patch("butlers.daemon.tick", new_callable=AsyncMock, return_value=0),
-            patch("butlers.daemon.sessions_list", new_callable=AsyncMock, return_value=[]),
-            patch("butlers.daemon.sessions_get", new_callable=AsyncMock, return_value=None),
+            patch("butlers.daemon._schedule_update", new_callable=AsyncMock),
+            patch("butlers.daemon._schedule_delete", new_callable=AsyncMock),
+            patch("butlers.daemon._tick", new_callable=AsyncMock, return_value=0),
+            patch("butlers.daemon._sessions_list", new_callable=AsyncMock, return_value=[]),
+            patch("butlers.daemon._sessions_get", new_callable=AsyncMock, return_value=None),
         ):
             for tool_name, kwargs in tool_kwargs.items():
                 await tools[tool_name](**kwargs)
@@ -334,13 +335,13 @@ class TestCoreToolSpans:
 
         with (
             patch(
-                "butlers.daemon.state_get",
+                "butlers.daemon._state_get",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("db gone"),
             ),
             pytest.raises(RuntimeError, match="db gone"),
         ):
-            await tools["get_state"](key="k")
+            await tools["state_get"](key="k")
 
         spans = otel_provider.get_finished_spans()
         assert len(spans) == 1
@@ -479,7 +480,10 @@ class TestModuleToolSpans:
             patches["init_telemetry"],
             patches["sync_schedules"],
             patch("butlers.daemon.FastMCP", return_value=mock_mcp),
-            patches["CCSpawner"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()

@@ -197,7 +197,7 @@ class Spawner:
         self,
         prompt: str,
         trigger_source: str,
-context: str | None = None,
+        context: str | None = None,
         max_turns: int = 20,
     ) -> SpawnerResult:
         """Spawn an ephemeral runtime instance.
@@ -210,7 +210,7 @@ context: str | None = None,
         prompt:
             The prompt to send to the runtime instance.
         trigger_source:
-What caused this invocation (schedule, trigger_tool, tick, heartbeat).
+            What caused this invocation (schedule, trigger_tool, tick, heartbeat).
         context:
             Optional text to prepend to the prompt. If provided and non-empty,
             this will be prepended to the prompt with two newlines separating them.
@@ -298,7 +298,7 @@ What caused this invocation (schedule, trigger_tool, tick, heartbeat).
         self,
         prompt: str,
         trigger_source: str,
-context: str | None = None,
+        context: str | None = None,
         max_turns: int = 20,
     ) -> SpawnerResult:
         """Internal: run the runtime invocation (called under lock)."""
@@ -327,7 +327,9 @@ context: str | None = None,
 
             # Create session record with trace_id
             if self._pool is not None:
-                session_id = await session_create(self._pool, final_prompt, trigger_source, trace_id)
+                session_id = await session_create(
+                    self._pool, final_prompt, trigger_source, trace_id
+                )
                 # Set session_id on span
                 span.set_attribute("session_id", str(session_id))
 
@@ -351,7 +353,7 @@ context: str | None = None,
 
             # Invoke via runtime adapter
             result_text, tool_calls = await self._runtime.invoke(
-                prompt=prompt,
+                prompt=final_prompt,
                 system_prompt=system_prompt,
                 mcp_servers=mcp_servers,
                 env=env,

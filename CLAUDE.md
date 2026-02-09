@@ -51,7 +51,8 @@ Each butler owns a dedicated PostgreSQL database. Inter-butler communication onl
 
 ```
 butler-name/
-├── CLAUDE.md       # Butler personality/instructions
+├── MANIFESTO.md    # Public-facing identity, purpose, and value proposition
+├── CLAUDE.md       # Butler personality/instructions (system prompt)
 ├── AGENTS.md       # Runtime agent notes
 ├── skills/         # Skills available to CC instances (SKILL.md + optional scripts)
 └── butler.toml     # Identity, schedule, modules config
@@ -75,6 +76,7 @@ tests/               # pytest tests
 - **TDD approach:** Write failing test first, then implement
 - **Module dependencies:** Resolved via topological sort
 - **Modules only add tools** — they never touch core infrastructure
+- **Manifesto-driven design:** Each butler has a `MANIFESTO.md` that defines its identity, purpose, and value proposition for users. New features, tools, and UX decisions for a butler should be deeply aligned with its manifesto. When in doubt about scope or framing, consult the manifesto.
 
 ## Implementation Plan
 
