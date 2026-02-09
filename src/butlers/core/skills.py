@@ -18,11 +18,16 @@ Butler config directory layout::
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PROMPT_TEMPLATE = "You are {butler_name}, a butler AI assistant."
+
+# Kebab-case validation pattern: starts with lowercase letter, followed by lowercase letters/digits,
+# optionally followed by groups of hyphen + lowercase letters/digits
+_KEBAB_CASE_PATTERN = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +57,59 @@ def get_skills_dir(config_dir: Path) -> Path | None:
     if skills.is_dir():
         return skills
     return None
+
+
+def is_valid_skill_name(name: str) -> bool:
+    """Check if a skill directory name is valid kebab-case.
+
+    Valid pattern: ^[a-z][a-z0-9]*(-[a-z0-9]+)*$
+    - Must start with a lowercase letter
+    - Can contain lowercase letters and digits
+    - Can contain hyphens to separate segments
+    - Each segment after a hyphen must have at least one character
+    - Cannot start or end with a hyphen
+    - Cannot have consecutive hyphens
+    """
+    return _KEBAB_CASE_PATTERN.match(name) is not None
+
+
+def list_valid_skills(skills_dir: Path) -> list[Path]:
+    """List all valid skill directories in the given skills directory.
+
+    Returns only directories with valid kebab-case names.
+    Invalid directories are logged as warnings and skipped.
+
+    Parameters
+    ----------
+    skills_dir:
+        Path to the skills directory to scan.
+
+    Returns
+    -------
+    list[Path]
+        List of paths to valid skill directories, sorted by name.
+    """
+    if not skills_dir.is_dir():
+        logger.warning("Skills directory does not exist: %s", skills_dir)
+        return []
+
+    valid_skills: list[Path] = []
+
+    for item in skills_dir.iterdir():
+        # Only process directories, skip files
+        if not item.is_dir():
+            continue
+
+        skill_name = item.name
+
+        if is_valid_skill_name(skill_name):
+            valid_skills.append(item)
+        else:
+            logger.warning(
+                "Skipping skill directory with invalid name (must be kebab-case): %s", skill_name
+            )
+
+    return sorted(valid_skills, key=lambda p: p.name)
 
 
 # ---------------------------------------------------------------------------
