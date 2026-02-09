@@ -329,17 +329,17 @@ class TestButlerStartupIntegration:
         expected_tools = {
             "status",
             "trigger",
-            "tick_now",
-            "get_state",
-            "set_state",
-            "delete_state",
-            "list_state",
-            "list_schedules",
-            "create_schedule",
-            "update_schedule",
-            "delete_schedule",
-            "list_sessions",
-            "get_session",
+            "tick",
+            "state_get",
+            "state_set",
+            "state_delete",
+            "state_list",
+            "schedule_list",
+            "schedule_create",
+            "schedule_update",
+            "schedule_delete",
+            "sessions_list",
+            "sessions_get",
         }
         assert set(registered_tools) == expected_tools
 
@@ -556,7 +556,7 @@ class TestSwitchboardRoutingIntegration:
         result = await route(
             pool,
             "target-butler",
-            "get_state",
+            "state_get",
             {"key": "test"},
             call_fn=mock_call,
         )
@@ -564,7 +564,7 @@ class TestSwitchboardRoutingIntegration:
         # Verify call_fn received correct arguments
         assert len(call_log) == 1
         assert call_log[0]["endpoint_url"] == "http://localhost:9200/sse"
-        assert call_log[0]["tool_name"] == "get_state"
+        assert call_log[0]["tool_name"] == "state_get"
         assert call_log[0]["args"] == {"key": "test"}
 
         # Verify result

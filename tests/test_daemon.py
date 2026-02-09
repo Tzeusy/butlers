@@ -303,17 +303,17 @@ class TestCoreToolRegistration:
     EXPECTED_TOOLS = {
         "status",
         "trigger",
-        "tick_now",
-        "get_state",
-        "set_state",
-        "delete_state",
-        "list_state",
-        "list_schedules",
-        "create_schedule",
-        "update_schedule",
-        "delete_schedule",
-        "list_sessions",
-        "get_session",
+        "tick",
+        "state_get",
+        "state_set",
+        "state_delete",
+        "state_list",
+        "schedule_list",
+        "schedule_create",
+        "schedule_update",
+        "schedule_delete",
+        "sessions_list",
+        "sessions_get",
     }
 
     async def test_all_core_tools_registered(self, butler_dir: Path) -> None:
