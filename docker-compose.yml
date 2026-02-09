@@ -26,13 +26,14 @@ services:
   postgres:
     image: postgres:17
     environment:
+      POSTGRES_USER: butlers
       POSTGRES_PASSWORD: butlers
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U butlers"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -54,13 +55,13 @@ services:
     ports:
       - "8100:8100"
     volumes:
-      - ./butlers/switchboard:/app/butler-config:ro
-    command: ["run", "--config", "/app/butler-config/butler.toml"]
+      - ./butlers/switchboard:/etc/butler:ro
+    command: ["run", "--config", "/etc/butler"]
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=postgres
+      - POSTGRES_USER=butlers
       - POSTGRES_PASSWORD=butlers
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     depends_on:
@@ -75,13 +76,13 @@ services:
     ports:
       - "8101:8101"
     volumes:
-      - ./butlers/general:/app/butler-config:ro
-    command: ["run", "--config", "/app/butler-config/butler.toml"]
+      - ./butlers/general:/etc/butler:ro
+    command: ["run", "--config", "/etc/butler"]
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=postgres
+      - POSTGRES_USER=butlers
       - POSTGRES_PASSWORD=butlers
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     depends_on:
@@ -96,13 +97,13 @@ services:
     ports:
       - "8102:8102"
     volumes:
-      - ./butlers/relationship:/app/butler-config:ro
-    command: ["run", "--config", "/app/butler-config/butler.toml"]
+      - ./butlers/relationship:/etc/butler:ro
+    command: ["run", "--config", "/etc/butler"]
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=postgres
+      - POSTGRES_USER=butlers
       - POSTGRES_PASSWORD=butlers
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     depends_on:
@@ -117,13 +118,13 @@ services:
     ports:
       - "8103:8103"
     volumes:
-      - ./butlers/health:/app/butler-config:ro
-    command: ["run", "--config", "/app/butler-config/butler.toml"]
+      - ./butlers/health:/etc/butler:ro
+    command: ["run", "--config", "/etc/butler"]
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=postgres
+      - POSTGRES_USER=butlers
       - POSTGRES_PASSWORD=butlers
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     depends_on:
@@ -138,13 +139,13 @@ services:
     ports:
       - "8199:8199"
     volumes:
-      - ./butlers/heartbeat:/app/butler-config:ro
-    command: ["run", "--config", "/app/butler-config/butler.toml"]
+      - ./butlers/heartbeat:/etc/butler:ro
+    command: ["run", "--config", "/etc/butler"]
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_USER=postgres
+      - POSTGRES_USER=butlers
       - POSTGRES_PASSWORD=butlers
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     depends_on:

@@ -34,4 +34,4 @@ RUN uv sync --no-dev
 
 # Set entrypoint and default command
 ENTRYPOINT ["uv", "run", "butlers"]
-CMD ["run", "--config", "/app/butler.toml"]
+CMD ["run", "--config", "/etc/butler"]
