@@ -8,11 +8,9 @@ from typing import Any
 import pytest
 
 from butlers.core.runtimes import RuntimeAdapter, get_adapter, register_adapter
-from butlers.core.runtimes.base import (
-    CodexAdapter,
-    GeminiAdapter,
-)
+from butlers.core.runtimes.base import GeminiAdapter
 from butlers.core.runtimes.claude_code import ClaudeCodeAdapter
+from butlers.core.runtimes.codex import CodexAdapter
 
 # ---------------------------------------------------------------------------
 # Test fixtures — concrete and partial subclasses
@@ -173,7 +171,7 @@ def test_get_adapter_claude_code():
 
 
 def test_get_adapter_codex():
-    """get_adapter('codex') returns CodexAdapter."""
+    """get_adapter('codex') returns the real CodexAdapter."""
     cls = get_adapter("codex")
     assert cls is CodexAdapter
 
@@ -206,51 +204,48 @@ def test_register_custom_adapter():
 
 
 # ---------------------------------------------------------------------------
-# Stub adapter tests — verify they are proper subclasses but not yet usable
+# Adapter subclass tests
 # ---------------------------------------------------------------------------
 
 
-def test_stub_adapters_are_runtime_adapters():
-    """All stub adapters are subclasses of RuntimeAdapter."""
+def test_all_adapters_are_runtime_adapters():
+    """All adapters are subclasses of RuntimeAdapter."""
     assert issubclass(ClaudeCodeAdapter, RuntimeAdapter)
     assert issubclass(CodexAdapter, RuntimeAdapter)
     assert issubclass(GeminiAdapter, RuntimeAdapter)
 
 
-def test_stub_adapters_instantiate():
-    """Stub adapters can be instantiated (they are concrete)."""
+def test_all_adapters_instantiate():
+    """All adapters can be instantiated."""
     assert ClaudeCodeAdapter()
     assert CodexAdapter()
     assert GeminiAdapter()
 
 
-async def test_stub_invoke_raises_not_implemented():
-    """Codex and Gemini stub adapters raise NotImplementedError on invoke()."""
-    for adapter_cls in (CodexAdapter, GeminiAdapter):
-        adapter = adapter_cls()
-        with pytest.raises(NotImplementedError):
-            await adapter.invoke(
-                prompt="test",
-                system_prompt="test",
-                mcp_servers={},
-                env={},
-            )
+async def test_gemini_stub_invoke_raises_not_implemented():
+    """GeminiAdapter stub raises NotImplementedError on invoke()."""
+    adapter = GeminiAdapter()
+    with pytest.raises(NotImplementedError):
+        await adapter.invoke(
+            prompt="test",
+            system_prompt="test",
+            mcp_servers={},
+            env={},
+        )
 
 
-def test_stub_build_config_raises_not_implemented(tmp_path: Path):
-    """Codex and Gemini stub adapters raise NotImplementedError on build_config_file()."""
-    for adapter_cls in (CodexAdapter, GeminiAdapter):
-        adapter = adapter_cls()
-        with pytest.raises(NotImplementedError):
-            adapter.build_config_file(mcp_servers={}, tmp_dir=tmp_path)
+def test_gemini_stub_build_config_raises_not_implemented(tmp_path: Path):
+    """GeminiAdapter stub raises NotImplementedError on build_config_file()."""
+    adapter = GeminiAdapter()
+    with pytest.raises(NotImplementedError):
+        adapter.build_config_file(mcp_servers={}, tmp_dir=tmp_path)
 
 
-def test_stub_parse_prompt_raises_not_implemented(tmp_path: Path):
-    """Codex and Gemini stub adapters raise NotImplementedError."""
-    for adapter_cls in (CodexAdapter, GeminiAdapter):
-        adapter = adapter_cls()
-        with pytest.raises(NotImplementedError):
-            adapter.parse_system_prompt_file(config_dir=tmp_path)
+def test_gemini_stub_parse_prompt_raises_not_implemented(tmp_path: Path):
+    """GeminiAdapter stub raises NotImplementedError."""
+    adapter = GeminiAdapter()
+    with pytest.raises(NotImplementedError):
+        adapter.parse_system_prompt_file(config_dir=tmp_path)
 
 
 # ---------------------------------------------------------------------------
