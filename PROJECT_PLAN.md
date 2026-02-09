@@ -972,15 +972,29 @@ async def route(butler_name: str, tool_name: str, args: dict) -> dict:
 
 ### Local Dev Export
 
-Docker Compose includes Jaeger for local trace visualization:
+Docker Compose includes the LGTM stack (Alloy/Tempo/Grafana) for local trace visualization:
 ```yaml
-  jaeger:
-    image: jaegertracing/all-in-one:1.62
+  alloy:
+    image: grafana/alloy:latest
     ports:
-      - "16686:16686"   # UI
-      - "4317:4317"     # OTLP gRPC
+      - "4317:4317"     # OTLP gRPC receiver
+    volumes:
+      - ./alloy-config.yaml:/etc/alloy/config.yaml:ro
+    command: run /etc/alloy/config.yaml
+
+  tempo:
+    image: grafana/tempo:latest
+    ports:
+      - "3200:3200"     # tempo API
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"     # UI
     environment:
-      COLLECTOR_OTLP_ENABLED: true
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
 ```
 
 ### What Gets Traced
@@ -1199,7 +1213,7 @@ Requires PostgreSQL running locally (or via `docker compose up postgres`). Reads
 
 ### Production Mode: docker-compose
 
-Each butler runs as a separate container from the same base image. PostgreSQL and Jaeger as companion services.
+Each butler runs as a separate container from the same base image. PostgreSQL and LGTM stack (Alloy/Tempo/Grafana) as companion services.
 
 ```yaml
 # docker-compose.yml
@@ -1218,13 +1232,29 @@ services:
       interval: 5s
       retries: 5
 
-  jaeger:
-    image: jaegertracing/all-in-one:1.62
+  alloy:
+    image: grafana/alloy:latest
     ports:
-      - "16686:16686"    # UI
-      - "4317:4317"      # OTLP gRPC
+      - "4317:4317"      # OTLP gRPC receiver
+    volumes:
+      - ./alloy-config.yaml:/etc/alloy/config.yaml:ro
+    command: run /etc/alloy/config.yaml
+
+  tempo:
+    image: grafana/tempo:latest
+    ports:
+      - "3200:3200"      # Tempo API
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"      # UI
     environment:
-      COLLECTOR_OTLP_ENABLED: "true"
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    depends_on:
+      - tempo
 
   switchboard:
     image: butlers:latest
@@ -1236,7 +1266,7 @@ services:
     environment:
       DATABASE_URL: postgres://butlers:butlers@postgres/butler_switchboard
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
     depends_on:
       postgres:
         condition: service_healthy
@@ -1251,7 +1281,7 @@ services:
     environment:
       DATABASE_URL: postgres://butlers:butlers@postgres/butler_general
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
     depends_on:
       postgres:
         condition: service_healthy
@@ -1266,7 +1296,7 @@ services:
     environment:
       DATABASE_URL: postgres://butlers:butlers@postgres/butler_relationship
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
     depends_on:
       postgres:
         condition: service_healthy
@@ -1281,7 +1311,7 @@ services:
     environment:
       DATABASE_URL: postgres://butlers:butlers@postgres/butler_health
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
     depends_on:
       postgres:
         condition: service_healthy
@@ -1296,7 +1326,7 @@ services:
     environment:
       DATABASE_URL: postgres://butlers:butlers@postgres/butler_heartbeat
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
     depends_on:
       postgres:
         condition: service_healthy
@@ -1343,8 +1373,8 @@ This happens identically in both dev and production modes. No separate init scri
 ### Quick Start
 
 ```bash
-# Dev (local Python, containerized Postgres)
-docker compose up -d postgres jaeger
+# Dev (local Python, containerized Postgres + LGTM stack)
+docker compose up -d postgres alloy tempo grafana
 butlers up
 
 # Production (everything containerized)
@@ -1362,7 +1392,7 @@ Python project with uv, ruff, pytest, CI. MockSpawner fixture. Testcontainers se
 Module ABC, registry with dependency resolution, config loading (with `[[butler.schedule]]`), daemon with core tool stubs + module composition. Butler class.
 
 ### Milestone 2: OpenTelemetry Foundation
-Telemetry init, tracer setup, span wrappers for MCP tool handlers. InMemorySpanExporter for tests. Jaeger in docker-compose.
+Telemetry init, tracer setup, span wrappers for MCP tool handlers. InMemorySpanExporter for tests. LGTM stack (Alloy/Tempo/Grafana) in docker-compose.
 
 ### Milestone 3: Per-Butler PostgreSQL + State Store
 DB connection layer, core schema migration on startup, state store tools live. Session log tools live.
@@ -1392,7 +1422,7 @@ Dedicated schema migration. All health tools (measurements, medications, conditi
 Dedicated schema with freeform entities + collections. CRUD + search + export tools. Tests.
 
 ### Milestone 12: Deployment + CLI
-`butlers up` (dev mode, single process) and `butlers run` (production mode, one butler). Dockerfile with Claude Code installed. docker-compose.yml with all 5 butlers + PostgreSQL + Jaeger. Auto-provisioning of per-butler databases on startup. End-to-end smoke test.
+`butlers up` (dev mode, single process) and `butlers run` (production mode, one butler). Dockerfile with Claude Code installed. docker-compose.yml with all 5 butlers + PostgreSQL + LGTM stack (Alloy/Tempo/Grafana). Auto-provisioning of per-butler databases on startup. End-to-end smoke test.
 
 ---
 

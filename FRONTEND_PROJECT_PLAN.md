@@ -321,7 +321,7 @@ Aggregate view of all CC sessions across all butlers.
 
 ### 5. Trace Viewer (`/traces`)
 
-Simplified distributed trace viewer (replaces Jaeger for common use cases).
+Simplified distributed trace viewer for common use cases within the dashboard (complementary to Grafana/Tempo UI for advanced analysis).
 
 **Trace List:**
 - Table: trace ID (short), start time, duration, entry point (channel + butler), span count
@@ -1016,7 +1016,7 @@ Understanding what the system costs.
 
 ### M5: Simplified Trace Viewer
 
-Inline trace visualization replacing Jaeger for common use cases.
+Inline trace visualization for common use cases within the dashboard (LGTM stack provides full tracing via Grafana UI).
 
 **Schema tasks:**
 - [ ] Add `trace_id` and `parent_session_id` columns to sessions table (if not done in M4)
