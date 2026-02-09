@@ -253,3 +253,75 @@ def _parse_classification(
         entries.append({"butler": butler_name, "prompt": sub_prompt})
 
     return entries if entries else fallback
+
+async def dispatch_decomposed(
+    pool: asyncpg.Pool,
+    targets: list[dict[str, str]],
+    source_channel: str = "switchboard",
+    source_id: str | None = None,
+    *,
+    call_fn: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Dispatch decomposed sub-messages to multiple butlers sequentially.
+
+    After :func:`classify_message` returns a list of ``(butler, prompt)`` pairs,
+    this function dispatches each via :func:`route` in order (v1 serial constraint),
+    collects results, and aggregates responses.  Each ``route()`` call is
+    independently logged in ``routing_log``.  An error in one sub-route does
+    **not** prevent subsequent sub-routes from executing.
+
+    Parameters
+    ----------
+    pool:
+        Database connection pool (switchboard DB).
+    targets:
+        List of dicts, each containing at minimum ``butler`` (target butler
+        name) and ``prompt`` (the sub-prompt to send).
+    source_channel:
+        Identifier for the originating channel (used as ``source_butler``
+        in routing log).
+    source_id:
+        Optional identifier for the originating message/request.
+    call_fn:
+        Optional callable for testing; forwarded to :func:`route`.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        One entry per target, each containing ``butler``, ``result``, and
+        ``error`` keys.  ``result`` is *None* when an error occurred;
+        ``error`` is *None* on success.
+    """
+    results: list[dict[str, Any]] = []
+
+    for target in targets:
+        butler_name = target["butler"]
+        prompt = target.get("prompt", "")
+
+        route_result = await route(
+            pool,
+            target_butler=butler_name,
+            tool_name="handle_message",
+            args={"prompt": prompt, "source_id": source_id},
+            source_butler=source_channel,
+            call_fn=call_fn,
+        )
+
+        if "error" in route_result:
+            results.append(
+                {
+                    "butler": butler_name,
+                    "result": None,
+                    "error": route_result["error"],
+                }
+            )
+        else:
+            results.append(
+                {
+                    "butler": butler_name,
+                    "result": route_result["result"],
+                    "error": None,
+                }
+            )
+
+    return results
