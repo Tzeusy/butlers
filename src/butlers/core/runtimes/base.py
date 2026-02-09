@@ -20,15 +20,6 @@ class RuntimeAdapter(abc.ABC):
     adapter so that butler core stays runtime-agnostic.
     """
 
-    @property
-    @abc.abstractmethod
-    def binary_name(self) -> str:
-        """Return the name of the CLI binary this adapter requires.
-
-        Used at startup to verify the binary is on PATH via ``shutil.which``.
-        """
-        ...
-
     @abc.abstractmethod
     async def invoke(
         self,
@@ -146,45 +137,12 @@ def get_adapter(type_str: str) -> type[RuntimeAdapter]:
 
 
 # ---------------------------------------------------------------------------
-# Stub adapters — real implementations in separate modules
+# Stub adapter — real implementation in separate module
 # ---------------------------------------------------------------------------
-
-
-class CodexAdapter(RuntimeAdapter):
-    """Stub adapter for OpenAI Codex runtime."""
-
-    @property
-    def binary_name(self) -> str:
-        return "codex"
-
-    async def invoke(
-        self,
-        prompt: str,
-        system_prompt: str,
-        mcp_servers: dict[str, Any],
-        env: dict[str, str],
-        cwd: Path | None = None,
-        timeout: int | None = None,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
-        raise NotImplementedError("CodexAdapter.invoke not yet implemented")
-
-    def build_config_file(
-        self,
-        mcp_servers: dict[str, Any],
-        tmp_dir: Path,
-    ) -> Path:
-        raise NotImplementedError("CodexAdapter.build_config_file not yet implemented")
-
-    def parse_system_prompt_file(self, config_dir: Path) -> str:
-        raise NotImplementedError("CodexAdapter.parse_system_prompt_file not yet implemented")
 
 
 class GeminiAdapter(RuntimeAdapter):
     """Stub adapter for Google Gemini runtime."""
-
-    @property
-    def binary_name(self) -> str:
-        return "gemini"
 
     async def invoke(
         self,
@@ -208,6 +166,5 @@ class GeminiAdapter(RuntimeAdapter):
         raise NotImplementedError("GeminiAdapter.parse_system_prompt_file not yet implemented")
 
 
-# Register the built-in stub adapters
-register_adapter("codex", CodexAdapter)
+# Register the built-in stub adapter
 register_adapter("gemini", GeminiAdapter)
