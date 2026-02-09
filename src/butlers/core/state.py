@@ -59,18 +59,21 @@ async def state_delete(pool: asyncpg.Pool, key: str) -> None:
 async def state_list(
     pool: asyncpg.Pool,
     prefix: str | None = None,
-) -> list[dict[str, Any]]:
+    keys_only: bool = True,
+) -> list[str] | list[dict[str, Any]]:
     """Return state entries, optionally filtered by key prefix.
-
-    Each entry is a dict with ``key`` and ``value`` fields.
 
     Args:
         pool: asyncpg connection pool.
         prefix: If given, only keys starting with this string are returned
             (SQL ``LIKE prefix%``).
+        keys_only: If True (default), return a list of key strings.
+            If False, return a list of ``{"key": ..., "value": ...}`` dicts
+            for backward compatibility.
 
     Returns:
-        A list of ``{"key": ..., "value": ...}`` dicts ordered by key.
+        By default (keys_only=True): A list of key strings ordered by key.
+        If keys_only=False: A list of ``{"key": ..., "value": ...}`` dicts.
     """
     if prefix is not None:
         rows = await pool.fetch(
@@ -79,6 +82,9 @@ async def state_list(
         )
     else:
         rows = await pool.fetch("SELECT key, value FROM state ORDER BY key")
+
+    if keys_only:
+        return [row["key"] for row in rows]
 
     results: list[dict[str, Any]] = []
     for row in rows:

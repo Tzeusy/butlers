@@ -169,9 +169,8 @@ class TestButlerStartupIntegration:
         val = await state_get(pool, "butler.config")
         assert val == {"port": 9100, "active": True}
 
-        # List with prefix
-        entries = await state_list(pool, prefix="butler.")
-        keys = [e["key"] for e in entries]
+        # List with prefix (returns key strings by default)
+        keys = await state_list(pool, prefix="butler.")
         assert "butler.name" in keys
         assert "butler.config" in keys
 
@@ -181,8 +180,9 @@ class TestButlerStartupIntegration:
         assert val is None
 
         # List after delete
-        entries = await state_list(pool, prefix="butler.")
-        keys = [e["key"] for e in entries]
+        keys = await state_list(pool, prefix="butler.")
+        assert "butler.name" not in keys
+        assert "butler.config" in keys
         assert "butler.name" not in keys
         assert "butler.config" in keys
 

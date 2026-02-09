@@ -136,7 +136,7 @@ async def test_delete_missing_key_is_noop(pool):
 
 
 async def test_list_all_entries(pool):
-    """state_list without prefix returns all stored entries."""
+    """state_list with keys_only=True returns list of key strings."""
     from butlers.core.state import state_list, state_set
 
     # Use a unique prefix to avoid collisions from other tests
@@ -144,8 +144,10 @@ async def test_list_all_entries(pool):
     await state_set(pool, "list_all:b", 2)
     await state_set(pool, "list_all:c", 3)
 
-    entries = await state_list(pool, prefix="list_all:")
-    keys = [e["key"] for e in entries]
+    # Default behavior: keys_only=True
+    keys = await state_list(pool, prefix="list_all:")
+    assert isinstance(keys, list)
+    assert all(isinstance(k, str) for k in keys)
     assert "list_all:a" in keys
     assert "list_all:b" in keys
     assert "list_all:c" in keys
@@ -159,11 +161,35 @@ async def test_list_with_prefix_filter(pool):
     await state_set(pool, "proj:beta", "b")
     await state_set(pool, "other:gamma", "g")
 
-    entries = await state_list(pool, prefix="proj:")
-    keys = [e["key"] for e in entries]
+    # Default behavior: keys_only=True
+    keys = await state_list(pool, prefix="proj:")
     assert "proj:alpha" in keys
     assert "proj:beta" in keys
     assert "other:gamma" not in keys
+
+
+async def test_list_keys_only_false(pool):
+    """state_list with keys_only=False returns dicts with key and value."""
+    from butlers.core.state import state_list, state_set
+
+    await state_set(pool, "compat:x", {"val": 10})
+    await state_set(pool, "compat:y", {"val": 20})
+
+    entries = await state_list(pool, prefix="compat:", keys_only=False)
+    assert isinstance(entries, list)
+    assert all(isinstance(e, dict) for e in entries)
+    assert all("key" in e and "value" in e for e in entries)
+
+    keys = [e["key"] for e in entries]
+    assert "compat:x" in keys
+    assert "compat:y" in keys
+
+    # Verify values are included
+    for e in entries:
+        if e["key"] == "compat:x":
+            assert e["value"] == {"val": 10}
+        elif e["key"] == "compat:y":
+            assert e["value"] == {"val": 20}
 
 
 # ------------------------------------------------------------------
