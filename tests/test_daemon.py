@@ -176,6 +176,10 @@ def _patch_infra():
     mock_db.port = 5432
     mock_db.db_name = "butler_test"
 
+    mock_spawner = MagicMock()
+    mock_spawner.stop_accepting = MagicMock()
+    mock_spawner.drain = AsyncMock()
+
     return {
         "db_from_env": patch("butlers.daemon.Database.from_env", return_value=mock_db),
         "run_migrations": patch("butlers.daemon.run_migrations", new_callable=AsyncMock),
@@ -183,9 +187,10 @@ def _patch_infra():
         "init_telemetry": patch("butlers.daemon.init_telemetry"),
         "sync_schedules": patch("butlers.daemon.sync_schedules", new_callable=AsyncMock),
         "FastMCP": patch("butlers.daemon.FastMCP"),
-        "CCSpawner": patch("butlers.daemon.CCSpawner"),
+        "CCSpawner": patch("butlers.daemon.CCSpawner", return_value=mock_spawner),
         "mock_db": mock_db,
         "mock_pool": mock_pool,
+        "mock_spawner": mock_spawner,
     }
 
 

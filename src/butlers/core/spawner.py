@@ -169,6 +169,10 @@ class CCSpawner:
         self._module_credentials_env = module_credentials_env
         self._sdk_query = sdk_query or query
         self._lock = asyncio.Lock()
+        self._accepting = True
+        self._in_flight: set[asyncio.Task] = set()
+        self._in_flight_event = asyncio.Event()
+        self._in_flight_event.set()  # Initially no in-flight sessions
 
     async def trigger(
         self,
@@ -191,9 +195,78 @@ class CCSpawner:
         -------
         SpawnerResult
             The result of the CC invocation.
+
+        Raises
+        ------
+        RuntimeError
+            If the spawner has been stopped and is no longer accepting triggers.
         """
-        async with self._lock:
-            return await self._run(prompt, trigger_source)
+        if not self._accepting:
+            raise RuntimeError("Spawner is shutting down; not accepting new triggers")
+
+        self._in_flight_event.clear()
+        task = asyncio.current_task()
+        if task is not None:
+            self._in_flight.add(task)
+        try:
+            async with self._lock:
+                return await self._run(prompt, trigger_source)
+        finally:
+            if task is not None:
+                self._in_flight.discard(task)
+            if not self._in_flight:
+                self._in_flight_event.set()
+
+    def stop_accepting(self) -> None:
+        """Stop accepting new trigger requests.
+
+        Existing in-flight sessions continue until they complete or are
+        cancelled via :meth:`drain`.
+        """
+        self._accepting = False
+        logger.info("Spawner stopped accepting new triggers")
+
+    async def drain(self, timeout: float = 30.0) -> None:
+        """Wait for in-flight CC sessions to complete, up to *timeout* seconds.
+
+        If sessions are still running after the timeout, they are cancelled.
+
+        Parameters
+        ----------
+        timeout:
+            Maximum seconds to wait for in-flight sessions to finish.
+        """
+        if not self._in_flight:
+            logger.info("No in-flight sessions to drain")
+            return
+
+        logger.info(
+            "Draining %d in-flight session(s) (timeout=%.1fs)",
+            len(self._in_flight),
+            timeout,
+        )
+        try:
+            await asyncio.wait_for(self._in_flight_event.wait(), timeout=timeout)
+            logger.info("All in-flight sessions drained successfully")
+        except TimeoutError:
+            remaining = len(self._in_flight)
+            logger.warning(
+                "Drain timeout after %.1fs; cancelling %d in-flight session(s)",
+                timeout,
+                remaining,
+            )
+            for task in list(self._in_flight):
+                task.cancel()
+            # Give cancelled tasks a moment to clean up
+            if self._in_flight:
+                await asyncio.sleep(0.1)
+            self._in_flight.clear()
+            self._in_flight_event.set()
+
+    @property
+    def in_flight_count(self) -> int:
+        """Return the number of currently in-flight CC sessions."""
+        return len(self._in_flight)
 
     async def _run(
         self,
