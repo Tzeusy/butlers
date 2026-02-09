@@ -938,3 +938,198 @@ async def test_activity_feed_limit(pool):
 
     feed = await feed_get(pool, contact_id=c["id"], limit=3)
     assert len(feed) <= 3
+
+
+# ------------------------------------------------------------------
+# Contact resolution
+# ------------------------------------------------------------------
+
+
+async def test_contact_resolve_exact_match(pool):
+    """contact_resolve returns HIGH confidence for an exact case-insensitive match."""
+    from butlers.tools.relationship import contact_create, contact_resolve
+
+    c = await contact_create(pool, "Sarah Connor")
+    result = await contact_resolve(pool, "sarah connor")
+
+    assert result["contact_id"] == c["id"]
+    assert result["confidence"] == "high"
+    assert len(result["candidates"]) == 1
+    assert result["candidates"][0]["contact_id"] == c["id"]
+    assert result["candidates"][0]["score"] == 100
+
+
+async def test_contact_resolve_exact_match_case_preserved(pool):
+    """contact_resolve exact match works regardless of case."""
+    from butlers.tools.relationship import contact_create, contact_resolve
+
+    c = await contact_create(pool, "JOHN DOE")
+    result = await contact_resolve(pool, "John Doe")
+
+    assert result["contact_id"] == c["id"]
+    assert result["confidence"] == "high"
+
+
+async def test_contact_resolve_no_match(pool):
+    """contact_resolve returns null contact_id and empty candidates when no match."""
+    from butlers.tools.relationship import contact_resolve
+
+    result = await contact_resolve(pool, "Nonexistent Person XYZ123")
+
+    assert result["contact_id"] is None
+    assert result["confidence"] == "none"
+    assert result["candidates"] == []
+
+
+async def test_contact_resolve_empty_name(pool):
+    """contact_resolve returns none for empty name."""
+    from butlers.tools.relationship import contact_resolve
+
+    result = await contact_resolve(pool, "")
+
+    assert result["contact_id"] is None
+    assert result["confidence"] == "none"
+    assert result["candidates"] == []
+
+
+async def test_contact_resolve_whitespace_name(pool):
+    """contact_resolve returns none for whitespace-only name."""
+    from butlers.tools.relationship import contact_resolve
+
+    result = await contact_resolve(pool, "   ")
+
+    assert result["contact_id"] is None
+    assert result["confidence"] == "none"
+    assert result["candidates"] == []
+
+
+async def test_contact_resolve_partial_first_name(pool):
+    """contact_resolve returns MEDIUM confidence for first-name-only match."""
+    from butlers.tools.relationship import contact_create, contact_resolve
+
+    c = await contact_create(pool, "Resolve-Maria Garcia")
+    result = await contact_resolve(pool, "Resolve-Maria")
+
+    assert result["confidence"] == "medium"
+    assert len(result["candidates"]) >= 1
+    ids = [cand["contact_id"] for cand in result["candidates"]]
+    assert c["id"] in ids
+
+
+async def test_contact_resolve_partial_last_name(pool):
+    """contact_resolve returns MEDIUM confidence for last-name-only match."""
+    from butlers.tools.relationship import contact_create, contact_resolve
+
+    c = await contact_create(pool, "Resolve-Alex Petrosyan")
+    result = await contact_resolve(pool, "Petrosyan")
+
+    assert result["confidence"] == "medium"
+    ids = [cand["contact_id"] for cand in result["candidates"]]
+    assert c["id"] in ids
+
+
+async def test_contact_resolve_ambiguous_multiple_matches(pool):
+    """contact_resolve returns MEDIUM confidence with multiple candidates for ambiguous names."""
+    from butlers.tools.relationship import contact_create, contact_resolve
+
+    c1 = await contact_create(pool, "Resolve-Amb Sarah Smith")
+    c2 = await contact_create(pool, "Resolve-Amb Sarah Johnson")
+    result = await contact_resolve(pool, "Resolve-Amb Sarah")
+
+    assert result["confidence"] == "medium"
+    assert len(result["candidates"]) >= 2
+    ids = [cand["contact_id"] for cand in result["candidates"]]
+    assert c1["id"] in ids
+    assert c2["id"] in ids
+
+
+async def test_contact_resolve_context_disambiguates(pool):
+    """context parameter helps disambiguate between multiple exact-name matches."""
+    from butlers.tools.relationship import contact_create, contact_resolve, note_create
+
+    c1 = await contact_create(pool, "Resolve-Ctx Mike", {"company": "Acme"})
+    await contact_create(pool, "Resolve-Ctx Mike", {"company": "Globex"})
+    await note_create(pool, c1["id"], "Works at the Acme office downtown")
+
+    result = await contact_resolve(pool, "Resolve-Ctx Mike", context="from Acme")
+
+    assert result["confidence"] == "high"
+    assert result["contact_id"] == c1["id"]
+    # c1 should be ranked higher due to context match
+    assert result["candidates"][0]["contact_id"] == c1["id"]
+
+
+async def test_contact_resolve_context_boosts_partial(pool):
+    """context parameter boosts partial match scores using details."""
+    from butlers.tools.relationship import contact_create, contact_resolve
+
+    c1 = await contact_create(pool, "Resolve-CtxP David Lee", {"hobby": "tennis"})
+    await contact_create(pool, "Resolve-CtxP David Kim", {"hobby": "chess"})
+
+    result = await contact_resolve(pool, "Resolve-CtxP David", context="tennis match")
+
+    assert result["confidence"] == "medium"
+    assert len(result["candidates"]) >= 2
+    # c1 should rank higher due to context match on "tennis"
+    assert result["candidates"][0]["contact_id"] == c1["id"]
+
+
+async def test_contact_resolve_excludes_archived(pool):
+    """contact_resolve does not return archived contacts."""
+    from butlers.tools.relationship import contact_archive, contact_create, contact_resolve
+
+    c = await contact_create(pool, "Resolve-Archived Person XYZ")
+    await contact_archive(pool, c["id"])
+
+    result = await contact_resolve(pool, "Resolve-Archived Person XYZ")
+    assert result["contact_id"] is None
+    assert result["confidence"] == "none"
+    assert result["candidates"] == []
+
+
+async def test_contact_resolve_single_partial_returns_contact_id(pool):
+    """When only one partial match exists, contact_id is returned with MEDIUM confidence."""
+    from butlers.tools.relationship import contact_create, contact_resolve
+
+    c = await contact_create(pool, "Resolve-Unique Ximenez")
+    result = await contact_resolve(pool, "Ximenez")
+
+    assert result["contact_id"] == c["id"]
+    assert result["confidence"] == "medium"
+    assert len(result["candidates"]) == 1
+
+
+async def test_contact_resolve_candidates_sorted_by_score(pool):
+    """Candidates are returned sorted by score descending."""
+    from butlers.tools.relationship import contact_create, contact_resolve
+
+    await contact_create(pool, "Resolve-Sort Taylor Swift")
+    await contact_create(pool, "Resolve-Sort Taylor Jones")
+
+    result = await contact_resolve(pool, "Resolve-Sort Taylor")
+
+    scores = [c["score"] for c in result["candidates"]]
+    assert scores == sorted(scores, reverse=True)
+
+
+async def test_contact_resolve_context_with_interactions(pool):
+    """Context matching works against interaction summaries."""
+    from butlers.tools.relationship import (
+        contact_create,
+        contact_resolve,
+        interaction_log,
+    )
+
+    c1 = await contact_create(pool, "Resolve-IntCtx Emma Brown")
+    c2 = await contact_create(pool, "Resolve-IntCtx Emma Davis")
+    await interaction_log(pool, c1["id"], "meeting", "Discussed yoga class schedule")
+
+    result = await contact_resolve(pool, "Resolve-IntCtx Emma", context="yoga class")
+
+    assert result["confidence"] == "medium"
+    assert len(result["candidates"]) >= 2
+    ids = [cand["contact_id"] for cand in result["candidates"]]
+    assert c1["id"] in ids
+    assert c2["id"] in ids
+    # c1 should be ranked first due to interaction mentioning yoga
+    assert result["candidates"][0]["contact_id"] == c1["id"]
