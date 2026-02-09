@@ -26,6 +26,7 @@ from typing import Any
 import asyncpg
 from claude_code_sdk import ClaudeCodeOptions, ResultMessage, ToolUseBlock, query
 from claude_code_sdk.types import McpSSEServerConfig
+from opentelemetry import trace
 
 from butlers.config import ButlerConfig
 from butlers.core.sessions import session_complete, session_create
@@ -219,13 +220,29 @@ context: str | None = None,
         if context:
             final_prompt = f"{context}\n\n{prompt}"
 
-        # Create session record
-        if self._pool is not None:
-            session_id = await session_create(self._pool, final_prompt, trigger_source)
+        # Get tracer and start butler.cc_session span
+        tracer = trace.get_tracer("butlers")
+        span = tracer.start_span("butler.cc_session")
+        span.set_attribute("butler.name", self._config.name)
+        span.set_attribute("prompt_length", len(final_prompt))
 
-        t0 = time.monotonic()
+        # Attach span to context
+        token = trace.context_api.attach(trace.set_span_in_context(span))
 
         try:
+            # Extract trace_id from active span
+            trace_id: str | None = None
+            if span.is_recording():
+                trace_id = format(span.get_span_context().trace_id, "032x")
+
+            # Create session record with trace_id
+            if self._pool is not None:
+                session_id = await session_create(self._pool, final_prompt, trigger_source, trace_id)
+                # Set session_id on span
+                span.set_attribute("session_id", str(session_id))
+
+            t0 = time.monotonic()
+
             # Generate MCP config in temp dir
             temp_dir = _write_mcp_config(self._config.name, self._config.port)
 
@@ -298,6 +315,10 @@ context: str | None = None,
             error_msg = f"{type(exc).__name__}: {exc}"
             logger.error("CC invocation failed: %s", error_msg, exc_info=True)
 
+            # Record exception on span
+            span.set_status(trace.StatusCode.ERROR, str(exc))
+            span.record_exception(exc)
+
             spawner_result = SpawnerResult(
                 error=error_msg,
                 success=False,
@@ -322,3 +343,7 @@ context: str | None = None,
             # Always clean up temp dir
             if temp_dir is not None:
                 _cleanup_temp_dir(temp_dir)
+
+            # End span and detach context
+            span.end()
+            trace.context_api.detach(token)

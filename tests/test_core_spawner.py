@@ -633,7 +633,13 @@ class TestSessionLogging:
             await spawner.trigger("log me", "schedule")
 
             # session_create called with correct args
-            mock_create.assert_called_once_with(mock_pool, "log me", "schedule")
+            # session_create now takes trace_id as 4th arg (None without telemetry setup)
+            call_args = mock_create.call_args
+            assert call_args[0][0] is mock_pool
+            assert call_args[0][1] == "log me"
+            assert call_args[0][2] == "schedule"
+            # trace_id may be None if no telemetry is set up
+            assert len(call_args[0]) == 4
 
             # session_complete called with result data
             mock_complete.assert_called_once()
@@ -859,3 +865,264 @@ class TestMaxTurnsAndCwd:
 
         assert len(captured_options) == 1
         assert captured_options[0].cwd == str(config_dir)
+# 8.7: Butler.cc_session span (butlers-06j.24)
+# ---------------------------------------------------------------------------
+
+
+class TestCCSessionSpan:
+    """Tests for butler.cc_session span creation and attributes."""
+
+    async def test_cc_session_span_created(self, tmp_path: Path):
+        """Verify that a butler.cc_session span is created during CC invocation."""
+        from opentelemetry import trace
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+        # Reset OTel state
+        trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+        trace._TRACER_PROVIDER = None
+
+        # Set up in-memory exporter
+        exporter = InMemorySpanExporter()
+        resource = Resource.create({"service.name": "butler-test"})
+        provider = TracerProvider(resource=resource)
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        trace.set_tracer_provider(provider)
+
+        try:
+            config_dir = tmp_path / "config"
+            config_dir.mkdir()
+            config = _make_config(name="test-butler")
+
+            spawner = CCSpawner(
+                config=config,
+                config_dir=config_dir,
+                sdk_query=_result_sdk_query,
+            )
+
+            await spawner.trigger("test prompt", "tick")
+
+            spans = exporter.get_finished_spans()
+            cc_session_spans = [s for s in spans if s.name == "butler.cc_session"]
+            assert len(cc_session_spans) == 1
+            span = cc_session_spans[0]
+            assert span.attributes["butler.name"] == "test-butler"
+            assert span.attributes["prompt_length"] == len("test prompt")
+        finally:
+            provider.shutdown()
+            trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+            trace._TRACER_PROVIDER = None
+
+    async def test_cc_session_span_has_session_id(self, tmp_path: Path):
+        """Verify that session_id attribute is set on the span."""
+        from opentelemetry import trace
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+        trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+        trace._TRACER_PROVIDER = None
+
+        exporter = InMemorySpanExporter()
+        resource = Resource.create({"service.name": "butler-test"})
+        provider = TracerProvider(resource=resource)
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        trace.set_tracer_provider(provider)
+
+        try:
+            config_dir = tmp_path / "config"
+            config_dir.mkdir()
+            config = _make_config()
+
+            mock_pool = AsyncMock()
+            fake_session_id = "00000000-0000-0000-0000-000000000001"
+
+            with patch(
+                "butlers.core.spawner.session_create", new_callable=AsyncMock
+            ) as mock_create:
+                import uuid
+
+                mock_create.return_value = uuid.UUID(fake_session_id)
+
+                spawner = CCSpawner(
+                    config=config,
+                    config_dir=config_dir,
+                    pool=mock_pool,
+                    sdk_query=_result_sdk_query,
+                )
+
+                await spawner.trigger("test", "tick")
+
+                spans = exporter.get_finished_spans()
+                cc_session_spans = [s for s in spans if s.name == "butler.cc_session"]
+                assert len(cc_session_spans) == 1
+                span = cc_session_spans[0]
+                assert "session_id" in span.attributes
+                assert span.attributes["session_id"] == fake_session_id
+        finally:
+            provider.shutdown()
+            trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+            trace._TRACER_PROVIDER = None
+
+    async def test_trace_id_passed_to_session_create(self, tmp_path: Path):
+        """Verify that trace_id is extracted from span and passed to session_create."""
+        from opentelemetry import trace
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+        trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+        trace._TRACER_PROVIDER = None
+
+        exporter = InMemorySpanExporter()
+        resource = Resource.create({"service.name": "butler-test"})
+        provider = TracerProvider(resource=resource)
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        trace.set_tracer_provider(provider)
+
+        try:
+            config_dir = tmp_path / "config"
+            config_dir.mkdir()
+            config = _make_config()
+
+            mock_pool = AsyncMock()
+
+            with patch(
+                "butlers.core.spawner.session_create", new_callable=AsyncMock
+            ) as mock_create:
+                import uuid
+
+                mock_create.return_value = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+                spawner = CCSpawner(
+                    config=config,
+                    config_dir=config_dir,
+                    pool=mock_pool,
+                    sdk_query=_result_sdk_query,
+                )
+
+                await spawner.trigger("test", "tick")
+
+                # Verify session_create was called with a trace_id
+                mock_create.assert_called_once()
+                call_args = mock_create.call_args
+                assert call_args[0][0] is mock_pool
+                assert call_args[0][1] == "test"
+                assert call_args[0][2] == "tick"
+                trace_id_arg = call_args[0][3]
+                assert trace_id_arg is not None
+                assert isinstance(trace_id_arg, str)
+                assert len(trace_id_arg) == 32  # trace_id is 128-bit hex string
+
+                # Verify the trace_id matches the span's trace_id
+                spans = exporter.get_finished_spans()
+                cc_session_spans = [s for s in spans if s.name == "butler.cc_session"]
+                assert len(cc_session_spans) == 1
+                span = cc_session_spans[0]
+                span_trace_id = format(span.context.trace_id, "032x")
+                assert trace_id_arg == span_trace_id
+        finally:
+            provider.shutdown()
+            trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+            trace._TRACER_PROVIDER = None
+
+    async def test_span_records_exception_on_error(self, tmp_path: Path):
+        """Verify that exceptions are recorded on the span."""
+        from opentelemetry import trace
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+        trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+        trace._TRACER_PROVIDER = None
+
+        exporter = InMemorySpanExporter()
+        resource = Resource.create({"service.name": "butler-test"})
+        provider = TracerProvider(resource=resource)
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        trace.set_tracer_provider(provider)
+
+        try:
+            config_dir = tmp_path / "config"
+            config_dir.mkdir()
+            config = _make_config()
+
+            spawner = CCSpawner(
+                config=config,
+                config_dir=config_dir,
+                sdk_query=_error_sdk_query,
+            )
+
+            result = await spawner.trigger("fail", "tick")
+            assert result.error is not None
+
+            spans = exporter.get_finished_spans()
+            cc_session_spans = [s for s in spans if s.name == "butler.cc_session"]
+            assert len(cc_session_spans) == 1
+            span = cc_session_spans[0]
+
+            # Verify span status is ERROR
+            assert span.status.status_code == trace.StatusCode.ERROR
+
+            # Verify exception was recorded
+            events = span.events
+            exception_events = [e for e in events if e.name == "exception"]
+            assert len(exception_events) == 1
+            exc_event = exception_events[0]
+            assert "RuntimeError" in exc_event.attributes["exception.type"]
+            assert "SDK connection failed" in exc_event.attributes["exception.message"]
+        finally:
+            provider.shutdown()
+            trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+            trace._TRACER_PROVIDER = None
+
+    async def test_no_span_error_without_pool(self, tmp_path: Path):
+        """Verify span is still created even without a pool (no session_id attribute)."""
+        from opentelemetry import trace
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+        trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+        trace._TRACER_PROVIDER = None
+
+        exporter = InMemorySpanExporter()
+        resource = Resource.create({"service.name": "butler-test"})
+        provider = TracerProvider(resource=resource)
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        trace.set_tracer_provider(provider)
+
+        try:
+            config_dir = tmp_path / "config"
+            config_dir.mkdir()
+            config = _make_config()
+
+            spawner = CCSpawner(
+                config=config,
+                config_dir=config_dir,
+                pool=None,
+                sdk_query=_result_sdk_query,
+            )
+
+            result = await spawner.trigger("no pool", "tick")
+            assert result.error is None
+
+            spans = exporter.get_finished_spans()
+            cc_session_spans = [s for s in spans if s.name == "butler.cc_session"]
+            assert len(cc_session_spans) == 1
+            span = cc_session_spans[0]
+            assert span.attributes["butler.name"] == "test-butler"
+            assert span.attributes["prompt_length"] == len("no pool")
+            # session_id should not be set when there's no pool
+            assert "session_id" not in span.attributes
+        finally:
+            provider.shutdown()
+            trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+            trace._TRACER_PROVIDER = None
+
