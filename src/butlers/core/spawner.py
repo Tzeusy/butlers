@@ -2,17 +2,16 @@
 
 The spawner is responsible for:
 1. Generating a locked-down MCP config pointing exclusively at this butler
-2. Invoking Claude Code via the SDK with that config
-3. Passing only declared credentials to the CC environment
-4. Reading the butler's CLAUDE.md as system prompt
-5. Enforcing serial dispatch (one CC instance at a time per butler)
+2. Invoking a runtime adapter (e.g. Claude Code) with that config
+3. Passing only declared credentials to the runtime environment
+4. Reading the butler's system prompt via the adapter
+5. Enforcing serial dispatch (one instance at a time per butler)
 6. Logging sessions before and after invocation
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import shutil
@@ -24,10 +23,9 @@ from pathlib import Path
 from typing import Any
 
 import asyncpg
-from claude_code_sdk import ClaudeCodeOptions, ResultMessage, ToolUseBlock, query
-from claude_code_sdk.types import McpSSEServerConfig
 
 from butlers.config import ButlerConfig
+from butlers.core.runtimes.base import RuntimeAdapter
 from butlers.core.sessions import session_complete, session_create
 from butlers.core.telemetry import get_traceparent_env
 
@@ -64,6 +62,8 @@ def _write_mcp_config(butler_name: str, port: int) -> Path:
 
     Returns the path to the temp directory (caller is responsible for cleanup).
     """
+    import json
+
     temp_dir = Path(tempfile.mkdtemp(prefix=f"butler_{butler_name}_{uuid.uuid4().hex[:8]}_"))
     config = _build_mcp_config(butler_name, port)
     mcp_json_path = temp_dir / "mcp.json"
@@ -150,9 +150,13 @@ class CCSpawner:
         asyncpg connection pool for session logging.
     module_credentials_env:
         Dict mapping module name to list of env var names needed by that module.
+    runtime:
+        A RuntimeAdapter instance to use for invocation. If provided, sdk_query
+        is ignored.
     sdk_query:
-        Callable to use for the actual SDK invocation. Defaults to
-        ``claude_code_sdk.query``. Override in tests to inject a mock.
+        DEPRECATED — Callable to use for the actual SDK invocation. Prefer
+        passing a RuntimeAdapter via ``runtime``. When neither ``runtime``
+        nor ``sdk_query`` is provided, a default ClaudeCodeAdapter is created.
     """
 
     def __init__(
@@ -161,14 +165,27 @@ class CCSpawner:
         config_dir: Path,
         pool: asyncpg.Pool | None = None,
         module_credentials_env: dict[str, list[str]] | None = None,
+        runtime: RuntimeAdapter | None = None,
         sdk_query: Any = None,
     ) -> None:
         self._config = config
         self._config_dir = config_dir
         self._pool = pool
         self._module_credentials_env = module_credentials_env
-        self._sdk_query = sdk_query or query
         self._lock = asyncio.Lock()
+
+        if runtime is not None:
+            self._runtime = runtime
+        elif sdk_query is not None:
+            # Legacy path: wrap sdk_query in a ClaudeCodeAdapter
+            from butlers.core.runtimes.claude_code import ClaudeCodeAdapter
+
+            self._runtime = ClaudeCodeAdapter(sdk_query=sdk_query)
+        else:
+            # Default: create a ClaudeCodeAdapter with the real SDK query
+            from butlers.core.runtimes.claude_code import ClaudeCodeAdapter
+
+            self._runtime = ClaudeCodeAdapter()
 
     async def trigger(
         self,
@@ -178,7 +195,7 @@ class CCSpawner:
         """Spawn an ephemeral Claude Code instance.
 
         Acquires a per-butler lock to ensure serial dispatch, generates the
-        MCP config, invokes CC via the SDK, and logs the session.
+        MCP config, invokes CC via the runtime adapter, and logs the session.
 
         Parameters
         ----------
@@ -220,39 +237,20 @@ class CCSpawner:
             # Build credential env
             env = _build_env(self._config, self._module_credentials_env)
 
-            # Build MCP server config for SDK
-            mcp_servers: dict[str, McpSSEServerConfig] = {
-                self._config.name: McpSSEServerConfig(
-                    type="sse",
-                    url=f"http://localhost:{self._config.port}/sse",
-                ),
+            # Build MCP server config for the adapter
+            mcp_servers: dict[str, Any] = {
+                self._config.name: {
+                    "url": f"http://localhost:{self._config.port}/sse",
+                },
             }
 
-            # Configure SDK options
-            options = ClaudeCodeOptions(
+            # Invoke via runtime adapter
+            result_text, tool_calls = await self._runtime.invoke(
+                prompt=prompt,
                 system_prompt=system_prompt,
                 mcp_servers=mcp_servers,
-                permission_mode="bypassPermissions",
                 env=env,
             )
-
-            # Invoke CC SDK
-            result_text = ""
-            tool_calls: list[dict] = []
-
-            async for message in self._sdk_query(prompt=prompt, options=options):
-                if isinstance(message, ResultMessage):
-                    result_text = message.result or ""
-                elif hasattr(message, "content"):
-                    for block in getattr(message, "content", []):
-                        if isinstance(block, ToolUseBlock):
-                            tool_calls.append(
-                                {
-                                    "id": block.id,
-                                    "name": block.name,
-                                    "input": block.input,
-                                }
-                            )
 
             duration_ms = int((time.monotonic() - t0) * 1000)
 
@@ -267,7 +265,7 @@ class CCSpawner:
                 await session_complete(
                     self._pool,
                     session_id,
-                    result_text,
+                    result_text or "",
                     tool_calls,
                     duration_ms,
                 )

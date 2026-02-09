@@ -1,0 +1,151 @@
+"""ClaudeCodeAdapter — RuntimeAdapter implementation for Claude Code SDK.
+
+Encapsulates all Claude Code SDK-specific logic:
+- claude_code_sdk imports (ClaudeCodeOptions, ResultMessage, ToolUseBlock,
+  McpSSEServerConfig, query)
+- MCP config file writing (JSON format with mcpServers key)
+- SDK invocation (building ClaudeCodeOptions, calling query(),
+  parsing ResultMessage/ToolUseBlock)
+- CLAUDE.md reading logic
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+from claude_code_sdk import ClaudeCodeOptions, ResultMessage, ToolUseBlock, query
+from claude_code_sdk.types import McpSSEServerConfig
+
+from butlers.core.runtimes.base import RuntimeAdapter, register_adapter
+
+logger = logging.getLogger(__name__)
+
+
+class ClaudeCodeAdapter(RuntimeAdapter):
+    """Runtime adapter for the Claude Code SDK.
+
+    Handles SDK invocation, MCP config file generation (JSON format),
+    and CLAUDE.md system prompt reading.
+
+    Parameters
+    ----------
+    sdk_query:
+        Callable to use for the actual SDK invocation. Defaults to
+        ``claude_code_sdk.query``. Override in tests to inject a mock.
+    """
+
+    def __init__(self, sdk_query: Any = None) -> None:
+        self._sdk_query = sdk_query or query
+
+    async def invoke(
+        self,
+        prompt: str,
+        system_prompt: str,
+        mcp_servers: dict[str, Any],
+        env: dict[str, str],
+        cwd: Path | None = None,
+        timeout: int | None = None,
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        """Invoke Claude Code SDK with the given prompt and configuration.
+
+        Builds ClaudeCodeOptions with MCP server configs (as
+        McpSSEServerConfig), calls query(), and parses
+        ResultMessage/ToolUseBlock from the response stream.
+
+        Returns
+        -------
+        tuple[str | None, list[dict[str, Any]]]
+            A tuple of (result_text, tool_calls).
+        """
+        # Build MCP server config objects for SDK
+        sdk_mcp_servers: dict[str, McpSSEServerConfig] = {}
+        for name, server_cfg in mcp_servers.items():
+            if isinstance(server_cfg, dict):
+                sdk_mcp_servers[name] = McpSSEServerConfig(
+                    type="sse",
+                    url=server_cfg["url"],
+                )
+            else:
+                # Already an McpSSEServerConfig or compatible object
+                sdk_mcp_servers[name] = server_cfg
+
+        options = ClaudeCodeOptions(
+            system_prompt=system_prompt,
+            mcp_servers=sdk_mcp_servers,
+            permission_mode="bypassPermissions",
+            env=env,
+        )
+
+        result_text: str | None = None
+        tool_calls: list[dict[str, Any]] = []
+
+        async for message in self._sdk_query(prompt=prompt, options=options):
+            if isinstance(message, ResultMessage):
+                result_text = message.result or ""
+            elif hasattr(message, "content"):
+                for block in getattr(message, "content", []):
+                    if isinstance(block, ToolUseBlock):
+                        tool_calls.append(
+                            {
+                                "id": block.id,
+                                "name": block.name,
+                                "input": block.input,
+                            }
+                        )
+
+        return result_text, tool_calls
+
+    def build_config_file(
+        self,
+        mcp_servers: dict[str, Any],
+        tmp_dir: Path,
+    ) -> Path:
+        """Write MCP config as JSON file with mcpServers key.
+
+        Parameters
+        ----------
+        mcp_servers:
+            Dict mapping server name to config (must include 'url' key).
+        tmp_dir:
+            Temporary directory to write the config file into.
+
+        Returns
+        -------
+        Path
+            Path to the generated mcp.json file.
+        """
+        config = {"mcpServers": mcp_servers}
+        mcp_json_path = tmp_dir / "mcp.json"
+        mcp_json_path.write_text(json.dumps(config, indent=2))
+        return mcp_json_path
+
+    def parse_system_prompt_file(self, config_dir: Path) -> str:
+        """Read CLAUDE.md from the butler's config directory.
+
+        Returns the file contents, or an empty string if the file is missing
+        or empty.
+
+        Parameters
+        ----------
+        config_dir:
+            Path to the butler's config directory.
+
+        Returns
+        -------
+        str
+            The parsed system prompt text.
+        """
+        claude_md = config_dir / "CLAUDE.md"
+
+        if not claude_md.exists():
+            return ""
+
+        content = claude_md.read_text().strip()
+        return content
+
+
+# Register the real Claude Code adapter (replaces the stub in base.py)
+register_adapter("claude-code", ClaudeCodeAdapter)

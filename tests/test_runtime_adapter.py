@@ -9,10 +9,10 @@ import pytest
 
 from butlers.core.runtimes import RuntimeAdapter, get_adapter, register_adapter
 from butlers.core.runtimes.base import (
-    ClaudeCodeAdapter,
     CodexAdapter,
     GeminiAdapter,
 )
+from butlers.core.runtimes.claude_code import ClaudeCodeAdapter
 
 # ---------------------------------------------------------------------------
 # Test fixtures — concrete and partial subclasses
@@ -225,8 +225,8 @@ def test_stub_adapters_instantiate():
 
 
 async def test_stub_invoke_raises_not_implemented():
-    """Stub adapters raise NotImplementedError on invoke()."""
-    for adapter_cls in (ClaudeCodeAdapter, CodexAdapter, GeminiAdapter):
+    """Codex and Gemini stub adapters raise NotImplementedError on invoke()."""
+    for adapter_cls in (CodexAdapter, GeminiAdapter):
         adapter = adapter_cls()
         with pytest.raises(NotImplementedError):
             await adapter.invoke(
@@ -238,19 +238,124 @@ async def test_stub_invoke_raises_not_implemented():
 
 
 def test_stub_build_config_raises_not_implemented(tmp_path: Path):
-    """Stub adapters raise NotImplementedError on build_config_file()."""
-    for adapter_cls in (ClaudeCodeAdapter, CodexAdapter, GeminiAdapter):
+    """Codex and Gemini stub adapters raise NotImplementedError on build_config_file()."""
+    for adapter_cls in (CodexAdapter, GeminiAdapter):
         adapter = adapter_cls()
         with pytest.raises(NotImplementedError):
             adapter.build_config_file(mcp_servers={}, tmp_dir=tmp_path)
 
 
 def test_stub_parse_prompt_raises_not_implemented(tmp_path: Path):
-    """Stub adapters raise NotImplementedError on parse_system_prompt_file()."""
-    for adapter_cls in (ClaudeCodeAdapter, CodexAdapter, GeminiAdapter):
+    """Codex and Gemini stub adapters raise NotImplementedError."""
+    for adapter_cls in (CodexAdapter, GeminiAdapter):
         adapter = adapter_cls()
         with pytest.raises(NotImplementedError):
             adapter.parse_system_prompt_file(config_dir=tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# ClaudeCodeAdapter-specific tests
+# ---------------------------------------------------------------------------
+
+
+def test_claude_code_adapter_build_config_file(tmp_path: Path):
+    """ClaudeCodeAdapter.build_config_file() writes mcp.json."""
+    import json
+
+    adapter = ClaudeCodeAdapter()
+    mcp_servers = {"my-butler": {"url": "http://localhost:9100/sse"}}
+    config_path = adapter.build_config_file(mcp_servers=mcp_servers, tmp_dir=tmp_path)
+    assert config_path == tmp_path / "mcp.json"
+    assert config_path.exists()
+    data = json.loads(config_path.read_text())
+    assert data["mcpServers"]["my-butler"]["url"] == "http://localhost:9100/sse"
+
+
+def test_claude_code_adapter_parse_system_prompt_file(tmp_path: Path):
+    """ClaudeCodeAdapter reads CLAUDE.md for system prompt."""
+    adapter = ClaudeCodeAdapter()
+    claude_md = tmp_path / "CLAUDE.md"
+    claude_md.write_text("You are a specialized butler.")
+    prompt = adapter.parse_system_prompt_file(config_dir=tmp_path)
+    assert prompt == "You are a specialized butler."
+
+
+def test_claude_code_adapter_parse_missing_prompt(tmp_path: Path):
+    """ClaudeCodeAdapter returns empty string for missing CLAUDE.md."""
+    adapter = ClaudeCodeAdapter()
+    prompt = adapter.parse_system_prompt_file(config_dir=tmp_path)
+    assert prompt == ""
+
+
+def test_claude_code_adapter_parse_empty_prompt(tmp_path: Path):
+    """ClaudeCodeAdapter returns empty string for empty CLAUDE.md."""
+    adapter = ClaudeCodeAdapter()
+    claude_md = tmp_path / "CLAUDE.md"
+    claude_md.write_text("   \n  ")
+    prompt = adapter.parse_system_prompt_file(config_dir=tmp_path)
+    assert prompt == ""
+
+
+async def test_claude_code_adapter_invoke_with_mock():
+    """ClaudeCodeAdapter.invoke() calls sdk_query and parses results."""
+    from claude_code_sdk import ResultMessage
+
+    async def mock_query(*, prompt, options):
+        yield ResultMessage(
+            subtype="result",
+            duration_ms=10,
+            duration_api_ms=8,
+            is_error=False,
+            num_turns=1,
+            session_id="test",
+            total_cost_usd=0.0,
+            usage={},
+            result="Hello!",
+        )
+
+    adapter = ClaudeCodeAdapter(sdk_query=mock_query)
+    result_text, tool_calls = await adapter.invoke(
+        prompt="hi",
+        system_prompt="you are helpful",
+        mcp_servers={"test": {"url": "http://localhost:9100/sse"}},
+        env={"ANTHROPIC_API_KEY": "sk-test"},
+    )
+    assert result_text == "Hello!"
+    assert tool_calls == []
+
+
+async def test_claude_code_adapter_invoke_with_tool_calls():
+    """ClaudeCodeAdapter.invoke() captures ToolUseBlock tool calls."""
+    from claude_code_sdk import AssistantMessage, ResultMessage, ToolUseBlock
+
+    async def mock_query(*, prompt, options):
+        yield AssistantMessage(
+            content=[ToolUseBlock(id="t1", name="state_get", input={"key": "foo"})],
+            model="claude-test",
+        )
+        yield ResultMessage(
+            subtype="result",
+            duration_ms=10,
+            duration_api_ms=8,
+            is_error=False,
+            num_turns=1,
+            session_id="test",
+            total_cost_usd=0.0,
+            usage={},
+            result="Done",
+        )
+
+    adapter = ClaudeCodeAdapter(sdk_query=mock_query)
+    result_text, tool_calls = await adapter.invoke(
+        prompt="use tools",
+        system_prompt="you are helpful",
+        mcp_servers={"test": {"url": "http://localhost:9100/sse"}},
+        env={},
+    )
+    assert result_text == "Done"
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["name"] == "state_get"
+    assert tool_calls[0]["input"] == {"key": "foo"}
 
 
 # ---------------------------------------------------------------------------
@@ -265,3 +370,10 @@ def test_importable_from_butlers_core_runtimes():
 
     assert RA is RuntimeAdapter
     assert ga is get_adapter
+
+
+def test_claude_code_adapter_importable_from_runtimes():
+    """ClaudeCodeAdapter is importable from butlers.core.runtimes."""
+    from butlers.core.runtimes import ClaudeCodeAdapter as CCA
+
+    assert CCA is ClaudeCodeAdapter
