@@ -279,13 +279,12 @@ AND butler configs MUST be provided at runtime via volume mounts.
 
 ### Requirement: docker-compose.yml
 
-The `docker-compose.yml` SHALL define services for PostgreSQL, Jaeger, and one service per butler. Each butler service MUST use the same Docker image and be configured via environment variables and volume mounts.
+The `docker-compose.yml` SHALL define services for PostgreSQL and one service per butler. Each butler service MUST use the same Docker image and be configured via environment variables and volume mounts.
 
 #### Scenario: Infrastructure services
 
 WHEN `docker compose up -d` is invoked,
 THEN a `postgres` service MUST be started using the `postgres:17` image,
-AND a `jaeger` service MUST be started using the `jaegertracing/all-in-one:1.62` image,
 AND the `postgres` service MUST include a healthcheck.
 
 #### Scenario: Butler services
@@ -300,7 +299,7 @@ AND each butler service MUST mount its config directory as `/etc/butler:ro`.
 WHEN a butler service starts in docker-compose,
 THEN the `DATABASE_URL` environment variable MUST be set to the PostgreSQL connection string for the compose network,
 AND the `ANTHROPIC_API_KEY` environment variable MUST be passed through from the host,
-AND the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable MUST be set to the Jaeger OTLP endpoint.
+AND the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable MUST be set to the Alloy gateway OTLP endpoint (http://otel.parrot-hen.ts.net:4318).
 
 #### Scenario: PostgreSQL healthcheck gates butler startup
 
@@ -316,15 +315,15 @@ The framework SHALL support two standard startup workflows: dev mode with local 
 
 #### Scenario: Dev mode quick start
 
-WHEN a developer runs `docker compose up -d postgres jaeger` followed by `butlers up`,
-THEN PostgreSQL and Jaeger MUST be running as Docker containers,
+WHEN a developer runs `docker compose up -d postgres` followed by `butlers up`,
+THEN PostgreSQL MUST be running as a Docker container,
 AND all butlers MUST start in a single local process connecting to the Dockerized PostgreSQL,
 AND inter-butler MCP communication MUST work over localhost ports.
 
 #### Scenario: Production quick start
 
 WHEN a developer runs `docker compose up -d`,
-THEN all services MUST start: postgres, jaeger, and one container per butler,
+THEN all services MUST start: postgres and one container per butler,
 AND each butler container MUST connect to the postgres service,
 AND inter-butler MCP communication MUST work over the Docker compose network.
 
