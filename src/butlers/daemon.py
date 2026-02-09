@@ -20,6 +20,7 @@ then closes DB pool.
 
 from __future__ import annotations
 
+import functools
 import logging
 import time
 import uuid
@@ -40,7 +41,7 @@ from butlers.core.scheduler import (
 from butlers.core.sessions import sessions_get, sessions_list
 from butlers.core.spawner import CCSpawner
 from butlers.core.state import state_delete, state_get, state_list, state_set
-from butlers.core.telemetry import init_telemetry
+from butlers.core.telemetry import init_telemetry, tool_span
 from butlers.credentials import validate_credentials
 from butlers.db import Database
 from butlers.migrations import run_migrations
@@ -48,6 +49,38 @@ from butlers.modules.base import Module
 from butlers.modules.registry import ModuleRegistry
 
 logger = logging.getLogger(__name__)
+
+
+class _SpanWrappingMCP:
+    """Proxy around FastMCP that auto-wraps tool handlers with tool_span.
+
+    When modules call ``mcp.tool()`` to register their tools, this proxy
+    intercepts the registration and wraps the handler with a
+    ``butler.tool.<name>`` span that includes the ``butler.name`` attribute.
+
+    All other attribute access is forwarded to the underlying FastMCP instance.
+    """
+
+    def __init__(self, mcp: FastMCP, butler_name: str) -> None:
+        self._mcp = mcp
+        self._butler_name = butler_name
+
+    def tool(self):
+        """Return a decorator that wraps the handler with tool_span."""
+        original_decorator = self._mcp.tool()
+
+        def wrapper(fn):  # noqa: ANN001, ANN202
+            @functools.wraps(fn)
+            async def instrumented(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+                with tool_span(fn.__name__, butler_name=self._butler_name):
+                    return await fn(*args, **kwargs)
+
+            return original_decorator(instrumented)
+
+        return wrapper
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._mcp, name)
 
 
 class ButlerDaemon:
@@ -156,13 +189,19 @@ class ButlerDaemon:
         return f"postgresql://{db.user}:{db.password}@{db.host}:{db.port}/{db.db_name}"
 
     def _register_core_tools(self) -> None:
-        """Register all core MCP tools on the FastMCP server."""
+        """Register all core MCP tools on the FastMCP server.
+
+        Every tool handler is wrapped with a ``tool_span`` that creates a
+        ``butler.tool.<name>`` span with a ``butler.name`` attribute.
+        """
         mcp = self.mcp
         pool = self.db.pool
         spawner = self.spawner
         daemon = self
+        butler_name = self.config.name
 
         @mcp.tool()
+        @tool_span("status", butler_name=butler_name)
         async def status() -> dict:
             """Return butler identity, health, loaded modules, and uptime."""
             uptime_seconds = time.monotonic() - daemon._started_at if daemon._started_at else 0
@@ -176,6 +215,7 @@ class ButlerDaemon:
             }
 
         @mcp.tool()
+        @tool_span("trigger", butler_name=butler_name)
         async def trigger(prompt: str) -> dict:
             """Trigger the CC spawner with a prompt."""
             result = await spawner.trigger(prompt=prompt, trigger_source="trigger_tool")
@@ -186,6 +226,7 @@ class ButlerDaemon:
             }
 
         @mcp.tool()
+        @tool_span("tick_now", butler_name=butler_name)
         async def tick_now() -> dict:
             """Evaluate due scheduled tasks and dispatch them now."""
             count = await tick(pool, spawner.trigger)
@@ -193,30 +234,35 @@ class ButlerDaemon:
 
         # State tools
         @mcp.tool()
+        @tool_span("get_state", butler_name=butler_name)
         async def get_state(key: str) -> dict:
             """Get a value from the state store."""
             value = await state_get(pool, key)
             return {"key": key, "value": value}
 
         @mcp.tool()
+        @tool_span("set_state", butler_name=butler_name)
         async def set_state(key: str, value: Any) -> dict:
             """Set a value in the state store."""
             await state_set(pool, key, value)
             return {"key": key, "status": "ok"}
 
         @mcp.tool()
+        @tool_span("delete_state", butler_name=butler_name)
         async def delete_state(key: str) -> dict:
             """Delete a key from the state store."""
             await state_delete(pool, key)
             return {"key": key, "status": "deleted"}
 
         @mcp.tool()
+        @tool_span("list_state", butler_name=butler_name)
         async def list_state(prefix: str | None = None) -> list[dict]:
             """List all entries in the state store, optionally filtered by prefix."""
             return await state_list(pool, prefix)
 
         # Schedule tools
         @mcp.tool()
+        @tool_span("list_schedules", butler_name=butler_name)
         async def list_schedules() -> list[dict]:
             """List all scheduled tasks."""
             tasks = await schedule_list(pool)
@@ -225,18 +271,21 @@ class ButlerDaemon:
             return tasks
 
         @mcp.tool()
+        @tool_span("create_schedule", butler_name=butler_name)
         async def create_schedule(name: str, cron: str, prompt: str) -> dict:
             """Create a new runtime scheduled task."""
             task_id = await schedule_create(pool, name, cron, prompt)
             return {"id": str(task_id), "status": "created"}
 
         @mcp.tool()
+        @tool_span("update_schedule", butler_name=butler_name)
         async def update_schedule(task_id: str, **fields) -> dict:
             """Update a scheduled task."""
             await schedule_update(pool, uuid.UUID(task_id), **fields)
             return {"id": task_id, "status": "updated"}
 
         @mcp.tool()
+        @tool_span("delete_schedule", butler_name=butler_name)
         async def delete_schedule(task_id: str) -> dict:
             """Delete a runtime scheduled task."""
             await schedule_delete(pool, uuid.UUID(task_id))
@@ -244,6 +293,7 @@ class ButlerDaemon:
 
         # Session tools
         @mcp.tool()
+        @tool_span("list_sessions", butler_name=butler_name)
         async def list_sessions(limit: int = 20, offset: int = 0) -> list[dict]:
             """List sessions ordered by most recent first."""
             sessions = await sessions_list(pool, limit, offset)
@@ -252,6 +302,7 @@ class ButlerDaemon:
             return sessions
 
         @mcp.tool()
+        @tool_span("get_session", butler_name=butler_name)
         async def get_session(session_id: str) -> dict | None:
             """Get a session by ID."""
             session = await sessions_get(pool, uuid.UUID(session_id))
@@ -260,10 +311,16 @@ class ButlerDaemon:
             return session
 
     async def _register_module_tools(self) -> None:
-        """Register MCP tools from all loaded modules."""
+        """Register MCP tools from all loaded modules.
+
+        Module tools are registered through a ``_SpanWrappingMCP`` proxy that
+        automatically wraps each tool handler with a ``butler.tool.<name>``
+        span carrying the ``butler.name`` attribute.
+        """
+        wrapped_mcp = _SpanWrappingMCP(self.mcp, self.config.name)
         for mod in self._modules:
             mod_config = self.config.modules.get(mod.name, {})
-            await mod.register_tools(self.mcp, mod_config, self.db)
+            await mod.register_tools(wrapped_mcp, mod_config, self.db)
 
     async def shutdown(self) -> None:
         """Graceful shutdown.
