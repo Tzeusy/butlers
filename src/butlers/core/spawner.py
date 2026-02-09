@@ -14,8 +14,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
-import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -43,43 +41,6 @@ class SpawnerResult:
     tool_calls: list[dict] = field(default_factory=list)
     error: str | None = None
     duration_ms: int = 0
-
-
-def _build_mcp_config(butler_name: str, port: int) -> dict[str, Any]:
-    """Build a locked-down MCP config dict with a single SSE endpoint.
-
-    The config restricts the runtime instance to communicate exclusively with
-    the butler's own MCP server.
-    """
-    return {
-        "mcpServers": {
-            butler_name: {
-                "url": f"http://localhost:{port}/sse",
-            }
-        }
-    }
-
-
-def _write_mcp_config(butler_name: str, port: int) -> Path:
-    """Create a unique temp dir and write the MCP config JSON to it.
-
-    Returns the path to the temp directory (caller is responsible for cleanup).
-    """
-    import json
-
-    temp_dir = Path(tempfile.mkdtemp(prefix=f"butler_{butler_name}_{uuid.uuid4().hex[:8]}_"))
-    config = _build_mcp_config(butler_name, port)
-    mcp_json_path = temp_dir / "mcp.json"
-    mcp_json_path.write_text(json.dumps(config, indent=2))
-    return temp_dir
-
-
-def _cleanup_temp_dir(temp_dir: Path) -> None:
-    """Remove the temp directory and all its contents."""
-    try:
-        shutil.rmtree(temp_dir)
-    except OSError:
-        logger.warning("Failed to clean up temp dir: %s", temp_dir, exc_info=True)
 
 
 def _build_env(
@@ -285,7 +246,6 @@ class Spawner:
         max_turns: int = 20,
     ) -> SpawnerResult:
         """Internal: run the runtime invocation (called under lock)."""
-        temp_dir: Path | None = None
         session_id: uuid.UUID | None = None
 
         # Prepend context to prompt if provided
@@ -317,9 +277,6 @@ class Spawner:
                 span.set_attribute("session_id", str(session_id))
 
             t0 = time.monotonic()
-
-            # Generate MCP config in temp dir
-            temp_dir = _write_mcp_config(self._config.name, self._config.port)
 
             # Read system prompt
             system_prompt = read_system_prompt(self._config_dir, self._config.name)
@@ -397,10 +354,6 @@ class Spawner:
             return spawner_result
 
         finally:
-            # Always clean up temp dir
-            if temp_dir is not None:
-                _cleanup_temp_dir(temp_dir)
-
             # End span and detach context
             span.end()
             trace.context_api.detach(token)
