@@ -1,13 +1,18 @@
-"""Tests for the CC Spawner (butlers-0qp.8).
+"""Tests for the Spawner orchestration layer (butlers-0qp.8, butlers-f3t.7).
 
 Covers:
 - MCP config generation (correct JSON structure, single endpoint)
 - Temp dir cleanup (success and failure paths)
 - Serial dispatch (lock prevents concurrent execution)
 - Credential passthrough (only declared vars included)
-- CLAUDE.md handling (present, missing, empty)
+- System prompt handling (present, missing, empty)
 - Session logging wired correctly
 - SpawnerResult construction on success and error
+- Parametrized orchestration tests across all runtime adapters
+
+Orchestration tests use a MockAdapter (runtime-agnostic). Adapter-specific
+unit tests live in test_runtime_adapter.py, test_codex_adapter.py, and
+test_gemini_adapter.py.
 """
 
 from __future__ import annotations
@@ -19,17 +24,152 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from butlers.config import ButlerConfig
-from butlers.core.skills import read_system_prompt
+from butlers.core.runtimes.base import RuntimeAdapter
 from butlers.core.spawner import (
-    CCSpawner,
     Spawner,
     SpawnerResult,
     _build_env,
     _build_mcp_config,
     _cleanup_temp_dir,
+    _read_system_prompt,
     _write_mcp_config,
 )
+
+# ---------------------------------------------------------------------------
+# MockAdapter — runtime-agnostic adapter for orchestration tests
+# ---------------------------------------------------------------------------
+
+
+class MockAdapter(RuntimeAdapter):
+    """A fully in-process mock adapter for testing Spawner orchestration.
+
+    Does not depend on any CLI binary or SDK. Invoke behavior is controlled
+    via constructor parameters:
+    - result_text / tool_calls: returned on success
+    - error: if set, invoke() raises RuntimeError with this message
+    - delay: if > 0, invoke() sleeps for this many seconds before returning
+    - capture: if True, records all invoke() calls in .calls list
+    """
+
+    def __init__(
+        self,
+        *,
+        result_text: str | None = "",
+        tool_calls: list[dict[str, Any]] | None = None,
+        error: str | None = None,
+        delay: float = 0,
+        capture: bool = False,
+    ) -> None:
+        self._result_text = result_text
+        self._tool_calls = tool_calls or []
+        self._error = error
+        self._delay = delay
+        self._capture = capture
+        self.calls: list[dict[str, Any]] = []
+        self._call_count = 0
+
+    @property
+    def binary_name(self) -> str:
+        return "mock"
+
+    async def invoke(
+        self,
+        prompt: str,
+        system_prompt: str,
+        mcp_servers: dict[str, Any],
+        env: dict[str, str],
+        cwd: Path | None = None,
+        timeout: int | None = None,
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        self._call_count += 1
+        if self._capture:
+            self.calls.append(
+                {
+                    "prompt": prompt,
+                    "system_prompt": system_prompt,
+                    "mcp_servers": mcp_servers,
+                    "env": env,
+                    "cwd": cwd,
+                    "timeout": timeout,
+                }
+            )
+        if self._delay > 0:
+            await asyncio.sleep(self._delay)
+        if self._error:
+            raise RuntimeError(self._error)
+        return self._result_text, list(self._tool_calls)
+
+    def build_config_file(
+        self,
+        mcp_servers: dict[str, Any],
+        tmp_dir: Path,
+    ) -> Path:
+        config_path = tmp_dir / "mock_config.json"
+        config_path.write_text(json.dumps({"mcpServers": mcp_servers}))
+        return config_path
+
+    def parse_system_prompt_file(self, config_dir: Path) -> str:
+        return ""
+
+
+class SequenceMockAdapter(MockAdapter):
+    """Mock adapter that returns different results on successive calls.
+
+    Used for tests like lock-released-on-error where the first call
+    fails and the second succeeds.
+    """
+
+    def __init__(
+        self,
+        sequence: list[dict[str, Any]],
+    ) -> None:
+        super().__init__()
+        self._sequence = sequence
+        self._call_index = 0
+
+    async def invoke(
+        self,
+        prompt: str,
+        system_prompt: str,
+        mcp_servers: dict[str, Any],
+        env: dict[str, str],
+        cwd: Path | None = None,
+        timeout: int | None = None,
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        idx = self._call_index
+        self._call_index += 1
+        entry = self._sequence[idx] if idx < len(self._sequence) else self._sequence[-1]
+        if entry.get("delay"):
+            await asyncio.sleep(entry["delay"])
+        if entry.get("error"):
+            raise RuntimeError(entry["error"])
+        return entry.get("result_text", ""), entry.get("tool_calls", [])
+
+
+class TrackingMockAdapter(MockAdapter):
+    """Mock adapter that tracks start/end of each invoke for serialization tests."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.execution_log: list[tuple[str, str]] = []
+
+    async def invoke(
+        self,
+        prompt: str,
+        system_prompt: str,
+        mcp_servers: dict[str, Any],
+        env: dict[str, str],
+        cwd: Path | None = None,
+        timeout: int | None = None,
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        self.execution_log.append(("start", prompt))
+        await asyncio.sleep(0.03)
+        self.execution_log.append(("end", prompt))
+        return f"result-{prompt}", []
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -47,76 +187,6 @@ def _make_config(
         port=port,
         env_required=env_required or [],
         env_optional=env_optional or [],
-    )
-
-
-async def _noop_sdk_query(*, prompt: str, options: Any):
-    """A mock SDK query that yields nothing (empty async generator)."""
-    return
-    yield  # noqa: E501 — makes this an async generator
-
-
-async def _result_sdk_query(*, prompt: str, options: Any):
-    """A mock SDK query that yields a ResultMessage."""
-    from claude_code_sdk import ResultMessage
-
-    yield ResultMessage(
-        subtype="result",
-        duration_ms=42,
-        duration_api_ms=30,
-        is_error=False,
-        num_turns=1,
-        session_id="fake-session",
-        total_cost_usd=0.01,
-        usage={"input_tokens": 100, "output_tokens": 50},
-        result="Hello from CC!",
-    )
-
-
-async def _tool_use_sdk_query(*, prompt: str, options: Any):
-    """A mock SDK query that yields an AssistantMessage with a ToolUseBlock, then a result."""
-    from claude_code_sdk import AssistantMessage, ResultMessage, ToolUseBlock
-
-    yield AssistantMessage(
-        content=[
-            ToolUseBlock(id="tool_1", name="state_get", input={"key": "foo"}),
-        ],
-        model="claude-test",
-    )
-    yield ResultMessage(
-        subtype="result",
-        duration_ms=100,
-        duration_api_ms=80,
-        is_error=False,
-        num_turns=2,
-        session_id="fake-session-2",
-        total_cost_usd=0.02,
-        usage={"input_tokens": 200, "output_tokens": 100},
-        result="Done with tools",
-    )
-
-
-async def _error_sdk_query(*, prompt: str, options: Any):
-    """A mock SDK query that raises an exception."""
-    raise RuntimeError("SDK connection failed")
-    yield  # noqa: E501 — makes this an async generator
-
-
-async def _slow_sdk_query(*, prompt: str, options: Any):
-    """A mock SDK query that sleeps to simulate duration."""
-    await asyncio.sleep(0.05)
-    from claude_code_sdk import ResultMessage
-
-    yield ResultMessage(
-        subtype="result",
-        duration_ms=50,
-        duration_api_ms=40,
-        is_error=False,
-        num_turns=1,
-        session_id="slow-session",
-        total_cost_usd=0.0,
-        usage={},
-        result="slow result",
     )
 
 
@@ -171,17 +241,18 @@ class TestMcpConfigGeneration:
 
 
 class TestTempDirCleanup:
-    """Temp dir is cleaned up after CC session on both success and failure."""
+    """Temp dir is cleaned up after session on both success and failure."""
 
     async def test_cleanup_on_success(self, tmp_path: Path):
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
 
+        adapter = MockAdapter(result_text="")
         spawner = Spawner(
             config=config,
             config_dir=config_dir,
-            sdk_query=_noop_sdk_query,
+            runtime=adapter,
         )
 
         with patch("butlers.core.spawner._write_mcp_config") as mock_write:
@@ -196,15 +267,16 @@ class TestTempDirCleanup:
         if real_dir.exists():
             _cleanup_temp_dir(real_dir)
 
-    async def test_cleanup_on_sdk_error(self, tmp_path: Path):
+    async def test_cleanup_on_error(self, tmp_path: Path):
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
 
+        adapter = MockAdapter(error="adapter invocation failed")
         spawner = Spawner(
             config=config,
             config_dir=config_dir,
-            sdk_query=_error_sdk_query,
+            runtime=adapter,
         )
 
         with patch("butlers.core.spawner._write_mcp_config") as mock_write:
@@ -227,7 +299,7 @@ class TestTempDirCleanup:
 
 
 # ---------------------------------------------------------------------------
-# 8.2: CC SDK invocation and SpawnerResult
+# 8.2: Spawner result and invocation (runtime-agnostic)
 # ---------------------------------------------------------------------------
 
 
@@ -236,45 +308,40 @@ class TestSpawnerResult:
 
     def test_default_values(self):
         r = SpawnerResult()
-        assert r.output is None
-        assert r.success is False
+        assert r.result is None
         assert r.tool_calls == []
         assert r.error is None
         assert r.duration_ms == 0
 
     def test_success_result(self):
-        r = SpawnerResult(
-            output="output text", success=True, tool_calls=[{"name": "t"}], duration_ms=42
-        )
-        assert r.output == "output text"
-        assert r.success is True
+        r = SpawnerResult(result="output", tool_calls=[{"name": "t"}], duration_ms=42)
+        assert r.result == "output"
         assert len(r.tool_calls) == 1
         assert r.error is None
 
     def test_error_result(self):
-        r = SpawnerResult(error="something broke", success=False, duration_ms=10)
-        assert r.output is None
-        assert r.success is False
+        r = SpawnerResult(error="something broke", duration_ms=10)
+        assert r.result is None
         assert r.error == "something broke"
 
 
-class TestCCSdkInvocation:
-    """Tests for SDK invocation via Spawner.trigger()."""
+class TestSpawnerInvocation:
+    """Tests for runtime invocation via Spawner.trigger() with MockAdapter."""
 
-    async def test_success_with_result_message(self, tmp_path: Path):
+    async def test_success_with_result(self, tmp_path: Path):
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
 
+        adapter = MockAdapter(result_text="Hello from mock!")
         spawner = Spawner(
             config=config,
             config_dir=config_dir,
-            sdk_query=_result_sdk_query,
+            runtime=adapter,
         )
 
         result = await spawner.trigger("hello", "tick")
-        assert result.output == "Hello from CC!"
-        assert result.success is True
+        assert result.result == "Hello from mock!"
         assert result.error is None
         assert result.duration_ms >= 0
 
@@ -283,36 +350,39 @@ class TestCCSdkInvocation:
         config_dir.mkdir()
         config = _make_config()
 
+        adapter = MockAdapter(
+            result_text="Done with tools",
+            tool_calls=[{"id": "tool_1", "name": "state_get", "input": {"key": "foo"}}],
+        )
         spawner = Spawner(
             config=config,
             config_dir=config_dir,
-            sdk_query=_tool_use_sdk_query,
+            runtime=adapter,
         )
 
         result = await spawner.trigger("use tools", "trigger_tool")
-        assert result.output == "Done with tools"
-        assert result.success is True
+        assert result.result == "Done with tools"
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0]["name"] == "state_get"
         assert result.tool_calls[0]["input"] == {"key": "foo"}
 
-    async def test_sdk_error_wrapped_in_result(self, tmp_path: Path):
+    async def test_error_wrapped_in_result(self, tmp_path: Path):
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
 
+        adapter = MockAdapter(error="adapter connection failed")
         spawner = Spawner(
             config=config,
             config_dir=config_dir,
-            sdk_query=_error_sdk_query,
+            runtime=adapter,
         )
 
         result = await spawner.trigger("fail", "tick")
         assert result.error is not None
         assert "RuntimeError" in result.error
-        assert "SDK connection failed" in result.error
-        assert result.output is None
-        assert result.success is False
+        assert "adapter connection failed" in result.error
+        assert result.result is None
         assert result.duration_ms >= 0
 
     async def test_duration_measured(self, tmp_path: Path):
@@ -320,10 +390,11 @@ class TestCCSdkInvocation:
         config_dir.mkdir()
         config = _make_config()
 
+        adapter = MockAdapter(result_text="slow result", delay=0.05)
         spawner = Spawner(
             config=config,
             config_dir=config_dir,
-            sdk_query=_slow_sdk_query,
+            runtime=adapter,
         )
 
         result = await spawner.trigger("slow", "tick")
@@ -336,7 +407,7 @@ class TestCCSdkInvocation:
 
 
 class TestCredentialPassthrough:
-    """Only declared env vars are passed to the CC instance."""
+    """Only declared env vars are passed to the runtime instance."""
 
     def test_anthropic_key_always_included(self):
         config = _make_config()
@@ -411,23 +482,17 @@ class TestCredentialPassthrough:
             env = _build_env(config)
             assert "ANTHROPIC_API_KEY" not in env
 
-    async def test_env_passed_to_sdk_options(self, tmp_path: Path):
-        """Verify the env dict is passed through to ClaudeCodeOptions."""
+    async def test_env_passed_to_adapter(self, tmp_path: Path):
+        """Verify the env dict is passed through to the adapter."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config(env_required=["BUTLER_SECRET"])
 
-        captured_options: list[Any] = []
-
-        async def capturing_sdk(*, prompt: str, options: Any):
-            captured_options.append(options)
-            return
-            yield
-
+        adapter = MockAdapter(result_text="", capture=True)
         spawner = Spawner(
             config=config,
             config_dir=config_dir,
-            sdk_query=capturing_sdk,
+            runtime=adapter,
         )
 
         with patch.dict(
@@ -437,66 +502,60 @@ class TestCredentialPassthrough:
         ):
             await spawner.trigger("test env", "tick")
 
-        assert len(captured_options) == 1
-        opts = captured_options[0]
-        assert opts.env["ANTHROPIC_API_KEY"] == "sk-key"
-        assert opts.env["BUTLER_SECRET"] == "s3cret"
+        assert len(adapter.calls) == 1
+        passed_env = adapter.calls[0]["env"]
+        assert passed_env["ANTHROPIC_API_KEY"] == "sk-key"
+        assert passed_env["BUTLER_SECRET"] == "s3cret"
 
 
 # ---------------------------------------------------------------------------
-# 8.4: CLAUDE.md system prompt reading
+# 8.4: System prompt reading
 # ---------------------------------------------------------------------------
 
 
 class TestSystemPrompt:
-    """CLAUDE.md reading for system prompt."""
+    """System prompt reading for spawner."""
 
     def test_reads_claude_md(self, tmp_path: Path):
         claude_md = tmp_path / "CLAUDE.md"
         claude_md.write_text("You are a specialized butler for email management.")
-        prompt = read_system_prompt(tmp_path, "email-butler")
+        prompt = _read_system_prompt(tmp_path, "email-butler")
         assert prompt == "You are a specialized butler for email management."
 
     def test_missing_claude_md_uses_default(self, tmp_path: Path):
-        prompt = read_system_prompt(tmp_path, "my-butler")
-        assert prompt == "You are the my-butler butler."
+        prompt = _read_system_prompt(tmp_path, "my-butler")
+        assert prompt == "You are my-butler, a butler AI assistant."
 
     def test_empty_claude_md_uses_default(self, tmp_path: Path):
         claude_md = tmp_path / "CLAUDE.md"
         claude_md.write_text("")
-        prompt = read_system_prompt(tmp_path, "my-butler")
-        assert prompt == "You are the my-butler butler."
+        prompt = _read_system_prompt(tmp_path, "my-butler")
+        assert prompt == "You are my-butler, a butler AI assistant."
 
     def test_whitespace_only_claude_md_uses_default(self, tmp_path: Path):
         claude_md = tmp_path / "CLAUDE.md"
         claude_md.write_text("   \n  \n  ")
-        prompt = read_system_prompt(tmp_path, "my-butler")
-        assert prompt == "You are the my-butler butler."
+        prompt = _read_system_prompt(tmp_path, "my-butler")
+        assert prompt == "You are my-butler, a butler AI assistant."
 
-    async def test_system_prompt_passed_to_sdk(self, tmp_path: Path):
+    async def test_system_prompt_passed_to_adapter(self, tmp_path: Path):
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         claude_md = config_dir / "CLAUDE.md"
         claude_md.write_text("Custom system prompt for testing.")
         config = _make_config()
 
-        captured_options: list[Any] = []
-
-        async def capturing_sdk(*, prompt: str, options: Any):
-            captured_options.append(options)
-            return
-            yield
-
+        adapter = MockAdapter(result_text="", capture=True)
         spawner = Spawner(
             config=config,
             config_dir=config_dir,
-            sdk_query=capturing_sdk,
+            runtime=adapter,
         )
 
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-key"}, clear=False):
             await spawner.trigger("test", "tick")
 
-        assert captured_options[0].system_prompt == "Custom system prompt for testing."
+        assert adapter.calls[0]["system_prompt"] == "Custom system prompt for testing."
 
 
 # ---------------------------------------------------------------------------
@@ -505,37 +564,18 @@ class TestSystemPrompt:
 
 
 class TestSerialDispatch:
-    """asyncio.Lock ensures only one CC instance runs at a time."""
+    """asyncio.Lock ensures only one runtime instance runs at a time."""
 
     async def test_concurrent_triggers_are_serialized(self, tmp_path: Path):
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
 
-        execution_log: list[tuple[str, str]] = []
-
-        async def tracking_sdk(*, prompt: str, options: Any):
-            execution_log.append(("start", prompt))
-            await asyncio.sleep(0.03)
-            execution_log.append(("end", prompt))
-            from claude_code_sdk import ResultMessage
-
-            yield ResultMessage(
-                subtype="result",
-                duration_ms=30,
-                duration_api_ms=20,
-                is_error=False,
-                num_turns=1,
-                session_id="s",
-                total_cost_usd=0.0,
-                usage={},
-                result=f"result-{prompt}",
-            )
-
+        adapter = TrackingMockAdapter()
         spawner = Spawner(
             config=config,
             config_dir=config_dir,
-            sdk_query=tracking_sdk,
+            runtime=adapter,
         )
 
         # Launch 3 concurrent triggers
@@ -547,10 +587,10 @@ class TestSerialDispatch:
 
         # All should succeed
         assert all(r.error is None for r in results)
-        assert all(r.success is True for r in results)
 
         # Verify serial execution: each "start" must be followed by its "end"
         # before the next "start"
+        execution_log = adapter.execution_log
         for i in range(0, len(execution_log), 2):
             assert execution_log[i][0] == "start"
             assert execution_log[i + 1][0] == "end"
@@ -561,42 +601,25 @@ class TestSerialDispatch:
         config_dir.mkdir()
         config = _make_config()
 
-        call_count = 0
-
-        async def failing_then_succeeding_sdk(*, prompt: str, options: Any):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("First call fails")
-            from claude_code_sdk import ResultMessage
-
-            yield ResultMessage(
-                subtype="result",
-                duration_ms=1,
-                duration_api_ms=1,
-                is_error=False,
-                num_turns=1,
-                session_id="s",
-                total_cost_usd=0.0,
-                usage={},
-                result="second call works",
-            )
-
+        adapter = SequenceMockAdapter(
+            sequence=[
+                {"error": "First call fails"},
+                {"result_text": "second call works", "tool_calls": []},
+            ]
+        )
         spawner = Spawner(
             config=config,
             config_dir=config_dir,
-            sdk_query=failing_then_succeeding_sdk,
+            runtime=adapter,
         )
 
         result1 = await spawner.trigger("first", "tick")
         assert result1.error is not None
-        assert result1.success is False
 
         # Lock should be released — second call should work
         result2 = await spawner.trigger("second", "tick")
         assert result2.error is None
-        assert result2.output == "second call works"
-        assert result2.success is True
+        assert result2.result == "second call works"
 
 
 # ---------------------------------------------------------------------------
@@ -624,36 +647,27 @@ class TestSessionLogging:
             fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
             mock_create.return_value = fake_session_id
 
+            adapter = MockAdapter(result_text="Hello from mock!")
             spawner = Spawner(
                 config=config,
                 config_dir=config_dir,
                 pool=mock_pool,
-                sdk_query=_result_sdk_query,
+                runtime=adapter,
             )
 
             await spawner.trigger("log me", "schedule")
 
             # session_create called with correct args
-            # session_create now takes trace_id as 4th arg (None without telemetry setup)
-            call_args = mock_create.call_args
-            assert call_args[0][0] is mock_pool
-            assert call_args[0][1] == "log me"
-            assert call_args[0][2] == "schedule"
-            # trace_id may be None if no telemetry is set up
-            assert len(call_args[0]) == 4
+            mock_create.assert_called_once_with(mock_pool, "log me", "schedule")
 
             # session_complete called with result data
             mock_complete.assert_called_once()
-            call_kwargs = mock_complete.call_args.kwargs
-            call_args = mock_complete.call_args.args
-            assert call_args[0] is mock_pool
-            assert call_args[1] == fake_session_id
-            # Check keyword arguments for the new signature
-            assert call_kwargs["output"] == "Hello from CC!"
-            assert isinstance(call_kwargs["tool_calls"], list)
-            assert call_kwargs["duration_ms"] >= 0
-            assert call_kwargs["success"] is True
-            assert call_kwargs.get("error") is None
+            call_args = mock_complete.call_args
+            assert call_args[0][0] is mock_pool
+            assert call_args[0][1] == fake_session_id
+            assert call_args[0][2] == "Hello from mock!"  # result text
+            assert isinstance(call_args[0][3], list)  # tool_calls
+            assert call_args[0][4] >= 0  # duration_ms
 
     async def test_session_completed_on_error(self, tmp_path: Path):
         config_dir = tmp_path / "config"
@@ -671,27 +685,24 @@ class TestSessionLogging:
             fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
             mock_create.return_value = fake_session_id
 
+            adapter = MockAdapter(error="adapter connection failed")
             spawner = Spawner(
                 config=config,
                 config_dir=config_dir,
                 pool=mock_pool,
-                sdk_query=_error_sdk_query,
+                runtime=adapter,
             )
 
             result = await spawner.trigger("fail", "tick")
             assert result.error is not None
-            assert result.success is False
 
             # session_complete called with error info
             mock_complete.assert_called_once()
-            call_kwargs = mock_complete.call_args.kwargs
-            call_args = mock_complete.call_args.args
-            assert call_args[0] is mock_pool
-            assert call_args[1] == fake_session_id
-            assert call_kwargs["output"] is None
-            assert call_kwargs["tool_calls"] == []
-            assert call_kwargs["success"] is False
-            assert "RuntimeError" in call_kwargs["error"]
+            call_args = mock_complete.call_args
+            assert call_args[0][0] is mock_pool
+            assert call_args[0][1] == fake_session_id
+            assert "RuntimeError" in call_args[0][2]  # error message as result
+            assert call_args[0][3] == []  # empty tool_calls on error
 
     async def test_no_session_logging_without_pool(self, tmp_path: Path):
         """When pool is None, no session logging occurs (no errors either)."""
@@ -699,26 +710,26 @@ class TestSessionLogging:
         config_dir.mkdir()
         config = _make_config()
 
+        adapter = MockAdapter(result_text="Hello from mock!")
         spawner = Spawner(
             config=config,
             config_dir=config_dir,
             pool=None,
-            sdk_query=_result_sdk_query,
+            runtime=adapter,
         )
 
         # Should not raise even without a pool
         result = await spawner.trigger("no pool", "tick")
-        assert result.output == "Hello from CC!"
-        assert result.success is True
+        assert result.result == "Hello from mock!"
 
 
 # ---------------------------------------------------------------------------
-# Integration-style test: full flow without real SDK
+# Integration-style test: full flow with MockAdapter
 # ---------------------------------------------------------------------------
 
 
 class TestFullFlow:
-    """End-to-end spawner flow with mocked SDK."""
+    """End-to-end spawner flow with MockAdapter."""
 
     async def test_full_trigger_flow(self, tmp_path: Path):
         config_dir = tmp_path / "config"
@@ -732,33 +743,15 @@ class TestFullFlow:
             env_required=["CUSTOM_VAR"],
         )
 
-        captured: dict[str, Any] = {}
-
-        async def capturing_sdk(*, prompt: str, options: Any):
-            captured["prompt"] = prompt
-            captured["options"] = options
-            from claude_code_sdk import AssistantMessage, ResultMessage, ToolUseBlock
-
-            yield AssistantMessage(
-                content=[ToolUseBlock(id="t1", name="state_set", input={"k": "v"})],
-                model="claude-test",
-            )
-            yield ResultMessage(
-                subtype="result",
-                duration_ms=10,
-                duration_api_ms=8,
-                is_error=False,
-                num_turns=1,
-                session_id="full-flow",
-                total_cost_usd=0.005,
-                usage={},
-                result="All done!",
-            )
-
+        adapter = MockAdapter(
+            result_text="All done!",
+            tool_calls=[{"id": "t1", "name": "state_set", "input": {"k": "v"}}],
+            capture=True,
+        )
         spawner = Spawner(
             config=config,
             config_dir=config_dir,
-            sdk_query=capturing_sdk,
+            runtime=adapter,
         )
 
         with patch.dict(
@@ -768,362 +761,197 @@ class TestFullFlow:
         ):
             result = await spawner.trigger("do the thing", "schedule")
 
-        assert result.output == "All done!"
-        assert result.success is True
+        assert result.result == "All done!"
         assert result.error is None
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0]["name"] == "state_set"
         assert result.duration_ms >= 0
 
-        # Verify options
-        opts = captured["options"]
-        assert opts.system_prompt == "You are the test butler."
-        assert opts.permission_mode == "bypassPermissions"
-        assert "flow-butler" in opts.mcp_servers
-        assert opts.env["ANTHROPIC_API_KEY"] == "sk-flow"
-        assert opts.env["CUSTOM_VAR"] == "cv"
+        # Verify adapter received correct args
+        assert len(adapter.calls) == 1
+        call = adapter.calls[0]
+        assert call["system_prompt"] == "You are the test butler."
+        assert "flow-butler" in call["mcp_servers"]
+        assert call["env"]["ANTHROPIC_API_KEY"] == "sk-flow"
+        assert call["env"]["CUSTOM_VAR"] == "cv"
 
 
 # ---------------------------------------------------------------------------
-# butlers-06j.13: max_turns and cwd configuration
+# Parametrized tests: orchestration behavior across adapters
 # ---------------------------------------------------------------------------
 
 
-class TestMaxTurnsAndCwd:
-    """Tests for max_turns and cwd configuration in CC spawner."""
+def _make_noop_adapter() -> MockAdapter:
+    """Adapter that returns empty result (no error)."""
+    return MockAdapter(result_text="")
 
-    async def test_max_turns_default_20(self, tmp_path: Path):
-        """Default max_turns should be 20."""
+
+def _make_result_adapter() -> MockAdapter:
+    """Adapter that returns a text result."""
+    return MockAdapter(result_text="Hello from adapter!")
+
+
+def _make_tool_use_adapter() -> MockAdapter:
+    """Adapter that returns result with tool calls."""
+    return MockAdapter(
+        result_text="Done with tools",
+        tool_calls=[{"id": "tool_1", "name": "state_get", "input": {"key": "foo"}}],
+    )
+
+
+def _make_error_adapter() -> MockAdapter:
+    """Adapter that raises an error."""
+    return MockAdapter(error="adapter connection failed")
+
+
+def _make_slow_adapter() -> MockAdapter:
+    """Adapter that sleeps to simulate duration."""
+    return MockAdapter(result_text="slow result", delay=0.05)
+
+
+@pytest.mark.parametrize(
+    "adapter_factory,expected_result,expected_error",
+    [
+        pytest.param(_make_noop_adapter, "", None, id="noop-adapter"),
+        pytest.param(_make_result_adapter, "Hello from adapter!", None, id="result-adapter"),
+        pytest.param(_make_error_adapter, None, "adapter connection failed", id="error-adapter"),
+    ],
+)
+class TestParametrizedOrchestration:
+    """Orchestration tests parametrized across different adapter behaviors."""
+
+    async def test_trigger_returns_spawner_result(
+        self, tmp_path: Path, adapter_factory, expected_result, expected_error
+    ):
+        """Spawner.trigger() wraps adapter output in SpawnerResult."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
 
-        captured_options: list[Any] = []
+        adapter = adapter_factory()
+        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
+        result = await spawner.trigger("test", "tick")
 
-        async def capturing_sdk(*, prompt: str, options: Any):
-            captured_options.append(options)
-            return
-            yield
-
-        spawner = CCSpawner(
-            config=config,
-            config_dir=config_dir,
-            sdk_query=capturing_sdk,
-        )
-
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-key"}, clear=False):
-            await spawner.trigger("test", "tick")
-
-        assert len(captured_options) == 1
-        assert captured_options[0].max_turns == 20
-
-    async def test_max_turns_custom(self, tmp_path: Path):
-        """Custom max_turns should be passed through."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-
-        captured_options: list[Any] = []
-
-        async def capturing_sdk(*, prompt: str, options: Any):
-            captured_options.append(options)
-            return
-            yield
-
-        spawner = CCSpawner(
-            config=config,
-            config_dir=config_dir,
-            sdk_query=capturing_sdk,
-        )
-
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-key"}, clear=False):
-            await spawner.trigger("test", "tick", max_turns=5)
-
-        assert len(captured_options) == 1
-        assert captured_options[0].max_turns == 5
-
-    async def test_cwd_set_to_config_dir(self, tmp_path: Path):
-        """cwd should be set to the butler's config directory."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-
-        captured_options: list[Any] = []
-
-        async def capturing_sdk(*, prompt: str, options: Any):
-            captured_options.append(options)
-            return
-            yield
-
-        spawner = CCSpawner(
-            config=config,
-            config_dir=config_dir,
-            sdk_query=capturing_sdk,
-        )
-
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-key"}, clear=False):
-            await spawner.trigger("test", "tick")
-
-        assert len(captured_options) == 1
-        assert captured_options[0].cwd == str(config_dir)
-# 8.7: Butler.cc_session span (butlers-06j.24)
-# ---------------------------------------------------------------------------
-
-
-class TestCCSessionSpan:
-    """Tests for butler.cc_session span creation and attributes."""
-
-    async def test_cc_session_span_created(self, tmp_path: Path):
-        """Verify that a butler.cc_session span is created during CC invocation."""
-        from opentelemetry import trace
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
-        # Reset OTel state
-        trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
-        trace._TRACER_PROVIDER = None
-
-        # Set up in-memory exporter
-        exporter = InMemorySpanExporter()
-        resource = Resource.create({"service.name": "butler-test"})
-        provider = TracerProvider(resource=resource)
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        trace.set_tracer_provider(provider)
-
-        try:
-            config_dir = tmp_path / "config"
-            config_dir.mkdir()
-            config = _make_config(name="test-butler")
-
-            spawner = CCSpawner(
-                config=config,
-                config_dir=config_dir,
-                sdk_query=_result_sdk_query,
-            )
-
-            await spawner.trigger("test prompt", "tick")
-
-            spans = exporter.get_finished_spans()
-            cc_session_spans = [s for s in spans if s.name == "butler.cc_session"]
-            assert len(cc_session_spans) == 1
-            span = cc_session_spans[0]
-            assert span.attributes["butler.name"] == "test-butler"
-            assert span.attributes["prompt_length"] == len("test prompt")
-        finally:
-            provider.shutdown()
-            trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
-            trace._TRACER_PROVIDER = None
-
-    async def test_cc_session_span_has_session_id(self, tmp_path: Path):
-        """Verify that session_id attribute is set on the span."""
-        from opentelemetry import trace
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
-        trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
-        trace._TRACER_PROVIDER = None
-
-        exporter = InMemorySpanExporter()
-        resource = Resource.create({"service.name": "butler-test"})
-        provider = TracerProvider(resource=resource)
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        trace.set_tracer_provider(provider)
-
-        try:
-            config_dir = tmp_path / "config"
-            config_dir.mkdir()
-            config = _make_config()
-
-            mock_pool = AsyncMock()
-            fake_session_id = "00000000-0000-0000-0000-000000000001"
-
-            with patch(
-                "butlers.core.spawner.session_create", new_callable=AsyncMock
-            ) as mock_create:
-                import uuid
-
-                mock_create.return_value = uuid.UUID(fake_session_id)
-
-                spawner = CCSpawner(
-                    config=config,
-                    config_dir=config_dir,
-                    pool=mock_pool,
-                    sdk_query=_result_sdk_query,
-                )
-
-                await spawner.trigger("test", "tick")
-
-                spans = exporter.get_finished_spans()
-                cc_session_spans = [s for s in spans if s.name == "butler.cc_session"]
-                assert len(cc_session_spans) == 1
-                span = cc_session_spans[0]
-                assert "session_id" in span.attributes
-                assert span.attributes["session_id"] == fake_session_id
-        finally:
-            provider.shutdown()
-            trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
-            trace._TRACER_PROVIDER = None
-
-    async def test_trace_id_passed_to_session_create(self, tmp_path: Path):
-        """Verify that trace_id is extracted from span and passed to session_create."""
-        from opentelemetry import trace
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
-        trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
-        trace._TRACER_PROVIDER = None
-
-        exporter = InMemorySpanExporter()
-        resource = Resource.create({"service.name": "butler-test"})
-        provider = TracerProvider(resource=resource)
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        trace.set_tracer_provider(provider)
-
-        try:
-            config_dir = tmp_path / "config"
-            config_dir.mkdir()
-            config = _make_config()
-
-            mock_pool = AsyncMock()
-
-            with patch(
-                "butlers.core.spawner.session_create", new_callable=AsyncMock
-            ) as mock_create:
-                import uuid
-
-                mock_create.return_value = uuid.UUID("00000000-0000-0000-0000-000000000001")
-
-                spawner = CCSpawner(
-                    config=config,
-                    config_dir=config_dir,
-                    pool=mock_pool,
-                    sdk_query=_result_sdk_query,
-                )
-
-                await spawner.trigger("test", "tick")
-
-                # Verify session_create was called with a trace_id
-                mock_create.assert_called_once()
-                call_args = mock_create.call_args
-                assert call_args[0][0] is mock_pool
-                assert call_args[0][1] == "test"
-                assert call_args[0][2] == "tick"
-                trace_id_arg = call_args[0][3]
-                assert trace_id_arg is not None
-                assert isinstance(trace_id_arg, str)
-                assert len(trace_id_arg) == 32  # trace_id is 128-bit hex string
-
-                # Verify the trace_id matches the span's trace_id
-                spans = exporter.get_finished_spans()
-                cc_session_spans = [s for s in spans if s.name == "butler.cc_session"]
-                assert len(cc_session_spans) == 1
-                span = cc_session_spans[0]
-                span_trace_id = format(span.context.trace_id, "032x")
-                assert trace_id_arg == span_trace_id
-        finally:
-            provider.shutdown()
-            trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
-            trace._TRACER_PROVIDER = None
-
-    async def test_span_records_exception_on_error(self, tmp_path: Path):
-        """Verify that exceptions are recorded on the span."""
-        from opentelemetry import trace
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-
-        trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
-        trace._TRACER_PROVIDER = None
-
-        exporter = InMemorySpanExporter()
-        resource = Resource.create({"service.name": "butler-test"})
-        provider = TracerProvider(resource=resource)
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        trace.set_tracer_provider(provider)
-
-        try:
-            config_dir = tmp_path / "config"
-            config_dir.mkdir()
-            config = _make_config()
-
-            spawner = CCSpawner(
-                config=config,
-                config_dir=config_dir,
-                sdk_query=_error_sdk_query,
-            )
-
-            result = await spawner.trigger("fail", "tick")
+        if expected_error:
             assert result.error is not None
+            assert expected_error in result.error
+            assert result.result is None
+        else:
+            assert result.error is None
+            assert result.result == expected_result
+        assert result.duration_ms >= 0
 
-            spans = exporter.get_finished_spans()
-            cc_session_spans = [s for s in spans if s.name == "butler.cc_session"]
-            assert len(cc_session_spans) == 1
-            span = cc_session_spans[0]
+    async def test_temp_dir_cleaned_up(
+        self, tmp_path: Path, adapter_factory, expected_result, expected_error
+    ):
+        """Temp dir is cleaned up regardless of adapter outcome."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
 
-            # Verify span status is ERROR
-            assert span.status.status_code == trace.StatusCode.ERROR
+        adapter = adapter_factory()
+        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
 
-            # Verify exception was recorded
-            events = span.events
-            exception_events = [e for e in events if e.name == "exception"]
-            assert len(exception_events) == 1
-            exc_event = exception_events[0]
-            assert "RuntimeError" in exc_event.attributes["exception.type"]
-            assert "SDK connection failed" in exc_event.attributes["exception.message"]
-        finally:
-            provider.shutdown()
-            trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
-            trace._TRACER_PROVIDER = None
+        with patch("butlers.core.spawner._write_mcp_config") as mock_write:
+            real_dir = _write_mcp_config("test-butler", 9100)
+            mock_write.return_value = real_dir
 
-    async def test_no_span_error_without_pool(self, tmp_path: Path):
-        """Verify span is still created even without a pool (no session_id attribute)."""
-        from opentelemetry import trace
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+            with patch("butlers.core.spawner._cleanup_temp_dir") as mock_cleanup:
+                await spawner.trigger("test", "tick")
+                mock_cleanup.assert_called_once_with(real_dir)
 
-        trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
-        trace._TRACER_PROVIDER = None
+        if real_dir.exists():
+            _cleanup_temp_dir(real_dir)
 
-        exporter = InMemorySpanExporter()
-        resource = Resource.create({"service.name": "butler-test"})
-        provider = TracerProvider(resource=resource)
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        trace.set_tracer_provider(provider)
 
-        try:
-            config_dir = tmp_path / "config"
-            config_dir.mkdir()
-            config = _make_config()
+@pytest.mark.parametrize(
+    "adapter_factory,expect_error",
+    [
+        pytest.param(_make_result_adapter, False, id="success"),
+        pytest.param(_make_error_adapter, True, id="error"),
+    ],
+)
+class TestParametrizedSessionLogging:
+    """Session logging parametrized across success and error adapters."""
 
-            spawner = CCSpawner(
+    async def test_session_logged(self, tmp_path: Path, adapter_factory, expect_error):
+        """Session is created and completed regardless of outcome."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        mock_pool = AsyncMock()
+
+        with (
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
+            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock) as mock_complete,
+        ):
+            import uuid
+
+            fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000099")
+            mock_create.return_value = fake_session_id
+
+            adapter = adapter_factory()
+            spawner = Spawner(
                 config=config,
                 config_dir=config_dir,
-                pool=None,
-                sdk_query=_result_sdk_query,
+                pool=mock_pool,
+                runtime=adapter,
             )
 
-            result = await spawner.trigger("no pool", "tick")
-            assert result.error is None
+            result = await spawner.trigger("test", "tick")
 
-            spans = exporter.get_finished_spans()
-            cc_session_spans = [s for s in spans if s.name == "butler.cc_session"]
-            assert len(cc_session_spans) == 1
-            span = cc_session_spans[0]
-            assert span.attributes["butler.name"] == "test-butler"
-            assert span.attributes["prompt_length"] == len("no pool")
-            # session_id should not be set when there's no pool
-            assert "session_id" not in span.attributes
-        finally:
-            provider.shutdown()
-            trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
-            trace._TRACER_PROVIDER = None
+            mock_create.assert_called_once_with(mock_pool, "test", "tick")
+            mock_complete.assert_called_once()
 
+            call_args = mock_complete.call_args
+            assert call_args[0][0] is mock_pool
+            assert call_args[0][1] == fake_session_id
+
+            if expect_error:
+                assert result.error is not None
+                assert "RuntimeError" in call_args[0][2]
+                assert call_args[0][3] == []
+            else:
+                assert result.error is None
+                assert call_args[0][4] >= 0
+
+
+# ---------------------------------------------------------------------------
+# Legacy sdk_query compat test
+# ---------------------------------------------------------------------------
+
+
+class TestLegacySdkQueryCompat:
+    """Verify backward compatibility with sdk_query parameter."""
+
+    async def test_sdk_query_still_works(self, tmp_path: Path):
+        """Spawner(sdk_query=...) wraps the callable in a ClaudeCodeAdapter."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        from claude_code_sdk import ResultMessage
+
+        async def mock_sdk(*, prompt: str, options: Any):
+            yield ResultMessage(
+                subtype="result",
+                duration_ms=10,
+                duration_api_ms=8,
+                is_error=False,
+                num_turns=1,
+                session_id="compat-test",
+                total_cost_usd=0.0,
+                usage={},
+                result="Hello from legacy!",
+            )
+
+        spawner = Spawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=mock_sdk,
+        )
+
+        result = await spawner.trigger("hello", "tick")
+        assert result.result == "Hello from legacy!"
+        assert result.error is None

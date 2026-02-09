@@ -238,37 +238,6 @@ def test_all_adapters_instantiate():
     assert GeminiAdapter()
 
 
-async def test_gemini_invoke_raises_file_not_found_when_binary_missing():
-    """GeminiAdapter.invoke() raises FileNotFoundError when binary is not on PATH."""
-    adapter = GeminiAdapter(gemini_binary=None)
-    from unittest.mock import patch
-
-    with patch("shutil.which", return_value=None), pytest.raises(FileNotFoundError):
-        await adapter.invoke(
-            prompt="test",
-            system_prompt="test",
-            mcp_servers={},
-            env={},
-        )
-
-
-def test_gemini_build_config_writes_json(tmp_path: Path):
-    """GeminiAdapter.build_config_file() writes valid JSON config."""
-    adapter = GeminiAdapter()
-    servers = {"s1": {"url": "http://localhost:8000/sse"}}
-    path = adapter.build_config_file(mcp_servers=servers, tmp_dir=tmp_path)
-    import json
-
-    data = json.loads(path.read_text())
-    assert "mcpServers" in data
-    assert "s1" in data["mcpServers"]
-
-
-def test_gemini_parse_system_prompt_returns_empty_for_missing_dir(tmp_path: Path):
-    """GeminiAdapter.parse_system_prompt_file() returns empty for missing files."""
-    adapter = GeminiAdapter()
-    result = adapter.parse_system_prompt_file(config_dir=tmp_path)
-    assert result == ""
 
 
 # ---------------------------------------------------------------------------
