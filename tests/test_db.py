@@ -140,12 +140,8 @@ async def test_pool_executes_queries(db_factory):
 
         # Test creating a table and inserting data
         async with db.pool.acquire() as conn:
-            await conn.execute(
-                "CREATE TABLE test_table (id serial PRIMARY KEY, value text)"
-            )
-            await conn.execute(
-                "INSERT INTO test_table (value) VALUES ($1)", "hello"
-            )
+            await conn.execute("CREATE TABLE test_table (id serial PRIMARY KEY, value text)")
+            await conn.execute("INSERT INTO test_table (value) VALUES ($1)", "hello")
             row = await conn.fetchrow("SELECT value FROM test_table WHERE id = 1")
             assert row is not None
             assert row["value"] == "hello"

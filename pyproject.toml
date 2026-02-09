@@ -18,6 +18,7 @@ dependencies = [
     "pydantic",
     "alembic",
     "sqlalchemy",
+    "psycopg2-binary",
 ]
 
 [dependency-groups]
