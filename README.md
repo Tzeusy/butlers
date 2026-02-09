@@ -44,6 +44,8 @@ calendar_id = "primary"
 
 ## Architecture
 
+### System Overview
+
 ```
 External Clients (MCP-compatible)
         │
@@ -63,9 +65,257 @@ Claude Code instances ── ephemeral, locked-down, reason + act
 - A **Heartbeat Butler** calls `tick()` on every butler every 10 minutes, triggering scheduled tasks
 - Butler configs are **git-based directories** with personality (`CLAUDE.md`), skills, and config (`butler.toml`)
 
-## Tech Stack
+### Detailed Architecture
 
-Python 3.12+ · FastMCP · Claude Code SDK · PostgreSQL · Docker · asyncio
+```mermaid
+graph TB
+    subgraph External
+        Client[MCP Client]
+        Cron[Heartbeat Butler<br/>tick every 10 min]
+    end
+
+    subgraph Switchboard["Switchboard Butler :8100"]
+        SRouter[Route Tool]
+        SRegistry[Butler Registry]
+    end
+
+    Client --> SRouter
+    SRouter --> SRegistry
+    Cron --> |tick_all_butlers| SRouter
+
+    subgraph Butlers["Domain Butlers"]
+        subgraph General["General :8101"]
+            G_MCP[FastMCP Server]
+        end
+        subgraph Relationship["Relationship :8102"]
+            R_MCP[FastMCP Server]
+        end
+        subgraph Health["Health :8103"]
+            H_MCP[FastMCP Server]
+        end
+    end
+
+    SRouter --> |route via MCP| G_MCP
+    SRouter --> |route via MCP| R_MCP
+    SRouter --> |route via MCP| H_MCP
+
+    subgraph Daemon["Butler Daemon Internals"]
+        direction TB
+        Config[butler.toml] --> Startup
+
+        subgraph Startup["12-Step Startup"]
+            S1[1. Load config]
+            S2[2. Init telemetry]
+            S3[3. Validate credentials]
+            S4[4. Provision database]
+            S5[5. Run core migrations]
+            S6[6. Init modules<br/>topological sort]
+            S7[7. Run module migrations]
+            S8[8. Module on_startup]
+            S9[9. Create CC Spawner]
+            S10[10. Sync schedules]
+            S11[11. Create FastMCP +<br/>register core tools]
+            S12[12. Register module tools]
+            S1 --> S2 --> S3 --> S4 --> S5 --> S6
+            S6 --> S7 --> S8 --> S9 --> S10 --> S11 --> S12
+        end
+
+        subgraph Core["Core Components"]
+            State[State Store<br/>KV JSONB]
+            Scheduler[Scheduler<br/>croniter]
+            Sessions[Session Log<br/>append-only]
+            Spawner[CC Spawner<br/>asyncio.Lock]
+        end
+
+        subgraph Modules["Opt-in Modules"]
+            Email[Email<br/>IMAP + SMTP]
+            Telegram[Telegram<br/>polling / webhook]
+            More[...]
+        end
+
+        Startup --> Core
+        Startup --> Modules
+    end
+
+    subgraph Trigger["CC Spawn Flow"]
+        T1[Trigger arrives] --> T2[Acquire lock]
+        T2 --> T3[Create session record]
+        T3 --> T4[Generate MCP config]
+        T4 --> T5[Invoke Claude Code SDK]
+        T5 --> T6[Parse result + tool calls]
+        T6 --> T7[Complete session log]
+    end
+
+    Spawner --> T1
+
+    subgraph DB["PostgreSQL (per butler)"]
+        StateTable[state]
+        TasksTable[scheduled_tasks]
+        SessionsTable[sessions]
+        ModTables[module tables...]
+    end
+
+    Core --> DB
+    Modules --> DB
+
+    subgraph Observability
+        Jaeger[Jaeger :16686]
+    end
+
+    Core --> |OTLP gRPC :4317| Jaeger
+    Spawner --> |traceparent env| T5
+```
+
+### Trigger Sources
+
+| Source | How it fires | `trigger_source` value |
+|--------|-------------|----------------------|
+| External MCP call | Client calls `trigger(prompt)` tool | `trigger_tool` |
+| Scheduler | Cron expression fires, dispatched by `tick()` | `schedule` |
+| Heartbeat | Heartbeat butler calls `tick_now()` every 10 min | `tick` |
+
+### Module System
+
+Modules implement the `Module` ABC and plug into the daemon lifecycle:
+
+```
+Module ABC
+├── name              → unique identifier
+├── config_schema     → Pydantic model for [modules.<name>] config
+├── dependencies      → list of required module names (topological sort)
+├── credentials_env   → env vars this module needs
+├── register_tools()  → add MCP tools to the FastMCP server
+├── migration_revisions() → Alembic branch label for DB tables
+├── on_startup()      → post-migration initialization
+└── on_shutdown()     → cleanup (reverse topological order)
+```
+
+## Getting Started
+
+### Development
+
+Start infrastructure in Docker, run butlers locally:
+
+```bash
+# Install dependencies
+uv sync --dev
+
+# Start PostgreSQL and Jaeger
+docker compose up -d postgres jaeger
+
+# Set your API key
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Start all butlers
+butlers up
+
+# Or start a specific butler
+butlers up --only switchboard --only general
+
+# List discovered butlers
+butlers list
+```
+
+Access points:
+- Butler MCP servers on their configured ports (8100-8199)
+- Jaeger tracing UI at http://localhost:16686
+
+### Production
+
+All services run in Docker:
+
+```bash
+# Configure environment
+cp .env.example .env
+# Edit .env — set ANTHROPIC_API_KEY at minimum
+
+# Start everything
+docker compose up -d
+```
+
+The Dockerfile builds an image with Python 3.12, Node.js 22, the `claude-code` CLI, and `uv`. The entrypoint is:
+
+```
+uv run butlers run --config /app/butler-config/butler.toml
+```
+
+Each butler service mounts its config directory read-only from `butlers/<name>/`.
+
+### Service Ports
+
+| Service | Port | Description |
+|---------|------|-------------|
+| Switchboard | 8100 | Message router — routes MCP requests to domain butlers |
+| General | 8101 | Catch-all assistant with collections/entities |
+| Relationship | 8102 | Contacts, interactions, gifts, activity feed |
+| Health | 8103 | Measurements, medications, conditions, symptoms |
+| Heartbeat | 8199 | System monitor — ticks all butlers every 10 min |
+| PostgreSQL | 5432 | Shared database server (one DB per butler) |
+| Jaeger UI | 16686 | Distributed tracing dashboard |
+| Jaeger OTLP | 4317 | OTLP gRPC receiver for trace data |
+
+### CLI Reference
+
+```
+butlers up [--only NAME ...] [--dir PATH]    Start all (or filtered) butler daemons
+butlers run --config PATH                    Start a single butler from config dir
+butlers list [--dir PATH]                    List discovered butler configurations
+butlers init NAME --port PORT [--dir PATH]   Scaffold a new butler config directory
+```
+
+### Scaffolding a New Butler
+
+```bash
+butlers init mybutler --port 8104
+```
+
+Creates:
+```
+butlers/mybutler/
+├── butler.toml    # Identity, port, schedules, modules
+├── CLAUDE.md      # System prompt / personality
+├── AGENTS.md      # Runtime agent notes
+└── skills/        # Skill definitions (future)
+```
+
+## Environment Variables
+
+### Global Variables
+
+These apply to all butler instances:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | — | API key for Claude Code SDK. Checked at startup for every butler. |
+| `POSTGRES_HOST` | No | `localhost` | PostgreSQL server hostname |
+| `POSTGRES_PORT` | No | `5432` | PostgreSQL server port |
+| `POSTGRES_USER` | No | `postgres` | PostgreSQL username |
+| `POSTGRES_PASSWORD` | No | `postgres` | PostgreSQL password |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OTLP gRPC endpoint (e.g., `http://jaeger:4317`). When unset, tracing is no-op. |
+
+### Butler-Specific Variables
+
+Each butler can declare custom env vars in `butler.toml`:
+
+```toml
+[butler.env]
+required = ["MY_CUSTOM_SECRET"]     # Startup fails if missing
+optional = ["MY_OPTIONAL_CONFIG"]   # Warns if missing, continues
+```
+
+These are validated at startup by the credential checker and passed through to spawned Claude Code instances.
+
+### Module Variables
+
+Each module declares its own required credentials via `credentials_env`. These are validated at startup alongside global and butler-specific vars.
+
+| Module | Variable | Description |
+|--------|----------|-------------|
+| `email` | `EMAIL_ADDRESS` | Email address for IMAP/SMTP authentication |
+| `email` | `EMAIL_PASSWORD` | Email password or app-specific password |
+| `telegram` | `TELEGRAM_BOT_TOKEN` | Telegram Bot API token from @BotFather |
+
+Module credentials are only required when the module is enabled in `butler.toml`. They are scoped to the CC spawner — only declared credentials are forwarded to ephemeral Claude Code instances.
 
 ## Development
 
@@ -76,6 +326,10 @@ make test            # Run tests
 make lint            # Lint
 make format          # Format
 ```
+
+## Tech Stack
+
+Python 3.12+ · FastMCP · Claude Code SDK · PostgreSQL · asyncpg · Docker · asyncio · OpenTelemetry · Alembic · Click · Pydantic
 
 ## Status
 
