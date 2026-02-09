@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
+from pydantic import ConfigDict, ValidationError
 
 from butlers.config import ButlerConfig, load_config
 from butlers.core.scheduler import (
@@ -50,6 +51,10 @@ from butlers.modules.registry import ModuleRegistry
 logger = logging.getLogger(__name__)
 
 
+class ModuleConfigError(Exception):
+    """Raised when a module's configuration fails Pydantic validation."""
+
+
 class ButlerDaemon:
     """Central orchestrator for a single butler instance."""
 
@@ -65,6 +70,7 @@ class ButlerDaemon:
         self.mcp: FastMCP | None = None
         self.spawner: CCSpawner | None = None
         self._modules: list[Module] = []
+        self._module_configs: dict[str, Any] = {}
         self._started_at: float | None = None
 
     async def start(self) -> None:
@@ -105,10 +111,11 @@ class ButlerDaemon:
             if rev:
                 await run_migrations(db_url, chain=rev)
 
-        # 8. Module on_startup (topological order)
+        # 8. Validate module configs and call on_startup (topological order)
+        self._module_configs = self._validate_module_configs()
         for mod in self._modules:
-            mod_config = self.config.modules.get(mod.name, {})
-            await mod.on_startup(mod_config, self.db)
+            validated_config = self._module_configs.get(mod.name)
+            await mod.on_startup(validated_config, self.db)
 
         # 9. Create CCSpawner
         self.spawner = CCSpawner(
@@ -259,11 +266,52 @@ class ButlerDaemon:
                 session["id"] = str(session["id"])
             return session
 
+    def _validate_module_configs(self) -> dict[str, Any]:
+        """Validate each module's raw config dict against its config_schema.
+
+        Returns a mapping of module name to validated Pydantic model instance.
+        If a module has no config_schema (returns None), the raw dict is passed
+        through for backward compatibility.
+
+        Extra fields not declared in the schema are rejected. Missing required
+        fields and type mismatches produce clear error messages.
+
+        Raises
+        ------
+        ModuleConfigError
+            If validation fails (missing required fields, extra unknown fields,
+            or type mismatches).
+        """
+        validated: dict[str, Any] = {}
+        for mod in self._modules:
+            raw_config = self.config.modules.get(mod.name, {})
+            schema = mod.config_schema
+            if schema is None:
+                validated[mod.name] = raw_config
+                continue
+            # Create a strict variant that forbids extra fields, unless the
+            # schema already configures its own extra handling.
+            effective_schema = schema
+            current_extra = schema.model_config.get("extra")
+            if current_extra is None:
+                effective_schema = type(
+                    f"{schema.__name__}Strict",
+                    (schema,),
+                    {"model_config": ConfigDict(extra="forbid")},
+                )
+            try:
+                validated[mod.name] = effective_schema.model_validate(raw_config)
+            except ValidationError as exc:
+                raise ModuleConfigError(
+                    f"Configuration validation failed for module '{mod.name}': {exc}"
+                ) from exc
+        return validated
+
     async def _register_module_tools(self) -> None:
         """Register MCP tools from all loaded modules."""
         for mod in self._modules:
-            mod_config = self.config.modules.get(mod.name, {})
-            await mod.register_tools(self.mcp, mod_config, self.db)
+            validated_config = self._module_configs.get(mod.name)
+            await mod.register_tools(self.mcp, validated_config, self.db)
 
     async def shutdown(self) -> None:
         """Graceful shutdown.
