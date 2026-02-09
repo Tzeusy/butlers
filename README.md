@@ -159,10 +159,10 @@ graph TB
     Modules --> DB
 
     subgraph Observability
-        Jaeger[Jaeger :16686]
+        Grafana[Grafana<br/>Tempo/Loki]
     end
 
-    Core --> |OTLP gRPC :4317| Jaeger
+    Core --> |OTLP HTTP :4318| Grafana
     Spawner --> |traceparent env| T5
 ```
 
@@ -200,8 +200,8 @@ Start infrastructure in Docker, run butlers locally:
 # Install dependencies
 uv sync --dev
 
-# Start PostgreSQL and Jaeger
-docker compose up -d postgres jaeger
+# Start PostgreSQL
+docker compose up -d postgres
 
 # Set your API key
 export ANTHROPIC_API_KEY="sk-ant-..."
@@ -218,7 +218,7 @@ butlers list
 
 Access points:
 - Butler MCP servers on their configured ports (8100-8199)
-- Jaeger tracing UI at http://localhost:16686
+- Grafana Tempo for distributed tracing (external Alloy endpoint)
 
 ### Production
 
@@ -251,8 +251,8 @@ Each butler service mounts its config directory read-only from `butlers/<name>/`
 | Health | 8103 | Measurements, medications, conditions, symptoms |
 | Heartbeat | 8199 | System monitor — ticks all butlers every 10 min |
 | PostgreSQL | 5432 | Shared database server (one DB per butler) |
-| Jaeger UI | 16686 | Distributed tracing dashboard |
-| Jaeger OTLP | 4317 | OTLP gRPC receiver for trace data |
+
+**Note:** OTLP HTTP traces (port 4318) are sent to an external Alloy instance (not exposed locally).
 
 ### CLI Reference
 
@@ -291,7 +291,7 @@ These apply to all butler instances:
 | `POSTGRES_PORT` | No | `5432` | PostgreSQL server port |
 | `POSTGRES_USER` | No | `postgres` | PostgreSQL username |
 | `POSTGRES_PASSWORD` | No | `postgres` | PostgreSQL password |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OTLP gRPC endpoint (e.g., `http://jaeger:4317`). When unset, tracing is no-op. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OTLP HTTP endpoint for trace export (e.g., `http://alloy:4318/v1/traces`). When unset, tracing is no-op. |
 
 ### Butler-Specific Variables
 
