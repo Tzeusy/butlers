@@ -212,6 +212,79 @@ async def pool(postgres_container):
         CREATE INDEX IF NOT EXISTS idx_addresses_contact_id
             ON addresses (contact_id)
     """)
+    # Life event tables (migration 002)
+    await p.execute("""
+        CREATE TABLE IF NOT EXISTS life_event_categories (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            name TEXT NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+    """)
+    await p.execute("""
+        CREATE TABLE IF NOT EXISTS life_event_types (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            category_id UUID NOT NULL REFERENCES life_event_categories(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT now(),
+            UNIQUE (category_id, name)
+        )
+    """)
+    await p.execute("""
+        CREATE INDEX IF NOT EXISTS idx_life_event_types_category
+            ON life_event_types (category_id)
+    """)
+    await p.execute("""
+        CREATE TABLE IF NOT EXISTS life_events (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            life_event_type_id UUID NOT NULL REFERENCES life_event_types(id),
+            summary TEXT NOT NULL,
+            description TEXT,
+            happened_at DATE,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+    """)
+    await p.execute("""
+        CREATE INDEX IF NOT EXISTS idx_life_events_contact_happened
+            ON life_events (contact_id, happened_at)
+    """)
+    await p.execute("""
+        CREATE INDEX IF NOT EXISTS idx_life_events_type
+            ON life_events (life_event_type_id)
+    """)
+    # Seed categories
+    await p.execute("""
+        INSERT INTO life_event_categories (name) VALUES
+            ('Career'), ('Personal'), ('Social')
+    """)
+    # Seed Career types
+    await p.execute("""
+        INSERT INTO life_event_types (category_id, name)
+        SELECT id, type_name FROM life_event_categories
+        CROSS JOIN (VALUES
+            ('new job'), ('promotion'), ('quit'), ('retired'), ('graduated')
+        ) AS t(type_name)
+        WHERE name = 'Career'
+    """)
+    # Seed Personal types
+    await p.execute("""
+        INSERT INTO life_event_types (category_id, name)
+        SELECT id, type_name FROM life_event_categories
+        CROSS JOIN (VALUES
+            ('married'), ('divorced'), ('had a child'), ('moved'), ('passed away')
+        ) AS t(type_name)
+        WHERE name = 'Personal'
+    """)
+    # Seed Social types
+    await p.execute("""
+        INSERT INTO life_event_types (category_id, name)
+        SELECT id, type_name FROM life_event_categories
+        CROSS JOIN (VALUES
+            ('met for first time'), ('reconnected')
+        ) AS t(type_name)
+        WHERE name = 'Social'
+    """)
+
 
     yield p
     await db.close()
@@ -1247,3 +1320,216 @@ async def test_address_cascade_on_contact_delete(pool):
 
     count = await pool.fetchval("SELECT COUNT(*) FROM addresses WHERE contact_id = $1", c["id"])
     assert count == 0
+
+
+# ------------------------------------------------------------------
+# Life Events Tests
+# ------------------------------------------------------------------
+
+
+async def test_life_event_types_list(pool):
+    """Test listing all life event types."""
+    from butlers.tools.relationship import life_event_types_list
+
+    types = await life_event_types_list(pool)
+    assert len(types) > 0
+
+    # Check that we have the seeded categories
+    categories = {t["category"] for t in types}
+    assert "Career" in categories
+    assert "Personal" in categories
+    assert "Social" in categories
+
+    # Check some specific types
+    type_names = {t["name"] for t in types}
+    assert "promotion" in type_names
+    assert "married" in type_names
+    assert "met for first time" in type_names
+
+
+async def test_life_event_log_basic(pool):
+    """Test logging a life event."""
+    from butlers.tools.relationship import contact_create, life_event_log
+
+    contact = await contact_create(pool, "Alice")
+    event = await life_event_log(
+        pool,
+        contact["id"],
+        "promotion",
+        "Got promoted to Senior Engineer",
+        description="Alice received a well-deserved promotion after 3 years of great work.",
+        happened_at="2026-01-15",
+    )
+
+    assert event["contact_id"] == contact["id"]
+    assert event["summary"] == "Got promoted to Senior Engineer"
+    assert event["description"] == (
+        "Alice received a well-deserved promotion after 3 years of great work."
+    )
+    assert str(event["happened_at"]) == "2026-01-15"
+
+
+async def test_life_event_log_invalid_type(pool):
+    """Test logging with an invalid life event type."""
+    from butlers.tools.relationship import contact_create, life_event_log
+
+    contact = await contact_create(pool, "Bob")
+
+    with pytest.raises(ValueError, match="Unknown life event type"):
+        await life_event_log(
+            pool,
+            contact["id"],
+            "invalid_type",
+            "Something happened",
+        )
+
+
+async def test_life_event_log_without_date(pool):
+    """Test logging a life event without specifying a date."""
+    from butlers.tools.relationship import contact_create, life_event_log
+
+    contact = await contact_create(pool, "Charlie")
+    event = await life_event_log(
+        pool,
+        contact["id"],
+        "new job",
+        "Started at TechCorp",
+    )
+
+    assert event["contact_id"] == contact["id"]
+    assert event["summary"] == "Started at TechCorp"
+    assert event["happened_at"] is None
+
+
+async def test_life_event_list_all(pool):
+    """Test listing all life events."""
+    from butlers.tools.relationship import contact_create, life_event_list, life_event_log
+
+    alice = await contact_create(pool, "Alice")
+    bob = await contact_create(pool, "Bob")
+
+    await life_event_log(pool, alice["id"], "promotion", "Promoted to manager")
+    await life_event_log(pool, bob["id"], "married", "Got married")
+    await life_event_log(pool, alice["id"], "moved", "Moved to London")
+
+    events = await life_event_list(pool)
+    assert len(events) >= 3
+
+    # Check that contact names are included
+    contact_names = {e["contact_name"] for e in events}
+    assert "Alice" in contact_names
+    assert "Bob" in contact_names
+
+
+async def test_life_event_list_by_contact(pool):
+    """Test filtering life events by contact."""
+    from butlers.tools.relationship import contact_create, life_event_list, life_event_log
+
+    alice = await contact_create(pool, "Alice")
+    bob = await contact_create(pool, "Bob")
+
+    await life_event_log(pool, alice["id"], "promotion", "Promoted to manager")
+    await life_event_log(pool, bob["id"], "married", "Got married")
+    await life_event_log(pool, alice["id"], "moved", "Moved to London")
+
+    alice_events = await life_event_list(pool, contact_id=alice["id"])
+    assert len(alice_events) == 2
+    assert all(e["contact_id"] == alice["id"] for e in alice_events)
+
+
+async def test_life_event_list_by_type(pool):
+    """Test filtering life events by type."""
+    from butlers.tools.relationship import contact_create, life_event_list, life_event_log
+
+    alice = await contact_create(pool, "Alice")
+    bob = await contact_create(pool, "Bob")
+
+    await life_event_log(pool, alice["id"], "promotion", "Promoted to manager")
+    await life_event_log(pool, bob["id"], "promotion", "Promoted to director")
+    await life_event_log(pool, alice["id"], "moved", "Moved to London")
+
+    promotion_events = await life_event_list(pool, type_name="promotion")
+    assert len(promotion_events) == 2
+    assert all(e["type_name"] == "promotion" for e in promotion_events)
+
+
+async def test_life_event_list_by_contact_and_type(pool):
+    """Test filtering life events by both contact and type."""
+    from butlers.tools.relationship import contact_create, life_event_list, life_event_log
+
+    alice = await contact_create(pool, "Alice")
+    bob = await contact_create(pool, "Bob")
+
+    await life_event_log(pool, alice["id"], "promotion", "Promoted to manager")
+    await life_event_log(pool, bob["id"], "promotion", "Promoted to director")
+    await life_event_log(pool, alice["id"], "moved", "Moved to London")
+
+    alice_promotions = await life_event_list(pool, contact_id=alice["id"], type_name="promotion")
+    assert len(alice_promotions) == 1
+    assert alice_promotions[0]["contact_id"] == alice["id"]
+    assert alice_promotions[0]["type_name"] == "promotion"
+
+
+async def test_life_event_list_ordering(pool):
+    """Test that life events are ordered by happened_at (most recent first)."""
+    from butlers.tools.relationship import contact_create, life_event_list, life_event_log
+
+    alice = await contact_create(pool, "Alice")
+
+    await life_event_log(
+        pool, alice["id"], "new job", "Started at Company A", happened_at="2024-01-01"
+    )
+    await life_event_log(pool, alice["id"], "promotion", "Promoted", happened_at="2025-06-15")
+    await life_event_log(pool, alice["id"], "quit", "Left Company A", happened_at="2026-01-01")
+
+    events = await life_event_list(pool, contact_id=alice["id"])
+    assert len(events) == 3
+    # Most recent first
+    assert str(events[0]["happened_at"]) == "2026-01-01"
+    assert str(events[1]["happened_at"]) == "2025-06-15"
+    assert str(events[2]["happened_at"]) == "2024-01-01"
+
+
+async def test_life_event_activity_feed_integration(pool):
+    """Test that life events are logged to activity feed."""
+    from butlers.tools.relationship import contact_create, feed_get, life_event_log
+
+    alice = await contact_create(pool, "Alice")
+    await life_event_log(pool, alice["id"], "graduated", "Graduated from MIT")
+
+    feed = await feed_get(pool, contact_id=alice["id"])
+
+    # Should have two activities: contact_created and life_event_logged
+    assert len(feed) >= 2
+
+    # Find the life event activity
+    life_event_activity = next((a for a in feed if a["type"] == "life_event_logged"), None)
+    assert life_event_activity is not None
+    assert "graduated" in life_event_activity["description"]
+    assert "Graduated from MIT" in life_event_activity["description"]
+
+
+async def test_life_event_all_seeded_types(pool):
+    """Test that all expected types are seeded."""
+    from butlers.tools.relationship import life_event_types_list
+
+    types = await life_event_types_list(pool)
+    type_dict = {(t["category"], t["name"]) for t in types}
+
+    # Career types
+    assert ("Career", "new job") in type_dict
+    assert ("Career", "promotion") in type_dict
+    assert ("Career", "quit") in type_dict
+    assert ("Career", "retired") in type_dict
+    assert ("Career", "graduated") in type_dict
+
+    # Personal types
+    assert ("Personal", "married") in type_dict
+    assert ("Personal", "divorced") in type_dict
+    assert ("Personal", "had a child") in type_dict
+    assert ("Personal", "moved") in type_dict
+    assert ("Personal", "passed away") in type_dict
+
+    # Social types
+    assert ("Social", "met for first time") in type_dict
+    assert ("Social", "reconnected") in type_dict
