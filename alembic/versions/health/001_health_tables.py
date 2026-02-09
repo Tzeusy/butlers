@@ -23,8 +23,8 @@ def upgrade() -> None:
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             type TEXT NOT NULL,
             value JSONB NOT NULL,
-            unit TEXT,
             measured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            notes TEXT,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
@@ -32,9 +32,11 @@ def upgrade() -> None:
         CREATE TABLE IF NOT EXISTS medications (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             name TEXT NOT NULL,
-            dosage TEXT,
-            frequency TEXT,
+            dosage TEXT NOT NULL,
+            frequency TEXT NOT NULL,
+            schedule JSONB NOT NULL DEFAULT '[]',
             active BOOLEAN NOT NULL DEFAULT true,
+            notes TEXT,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
@@ -42,8 +44,9 @@ def upgrade() -> None:
     op.execute("""
         CREATE TABLE IF NOT EXISTS medication_doses (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            medication_id UUID NOT NULL REFERENCES medications(id) ON DELETE CASCADE,
+            medication_id UUID NOT NULL REFERENCES medications(id),
             taken_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            skipped BOOLEAN NOT NULL DEFAULT false,
             notes TEXT,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
@@ -52,8 +55,7 @@ def upgrade() -> None:
         CREATE TABLE IF NOT EXISTS conditions (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             name TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active'
-                CHECK (status IN ('active', 'resolved', 'managed')),
+            status TEXT NOT NULL DEFAULT 'active',
             diagnosed_at TIMESTAMPTZ,
             notes TEXT,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -63,10 +65,11 @@ def upgrade() -> None:
     op.execute("""
         CREATE TABLE IF NOT EXISTS meals (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            type TEXT NOT NULL,
             description TEXT NOT NULL,
-            calories NUMERIC,
-            nutrients JSONB NOT NULL DEFAULT '{}',
+            nutrition JSONB,
             eaten_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            notes TEXT,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
@@ -74,18 +77,21 @@ def upgrade() -> None:
         CREATE TABLE IF NOT EXISTS symptoms (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             name TEXT NOT NULL,
-            severity INT NOT NULL CHECK (severity BETWEEN 1 AND 10),
-            notes TEXT,
+            severity INTEGER NOT NULL CHECK (severity BETWEEN 1 AND 10),
+            condition_id UUID REFERENCES conditions(id),
             occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            notes TEXT,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
     op.execute("""
         CREATE TABLE IF NOT EXISTS research (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            topic TEXT NOT NULL,
+            title TEXT NOT NULL,
             content TEXT NOT NULL,
-            sources JSONB NOT NULL DEFAULT '[]',
+            tags JSONB NOT NULL DEFAULT '[]',
+            source_url TEXT,
+            condition_id UUID REFERENCES conditions(id),
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
@@ -110,10 +116,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("DROP TABLE IF EXISTS research")
+    op.execute("DROP TABLE IF EXISTS symptoms")
     op.execute("DROP TABLE IF EXISTS medication_doses")
     op.execute("DROP TABLE IF EXISTS medications")
     op.execute("DROP TABLE IF EXISTS measurements")
     op.execute("DROP TABLE IF EXISTS conditions")
-    op.execute("DROP TABLE IF EXISTS symptoms")
     op.execute("DROP TABLE IF EXISTS meals")
-    op.execute("DROP TABLE IF EXISTS research")
