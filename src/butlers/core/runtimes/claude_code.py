@@ -40,6 +40,10 @@ class ClaudeCodeAdapter(RuntimeAdapter):
     def __init__(self, sdk_query: Any = None) -> None:
         self._sdk_query = sdk_query or query
 
+    @property
+    def binary_name(self) -> str:
+        return "claude"
+
     async def invoke(
         self,
         prompt: str,

@@ -9,7 +9,7 @@ The ButlerDaemon manages the lifecycle of a butler:
 6. Initialize modules (topological order)
 7. Run module Alembic migrations
 8. Module on_startup (topological order)
-9. Create CCSpawner with runtime adapter
+9. Create Spawner with runtime adapter (verify binary on PATH)
 10. Sync TOML schedules to DB
 11. Create FastMCP server and register core tools
 12. Register module MCP tools
@@ -21,6 +21,7 @@ then closes DB pool.
 from __future__ import annotations
 
 import logging
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -39,7 +40,7 @@ from butlers.core.scheduler import (
     tick,
 )
 from butlers.core.sessions import sessions_get, sessions_list
-from butlers.core.spawner import CCSpawner
+from butlers.core.spawner import Spawner
 from butlers.core.state import state_delete, state_get, state_list, state_set
 from butlers.core.telemetry import init_telemetry
 from butlers.credentials import validate_credentials
@@ -49,6 +50,10 @@ from butlers.modules.base import Module
 from butlers.modules.registry import ModuleRegistry
 
 logger = logging.getLogger(__name__)
+
+
+class RuntimeBinaryNotFoundError(RuntimeError):
+    """Raised when the runtime adapter's binary is not found on PATH."""
 
 
 class ButlerDaemon:
@@ -64,7 +69,7 @@ class ButlerDaemon:
         self.config: ButlerConfig | None = None
         self.db: Database | None = None
         self.mcp: FastMCP | None = None
-        self.spawner: CCSpawner | None = None
+        self.spawner: Spawner | None = None
         self._modules: list[Module] = []
         self._started_at: float | None = None
 
@@ -111,10 +116,18 @@ class ButlerDaemon:
             mod_config = self.config.modules.get(mod.name, {})
             await mod.on_startup(mod_config, self.db)
 
-        # 9. Create CCSpawner with runtime adapter
+        # 9. Create Spawner with runtime adapter (verify binary on PATH)
         adapter_cls = get_adapter(self.config.runtime.type)
         runtime = adapter_cls()
-        self.spawner = CCSpawner(
+
+        binary = runtime.binary_name
+        if not shutil.which(binary):
+            raise RuntimeBinaryNotFoundError(
+                f"Runtime binary {binary!r} not found on PATH. "
+                f"The {self.config.runtime.type!r} runtime requires {binary!r} to be installed."
+            )
+
+        self.spawner = Spawner(
             config=self.config,
             config_dir=self.config_dir,
             pool=pool,
@@ -181,7 +194,7 @@ class ButlerDaemon:
 
         @mcp.tool()
         async def trigger(prompt: str) -> dict:
-            """Trigger the CC spawner with a prompt."""
+            """Trigger the spawner with a prompt."""
             result = await spawner.trigger(prompt=prompt, trigger_source="trigger_tool")
             return {
                 "result": result.result,

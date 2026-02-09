@@ -105,7 +105,7 @@ async def tick(pool: asyncpg.Pool, dispatch_fn) -> int:
 
     Args:
         pool: asyncpg connection pool.
-        dispatch_fn: Async callable matching ``CCSpawner.trigger`` signature.
+        dispatch_fn: Async callable matching ``Spawner.trigger`` signature.
 
     Returns:
         The number of tasks successfully dispatched.
