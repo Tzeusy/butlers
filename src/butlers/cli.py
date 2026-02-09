@@ -6,6 +6,7 @@ import asyncio
 import logging
 import signal
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 import click
@@ -47,6 +48,15 @@ def up(only: tuple[str, ...], butlers_dir: Path) -> None:
         if missing:
             click.echo(f"Butler(s) not found: {', '.join(sorted(missing))}")
             sys.exit(1)
+
+    # Check for port conflicts before starting any butler
+    conflicts = _check_port_conflicts(configs)
+    if conflicts:
+        click.echo("Port conflict detected:")
+        for port, butler_names in sorted(conflicts.items()):
+            names_str = ", ".join(sorted(butler_names))
+            click.echo(f"  Port {port}: {names_str}")
+        sys.exit(1)
 
     click.echo(f"Starting {len(configs)} butler(s): {', '.join(sorted(configs.keys()))}")
     asyncio.run(_start_all(configs))
@@ -154,6 +164,33 @@ def _discover_configs(butlers_dir: Path) -> dict[str, Path]:
                 logger.warning("Invalid config in %s, skipping", entry)
 
     return configs
+
+
+def _check_port_conflicts(configs: dict[str, Path]) -> dict[int, list[str]]:
+    """Check for port conflicts among butler configurations.
+
+    Parameters
+    ----------
+    configs:
+        Mapping of butler name to config directory path.
+
+    Returns
+    -------
+    dict[int, list[str]]
+        Mapping of conflicting ports to lists of butler names using that port.
+        Empty dict if no conflicts.
+    """
+    port_to_butlers: dict[int, list[str]] = defaultdict(list)
+
+    for name, config_dir in configs.items():
+        try:
+            config = load_config(config_dir)
+            port_to_butlers[config.port].append(config.name)
+        except ConfigError:
+            logger.warning("Could not load config for %s, skipping conflict check", name)
+
+    # Return only ports with multiple butlers
+    return {port: names for port, names in port_to_butlers.items() if len(names) > 1}
 
 
 async def _start_all(configs: dict[str, Path]) -> None:
