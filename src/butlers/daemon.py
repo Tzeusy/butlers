@@ -136,9 +136,24 @@ class ButlerDaemon:
         logger.info("Butler %s started on port %d", self.config.name, self.config.port)
 
     def _collect_module_credentials(self) -> dict[str, list[str]]:
-        """Collect credentials_env from enabled modules."""
+        """Collect credentials_env from enabled modules.
+
+        Sources (in priority order):
+        1. ``credentials_env`` declared in butler.toml under ``[modules.<name>]``
+        2. Module class ``credentials_env`` property (fallback)
+
+        This aligns with the spec: credential declarations are config-driven
+        via butler.toml, with the module class providing defaults.
+        """
         creds: dict[str, list[str]] = {}
-        for mod_name in self.config.modules:
+        for mod_name, mod_cfg in self.config.modules.items():
+            # 1. Check TOML config first (spec-driven)
+            toml_creds = mod_cfg.get("credentials_env")
+            if toml_creds is not None:
+                creds[mod_name] = list(toml_creds)
+                continue
+
+            # 2. Fallback to module class property
             try:
                 temp_modules = self._registry.load_from_config({mod_name: {}})
                 if temp_modules:
