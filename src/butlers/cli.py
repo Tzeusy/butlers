@@ -1,0 +1,217 @@
+"""CLI for the Butlers framework — manage butler daemons."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import signal
+import sys
+from pathlib import Path
+
+import click
+
+from butlers.config import ConfigError, load_config
+
+logger = logging.getLogger(__name__)
+
+# Default directory containing butler configurations
+DEFAULT_BUTLERS_DIR = Path("butlers")
+
+
+@click.group()
+@click.version_option(version="0.1.0")
+def cli() -> None:
+    """Butlers — AI agent framework with pluggable MCP server daemons."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(name)s: %(message)s")
+
+
+@cli.command()
+@click.option("--only", multiple=True, help="Start only specific butlers by name")
+@click.option(
+    "--dir",
+    "butlers_dir",
+    type=click.Path(exists=True, path_type=Path),
+    default=DEFAULT_BUTLERS_DIR,
+    help="Directory containing butler configs",
+)
+def up(only: tuple[str, ...], butlers_dir: Path) -> None:
+    """Start all butler daemons (or filtered by --only)."""
+    configs = _discover_configs(butlers_dir)
+    if not configs:
+        click.echo(f"No butler configs found in {butlers_dir}/")
+        sys.exit(1)
+
+    if only:
+        configs = {name: path for name, path in configs.items() if name in only}
+        missing = set(only) - set(configs.keys())
+        if missing:
+            click.echo(f"Butler(s) not found: {', '.join(sorted(missing))}")
+            sys.exit(1)
+
+    click.echo(f"Starting {len(configs)} butler(s): {', '.join(sorted(configs.keys()))}")
+    asyncio.run(_start_all(configs))
+
+
+@cli.command()
+@click.option(
+    "--config",
+    "config_path",
+    required=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to butler config directory",
+)
+def run(config_path: Path) -> None:
+    """Start a single butler daemon from a config directory."""
+    click.echo(f"Starting butler from {config_path}")
+    asyncio.run(_start_single(config_path))
+
+
+@cli.command("list")
+@click.option(
+    "--dir",
+    "butlers_dir",
+    type=click.Path(exists=True, path_type=Path),
+    default=DEFAULT_BUTLERS_DIR,
+    help="Directory containing butler configs",
+)
+def list_cmd(butlers_dir: Path) -> None:
+    """List all discovered butler configurations."""
+    configs = _discover_configs(butlers_dir)
+    if not configs:
+        click.echo(f"No butler configs found in {butlers_dir}/")
+        return
+
+    # Print header
+    click.echo(f"{'Name':<20} {'Port':<8} {'Modules':<30} {'Description'}")
+    click.echo("-" * 80)
+
+    for name, config_dir in sorted(configs.items()):
+        try:
+            config = load_config(config_dir)
+            modules = ", ".join(sorted(config.modules.keys())) or "(none)"
+            desc = config.description or ""
+            click.echo(f"{config.name:<20} {config.port:<8} {modules:<30} {desc}")
+        except ConfigError as exc:
+            click.echo(f"{name:<20} {'ERROR':<8} {exc!s}")
+
+
+@cli.command()
+@click.argument("name")
+@click.option("--port", type=int, required=True, help="Port for the butler's MCP server")
+@click.option(
+    "--dir",
+    "butlers_dir",
+    type=click.Path(path_type=Path),
+    default=DEFAULT_BUTLERS_DIR,
+    help="Parent directory for butler configs",
+)
+def init(name: str, port: int, butlers_dir: Path) -> None:
+    """Scaffold a new butler configuration directory."""
+    butler_dir = butlers_dir / name
+    if butler_dir.exists():
+        click.echo(f"Directory already exists: {butler_dir}")
+        sys.exit(1)
+
+    butler_dir.mkdir(parents=True)
+    (butler_dir / "skills").mkdir()
+
+    # butler.toml
+    toml_content = f"""[butler]
+name = "{name}"
+port = {port}
+description = ""
+
+[butler.db]
+name = "butler_{name}"
+"""
+    (butler_dir / "butler.toml").write_text(toml_content)
+
+    # CLAUDE.md
+    claude_md = f"# {name.title()} Butler\n\nYou are {name}, a butler AI assistant.\n"
+    (butler_dir / "CLAUDE.md").write_text(claude_md)
+
+    # AGENTS.md
+    (butler_dir / "AGENTS.md").write_text("# Notes to self\n")
+
+    click.echo(f"Created butler scaffold: {butler_dir}/")
+
+
+def _discover_configs(butlers_dir: Path) -> dict[str, Path]:
+    """Discover all butler.toml configs in a directory.
+
+    Returns a dict mapping butler name to config directory path.
+    """
+    configs: dict[str, Path] = {}
+    if not butlers_dir.is_dir():
+        return configs
+
+    for entry in sorted(butlers_dir.iterdir()):
+        if entry.is_dir() and (entry / "butler.toml").exists():
+            try:
+                config = load_config(entry)
+                configs[config.name] = entry
+            except ConfigError:
+                logger.warning("Invalid config in %s, skipping", entry)
+
+    return configs
+
+
+async def _start_all(configs: dict[str, Path]) -> None:
+    """Start all butler daemons in a single event loop."""
+    from butlers.daemon import ButlerDaemon
+
+    daemons: list[ButlerDaemon] = []
+    loop = asyncio.get_event_loop()
+
+    # Set up signal handling
+    shutdown_event = asyncio.Event()
+
+    def _signal_handler() -> None:
+        click.echo("\nShutting down...")
+        shutdown_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, _signal_handler)
+
+    # Start all daemons
+    for name, config_dir in sorted(configs.items()):
+        daemon = ButlerDaemon(config_dir)
+        try:
+            await daemon.start()
+            daemons.append(daemon)
+            click.echo(f"  started: {name}")
+        except Exception as exc:
+            click.echo(f"  failed: {name}: {exc}")
+
+    if not daemons:
+        click.echo("No butlers started successfully")
+        return
+
+    # Wait for shutdown signal
+    await shutdown_event.wait()
+
+    # Graceful shutdown
+    for daemon in reversed(daemons):
+        await daemon.shutdown()
+
+
+async def _start_single(config_path: Path) -> None:
+    """Start a single butler daemon."""
+    from butlers.daemon import ButlerDaemon
+
+    loop = asyncio.get_event_loop()
+    shutdown_event = asyncio.Event()
+
+    def _signal_handler() -> None:
+        click.echo("\nShutting down...")
+        shutdown_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, _signal_handler)
+
+    daemon = ButlerDaemon(config_path)
+    await daemon.start()
+    click.echo(f"Butler {daemon.config.name} running on port {daemon.config.port}")
+
+    await shutdown_event.wait()
+    await daemon.shutdown()
