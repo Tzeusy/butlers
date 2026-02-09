@@ -7,6 +7,7 @@ croniter and dispatches due task prompts to the CC spawner serially.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -22,6 +23,21 @@ def _next_run(cron: str) -> datetime:
     """Compute the next run time for a cron expression from now (UTC)."""
     now = datetime.now(UTC)
     return croniter(cron, now).get_next(datetime).replace(tzinfo=UTC)
+
+
+def _result_to_jsonb(result: Any) -> str | None:
+    """Convert a dispatch result to a JSON string suitable for JSONB storage.
+
+    Handles dataclass-like objects (SpawnerResult) by extracting their __dict__,
+    plain dicts, and falls back to string representation.
+    """
+    if result is None:
+        return None
+    if hasattr(result, "__dict__") and not isinstance(result, type):
+        return json.dumps(result.__dict__, default=str)
+    if isinstance(result, dict):
+        return json.dumps(result, default=str)
+    return json.dumps({"result": str(result)}, default=str)
 
 
 async def sync_schedules(pool: asyncpg.Pool, schedules: list[dict[str, str]]) -> None:
@@ -100,8 +116,9 @@ async def tick(pool: asyncpg.Pool, dispatch_fn) -> int:
 
     Queries ``scheduled_tasks`` WHERE ``enabled=true AND next_run_at <= now()``.
     For each due task, calls ``dispatch_fn(prompt=..., trigger_source="schedule")``.
-    After dispatch, updates ``next_run_at`` and ``last_run_at``.
-    If dispatch fails, logs the error but continues to the next task.
+    After dispatch, updates ``next_run_at``, ``last_run_at``, and ``last_result``.
+    If dispatch fails, logs the error and stores the error in ``last_result``,
+    but continues to the next task.
 
     Args:
         pool: asyncpg connection pool.
@@ -128,24 +145,29 @@ async def tick(pool: asyncpg.Pool, dispatch_fn) -> int:
         prompt = row["prompt"]
         cron = row["cron"]
 
+        result_json: str | None = None
         try:
-            await dispatch_fn(prompt=prompt, trigger_source="schedule")
+            result = await dispatch_fn(prompt=prompt, trigger_source="schedule")
+            result_json = _result_to_jsonb(result)
             dispatched += 1
             logger.info("Dispatched scheduled task: %s", name)
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to dispatch scheduled task: %s", name)
+            result_json = _result_to_jsonb({"error": str(exc)})
 
         # Always advance next_run_at whether dispatch succeeded or failed
         next_run_at = _next_run(cron)
         await pool.execute(
             """
             UPDATE scheduled_tasks
-            SET next_run_at = $2, last_run_at = $3, updated_at = now()
+            SET next_run_at = $2, last_run_at = $3, last_result = $4::jsonb,
+                updated_at = now()
             WHERE id = $1
             """,
             task_id,
             next_run_at,
             now,
+            result_json,
         )
 
     return dispatched
@@ -160,7 +182,8 @@ async def schedule_list(pool: asyncpg.Pool) -> list[dict[str, Any]]:
     rows = await pool.fetch(
         """
         SELECT id, name, cron, prompt, source, enabled,
-               next_run_at, last_run_at, created_at, updated_at
+               next_run_at, last_run_at, last_result,
+               created_at, updated_at
         FROM scheduled_tasks
         ORDER BY name
         """
