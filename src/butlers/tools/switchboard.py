@@ -9,14 +9,8 @@ from pathlib import Path
 from typing import Any
 
 import asyncpg
-from opentelemetry import trace
-
-from butlers.core.telemetry import inject_trace_context
 
 logger = logging.getLogger(__name__)
-tracer = trace.get_tracer("butlers.switchboard")
-
-_TRACER_NAME = "butlers"
 
 
 async def register_butler(
@@ -90,11 +84,6 @@ async def route(
     Looks up the target butler in the registry, connects via SSE MCP client,
     calls the specified tool, logs the routing, and returns the result.
 
-    Creates a ``switchboard.route`` span with ``target`` and ``tool_name``
-    attributes, and injects W3C trace context into the forwarded tool call
-    args as ``_trace_context``.  On success, updates the target butler's
-    ``last_seen_at`` timestamp.
-
     Parameters
     ----------
     pool:
@@ -112,82 +101,46 @@ async def route(
         ``async (endpoint_url, tool_name, args) -> Any``.
         When *None*, the default MCP client is used.
     """
-with tracer.start_as_current_span(
-        "switchboard.route",
-        attributes={"target": target_butler, "tool_name": tool_name},
-    ) as span:
-        t0 = time.monotonic()
+    t0 = time.monotonic()
 
-        # Look up target
-        row = await pool.fetchrow(
-            "SELECT endpoint_url FROM butler_registry WHERE name = $1", target_butler
+    # Look up target
+    row = await pool.fetchrow(
+        "SELECT endpoint_url FROM butler_registry WHERE name = $1", target_butler
+    )
+    if row is None:
+        await _log_routing(
+            pool, source_butler, target_butler, tool_name, False, 0, "Butler not found"
         )
-        if row is None:
-span.set_status(trace.StatusCode.ERROR, "Butler not found")
-            await _log_routing(
-                pool, source_butler, target_butler, tool_name, False, 0, "Butler not found"
-            )
-            return {"error": f"Butler '{target_butler}' not found in registry"}
+        return {"error": f"Butler '{target_butler}' not found in registry"}
 
-        endpoint_url = row["endpoint_url"]
+    endpoint_url = row["endpoint_url"]
 
-# Inject W3C trace context into args for propagation
-        trace_ctx = inject_trace_context()
-        forwarded_args = {**args}
-        if trace_ctx:
-            forwarded_args["_trace_context"] = trace_ctx
-
-        try:
-            if call_fn is not None:
-                result = await call_fn(endpoint_url, tool_name, forwarded_args)
-            else:
-                result = await _call_butler_tool(endpoint_url, tool_name, forwarded_args)
-            duration_ms = int((time.monotonic() - t0) * 1000)
-            await _log_routing(
-                pool, source_butler, target_butler, tool_name, True, duration_ms, None
-            )
-span.set_attribute("duration_ms", duration_ms)
-            # Update last_seen_at on success
-            await pool.execute(
-                "UPDATE butler_registry SET last_seen_at = now() WHERE name = $1",
-                target_butler,
-            )
-            return {"result": result}
-        except Exception as exc:
-            duration_ms = int((time.monotonic() - t0) * 1000)
-            error_msg = f"{type(exc).__name__}: {exc}"
-span.set_status(trace.StatusCode.ERROR, error_msg)
-            span.record_exception(exc)
-            await _log_routing(
-                pool, source_butler, target_butler, tool_name, False, duration_ms, error_msg
-            )
-            return {"error": error_msg}
+    try:
+        if call_fn is not None:
+            result = await call_fn(endpoint_url, tool_name, args)
+        else:
+            result = await _call_butler_tool(endpoint_url, tool_name, args)
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        await _log_routing(pool, source_butler, target_butler, tool_name, True, duration_ms, None)
+        return {"result": result}
+    except Exception as exc:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        error_msg = f"{type(exc).__name__}: {exc}"
+        await _log_routing(
+            pool, source_butler, target_butler, tool_name, False, duration_ms, error_msg
+        )
+        return {"error": error_msg}
 
 
 async def _call_butler_tool(endpoint_url: str, tool_name: str, args: dict[str, Any]) -> Any:
     """Call a tool on another butler via MCP SSE client.
 
-    Connects to the target butler's MCP server using FastMCP's Client,
-    calls the specified tool, and returns the result.  The caller is
-    responsible for injecting ``_trace_context`` into *args* before
-    calling this function.
-
-    FastMCP's ``Client.call_tool()`` returns a ``CallToolResult`` with a
-    ``data`` property that automatically extracts structured content or
-    parses text content.  We use this for the return value.
+    In production this would use the MCP SDK client; for now it raises
+    NotImplementedError to signal that real MCP integration is pending.
     """
-    from fastmcp import Client
-
-    try:
-        async with Client(endpoint_url) as client:
-            result = await client.call_tool(tool_name, args, raise_on_error=True)
-    except Exception as exc:
-        raise ConnectionError(
-            f"Failed to call tool '{tool_name}' on {endpoint_url}: {exc}"
-        ) from exc
-
-    # FastMCP's CallToolResult.data extracts structured content or parses text
-    return result.data
+    raise NotImplementedError(
+        f"MCP client call to {endpoint_url} tool {tool_name} — requires MCP client SDK integration"
+    )
 
 
 async def _log_routing(
@@ -219,47 +172,84 @@ async def classify_message(
     pool: asyncpg.Pool,
     message: str,
     dispatch_fn: Any,
-) -> str:
-    """Use CC spawner to classify an incoming message to a target butler.
+) -> list[dict[str, str]]:
+    """Use CC spawner to classify and decompose a message across butlers.
 
     Spawns a CC instance that sees the butler registry and determines
-    which butler should handle the message. Returns the butler name.
-    Defaults to ``'general'`` if classification fails.
+    which butler(s) should handle the message.  If the message spans
+    multiple domains the CC instance decomposes it into distinct
+    sub-messages, each tagged with the target butler.
+
+    Returns a list of dicts with keys ``'butler'`` and ``'prompt'``.
+    For single-domain messages the list contains exactly one entry.
+    Falls back to ``[{'butler': 'general', 'prompt': message}]`` when
+    classification fails.
     """
-    with tracer.start_as_current_span("switchboard.receive") as receive_span:
-        receive_span.set_attribute("channel", "mcp")  # Default channel
-        receive_span.set_attribute("source_id", "external")  # Default source
+    fallback = [{"butler": "general", "prompt": message}]
 
-        butlers = await list_butlers(pool)
-        butler_list = "\n".join(
-            f"- {b['name']}: {b.get('description') or 'No description'}" for b in butlers
-        )
+    butlers = await list_butlers(pool)
+    butler_list = "\n".join(
+        f"- {b['name']}: {b.get('description') or 'No description'}" for b in butlers
+    )
 
-        prompt = (
-            f"Classify this message to the appropriate butler.\n"
-            f"Available butlers:\n{butler_list}\n\n"
-            f"Message: {message}\n\n"
-            f"Respond with ONLY the butler name."
-        )
+    prompt = (
+        "Analyze the following message and determine which butler(s) should handle it.\n"
+        "If the message spans multiple domains, decompose it into distinct sub-messages,\n"
+        "each tagged with the appropriate butler.\n\n"
+        f"Available butlers:\n{butler_list}\n\n"
+        f"Message: {message}\n\n"
+        'Respond with ONLY a JSON array. Each element must have keys "butler" and "prompt".\n'
+        "Example for a single-domain message:\n"
+        '[{"butler": "health", "prompt": "Log weight at 75kg"}]\n'
+        "Example for a multi-domain message:\n"
+        '[{"butler": "health", "prompt": "Log weight at 75kg"}, '
+        '{"butler": "relationship", "prompt": "Remind me to call Mom on Tuesday"}]\n'
+        "Respond with ONLY the JSON array, no other text."
+    )
 
-        try:
-            result = await dispatch_fn(prompt=prompt, trigger_source="tick")
-            # Parse butler name from result
-            if result and hasattr(result, "output") and result.output:
-                name = result.output.strip().lower()
-                # Validate it's a known butler
-                known = {b["name"] for b in butlers}
-                if name in known:
-                    # Create classify span as child of receive span
-                    with tracer.start_as_current_span("switchboard.classify") as classify_span:
-                        classify_span.set_attribute("routed_to", name)
-                    return name
-        except Exception:
-            logger.exception("Classification failed")
-            receive_span.record_exception(Exception("Classification failed"))
-            receive_span.set_status(trace.StatusCode.ERROR, "Classification failed")
+    try:
+        result = await dispatch_fn(prompt=prompt, trigger_source="tick")
+        if result and hasattr(result, "result") and result.result:
+            return _parse_classification(result.result, butlers, message)
+    except Exception:
+        logger.exception("Classification failed")
 
-        # Default fallback
-        with tracer.start_as_current_span("switchboard.classify") as classify_span:
-            classify_span.set_attribute("routed_to", "general")
-        return "general"
+    return fallback
+
+
+def _parse_classification(
+    raw: str,
+    butlers: list[dict[str, Any]],
+    original_message: str,
+) -> list[dict[str, str]]:
+    """Parse the JSON classification response from CC.
+
+    Validates that each entry references a known butler and has the
+    required keys.  Returns the fallback on any parse or validation
+    error.
+    """
+    fallback = [{"butler": "general", "prompt": original_message}]
+    known = {b["name"] for b in butlers}
+
+    try:
+        parsed = json.loads(raw.strip())
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("classify_message: failed to parse JSON: %s", raw)
+        return fallback
+
+    if not isinstance(parsed, list) or len(parsed) == 0:
+        return fallback
+
+    entries: list[dict[str, str]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            return fallback
+        butler_name = item.get("butler", "").strip().lower()
+        sub_prompt = item.get("prompt", "").strip()
+        if not butler_name or not sub_prompt:
+            return fallback
+        if butler_name not in known:
+            return fallback
+        entries.append({"butler": butler_name, "prompt": sub_prompt})
+
+    return entries if entries else fallback
