@@ -22,7 +22,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PROMPT_TEMPLATE = "You are {butler_name}, a butler AI assistant."
+_DEFAULT_PROMPT_TEMPLATE = "You are the {butler_name} butler."
 
 
 # ---------------------------------------------------------------------------
