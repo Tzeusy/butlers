@@ -330,3 +330,131 @@ async def test_tick_all_with_switchboard_route_simulation(pool):
     assert logs[0]["target_butler"] == "general"
     assert logs[0]["tool_name"] == "tick"
     assert logs[0]["success"] is True
+
+
+# ------------------------------------------------------------------
+# Telemetry — heartbeat.cycle span
+# ------------------------------------------------------------------
+
+
+def _reset_otel_global_state():
+    """Fully reset the OpenTelemetry global tracer provider state."""
+    from opentelemetry import trace
+
+    trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
+    trace._TRACER_PROVIDER = None
+
+
+@pytest.fixture
+def otel_provider():
+    """Set up an in-memory TracerProvider for heartbeat span tests, then tear down."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    _reset_otel_global_state()
+    exporter = InMemorySpanExporter()
+    resource = Resource.create({"service.name": "butler-test"})
+    provider = TracerProvider(resource=resource)
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    yield exporter
+    provider.shutdown()
+    _reset_otel_global_state()
+
+
+async def test_tick_all_butlers_creates_heartbeat_cycle_span(pool, otel_provider):
+    """tick_all_butlers creates heartbeat.cycle span with butlers_ticked and failures."""
+    from butlers.tools.heartbeat import tick_all_butlers
+
+    butlers = [
+        {"name": "general", "endpoint_url": "http://localhost:8101/sse"},
+        {"name": "health", "endpoint_url": "http://localhost:8102/sse"},
+        {"name": "heartbeat", "endpoint_url": "http://localhost:8199/sse"},
+        {"name": "relationship", "endpoint_url": "http://localhost:8103/sse"},
+    ]
+
+    async def mock_list_butlers():
+        return butlers
+
+    async def mock_tick_fn(name: str):
+        pass
+
+    await tick_all_butlers(pool, mock_list_butlers, mock_tick_fn)
+
+    spans = otel_provider.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "heartbeat.cycle"
+    assert span.attributes["butlers_ticked"] == 3  # all except heartbeat
+    assert span.attributes["failures"] == 0
+
+
+async def test_heartbeat_cycle_span_with_failures(pool, otel_provider):
+    """heartbeat.cycle span records failures count."""
+    from butlers.tools.heartbeat import tick_all_butlers
+
+    butlers = [
+        {"name": "alpha", "endpoint_url": "http://localhost:8101/sse"},
+        {"name": "beta", "endpoint_url": "http://localhost:8102/sse"},
+        {"name": "gamma", "endpoint_url": "http://localhost:8103/sse"},
+        {"name": "delta", "endpoint_url": "http://localhost:8104/sse"},
+    ]
+
+    async def mock_list_butlers():
+        return butlers
+
+    async def failing_tick_fn(name: str):
+        if name == "beta":
+            raise RuntimeError("beta failed")
+
+    await tick_all_butlers(pool, mock_list_butlers, failing_tick_fn)
+
+    spans = otel_provider.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "heartbeat.cycle"
+    assert span.attributes["butlers_ticked"] == 4
+    assert span.attributes["failures"] == 1
+
+
+async def test_heartbeat_cycle_span_with_list_butlers_failure(pool, otel_provider):
+    """heartbeat.cycle span handles list_butlers failure."""
+    from butlers.tools.heartbeat import tick_all_butlers
+
+    async def broken_list_butlers():
+        raise RuntimeError("Registry unavailable")
+
+    async def mock_tick_fn(name: str):
+        pass
+
+    await tick_all_butlers(pool, broken_list_butlers, mock_tick_fn)
+
+    spans = otel_provider.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "heartbeat.cycle"
+    assert span.attributes["butlers_ticked"] == 0
+    assert span.attributes["failures"] == 1
+
+
+async def test_heartbeat_cycle_span_with_empty_registry(pool, otel_provider):
+    """heartbeat.cycle span with empty registry has zero butlers_ticked."""
+    from butlers.tools.heartbeat import tick_all_butlers
+
+    async def empty_list_butlers():
+        return []
+
+    async def mock_tick_fn(name: str):
+        pass
+
+    await tick_all_butlers(pool, empty_list_butlers, mock_tick_fn)
+
+    spans = otel_provider.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "heartbeat.cycle"
+    assert span.attributes["butlers_ticked"] == 0
+    assert span.attributes["failures"] == 0

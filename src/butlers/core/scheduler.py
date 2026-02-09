@@ -15,6 +15,7 @@ from typing import Any
 
 import asyncpg
 from croniter import croniter
+from opentelemetry import trace
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,9 @@ async def tick(pool: asyncpg.Pool, dispatch_fn) -> int:
     If dispatch fails, logs the error and stores the error in ``last_result``,
     but continues to the next task.
 
+    Creates a ``butler.tick`` span with attributes ``tasks_due`` (count of due tasks)
+    and ``tasks_run`` (count of successfully dispatched tasks).
+
     Args:
         pool: asyncpg connection pool.
         dispatch_fn: Async callable matching ``CCSpawner.trigger`` signature.
@@ -127,50 +131,56 @@ async def tick(pool: asyncpg.Pool, dispatch_fn) -> int:
     Returns:
         The number of tasks successfully dispatched.
     """
-    now = datetime.now(UTC)
-    rows = await pool.fetch(
-        """
-        SELECT id, name, cron, prompt
-        FROM scheduled_tasks
-        WHERE enabled = true AND next_run_at <= $1
-        ORDER BY next_run_at
-        """,
-        now,
-    )
-
-    dispatched = 0
-    for row in rows:
-        task_id = row["id"]
-        name = row["name"]
-        prompt = row["prompt"]
-        cron = row["cron"]
-
-        result_json: str | None = None
-        try:
-            result = await dispatch_fn(prompt=prompt, trigger_source=f"schedule:{name}")
-            result_json = _result_to_jsonb(result)
-            dispatched += 1
-            logger.info("Dispatched scheduled task: %s", name)
-        except Exception as exc:
-            logger.exception("Failed to dispatch scheduled task: %s", name)
-            result_json = _result_to_jsonb({"error": str(exc)})
-
-        # Always advance next_run_at whether dispatch succeeded or failed
-        next_run_at = _next_run(cron)
-        await pool.execute(
+    tracer = trace.get_tracer("butlers")
+    with tracer.start_as_current_span("butler.tick") as span:
+        now = datetime.now(UTC)
+        rows = await pool.fetch(
             """
-            UPDATE scheduled_tasks
-            SET next_run_at = $2, last_run_at = $3, last_result = $4::jsonb,
-                updated_at = now()
-            WHERE id = $1
+            SELECT id, name, cron, prompt
+            FROM scheduled_tasks
+            WHERE enabled = true AND next_run_at <= $1
+            ORDER BY next_run_at
             """,
-            task_id,
-            next_run_at,
             now,
-            result_json,
         )
 
-    return dispatched
+        tasks_due = len(rows)
+        span.set_attribute("tasks_due", tasks_due)
+
+        dispatched = 0
+        for row in rows:
+            task_id = row["id"]
+            name = row["name"]
+            prompt = row["prompt"]
+            cron = row["cron"]
+
+            result_json: str | None = None
+            try:
+                result = await dispatch_fn(prompt=prompt, trigger_source=f"schedule:{name}")
+                result_json = _result_to_jsonb(result)
+                dispatched += 1
+                logger.info("Dispatched scheduled task: %s", name)
+            except Exception as exc:
+                logger.exception("Failed to dispatch scheduled task: %s", name)
+                result_json = _result_to_jsonb({"error": str(exc)})
+
+            # Always advance next_run_at whether dispatch succeeded or failed
+            next_run_at = _next_run(cron)
+            await pool.execute(
+                """
+                UPDATE scheduled_tasks
+                SET next_run_at = $2, last_run_at = $3, last_result = $4::jsonb,
+                    updated_at = now()
+                WHERE id = $1
+                """,
+                task_id,
+                next_run_at,
+                now,
+                result_json,
+            )
+
+        span.set_attribute("tasks_run", dispatched)
+        return dispatched
 
 
 async def schedule_list(pool: asyncpg.Pool) -> list[dict[str, Any]]:
