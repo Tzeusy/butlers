@@ -1,6 +1,6 @@
 # Switchboard Butler
 
-The Switchboard is the public-facing ingress butler for the Butlers framework. It listens on Telegram (bot) and Email (IMAP/webhook), classifies incoming messages using an ephemeral Claude Code instance, and routes them to the correct specialist butler via MCP. It owns the butler registry and serves as the single entry point for all external communication.
+The Switchboard is the public-facing ingress butler for the Butlers framework. It listens on Telegram (bot) and Email (IMAP/webhook), classifies incoming messages using an ephemeral Claude Code instance, and routes them to the correct specialist butler(s) via MCP. When a message spans multiple butler domains, the CC instance decomposes it into sub-messages and dispatches each sequentially. It owns the butler registry and serves as the single entry point for all external communication.
 
 **Modules:** `telegram`, `email`
 
@@ -25,8 +25,11 @@ CREATE TABLE routing_log (
     routed_to TEXT NOT NULL,            -- butler name
     prompt_summary TEXT,
     trace_id TEXT,
+    group_id UUID,                      -- links sub-routes from a decomposed message
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX idx_routing_log_group_id ON routing_log (group_id);
 ```
 
 ## MCP Tools
@@ -47,7 +50,8 @@ The `butler_registry` and `routing_log` tables SHALL be created during Switchboa
 
 WHEN the Switchboard butler starts up against a newly provisioned database
 THEN the `butler_registry` table MUST exist with columns `name` (TEXT PRIMARY KEY), `endpoint_url` (TEXT NOT NULL), `description` (TEXT), `modules` (JSONB NOT NULL DEFAULT '[]'), `last_seen_at` (TIMESTAMPTZ), and `registered_at` (TIMESTAMPTZ NOT NULL DEFAULT now())
-AND the `routing_log` table MUST exist with columns `id` (UUID PRIMARY KEY), `source_channel` (TEXT NOT NULL), `source_id` (TEXT), `routed_to` (TEXT NOT NULL), `prompt_summary` (TEXT), `trace_id` (TEXT), and `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now())
+AND the `routing_log` table MUST exist with columns `id` (UUID PRIMARY KEY), `source_channel` (TEXT NOT NULL), `source_id` (TEXT), `routed_to` (TEXT NOT NULL), `prompt_summary` (TEXT), `trace_id` (TEXT), `group_id` (UUID, nullable), and `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now())
+AND an index `idx_routing_log_group_id` MUST exist on the `group_id` column
 
 #### Scenario: Core tables are also present
 
@@ -356,3 +360,158 @@ THEN the `routing_log` entry's `trace_id` column MUST contain the trace ID of th
 
 WHEN a `routing_log` entry has a `trace_id` value
 THEN that trace ID MUST correspond to a trace in the telemetry backend (e.g., Jaeger) that includes spans for message receipt, classification, routing, and target butler execution
+
+---
+
+### Requirement: Message decomposition via CC classification
+
+When an incoming message spans multiple butler domains, the CC classification instance SHALL decompose it into distinct sub-messages, each targeting a specific butler. The classification prompt MUST instruct CC to identify all relevant butler targets from a single message and construct a separate `route()` call for each.
+
+#### Scenario: Multi-domain message is decomposed
+
+WHEN a Telegram message arrives with content "Remind me to call Mom on Tuesday and log my weight at 75kg"
+AND the butler registry contains `general`, `relationship`, and `health` butlers
+THEN the CC classification instance MUST identify that the message contains two sub-intents
+AND it MUST decompose the message into sub-messages: one targeting the `relationship` butler (about calling Mom) and one targeting the `health` butler (about logging weight)
+AND it MUST call `route()` once for each sub-message with the appropriate butler name and a prompt containing the relevant sub-intent
+
+#### Scenario: Classification prompt includes decomposition instructions
+
+WHEN the Switchboard constructs the classification prompt for the CC instance
+THEN the prompt MUST instruct CC that a single user message MAY contain multiple intents for different butlers
+AND the prompt MUST instruct CC to identify all distinct intents and route each to the appropriate butler via separate `route()` calls
+AND the prompt MUST instruct CC that each `route()` call's prompt argument SHALL contain only the sub-intent relevant to that butler, not the entire original message
+
+#### Scenario: Single-domain message produces one route call (no regression)
+
+WHEN a message arrives with content "Log my weight at 75kg"
+AND the CC instance determines that only the `health` butler is relevant
+THEN the CC instance MUST call `route()` exactly once, targeting the `health` butler
+AND the behavior MUST be identical to the existing single-target classification flow
+
+---
+
+### Requirement: Sequential fan-out dispatch of decomposed sub-messages
+
+When the CC instance decomposes a message into multiple sub-messages, it SHALL dispatch each `route()` call sequentially (one at a time), consistent with the framework's serial CC dispatch constraint. The CC instance itself orchestrates the fan-out by making multiple `route()` tool calls within a single CC session.
+
+#### Scenario: Two sub-messages are dispatched sequentially
+
+WHEN a message is decomposed into sub-messages targeting the `relationship` and `health` butlers
+THEN the CC instance MUST call `route("relationship", "trigger", ...)` first
+AND it MUST wait for the response before calling `route("health", "trigger", ...)`
+AND both calls MUST occur within the same CC session (no additional CC spawns)
+
+#### Scenario: Fan-out respects serial dispatch constraint
+
+WHEN a message is decomposed into N sub-messages targeting N distinct butlers
+THEN the CC instance MUST issue exactly N sequential `route()` calls
+AND at no point SHALL more than one `route()` call be in-flight simultaneously
+AND the total number of CC instances spawned for the original message MUST be exactly one (the classification instance)
+
+#### Scenario: Order of dispatch follows message order
+
+WHEN a message is decomposed into multiple sub-messages
+THEN the CC instance SHOULD dispatch `route()` calls in the order the sub-intents appear in the original message
+
+---
+
+### Requirement: Response aggregation for multi-butler replies
+
+When the CC instance has dispatched multiple `route()` calls for a decomposed message, it SHALL aggregate the responses from all targeted butlers into a single coherent reply before returning. The aggregated reply is then delivered to the user via the originating channel.
+
+#### Scenario: Successful multi-butler response aggregation
+
+WHEN a message is decomposed into sub-messages targeting `relationship` and `health`
+AND both `route()` calls return successful responses
+THEN the CC instance MUST combine the responses into a single aggregated reply
+AND the aggregated reply MUST clearly attribute each part of the response to the relevant domain or butler
+AND the Switchboard MUST deliver the aggregated reply to the user via the originating channel (Telegram or Email)
+
+#### Scenario: Partial failure during fan-out
+
+WHEN a message is decomposed into sub-messages targeting `relationship` and `health`
+AND the `route()` call to `relationship` succeeds but the `route()` call to `health` fails (butler unreachable or returns an error)
+THEN the CC instance MUST still aggregate a response
+AND the aggregated reply MUST include the successful response from `relationship`
+AND the aggregated reply MUST inform the user that the `health`-related part of their request could not be processed, along with a brief reason
+AND the Switchboard MUST deliver this partial aggregated reply to the user
+
+#### Scenario: All sub-routes fail
+
+WHEN a message is decomposed into multiple sub-messages and all `route()` calls fail
+THEN the CC instance MUST return a reply informing the user that none of the requested actions could be processed
+AND the reply MUST include a summary of which actions failed and why
+AND the Switchboard MUST deliver this error reply to the user via the originating channel
+
+---
+
+### Requirement: Routing log entries per sub-route with group linkage
+
+When a message is decomposed into multiple sub-messages, each `route()` call SHALL produce its own independent `routing_log` entry. All entries originating from the same decomposed message SHALL share a common `group_id` to enable correlation.
+
+#### Scenario: Multi-target message produces multiple routing log entries
+
+WHEN a Telegram message from chat ID `12345` is decomposed into sub-messages targeting `relationship` and `health`
+THEN the `routing_log` table MUST contain two entries
+AND both entries MUST have `source_channel` set to `'telegram'` and `source_id` set to `'12345'`
+AND the entry for `relationship` MUST have `routed_to` set to `'relationship'` and `prompt_summary` reflecting the relationship sub-intent
+AND the entry for `health` MUST have `routed_to` set to `'health'` and `prompt_summary` reflecting the health sub-intent
+
+#### Scenario: Sub-route entries share a group_id
+
+WHEN a message is decomposed into N sub-messages
+THEN all N resulting `routing_log` entries MUST share the same `group_id` value (a UUID)
+AND the `group_id` MUST be unique per original incoming message
+
+#### Scenario: Single-target message has null group_id
+
+WHEN a message is classified to a single butler (no decomposition)
+THEN the resulting `routing_log` entry MUST have `group_id` set to NULL
+AND this preserves backward compatibility with existing single-route log entries
+
+#### Scenario: Each sub-route entry has its own trace context
+
+WHEN a decomposed message produces multiple `routing_log` entries
+THEN each entry MUST have its own `trace_id` corresponding to the span of its individual `route()` call
+AND all entries in the same group SHOULD share a parent trace that encompasses the entire decomposition flow
+
+---
+
+### Requirement: routing_log schema addition for group_id
+
+The `routing_log` table SHALL include a `group_id` column to link entries that originate from the same decomposed message.
+
+#### Scenario: routing_log table includes group_id column
+
+WHEN the Switchboard database is provisioned
+THEN the `routing_log` table MUST include a `group_id` column of type `UUID`, which is nullable
+AND the column MUST default to NULL
+AND an index MUST exist on `group_id` for efficient group lookups
+
+---
+
+### Requirement: Backward compatibility with single-target classification
+
+The message decomposition flow SHALL be fully backward compatible with existing single-target classification. When a message maps to exactly one butler, the behavior MUST be identical to the pre-decomposition flow: one CC session, one `route()` call, one `routing_log` entry (with `group_id` NULL), one response delivered to the user.
+
+#### Scenario: Single-target message flow is unchanged
+
+WHEN a message arrives with content "What's on my calendar today?"
+AND the CC instance determines that only the `general` butler is relevant
+THEN exactly one `route()` call MUST be made to the `general` butler
+AND exactly one `routing_log` entry MUST be created with `group_id` set to NULL
+AND the response MUST be delivered directly to the user without aggregation logic
+
+#### Scenario: Default-to-General still works for ambiguous messages
+
+WHEN a message arrives that does not clearly match any specialist butler
+AND the CC instance cannot determine the correct target with confidence
+THEN the CC instance MUST route the message to the `general` butler as a single-target route (not a decomposition)
+AND `group_id` in the `routing_log` MUST be NULL
+
+#### Scenario: Existing routing log queries are not broken
+
+WHEN a query is executed against `routing_log` without filtering on `group_id`
+THEN all entries (both single-target and decomposed) MUST be returned
+AND existing queries that do not reference `group_id` MUST continue to function without modification
