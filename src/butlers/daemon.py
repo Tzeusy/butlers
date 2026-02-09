@@ -155,6 +155,22 @@ class ButlerDaemon:
         db = self.db
         return f"postgresql://{db.user}:{db.password}@{db.host}:{db.port}/{db.db_name}"
 
+    async def _check_health(self) -> str:
+        """Check health of all core components.
+
+        Returns 'ok' when all components are healthy, 'degraded' otherwise.
+        Currently checks DB pool availability.
+        """
+        try:
+            pool = self.db.pool if self.db else None
+            if pool is None:
+                return "degraded"
+            await pool.fetchval("SELECT 1")
+        except Exception:
+            logger.warning("Health check failed: DB pool unavailable")
+            return "degraded"
+        return "ok"
+
     def _register_core_tools(self) -> None:
         """Register all core MCP tools on the FastMCP server."""
         mcp = self.mcp
@@ -166,12 +182,13 @@ class ButlerDaemon:
         async def status() -> dict:
             """Return butler identity, health, loaded modules, and uptime."""
             uptime_seconds = time.monotonic() - daemon._started_at if daemon._started_at else 0
+            health = await daemon._check_health()
             return {
                 "name": daemon.config.name,
                 "description": daemon.config.description,
                 "port": daemon.config.port,
                 "modules": [mod.name for mod in daemon._modules],
-                "health": "ok",
+                "health": health,
                 "uptime_seconds": round(uptime_seconds, 1),
             }
 

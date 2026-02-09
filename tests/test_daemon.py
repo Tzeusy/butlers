@@ -612,6 +612,121 @@ class TestStatusTool:
         assert set(result["modules"]) == {"stub_a", "stub_b"}
 
 
+class TestHealthCheck:
+    """Verify dynamic health checking in the status() MCP tool."""
+
+    async def _get_status_fn(self, butler_dir, patches):
+        """Helper to start daemon and extract the status function."""
+        status_fn = None
+        mock_mcp = MagicMock()
+
+        def tool_decorator():
+            def decorator(fn):
+                nonlocal status_fn
+                if fn.__name__ == "status":
+                    status_fn = fn
+                return fn
+
+            return decorator
+
+        mock_mcp.tool = tool_decorator
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patch("butlers.daemon.FastMCP", return_value=mock_mcp),
+            patches["CCSpawner"],
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        return daemon, status_fn
+
+    async def test_health_ok_when_pool_healthy(self, butler_dir: Path) -> None:
+        """status() returns health=ok when DB pool responds to SELECT 1."""
+        patches = _patch_infra()
+        mock_pool = patches["mock_pool"]
+        mock_pool.fetchval = AsyncMock(return_value=1)
+
+        daemon, status_fn = await self._get_status_fn(butler_dir, patches)
+        assert status_fn is not None
+
+        result = await status_fn()
+        assert result["health"] == "ok"
+        mock_pool.fetchval.assert_awaited_once_with("SELECT 1")
+
+    async def test_health_degraded_when_pool_raises(self, butler_dir: Path) -> None:
+        """status() returns health=degraded when DB pool query raises an exception."""
+        patches = _patch_infra()
+        mock_pool = patches["mock_pool"]
+        mock_pool.fetchval = AsyncMock(side_effect=ConnectionRefusedError("connection refused"))
+
+        daemon, status_fn = await self._get_status_fn(butler_dir, patches)
+        assert status_fn is not None
+
+        result = await status_fn()
+        assert result["health"] == "degraded"
+
+    async def test_health_degraded_when_pool_is_none(self, butler_dir: Path) -> None:
+        """status() returns health=degraded when pool has been set to None (closed)."""
+        patches = _patch_infra()
+
+        daemon, status_fn = await self._get_status_fn(butler_dir, patches)
+        assert status_fn is not None
+
+        # Simulate pool being closed (set to None)
+        daemon.db.pool = None
+
+        result = await status_fn()
+        assert result["health"] == "degraded"
+
+    async def test_health_degraded_when_db_is_none(self, butler_dir: Path) -> None:
+        """status() returns health=degraded when db object itself is None."""
+        patches = _patch_infra()
+
+        daemon, status_fn = await self._get_status_fn(butler_dir, patches)
+        assert status_fn is not None
+
+        # Simulate db being None (not initialized)
+        daemon.db = None
+
+        result = await status_fn()
+        assert result["health"] == "degraded"
+
+    async def test_health_degraded_when_pool_timeout(self, butler_dir: Path) -> None:
+        """status() returns health=degraded when pool query times out."""
+
+        patches = _patch_infra()
+        mock_pool = patches["mock_pool"]
+        mock_pool.fetchval = AsyncMock(side_effect=TimeoutError())
+
+        daemon, status_fn = await self._get_status_fn(butler_dir, patches)
+        assert status_fn is not None
+
+        result = await status_fn()
+        assert result["health"] == "degraded"
+
+    async def test_status_still_returns_all_fields_when_degraded(self, butler_dir: Path) -> None:
+        """Even when degraded, status() still returns all expected fields."""
+        patches = _patch_infra()
+        mock_pool = patches["mock_pool"]
+        mock_pool.fetchval = AsyncMock(side_effect=OSError("pool closed"))
+
+        daemon, status_fn = await self._get_status_fn(butler_dir, patches)
+        assert status_fn is not None
+
+        result = await status_fn()
+        assert result["health"] == "degraded"
+        assert result["name"] == "test-butler"
+        assert result["description"] == "A test butler"
+        assert result["port"] == 9100
+        assert result["modules"] == []
+        assert isinstance(result["uptime_seconds"], float)
+
+
 class TestStartupFailurePropagation:
     """Verify that failures in early steps prevent later steps."""
 
