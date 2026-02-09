@@ -34,6 +34,7 @@ from typing import Any
 
 import uvicorn
 from fastmcp import FastMCP
+from opentelemetry import trace
 from pydantic import ConfigDict, ValidationError
 
 from butlers.config import ButlerConfig, load_config
@@ -50,7 +51,7 @@ from butlers.core.state import state_delete as _state_delete
 from butlers.core.state import state_get as _state_get
 from butlers.core.state import state_list as _state_list
 from butlers.core.state import state_set as _state_set
-from butlers.core.telemetry import init_telemetry, tool_span
+from butlers.core.telemetry import extract_trace_context, init_telemetry, tool_span
 from butlers.credentials import detect_secrets, validate_credentials
 from butlers.db import Database
 from butlers.migrations import has_butler_chain, run_migrations
@@ -374,26 +375,40 @@ async def tick() -> dict:
 
         # State tools
         @mcp.tool()
-async def state_get(key: str) -> dict:
+async def state_get(key: str, _trace_context: dict | None = None) -> dict:
             """Get a value from the state store."""
-            value = await _state_get(pool, key)
-            return {"key": key, "value": value}
+            parent_ctx = extract_trace_context(_trace_context) if _trace_context else None
+            tracer = trace.get_tracer("butlers")
+            with tracer.start_as_current_span("butler.tool.state_get", context=parent_ctx) as span:
+                span.set_attribute("butler.name", daemon.config.name)
+                value = await _state_get(pool, key)
+                return {"key": key, "value": value}
 
         @mcp.tool()
-async def state_set(key: str, value: Any) -> dict:
+        async def state_set(key: str, value: Any, _trace_context: dict | None = None) -> dict:
             """Set a value in the state store."""
-            await _state_set(pool, key, value)
-            return {"key": key, "status": "ok"}
+            parent_ctx = extract_trace_context(_trace_context) if _trace_context else None
+            tracer = trace.get_tracer("butlers")
+            with tracer.start_as_current_span("butler.tool.state_set", context=parent_ctx) as span:
+                span.set_attribute("butler.name", daemon.config.name)
+                await _state_set(pool, key, value)
+                return {"key": key, "status": "ok"}
 
         @mcp.tool()
-async def state_delete(key: str) -> dict:
+        async def state_delete(key: str, _trace_context: dict | None = None) -> dict:
             """Delete a key from the state store."""
-            await _state_delete(pool, key)
-            return {"key": key, "status": "deleted"}
+            parent_ctx = extract_trace_context(_trace_context) if _trace_context else None
+            tracer = trace.get_tracer("butlers")
+            with tracer.start_as_current_span(
+                "butler.tool.state_delete", context=parent_ctx
+            ) as span:
+                span.set_attribute("butler.name", daemon.config.name)
+                await _state_delete(pool, key)
+                return {"key": key, "status": "deleted"}
 
         @mcp.tool()
-async def state_list(
-            prefix: str | None = None, keys_only: bool = True
+        async def state_list(
+            prefix: str | None = None, keys_only: bool = True, _trace_context: dict | None = None
         ) -> list[str] | list[dict]:
             """List keys in the state store, optionally filtered by prefix.
 
@@ -402,7 +417,11 @@ async def state_list(
                 keys_only: If True (default), return list of key strings.
                     If False, return list of {"key": ..., "value": ...} dicts.
             """
-            return await _state_list(pool, prefix, keys_only)
+            parent_ctx = extract_trace_context(_trace_context) if _trace_context else None
+            tracer = trace.get_tracer("butlers")
+            with tracer.start_as_current_span("butler.tool.state_list", context=parent_ctx) as span:
+                span.set_attribute("butler.name", daemon.config.name)
+                return await _state_list(pool, prefix, keys_only)
 
         # Schedule tools
         @mcp.tool()
