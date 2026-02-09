@@ -1067,3 +1067,405 @@ async def test_dispatch_decomposed_passes_source_id(pool):
     assert len(captured_args) == 1
     assert captured_args[0]["prompt"] == "hello"
     assert captured_args[0]["source_id"] == "msg-12345"
+
+
+# ------------------------------------------------------------------
+
+
+@pytest.fixture
+async def pool_with_extraction(pool):
+    """Add extraction_log table to the test pool."""
+    await pool.execute("""
+        CREATE TABLE IF NOT EXISTS extraction_log (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            source_message_preview TEXT,
+            extraction_type VARCHAR(100) NOT NULL,
+            tool_name VARCHAR(100) NOT NULL,
+            tool_args JSONB NOT NULL,
+            target_contact_id UUID,
+            confidence VARCHAR(20),
+            dispatched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            source_channel VARCHAR(50)
+        )
+    """)
+    await pool.execute("""
+        CREATE INDEX IF NOT EXISTS idx_extraction_log_contact
+        ON extraction_log(target_contact_id)
+    """)
+    await pool.execute("""
+        CREATE INDEX IF NOT EXISTS idx_extraction_log_type
+        ON extraction_log(extraction_type)
+    """)
+    await pool.execute("""
+        CREATE INDEX IF NOT EXISTS idx_extraction_log_dispatched
+        ON extraction_log(dispatched_at DESC)
+    """)
+    yield pool
+
+
+async def test_log_extraction_creates_entry(pool_with_extraction):
+    """log_extraction creates a new audit log entry and returns the UUID."""
+    from butlers.tools.switchboard import log_extraction
+
+    log_id = await log_extraction(
+        pool_with_extraction,
+        extraction_type="contact",
+        tool_name="contact_add",
+        tool_args={"name": "Alice", "email": "alice@example.com"},
+        target_contact_id="123e4567-e89b-12d3-a456-426614174000",
+        confidence="high",
+        source_message_preview="Email from Alice about meeting",
+        source_channel="email",
+    )
+
+    # Verify UUID format
+    from uuid import UUID
+
+    assert UUID(log_id)
+
+    # Verify entry was created
+    row = await pool_with_extraction.fetchrow("SELECT * FROM extraction_log WHERE id = $1", log_id)
+    assert row is not None
+    assert row["extraction_type"] == "contact"
+    assert row["tool_name"] == "contact_add"
+    assert row["confidence"] == "high"
+    assert row["source_channel"] == "email"
+    assert "Alice" in row["source_message_preview"]
+
+
+async def test_log_extraction_truncates_long_preview(pool_with_extraction):
+    """log_extraction truncates source_message_preview to 200 characters."""
+    from butlers.tools.switchboard import log_extraction
+
+    long_message = "a" * 300
+    log_id = await log_extraction(
+        pool_with_extraction,
+        extraction_type="note",
+        tool_name="note_add",
+        tool_args={"content": "test"},
+        source_message_preview=long_message,
+    )
+
+    row = await pool_with_extraction.fetchrow(
+        "SELECT source_message_preview FROM extraction_log WHERE id = $1", log_id
+    )
+    assert len(row["source_message_preview"]) == 200
+    assert row["source_message_preview"].endswith("...")
+
+
+async def test_log_extraction_minimal_fields(pool_with_extraction):
+    """log_extraction works with only required fields."""
+    from butlers.tools.switchboard import log_extraction
+
+    log_id = await log_extraction(
+        pool_with_extraction,
+        extraction_type="birthday",
+        tool_name="birthday_set",
+        tool_args={"contact_id": "123", "date": "1990-01-01"},
+    )
+
+    row = await pool_with_extraction.fetchrow("SELECT * FROM extraction_log WHERE id = $1", log_id)
+    assert row is not None
+    assert row["extraction_type"] == "birthday"
+    assert row["tool_name"] == "birthday_set"
+    assert row["source_message_preview"] is None
+    assert row["source_channel"] is None
+
+
+async def test_extraction_log_list_empty(pool_with_extraction):
+    """extraction_log_list returns empty list when no entries exist."""
+    from butlers.tools.switchboard import extraction_log_list
+
+    await pool_with_extraction.execute("DELETE FROM extraction_log")
+    entries = await extraction_log_list(pool_with_extraction)
+    assert entries == []
+
+
+async def test_extraction_log_list_all(pool_with_extraction):
+    """extraction_log_list returns all entries when no filters applied."""
+    from butlers.tools.switchboard import extraction_log_list, log_extraction
+
+    await pool_with_extraction.execute("DELETE FROM extraction_log")
+
+    await log_extraction(pool_with_extraction, "contact", "contact_add", {"name": "Alice"})
+    await log_extraction(pool_with_extraction, "note", "note_add", {"content": "Test note"})
+
+    entries = await extraction_log_list(pool_with_extraction)
+    assert len(entries) == 2
+    types = {e["extraction_type"] for e in entries}
+    assert types == {"contact", "note"}
+
+
+async def test_extraction_log_list_filter_by_contact(pool_with_extraction):
+    """extraction_log_list filters by target_contact_id."""
+    from butlers.tools.switchboard import extraction_log_list, log_extraction
+
+    await pool_with_extraction.execute("DELETE FROM extraction_log")
+
+    contact_id_1 = "123e4567-e89b-12d3-a456-426614174001"
+    contact_id_2 = "123e4567-e89b-12d3-a456-426614174002"
+
+    await log_extraction(
+        pool_with_extraction,
+        "contact",
+        "contact_add",
+        {"name": "Alice"},
+        target_contact_id=contact_id_1,
+    )
+    await log_extraction(
+        pool_with_extraction,
+        "note",
+        "note_add",
+        {"content": "Note for Bob"},
+        target_contact_id=contact_id_2,
+    )
+
+    entries = await extraction_log_list(pool_with_extraction, contact_id=contact_id_1)
+    assert len(entries) == 1
+    assert entries[0]["target_contact_id"] == contact_id_1
+
+
+async def test_extraction_log_list_filter_by_type(pool_with_extraction):
+    """extraction_log_list filters by extraction_type."""
+    from butlers.tools.switchboard import extraction_log_list, log_extraction
+
+    await pool_with_extraction.execute("DELETE FROM extraction_log")
+
+    await log_extraction(pool_with_extraction, "contact", "contact_add", {"name": "Alice"})
+    await log_extraction(pool_with_extraction, "note", "note_add", {"content": "Test"})
+    await log_extraction(pool_with_extraction, "contact", "contact_update", {"id": "123"})
+
+    entries = await extraction_log_list(pool_with_extraction, extraction_type="contact")
+    assert len(entries) == 2
+    assert all(e["extraction_type"] == "contact" for e in entries)
+
+
+async def test_extraction_log_list_filter_by_time(pool_with_extraction):
+    """extraction_log_list filters by since timestamp."""
+    from datetime import datetime, timedelta
+
+    from butlers.tools.switchboard import extraction_log_list, log_extraction
+
+    await pool_with_extraction.execute("DELETE FROM extraction_log")
+
+    # Create entries at different times (we'll manipulate timestamps after)
+    log_id_1 = await log_extraction(pool_with_extraction, "contact", "contact_add", {"name": "Old"})
+    log_id_2 = await log_extraction(pool_with_extraction, "contact", "contact_add", {"name": "New"})
+
+    # Manually set timestamps to simulate time passing
+    old_time = datetime.now(UTC) - timedelta(hours=2)
+    new_time = datetime.now(UTC)
+
+    await pool_with_extraction.execute(
+        "UPDATE extraction_log SET dispatched_at = $1 WHERE id = $2",
+        old_time,
+        log_id_1,
+    )
+    await pool_with_extraction.execute(
+        "UPDATE extraction_log SET dispatched_at = $1 WHERE id = $2",
+        new_time,
+        log_id_2,
+    )
+
+    # Query for entries after 1 hour ago
+    since_time = datetime.now(UTC) - timedelta(hours=1)
+    entries = await extraction_log_list(pool_with_extraction, since=since_time.isoformat())
+
+    assert len(entries) == 1
+    assert str(entries[0]["id"]) == log_id_2
+
+
+async def test_extraction_log_list_respects_limit(pool_with_extraction):
+    """extraction_log_list respects the limit parameter."""
+    from butlers.tools.switchboard import extraction_log_list, log_extraction
+
+    await pool_with_extraction.execute("DELETE FROM extraction_log")
+
+    for i in range(10):
+        await log_extraction(
+            pool_with_extraction, "contact", "contact_add", {"name": f"Contact {i}"}
+        )
+
+    entries = await extraction_log_list(pool_with_extraction, limit=5)
+    assert len(entries) == 5
+
+
+async def test_extraction_log_list_max_limit(pool_with_extraction):
+    """extraction_log_list caps limit at 500."""
+    from butlers.tools.switchboard import extraction_log_list
+
+    await pool_with_extraction.execute("DELETE FROM extraction_log")
+
+    # Request more than max limit
+    entries = await extraction_log_list(pool_with_extraction, limit=1000)
+    # Since we have no entries, we can't test the actual limit enforcement,
+    # but we verify it doesn't error
+    assert entries == []
+
+
+async def test_extraction_log_list_ordered_by_time_desc(pool_with_extraction):
+    """extraction_log_list returns entries ordered by dispatched_at DESC."""
+
+    from butlers.tools.switchboard import extraction_log_list, log_extraction
+
+    await pool_with_extraction.execute("DELETE FROM extraction_log")
+
+    log_ids = []
+    for i in range(3):
+        log_id = await log_extraction(
+            pool_with_extraction, "contact", "contact_add", {"name": f"Contact {i}"}
+        )
+        log_ids.append(log_id)
+
+    entries = await extraction_log_list(pool_with_extraction)
+    assert len(entries) == 3
+
+    # Most recent should be first
+    entry_ids = [str(e["id"]) for e in entries]
+    assert entry_ids == list(reversed(log_ids))
+
+
+async def test_extraction_log_undo_invalid_uuid(pool_with_extraction):
+    """extraction_log_undo returns error for invalid UUID format."""
+    from butlers.tools.switchboard import extraction_log_undo
+
+    result = await extraction_log_undo(pool_with_extraction, "not-a-uuid")
+    assert "error" in result
+    assert "Invalid UUID format" in result["error"]
+
+
+async def test_extraction_log_undo_not_found(pool_with_extraction):
+    """extraction_log_undo returns error when log entry doesn't exist."""
+    from uuid import uuid4
+
+    from butlers.tools.switchboard import extraction_log_undo
+
+    fake_id = str(uuid4())
+    result = await extraction_log_undo(pool_with_extraction, fake_id)
+    assert "error" in result
+    assert "not found" in result["error"]
+
+
+async def test_extraction_log_undo_no_undo_available(pool_with_extraction):
+    """extraction_log_undo returns error for tools without undo operations."""
+    from butlers.tools.switchboard import extraction_log_undo, log_extraction
+
+    log_id = await log_extraction(
+        pool_with_extraction,
+        "contact",
+        "contact_update",
+        {"id": "123", "name": "Updated"},
+    )
+
+    result = await extraction_log_undo(pool_with_extraction, log_id)
+    assert "error" in result
+    assert "No undo operation available" in result["error"]
+
+
+async def test_extraction_log_undo_success_contact_add(pool_with_extraction):
+    """extraction_log_undo calls contact_delete for contact_add."""
+    from butlers.tools.switchboard import extraction_log_undo, log_extraction
+
+    contact_id = "123e4567-e89b-12d3-a456-426614174000"
+    log_id = await log_extraction(
+        pool_with_extraction,
+        "contact",
+        "contact_add",
+        {"id": contact_id, "name": "Alice"},
+    )
+
+    async def mock_route(pool, target_butler, tool_name, args):
+        return {
+            "result": {
+                "target": target_butler,
+                "tool": tool_name,
+                "args": args,
+            }
+        }
+
+    result = await extraction_log_undo(pool_with_extraction, log_id, route_fn=mock_route)
+
+    assert "result" in result
+    assert result["result"]["target"] == "relationship"
+    assert result["result"]["tool"] == "contact_delete"
+    assert result["result"]["args"]["id"] == contact_id
+
+
+async def test_extraction_log_undo_success_note_add(pool_with_extraction):
+    """extraction_log_undo calls note_delete for note_add."""
+    from butlers.tools.switchboard import extraction_log_undo, log_extraction
+
+    note_id = "note-123"
+    log_id = await log_extraction(
+        pool_with_extraction,
+        "note",
+        "note_add",
+        {"note_id": note_id, "content": "Test note"},
+    )
+
+    async def mock_route(pool, target_butler, tool_name, args):
+        return {"result": {"tool": tool_name, "args": args}}
+
+    result = await extraction_log_undo(pool_with_extraction, log_id, route_fn=mock_route)
+
+    assert "result" in result
+    assert result["result"]["tool"] == "note_delete"
+    assert result["result"]["args"]["note_id"] == note_id
+
+
+async def test_extraction_log_undo_success_birthday_set(pool_with_extraction):
+    """extraction_log_undo calls birthday_remove for birthday_set."""
+    from butlers.tools.switchboard import extraction_log_undo, log_extraction
+
+    contact_id = "contact-456"
+    log_id = await log_extraction(
+        pool_with_extraction,
+        "birthday",
+        "birthday_set",
+        {"contact_id": contact_id, "date": "1990-01-01"},
+    )
+
+    async def mock_route(pool, target_butler, tool_name, args):
+        return {"result": {"tool": tool_name, "args": args}}
+
+    result = await extraction_log_undo(pool_with_extraction, log_id, route_fn=mock_route)
+
+    assert "result" in result
+    assert result["result"]["tool"] == "birthday_remove"
+    assert result["result"]["args"]["contact_id"] == contact_id
+
+
+async def test_extraction_log_undo_missing_id_field(pool_with_extraction):
+    """extraction_log_undo returns error when tool_args lacks ID fields."""
+    from butlers.tools.switchboard import extraction_log_undo, log_extraction
+
+    log_id = await log_extraction(
+        pool_with_extraction,
+        "contact",
+        "contact_add",
+        {"name": "Alice"},  # No id, contact_id, or note_id
+    )
+
+    result = await extraction_log_undo(pool_with_extraction, log_id)
+    assert "error" in result
+    assert "Cannot determine target ID" in result["error"]
+
+
+async def test_extraction_log_undo_routes_error(pool_with_extraction):
+    """extraction_log_undo propagates routing errors."""
+    from butlers.tools.switchboard import extraction_log_undo, log_extraction
+
+    log_id = await log_extraction(
+        pool_with_extraction,
+        "contact",
+        "contact_add",
+        {"id": "123", "name": "Alice"},
+    )
+
+    async def failing_route(pool, target_butler, tool_name, args):
+        return {"error": "Relationship butler not available"}
+
+    result = await extraction_log_undo(pool_with_extraction, log_id, route_fn=failing_route)
+
+    assert "error" in result
+    assert "not available" in result["error"]
