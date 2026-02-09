@@ -2,6 +2,9 @@
 
 Uses IMAP for inbox access and SMTP for sending.
 Configured via [modules.email] in butler.toml.
+
+When a ``MessagePipeline`` is attached, incoming emails can be classified
+and routed to the appropriate butler via ``check_and_route_inbox``.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from butlers.modules.base import Module
+from butlers.modules.pipeline import MessagePipeline, RoutingResult
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +37,18 @@ class EmailConfig(BaseModel):
 
 
 class EmailModule(Module):
-    """Email module providing send_email, search_inbox, and read_email tools."""
+    """Email module providing send_email, search_inbox, and read_email tools.
+
+    When a ``MessagePipeline`` is set via ``set_pipeline()``, the
+    ``check_and_route_inbox`` tool becomes functional: it fetches unseen
+    emails, classifies each via ``classify_message()``, and routes them
+    to the appropriate butler.
+    """
+
+    def __init__(self) -> None:
+        self._config: EmailConfig = EmailConfig()
+        self._pipeline: MessagePipeline | None = None
+        self._routed_messages: list[RoutingResult] = []
 
     @property
     def name(self) -> str:
@@ -55,24 +70,38 @@ class EmailModule(Module):
     def migration_revisions(self) -> str | None:
         return None  # No custom tables needed
 
+    def set_pipeline(self, pipeline: MessagePipeline) -> None:
+        """Attach a classification/routing pipeline for incoming messages.
+
+        When set, ``check_and_route_inbox`` will classify and route each
+        unseen email to the appropriate butler.
+        """
+        self._pipeline = pipeline
+
     async def register_tools(self, mcp: Any, config: Any, db: Any) -> None:
-        """Register send_email, search_inbox, read_email MCP tools."""
+        """Register send_email, search_inbox, read_email, check_and_route_inbox MCP tools."""
         self._config = EmailConfig(**(config or {}))
+        module = self  # capture for closures
 
         @mcp.tool()
         async def send_email(to: str, subject: str, body: str) -> dict:
             """Send an email via SMTP."""
-            return await self._send_email(to, subject, body)
+            return await module._send_email(to, subject, body)
 
         @mcp.tool()
         async def search_inbox(query: str) -> list[dict]:
             """Search inbox via IMAP SEARCH."""
-            return await self._search_inbox(query)
+            return await module._search_inbox(query)
 
         @mcp.tool()
         async def read_email(message_id: str) -> dict:
             """Read a specific email by message ID."""
-            return await self._read_email(message_id)
+            return await module._read_email(message_id)
+
+        @mcp.tool()
+        async def check_and_route_inbox() -> dict:
+            """Check for unseen emails and route each through the classification pipeline."""
+            return await module._check_and_route_inbox()
 
     async def on_startup(self, config: Any, db: Any) -> None:
         """Initialize email config. Connections are created per-operation."""
@@ -81,6 +110,120 @@ class EmailModule(Module):
     async def on_shutdown(self) -> None:
         """No persistent connections to clean up."""
         pass
+
+    # ------------------------------------------------------------------
+    # Classification pipeline integration
+    # ------------------------------------------------------------------
+
+    async def process_incoming(
+        self,
+        email_data: dict[str, str],
+    ) -> RoutingResult | None:
+        """Process a single email through the classification pipeline.
+
+        Builds a message string from the email subject and body, then
+        classifies and routes it via the pipeline.
+
+        Returns ``None`` if no pipeline is configured or the email has
+        no usable content.
+        """
+        if self._pipeline is None:
+            return None
+
+        subject = email_data.get("subject", "")
+        body = email_data.get("body", "")
+        sender = email_data.get("from", "")
+        message_id = email_data.get("message_id", "")
+
+        # Build a text representation for classification
+        text = _build_classification_text(subject, body)
+        if not text:
+            return None
+
+        result = await self._pipeline.process(
+            message_text=text,
+            tool_name="handle_message",
+            tool_args={
+                "source": "email",
+                "from": sender,
+                "subject": subject,
+                "message_id": message_id,
+            },
+        )
+
+        self._routed_messages.append(result)
+        logger.info(
+            "Email routed to %s (from=%s, subject=%s)",
+            result.target_butler,
+            sender,
+            subject,
+        )
+        return result
+
+    async def _check_and_route_inbox(self) -> dict:
+        """Check for unseen emails and route each through the pipeline.
+
+        Returns a summary dict with counts and per-email routing results.
+        """
+        if self._pipeline is None:
+            return {"status": "no_pipeline", "message": "No classification pipeline configured"}
+
+        try:
+            unseen = await self._search_inbox("UNSEEN")
+        except Exception as exc:
+            return {"status": "error", "message": f"Failed to search inbox: {exc}"}
+
+        results: list[dict[str, Any]] = []
+        for email_header in unseen:
+            # Read the full email
+            try:
+                full_email = await self._read_email(email_header["message_id"])
+            except Exception as exc:
+                results.append(
+                    {
+                        "message_id": email_header.get("message_id"),
+                        "status": "error",
+                        "error": f"Failed to read email: {exc}",
+                    }
+                )
+                continue
+
+            if "error" in full_email:
+                results.append(
+                    {
+                        "message_id": email_header.get("message_id"),
+                        "status": "error",
+                        "error": full_email["error"],
+                    }
+                )
+                continue
+
+            # Route through the pipeline
+            routing_result = await self.process_incoming(full_email)
+            if routing_result:
+                results.append(
+                    {
+                        "message_id": email_header.get("message_id"),
+                        "subject": full_email.get("subject"),
+                        "target_butler": routing_result.target_butler,
+                        "status": "routed",
+                    }
+                )
+            else:
+                results.append(
+                    {
+                        "message_id": email_header.get("message_id"),
+                        "status": "skipped",
+                        "reason": "no content or no pipeline",
+                    }
+                )
+
+        return {
+            "status": "ok",
+            "total": len(unseen),
+            "routed": sum(1 for r in results if r.get("status") == "routed"),
+            "results": results,
+        }
 
     # ------------------------------------------------------------------
     # Implementation helpers using stdlib imaplib/smtplib
@@ -215,3 +358,17 @@ class EmailModule(Module):
     async def _read_email(self, message_id: str) -> dict:
         """Read specific email via IMAP. Uses asyncio.to_thread for blocking IMAP calls."""
         return await asyncio.to_thread(self._imap_read, message_id)
+
+
+def _build_classification_text(subject: str, body: str) -> str | None:
+    """Build a classification-ready text from email subject and body.
+
+    Returns None if both are empty.
+    """
+    parts = []
+    if subject:
+        parts.append(f"Subject: {subject}")
+    if body:
+        # Limit body to first 500 chars to avoid overwhelming the classifier
+        parts.append(body[:500])
+    return "\n".join(parts) if parts else None
