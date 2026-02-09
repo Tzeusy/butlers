@@ -14,8 +14,11 @@ The ButlerDaemon manages the lifecycle of a butler:
 11. Create FastMCP server and register core tools
 12. Register module MCP tools
 
-Graceful shutdown reverses module shutdown in reverse topological order,
-then closes DB pool.
+On startup failure, already-initialized modules get on_shutdown() called.
+
+Graceful shutdown: (a) stops accepting new MCP connections,
+(b) drains in-flight CC sessions up to a configurable timeout,
+(c) shuts down modules in reverse topological order, (d) closes DB pool.
 """
 
 from __future__ import annotations
@@ -68,6 +71,7 @@ class ButlerDaemon:
         self.spawner: CCSpawner | None = None
         self._modules: list[Module] = []
         self._started_at: float | None = None
+        self._accepting_connections = False
 
     async def start(self) -> None:
         """Execute the full startup sequence.
@@ -108,9 +112,24 @@ class ButlerDaemon:
                 await run_migrations(db_url, chain=rev)
 
         # 8. Module on_startup (topological order)
-        for mod in self._modules:
-            mod_config = self.config.modules.get(mod.name, {})
-            await mod.on_startup(mod_config, self.db)
+        started_modules: list[Module] = []
+        try:
+            for mod in self._modules:
+                mod_config = self.config.modules.get(mod.name, {})
+                await mod.on_startup(mod_config, self.db)
+                started_modules.append(mod)
+        except Exception:
+            # Clean up already-started modules in reverse order
+            logger.error(
+                "Startup failure; cleaning up %d already-started module(s)",
+                len(started_modules),
+            )
+            for mod in reversed(started_modules):
+                try:
+                    await mod.on_shutdown()
+                except Exception:
+                    logger.exception("Error during cleanup shutdown of module: %s", mod.name)
+            raise
 
         # 9. Create CCSpawner
         self.spawner = CCSpawner(
@@ -133,7 +152,8 @@ class ButlerDaemon:
         # 12. Register module MCP tools
         await self._register_module_tools()
 
-        # Record startup time
+        # Mark as accepting connections and record startup time
+        self._accepting_connections = True
         self._started_at = time.monotonic()
         logger.info("Butler %s started on port %d", self.config.name, self.config.port)
 
@@ -289,22 +309,33 @@ class ButlerDaemon:
     async def shutdown(self) -> None:
         """Graceful shutdown.
 
-        1. Module on_shutdown in reverse topological order
-        2. Close DB pool
+        1. Stop accepting new MCP connections
+        2. Drain in-flight CC sessions (up to configurable timeout)
+        3. Module on_shutdown in reverse topological order
+        4. Close DB pool
         """
         logger.info(
             "Shutting down butler: %s",
             self.config.name if self.config else "unknown",
         )
 
-        # Module shutdown in reverse topological order
+        # 1. Stop accepting new MCP connections
+        self._accepting_connections = False
+
+        # 2. Drain in-flight CC sessions
+        if self.spawner is not None:
+            self.spawner.stop_accepting()
+            timeout = self.config.shutdown_timeout_s if self.config else 30.0
+            await self.spawner.drain(timeout=timeout)
+
+        # 3. Module shutdown in reverse topological order
         for mod in reversed(self._modules):
             try:
                 await mod.on_shutdown()
             except Exception:
                 logger.exception("Error during shutdown of module: %s", mod.name)
 
-        # Close DB pool
+        # 4. Close DB pool
         if self.db:
             await self.db.close()
 

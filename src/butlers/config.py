@@ -42,6 +42,7 @@ class ButlerConfig:
     modules: dict[str, dict] = field(default_factory=dict)
     env_required: list[str] = field(default_factory=list)
     env_optional: list[str] = field(default_factory=list)
+    shutdown_timeout_s: float = 30.0
 
 
 def resolve_env_vars(value: Any) -> Any:
@@ -162,6 +163,10 @@ def load_config(config_dir: Path) -> ButlerConfig:
     env_required = list(env_section.get("required", []))
     env_optional = list(env_section.get("optional", []))
 
+    # --- [butler.shutdown] sub-section ---
+    shutdown_section = butler_section.get("shutdown", {})
+    shutdown_timeout_s = float(shutdown_section.get("timeout_s", 30.0))
+
     # --- [[butler.schedule]] array ---
     raw_schedules = butler_section.get("schedule", [])
     schedules: list[ScheduleConfig] = []
@@ -189,4 +194,5 @@ def load_config(config_dir: Path) -> ButlerConfig:
         modules=modules,
         env_required=env_required,
         env_optional=env_optional,
+        shutdown_timeout_s=shutdown_timeout_s,
     )
