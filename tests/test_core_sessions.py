@@ -87,7 +87,7 @@ async def test_create_session_returns_uuid(pool):
     """session_create returns a valid UUID."""
     from butlers.core.sessions import session_create
 
-    session_id = await session_create(pool, prompt="Hello", trigger_source="schedule")
+    session_id = await session_create(pool, prompt="Hello", trigger_source="schedule:test-task")
     assert isinstance(session_id, uuid.UUID)
 
 
@@ -124,7 +124,7 @@ async def test_complete_session_updates_fields(pool):
     """session_complete sets result, tool_calls, duration_ms, success, and completed_at."""
     from butlers.core.sessions import session_complete, session_create, sessions_get
 
-    session_id = await session_create(pool, prompt="Test", trigger_source="schedule")
+    session_id = await session_create(pool, prompt="Test", trigger_source="schedule:test-task")
 
     tool_calls = [{"tool": "state_get", "args": {"key": "foo"}}]
     await session_complete(
@@ -152,7 +152,7 @@ async def test_complete_with_failure(pool):
     """session_complete stores error information with success=false."""
     from butlers.core.sessions import session_complete, session_create, sessions_get
 
-    session_id = await session_create(pool, prompt="Failing task", trigger_source="heartbeat")
+    session_id = await session_create(pool, prompt="Failing task", trigger_source="tick")
 
     await session_complete(
         pool,
@@ -216,7 +216,7 @@ async def test_trigger_source_valid_values(pool):
     """All four valid trigger_source values are accepted."""
     from butlers.core.sessions import session_create
 
-    for source in ("schedule", "trigger_tool", "tick", "heartbeat"):
+    for source in ("schedule:daily-task", "trigger", "tick", "external"):
         sid = await session_create(pool, prompt="test", trigger_source=source)
         assert isinstance(sid, uuid.UUID)
 
@@ -277,7 +277,7 @@ async def test_sessions_list_default(pool):
 
     ids = []
     for i in range(3):
-        sid = await session_create(pool, prompt=f"list-{i}", trigger_source="schedule")
+        sid = await session_create(pool, prompt=f"list-{i}", trigger_source="schedule:test-task")
         ids.append(sid)
         # Insert a small delay so started_at ordering is deterministic
         await asyncio.sleep(0.01)
@@ -338,7 +338,7 @@ async def test_sessions_get_returns_full_record(pool):
     """sessions_get returns all columns for an existing session."""
     from butlers.core.sessions import session_create, sessions_get
 
-    sid = await session_create(pool, prompt="full", trigger_source="trigger_tool", trace_id="t-1")
+    sid = await session_create(pool, prompt="full", trigger_source="trigger", trace_id="t-1")
     session = await sessions_get(pool, sid)
     assert session is not None
 

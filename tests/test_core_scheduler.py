@@ -240,7 +240,7 @@ async def test_tick_dispatches_due_tasks(pool):
     assert count == 1
     assert len(dispatch.calls) == 1
     assert dispatch.calls[0]["prompt"] == "run this"
-    assert dispatch.calls[0]["trigger_source"] == "schedule"
+    assert dispatch.calls[0]["trigger_source"] == "schedule:due-task"
 
 
 async def test_tick_noop_when_nothing_due(pool):

@@ -186,7 +186,7 @@ class CCSpawner:
         prompt:
             The prompt to send to the CC instance.
         trigger_source:
-            What caused this invocation (schedule, trigger_tool, tick, heartbeat).
+            What caused this invocation (schedule:<task-name>, trigger, tick, external).
 
         Returns
         -------

@@ -17,11 +17,27 @@ import asyncpg
 
 logger = logging.getLogger(__name__)
 
-# Valid trigger_source values
-TRIGGER_SOURCES = frozenset({"schedule", "trigger_tool", "tick", "heartbeat"})
+# Valid trigger_source base values (schedule uses pattern "schedule:<task-name>")
+TRIGGER_SOURCES = frozenset({"tick", "external", "trigger"})
 
 # JSONB columns that need deserialization from string → Python object
 _JSONB_FIELDS = ("tool_calls", "cost")
+
+
+def _is_valid_trigger_source(trigger_source: str) -> bool:
+    """Check if trigger_source is valid.
+
+    Valid values:
+    - "tick"
+    - "external"
+    - "trigger"
+    - "schedule:<task-name>" where task-name is any non-empty string
+    """
+    if trigger_source in TRIGGER_SOURCES:
+        return True
+    if trigger_source.startswith("schedule:") and len(trigger_source) > 9:
+        return True
+    return False
 
 
 def _decode_row(row: asyncpg.Record) -> dict[str, Any]:
@@ -45,7 +61,7 @@ async def session_create(
         pool: asyncpg connection pool for the butler's database.
         prompt: The prompt text sent to the CC instance.
         trigger_source: What caused this session. Must be one of:
-            ``"schedule"``, ``"trigger_tool"``, ``"tick"``, ``"heartbeat"``.
+            ``"tick"``, ``"external"``, ``"trigger"``, or ``"schedule:<task-name>"``.
         trace_id: Optional OpenTelemetry trace ID for correlation.
 
     Returns:
@@ -54,9 +70,10 @@ async def session_create(
     Raises:
         ValueError: If ``trigger_source`` is not a recognised value.
     """
-    if trigger_source not in TRIGGER_SOURCES:
+    if not _is_valid_trigger_source(trigger_source):
         raise ValueError(
-            f"Invalid trigger_source {trigger_source!r}; must be one of {sorted(TRIGGER_SOURCES)}"
+            f"Invalid trigger_source {trigger_source!r}; must be 'tick', 'external', "
+            f"'trigger', or 'schedule:<task-name>'"
         )
 
     session_id: uuid.UUID = await pool.fetchval(
