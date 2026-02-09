@@ -754,3 +754,87 @@ class TestFullFlow:
         assert "flow-butler" in opts.mcp_servers
         assert opts.env["ANTHROPIC_API_KEY"] == "sk-flow"
         assert opts.env["CUSTOM_VAR"] == "cv"
+
+
+# ---------------------------------------------------------------------------
+# butlers-06j.13: max_turns and cwd configuration
+# ---------------------------------------------------------------------------
+
+
+class TestMaxTurnsAndCwd:
+    """Tests for max_turns and cwd configuration in CC spawner."""
+
+    async def test_max_turns_default_20(self, tmp_path: Path):
+        """Default max_turns should be 20."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        captured_options: list[Any] = []
+
+        async def capturing_sdk(*, prompt: str, options: Any):
+            captured_options.append(options)
+            return
+            yield
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=capturing_sdk,
+        )
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-key"}, clear=False):
+            await spawner.trigger("test", "tick")
+
+        assert len(captured_options) == 1
+        assert captured_options[0].max_turns == 20
+
+    async def test_max_turns_custom(self, tmp_path: Path):
+        """Custom max_turns should be passed through."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        captured_options: list[Any] = []
+
+        async def capturing_sdk(*, prompt: str, options: Any):
+            captured_options.append(options)
+            return
+            yield
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=capturing_sdk,
+        )
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-key"}, clear=False):
+            await spawner.trigger("test", "tick", max_turns=5)
+
+        assert len(captured_options) == 1
+        assert captured_options[0].max_turns == 5
+
+    async def test_cwd_set_to_config_dir(self, tmp_path: Path):
+        """cwd should be set to the butler's config directory."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        captured_options: list[Any] = []
+
+        async def capturing_sdk(*, prompt: str, options: Any):
+            captured_options.append(options)
+            return
+            yield
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=capturing_sdk,
+        )
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-key"}, clear=False):
+            await spawner.trigger("test", "tick")
+
+        assert len(captured_options) == 1
+        assert captured_options[0].cwd == str(config_dir)

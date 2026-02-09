@@ -174,6 +174,7 @@ class CCSpawner:
         self,
         prompt: str,
         trigger_source: str,
+        max_turns: int = 20,
     ) -> SpawnerResult:
         """Spawn an ephemeral Claude Code instance.
 
@@ -186,6 +187,8 @@ class CCSpawner:
             The prompt to send to the CC instance.
         trigger_source:
             What caused this invocation (schedule, trigger_tool, tick, heartbeat).
+        max_turns:
+            Maximum number of turns for the CC session. Defaults to 20.
 
         Returns
         -------
@@ -193,12 +196,13 @@ class CCSpawner:
             The result of the CC invocation.
         """
         async with self._lock:
-            return await self._run(prompt, trigger_source)
+            return await self._run(prompt, trigger_source, max_turns)
 
     async def _run(
         self,
         prompt: str,
         trigger_source: str,
+        max_turns: int = 20,
     ) -> SpawnerResult:
         """Internal: run the CC invocation (called under lock)."""
         temp_dir: Path | None = None
@@ -234,6 +238,8 @@ class CCSpawner:
                 mcp_servers=mcp_servers,
                 permission_mode="bypassPermissions",
                 env=env,
+                max_turns=max_turns,
+                cwd=str(self._config_dir),
             )
 
             # Invoke CC SDK
