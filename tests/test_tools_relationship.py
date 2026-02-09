@@ -938,3 +938,173 @@ async def test_activity_feed_limit(pool):
 
     feed = await feed_get(pool, contact_id=c["id"], limit=3)
     assert len(feed) <= 3
+
+
+# ------------------------------------------------------------------
+# Stay-in-touch cadence
+# ------------------------------------------------------------------
+
+
+@pytest.fixture
+async def pool_with_cadence(pool):
+    """Extend the base pool fixture with the stay_in_touch_days column."""
+    await pool.execute("""
+        ALTER TABLE contacts ADD COLUMN IF NOT EXISTS stay_in_touch_days INTEGER
+    """)
+    yield pool
+
+
+async def test_stay_in_touch_set(pool_with_cadence):
+    """Setting cadence stores the frequency_days on the contact."""
+    from butlers.tools.relationship import contact_create, stay_in_touch_set
+
+    pool = pool_with_cadence
+    contact = await contact_create(pool, "Alice")
+    cid = contact["id"]
+
+    updated = await stay_in_touch_set(pool, cid, 14)
+    assert updated["stay_in_touch_days"] == 14
+
+
+async def test_stay_in_touch_clear(pool_with_cadence):
+    """Clearing cadence (None) sets stay_in_touch_days to NULL."""
+    from butlers.tools.relationship import contact_create, stay_in_touch_set
+
+    pool = pool_with_cadence
+    contact = await contact_create(pool, "Bob")
+    cid = contact["id"]
+
+    await stay_in_touch_set(pool, cid, 7)
+    cleared = await stay_in_touch_set(pool, cid, None)
+    assert cleared["stay_in_touch_days"] is None
+
+
+async def test_stay_in_touch_set_not_found(pool_with_cadence):
+    """Setting cadence on a non-existent contact raises ValueError."""
+    from butlers.tools.relationship import stay_in_touch_set
+
+    pool = pool_with_cadence
+    fake_id = uuid.uuid4()
+    with pytest.raises(ValueError, match="not found"):
+        await stay_in_touch_set(pool, fake_id, 30)
+
+
+async def test_contacts_overdue_with_stale_interaction(pool_with_cadence):
+    """Contact with last interaction beyond cadence shows as overdue."""
+    from butlers.tools.relationship import (
+        contact_create,
+        contacts_overdue,
+        interaction_log,
+        stay_in_touch_set,
+    )
+
+    pool = pool_with_cadence
+    contact = await contact_create(pool, "Charlie")
+    cid = contact["id"]
+
+    await stay_in_touch_set(pool, cid, 7)
+    # Log an interaction 10 days ago
+    old_time = datetime.now(UTC).replace(microsecond=0) - __import__("datetime").timedelta(days=10)
+    await interaction_log(pool, cid, "call", "Catch-up call", occurred_at=old_time)
+
+    overdue = await contacts_overdue(pool)
+    overdue_ids = [c["id"] for c in overdue]
+    assert cid in overdue_ids
+    # Verify staleness data is present
+    match = [c for c in overdue if c["id"] == cid][0]
+    assert match["days_since_last_interaction"] is not None
+    assert match["days_since_last_interaction"] >= 10
+
+
+async def test_contacts_overdue_no_interaction(pool_with_cadence):
+    """Contact with cadence but no interactions is always overdue."""
+    from butlers.tools.relationship import contact_create, contacts_overdue, stay_in_touch_set
+
+    pool = pool_with_cadence
+    contact = await contact_create(pool, "Diana")
+    cid = contact["id"]
+
+    await stay_in_touch_set(pool, cid, 30)
+
+    overdue = await contacts_overdue(pool)
+    overdue_ids = [c["id"] for c in overdue]
+    assert cid in overdue_ids
+    # last_interaction_at should be None
+    match = [c for c in overdue if c["id"] == cid][0]
+    assert match["last_interaction_at"] is None
+    assert match["days_since_last_interaction"] is None
+
+
+async def test_contacts_overdue_recent_interaction(pool_with_cadence):
+    """Contact with recent interaction within cadence does NOT show as overdue."""
+    from butlers.tools.relationship import (
+        contact_create,
+        contacts_overdue,
+        interaction_log,
+        stay_in_touch_set,
+    )
+
+    pool = pool_with_cadence
+    contact = await contact_create(pool, "Eve")
+    cid = contact["id"]
+
+    await stay_in_touch_set(pool, cid, 30)
+    # Log a recent interaction (now)
+    await interaction_log(pool, cid, "coffee", "Coffee catch-up")
+
+    overdue = await contacts_overdue(pool)
+    overdue_ids = [c["id"] for c in overdue]
+    assert cid not in overdue_ids
+
+
+async def test_contacts_overdue_no_cadence_excluded(pool_with_cadence):
+    """Contact without cadence (NULL) never appears in overdue list."""
+    from butlers.tools.relationship import contact_create, contacts_overdue
+
+    pool = pool_with_cadence
+    contact = await contact_create(pool, "Frank")
+    # No cadence set — stay_in_touch_days is NULL by default
+
+    overdue = await contacts_overdue(pool)
+    overdue_ids = [c["id"] for c in overdue]
+    assert contact["id"] not in overdue_ids
+
+
+async def test_contacts_overdue_cleared_cadence_excluded(pool_with_cadence):
+    """Clearing cadence removes contact from overdue list."""
+    from butlers.tools.relationship import contact_create, contacts_overdue, stay_in_touch_set
+
+    pool = pool_with_cadence
+    contact = await contact_create(pool, "Grace")
+    cid = contact["id"]
+
+    # Set cadence — should be overdue (no interactions)
+    await stay_in_touch_set(pool, cid, 1)
+    overdue = await contacts_overdue(pool)
+    assert cid in [c["id"] for c in overdue]
+
+    # Clear cadence — should no longer be overdue
+    await stay_in_touch_set(pool, cid, None)
+    overdue = await contacts_overdue(pool)
+    assert cid not in [c["id"] for c in overdue]
+
+
+async def test_contacts_overdue_archived_excluded(pool_with_cadence):
+    """Archived contacts with cadence are excluded from overdue list."""
+    from butlers.tools.relationship import (
+        contact_archive,
+        contact_create,
+        contacts_overdue,
+        stay_in_touch_set,
+    )
+
+    pool = pool_with_cadence
+    contact = await contact_create(pool, "Hank")
+    cid = contact["id"]
+
+    await stay_in_touch_set(pool, cid, 1)
+    await contact_archive(pool, cid)
+
+    overdue = await contacts_overdue(pool)
+    overdue_ids = [c["id"] for c in overdue]
+    assert cid not in overdue_ids
