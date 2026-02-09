@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -255,7 +255,21 @@ async def date_add(
     day: int,
     year: int | None = None,
 ) -> dict[str, Any]:
-    """Add an important date for a contact."""
+    """Add an important date for a contact. Skips duplicate contact+label+month+day."""
+    # Idempotency guard: check for existing duplicate
+    existing = await pool.fetchrow(
+        """
+        SELECT id FROM important_dates
+        WHERE contact_id = $1 AND label = $2 AND month = $3 AND day = $4
+        """,
+        contact_id,
+        label,
+        month,
+        day,
+    )
+    if existing is not None:
+        return {"skipped": "duplicate", "existing_id": str(existing["id"])}
+
     row = await pool.fetchrow(
         """
         INSERT INTO important_dates (contact_id, label, month, day, year)
@@ -332,7 +346,21 @@ async def note_create(
     content: str,
     emotion: str | None = None,
 ) -> dict[str, Any]:
-    """Create a note about a contact."""
+    """Create a note about a contact. Skips duplicate contact+content within 1 hour."""
+    # Idempotency guard: check for same contact+content within 1 hour
+    one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
+    existing = await pool.fetchrow(
+        """
+        SELECT id FROM notes
+        WHERE contact_id = $1 AND content = $2 AND created_at >= $3
+        """,
+        contact_id,
+        content,
+        one_hour_ago,
+    )
+    if existing is not None:
+        return {"skipped": "duplicate", "existing_id": str(existing["id"])}
+
     row = await pool.fetchrow(
         """
         INSERT INTO notes (contact_id, content, emotion)
@@ -385,7 +413,21 @@ async def interaction_log(
     summary: str | None = None,
     occurred_at: datetime | None = None,
 ) -> dict[str, Any]:
-    """Log an interaction with a contact."""
+    """Log an interaction with a contact. Skips duplicate contact+type+date."""
+    # Idempotency guard: check for existing duplicate on same contact+type+date
+    effective_time = occurred_at or datetime.now(UTC)
+    existing = await pool.fetchrow(
+        """
+        SELECT id FROM interactions
+        WHERE contact_id = $1 AND type = $2 AND DATE(occurred_at) = DATE($3)
+        """,
+        contact_id,
+        type,
+        effective_time,
+    )
+    if existing is not None:
+        return {"skipped": "duplicate", "existing_id": str(existing["id"])}
+
     row = await pool.fetchrow(
         """
         INSERT INTO interactions (contact_id, type, summary, occurred_at)
@@ -623,6 +665,62 @@ async def loan_list(pool: asyncpg.Pool, contact_id: uuid.UUID) -> list[dict[str,
     """List loans for a contact."""
     rows = await pool.fetch(
         "SELECT * FROM loans WHERE contact_id = $1 ORDER BY created_at DESC",
+        contact_id,
+    )
+    return [dict(row) for row in rows]
+
+
+# ------------------------------------------------------------------
+# Life events
+# ------------------------------------------------------------------
+
+
+async def life_event_log(
+    pool: asyncpg.Pool,
+    contact_id: uuid.UUID,
+    type: str,
+    description: str | None = None,
+    occurred_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Log a life event for a contact. Skips duplicate contact+type+date."""
+    effective_time = occurred_at or datetime.now(UTC)
+    # Idempotency guard: check for existing duplicate on same contact+type+date
+    existing = await pool.fetchrow(
+        """
+        SELECT id FROM life_events
+        WHERE contact_id = $1 AND type = $2 AND DATE(occurred_at) = DATE($3)
+        """,
+        contact_id,
+        type,
+        effective_time,
+    )
+    if existing is not None:
+        return {"skipped": "duplicate", "existing_id": str(existing["id"])}
+
+    row = await pool.fetchrow(
+        """
+        INSERT INTO life_events (contact_id, type, description, occurred_at)
+        VALUES ($1, $2, $3, $4)
+        RETURNING *
+        """,
+        contact_id,
+        type,
+        description,
+        effective_time,
+    )
+    result = dict(row)
+    await _log_activity(pool, contact_id, "life_event_logged", f"Logged life event: '{type}'")
+    return result
+
+
+async def life_event_list(pool: asyncpg.Pool, contact_id: uuid.UUID) -> list[dict[str, Any]]:
+    """List life events for a contact, most recent first."""
+    rows = await pool.fetch(
+        """
+        SELECT * FROM life_events
+        WHERE contact_id = $1
+        ORDER BY occurred_at DESC
+        """,
         contact_id,
     )
     return [dict(row) for row in rows]
