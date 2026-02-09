@@ -18,112 +18,163 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Contacts — proper columns per spec (no JSONB details blob)
     op.execute("""
         CREATE TABLE IF NOT EXISTS contacts (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            name TEXT NOT NULL,
-            details JSONB DEFAULT '{}',
-            archived_at TIMESTAMPTZ,
-            created_at TIMESTAMPTZ DEFAULT now(),
-            updated_at TIMESTAMPTZ DEFAULT now()
+            first_name TEXT,
+            last_name TEXT,
+            nickname TEXT,
+            company TEXT,
+            job_title TEXT,
+            gender TEXT,
+            pronouns TEXT,
+            avatar_url TEXT,
+            listed BOOLEAN NOT NULL DEFAULT true,
+            metadata JSONB NOT NULL DEFAULT '{}',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
     op.execute("""
-        CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts (name)
+        CREATE INDEX IF NOT EXISTS idx_contacts_name
+            ON contacts (first_name, last_name)
     """)
 
+    # Contact information (email, phone, social, etc.)
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS contact_info (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            type TEXT NOT NULL,
+            value TEXT NOT NULL,
+            label TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+    """)
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS idx_contact_info_type
+            ON contact_info (contact_id, type)
+    """)
+
+    # Typed, bidirectional relationships between contacts
     op.execute("""
         CREATE TABLE IF NOT EXISTS relationships (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            contact_a UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-            contact_b UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            related_contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            group_type TEXT NOT NULL,
             type TEXT NOT NULL,
-            notes TEXT,
-            created_at TIMESTAMPTZ DEFAULT now()
+            reverse_type TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE(contact_id, related_contact_id, type)
         )
     """)
 
+    # Important dates (birthdays, anniversaries, etc.)
     op.execute("""
         CREATE TABLE IF NOT EXISTS important_dates (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
             label TEXT NOT NULL,
-            month INT NOT NULL,
-            day INT NOT NULL,
+            day INT,
+            month INT,
             year INT,
-            created_at TIMESTAMPTZ DEFAULT now()
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS idx_important_dates_month
+            ON important_dates (month, day)
+    """)
 
+    # Notes per contact
     op.execute("""
         CREATE TABLE IF NOT EXISTS notes (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-            content TEXT NOT NULL,
+            title TEXT,
+            body TEXT NOT NULL,
             emotion TEXT,
-            created_at TIMESTAMPTZ DEFAULT now()
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS idx_notes_contact
+            ON notes (contact_id, created_at DESC)
+    """)
 
+    # Interaction log (calls, meetings, messages)
     op.execute("""
         CREATE TABLE IF NOT EXISTS interactions (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
             type TEXT NOT NULL,
+            direction TEXT,
             summary TEXT,
-            occurred_at TIMESTAMPTZ DEFAULT now(),
-            created_at TIMESTAMPTZ DEFAULT now()
+            duration_minutes INT,
+            occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            metadata JSONB NOT NULL DEFAULT '{}'
         )
     """)
     op.execute("""
-        CREATE INDEX IF NOT EXISTS idx_interactions_contact_occurred
-            ON interactions (contact_id, occurred_at)
+        CREATE INDEX IF NOT EXISTS idx_interactions_contact
+            ON interactions (contact_id, occurred_at DESC)
     """)
 
+    # Reminders (one-time or recurring)
     op.execute("""
         CREATE TABLE IF NOT EXISTS reminders (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-            message TEXT NOT NULL,
-            reminder_type TEXT NOT NULL CHECK (reminder_type IN ('one_time', 'recurring')),
-            cron TEXT,
-            due_at TIMESTAMPTZ,
-            dismissed BOOLEAN DEFAULT false,
-            created_at TIMESTAMPTZ DEFAULT now()
+            contact_id UUID REFERENCES contacts(id) ON DELETE CASCADE,
+            label TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'one_time',
+            next_trigger_at TIMESTAMPTZ,
+            last_triggered_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
 
+    # Gift tracking (idea -> searched -> found -> bought -> given pipeline)
     op.execute("""
         CREATE TABLE IF NOT EXISTS gifts (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-            description TEXT NOT NULL,
-            occasion TEXT,
+            name TEXT NOT NULL,
+            description TEXT,
             status TEXT NOT NULL DEFAULT 'idea'
-                CHECK (status IN ('idea', 'purchased', 'wrapped', 'given', 'thanked')),
-            created_at TIMESTAMPTZ DEFAULT now(),
-            updated_at TIMESTAMPTZ DEFAULT now()
+                CHECK (status IN ('idea', 'searched', 'found', 'bought', 'given')),
+            occasion TEXT,
+            estimated_price_cents INT,
+            url TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
 
+    # Loans and debts
     op.execute("""
         CREATE TABLE IF NOT EXISTS loans (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-            amount NUMERIC NOT NULL,
-            direction TEXT NOT NULL CHECK (direction IN ('lent', 'borrowed')),
-            description TEXT,
-            settled BOOLEAN DEFAULT false,
-            created_at TIMESTAMPTZ DEFAULT now(),
-            settled_at TIMESTAMPTZ
+            lender_contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            borrower_contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            amount_cents INT NOT NULL,
+            currency TEXT NOT NULL DEFAULT 'USD',
+            loaned_at TIMESTAMPTZ,
+            settled BOOLEAN NOT NULL DEFAULT false,
+            settled_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
 
+    # Groups (families, friend circles, teams)
     op.execute("""
         CREATE TABLE IF NOT EXISTS groups (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            name TEXT NOT NULL UNIQUE,
-            created_at TIMESTAMPTZ DEFAULT now()
+            name TEXT NOT NULL,
+            type TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
 
@@ -131,56 +182,78 @@ def upgrade() -> None:
         CREATE TABLE IF NOT EXISTS group_members (
             group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            role TEXT,
             PRIMARY KEY (group_id, contact_id)
         )
     """)
 
+    # Labels (color-coded tags)
     op.execute("""
         CREATE TABLE IF NOT EXISTS labels (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            name TEXT NOT NULL UNIQUE,
+            name TEXT UNIQUE NOT NULL,
             color TEXT,
-            created_at TIMESTAMPTZ DEFAULT now()
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
 
     op.execute("""
         CREATE TABLE IF NOT EXISTS contact_labels (
-            label_id UUID NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-            PRIMARY KEY (label_id, contact_id)
+            label_id UUID NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+            PRIMARY KEY (contact_id, label_id)
         )
     """)
 
+    # Quick facts (key-value per contact)
     op.execute("""
         CREATE TABLE IF NOT EXISTS quick_facts (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-            key TEXT NOT NULL,
-            value TEXT NOT NULL,
-            created_at TIMESTAMPTZ DEFAULT now(),
-            updated_at TIMESTAMPTZ DEFAULT now(),
-            UNIQUE (contact_id, key)
+            category TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
 
+    # Addresses
     op.execute("""
-        CREATE TABLE IF NOT EXISTS activity_feed (
+        CREATE TABLE IF NOT EXISTS addresses (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-            type TEXT NOT NULL,
-            description TEXT NOT NULL,
-            created_at TIMESTAMPTZ DEFAULT now()
+            type TEXT,
+            line_1 TEXT,
+            line_2 TEXT,
+            city TEXT,
+            province TEXT,
+            postal_code TEXT,
+            country TEXT,
+            is_current BOOLEAN NOT NULL DEFAULT true,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+    """)
+
+    # Activity feed (polymorphic log of all changes per contact)
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS contact_feed (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+            action TEXT NOT NULL,
+            entity_type TEXT,
+            entity_id UUID,
+            summary TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
     op.execute("""
-        CREATE INDEX IF NOT EXISTS idx_activity_feed_contact_created
-            ON activity_feed (contact_id, created_at)
+        CREATE INDEX IF NOT EXISTS idx_contact_feed_contact
+            ON contact_feed (contact_id, created_at DESC)
     """)
 
 
 def downgrade() -> None:
-    op.execute("DROP TABLE IF EXISTS activity_feed")
+    op.execute("DROP TABLE IF EXISTS contact_feed")
+    op.execute("DROP TABLE IF EXISTS addresses")
     op.execute("DROP TABLE IF EXISTS quick_facts")
     op.execute("DROP TABLE IF EXISTS contact_labels")
     op.execute("DROP TABLE IF EXISTS labels")
@@ -193,4 +266,5 @@ def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS notes")
     op.execute("DROP TABLE IF EXISTS important_dates")
     op.execute("DROP TABLE IF EXISTS relationships")
+    op.execute("DROP TABLE IF EXISTS contact_info")
     op.execute("DROP TABLE IF EXISTS contacts")

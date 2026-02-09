@@ -16,6 +16,7 @@ dependencies = [
     "opentelemetry-exporter-otlp",
     "click",
     "pydantic",
+    "python-dateutil",
     "alembic",
     "sqlalchemy",
     "psycopg2-binary",
