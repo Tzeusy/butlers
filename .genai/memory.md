@@ -34,7 +34,7 @@ The v1 MVP spec has 15 capabilities: `butler-daemon`, `module-system`, `state-st
 
 _Added: 2026-02-09 by claude-opus-4-6_
 
-FastMCP for MCP servers. asyncpg (no ORM). croniter for cron. Click for CLI. SSE transport for inter-butler MCP. Ephemeral MCP configs lock down CC instances. Alembic for migrations (raw SQL via op.execute, multi-chain). OTel + Jaeger for tracing. Serial CC dispatch in v1. No auth between butlers in v1.
+FastMCP for MCP servers. asyncpg (no ORM). croniter for cron. Click for CLI. SSE transport for inter-butler MCP. Ephemeral MCP configs lock down CC instances. Alembic for migrations (raw SQL via op.execute, multi-chain). OTel + LGTM stack (Alloy/Tempo/Grafana) for observability. Serial CC dispatch in v1. No auth between butlers in v1.
 
 ## Beads backlog covers full v1 MVP (122 issues)
 
