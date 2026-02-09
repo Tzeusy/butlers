@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -67,3 +69,83 @@ def validate_credentials(
         lines = [f"  - {var} (required by {source})" for var, source in missing]
         msg = "Missing required environment variables:\n" + "\n".join(lines)
         raise CredentialError(msg)
+
+
+def detect_secrets(config_values: dict[str, Any]) -> list[str]:
+    """Scan config string values for suspected inline secrets.
+
+    Returns list of warning messages for suspected secrets.
+    Advisory only — does not block startup.
+
+    Parameters
+    ----------
+    config_values:
+        Flat dict of config key-value pairs. Non-string values are skipped.
+
+    Returns
+    -------
+    list[str]
+        List of warning messages for suspected secrets.
+    """
+    warnings: list[str] = []
+
+    # Patterns for common secret prefixes
+    secret_prefixes = [
+        "sk-",  # OpenAI
+        "ghp_",  # GitHub Personal Access Token
+        "xoxb-",  # Slack Bot
+        "xoxp-",  # Slack User
+        "xoxs-",  # Slack Workspace
+        "xoxa-",  # Slack App
+        "gho_",  # GitHub OAuth
+        "github_pat_",  # GitHub Personal Access Token
+    ]
+
+    # Heuristic key names that suggest secret values
+    secret_key_hints = {"password", "secret", "api_key", "token", "key"}
+
+    # Base64-like pattern (40+ chars of alphanumeric + / + = )
+    base64_pattern = re.compile(r"^[A-Za-z0-9/+=]{40,}$")
+
+    for key, value in config_values.items():
+        # Skip non-string values
+        if not isinstance(value, str):
+            continue
+
+        # Skip short values to avoid false positives
+        if len(value) < 8:
+            continue
+
+        # Skip common non-secret patterns (URLs, file paths, hostnames)
+        if value.startswith(("http://", "https://", "/", ".", "file://")) or ":" in value:
+            # Exception: allow `:` in base64 check, but skip URLs/file paths
+            if "://" in value or value.startswith("/"):
+                continue
+
+        # Check for secret prefixes
+        for prefix in secret_prefixes:
+            if value.startswith(prefix):
+                warnings.append(
+                    f"Config key '{key}' may contain an inline secret "
+                    f"(matches pattern: {prefix} prefix). "
+                    f"Consider using an environment variable instead."
+                )
+                break  # Only report once per key
+        else:
+            # Only check other patterns if prefix check didn't match
+            # Check for long base64-like strings
+            if base64_pattern.match(value):
+                warnings.append(
+                    f"Config key '{key}' may contain an inline secret "
+                    f"(matches pattern: long base64-like string). "
+                    f"Consider using an environment variable instead."
+                )
+            # Check for secret key name heuristics with long values
+            elif any(hint in key.lower() for hint in secret_key_hints) and len(value) >= 16:
+                warnings.append(
+                    f"Config key '{key}' may contain an inline secret "
+                    f"(key name suggests secret and value is long). "
+                    f"Consider using an environment variable instead."
+                )
+
+    return warnings

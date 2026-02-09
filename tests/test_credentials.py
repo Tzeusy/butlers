@@ -161,3 +161,282 @@ def test_error_message_identifies_sources(monkeypatch: pytest.MonkeyPatch):
     assert "required by core" in msg
     assert "required by butler.env" in msg
     assert "required by module:telegram" in msg
+
+
+# ---------------------------------------------------------------------------
+# Tests for detect_secrets function
+# ---------------------------------------------------------------------------
+
+
+def test_detect_secrets_finds_sk_prefix():
+    """Detect OpenAI sk- prefix in config values."""
+    from butlers.credentials import detect_secrets
+
+    config = {"api_key": "sk-1234567890abcdef"}
+    warnings = detect_secrets(config)
+
+    assert len(warnings) == 1
+    assert "api_key" in warnings[0]
+    assert "sk-" in warnings[0]
+    assert "prefix" in warnings[0]
+
+
+def test_detect_secrets_finds_ghp_prefix():
+    """Detect GitHub Personal Access Token ghp_ prefix."""
+    from butlers.credentials import detect_secrets
+
+    config = {"github_token": "ghp_1234567890abcdefghij1234567890"}
+    warnings = detect_secrets(config)
+
+    assert len(warnings) == 1
+    assert "github_token" in warnings[0]
+    assert "ghp_" in warnings[0]
+
+
+def test_detect_secrets_finds_slack_prefixes():
+    """Detect various Slack token prefixes."""
+    from butlers.credentials import detect_secrets
+
+    # Slack Bot token
+    config1 = {"slack_token": "xoxb-1234567890abcdefghij"}
+    warnings1 = detect_secrets(config1)
+    assert len(warnings1) == 1
+    assert "xoxb-" in warnings1[0]
+
+    # Slack User token
+    config2 = {"slack_token": "xoxp-1234567890abcdefghij"}
+    warnings2 = detect_secrets(config2)
+    assert len(warnings2) == 1
+    assert "xoxp-" in warnings2[0]
+
+    # Slack Workspace token
+    config3 = {"slack_token": "xoxs-1234567890abcdefghij"}
+    warnings3 = detect_secrets(config3)
+    assert len(warnings3) == 1
+    assert "xoxs-" in warnings3[0]
+
+    # Slack App token
+    config4 = {"slack_token": "xoxa-1234567890abcdefghij"}
+    warnings4 = detect_secrets(config4)
+    assert len(warnings4) == 1
+    assert "xoxa-" in warnings4[0]
+
+
+def test_detect_secrets_finds_github_pat_prefix():
+    """Detect GitHub Personal Access Token github_pat_ prefix."""
+    from butlers.credentials import detect_secrets
+
+    config = {"github_pat": "github_pat_1234567890abcdefghij1234567890"}
+    warnings = detect_secrets(config)
+
+    assert len(warnings) == 1
+    assert "github_pat" in warnings[0]
+    assert "github_pat_" in warnings[0]
+
+
+def test_detect_secrets_finds_gho_prefix():
+    """Detect GitHub OAuth token gho_ prefix."""
+    from butlers.credentials import detect_secrets
+
+    config = {"github_oauth": "gho_1234567890abcdefghij1234567890"}
+    warnings = detect_secrets(config)
+
+    assert len(warnings) == 1
+    assert "gho_" in warnings[0]
+
+
+def test_detect_secrets_ignores_short_values():
+    """Skip short values to avoid false positives."""
+    from butlers.credentials import detect_secrets
+
+    config = {
+        "api_key": "short",
+        "token": "abc123",
+        "secret": "s3cr",
+    }
+    warnings = detect_secrets(config)
+
+    assert len(warnings) == 0
+
+
+def test_detect_secrets_ignores_normal_config():
+    """No warnings for normal non-secret config values."""
+    from butlers.credentials import detect_secrets
+
+    config = {
+        "debug": "true",
+        "port": "8080",
+        "host": "localhost:8080",
+        "database": "postgresql",
+        "version": "1.0.0",
+        "app_name": "my_butler",
+    }
+    warnings = detect_secrets(config)
+
+    assert len(warnings) == 0
+
+
+def test_detect_secrets_finds_long_base64():
+    """Detect long base64-like strings (40+ chars)."""
+    from butlers.credentials import detect_secrets
+
+    # Exactly 40 chars of base64-like content
+    config1 = {"cert": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij1234"}
+    warnings1 = detect_secrets(config1)
+    assert len(warnings1) == 1
+    assert "base64" in warnings1[0]
+
+    # 50 chars of base64-like content
+    config2 = {"certificate": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij/+=1234567890"}
+    warnings2 = detect_secrets(config2)
+    assert len(warnings2) == 1
+    assert "base64" in warnings2[0]
+
+    # Less than 40 chars should not trigger
+    config3 = {"certificate": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij123"}
+    warnings3 = detect_secrets(config3)
+    assert len(warnings3) == 0
+
+
+def test_detect_secrets_key_name_heuristic():
+    """Detect secret key names with long values."""
+    from butlers.credentials import detect_secrets
+
+    # Key name "password" with long value (16+ chars)
+    config1 = {"password": "1234567890abcdef1234567890"}
+    warnings1 = detect_secrets(config1)
+    assert len(warnings1) == 1
+    assert "password" in warnings1[0]
+    assert "key name suggests secret" in warnings1[0]
+
+    # Key name "secret" with long value
+    config2 = {"secret": "abcdefghijklmnop1234567890"}
+    warnings2 = detect_secrets(config2)
+    assert len(warnings2) == 1
+    assert "secret" in warnings2[0]
+
+    # Key name "api_key" with long value
+    config3 = {"api_key": "1234567890abcdef1234567890"}
+    warnings3 = detect_secrets(config3)
+    assert len(warnings3) == 1
+    assert "api_key" in warnings3[0]
+
+    # Key name "token" with long value
+    config4 = {"token": "1234567890abcdef1234567890"}
+    warnings4 = detect_secrets(config4)
+    assert len(warnings4) == 1
+    assert "token" in warnings4[0]
+
+    # Key name "key" with long value
+    config5 = {"key": "1234567890abcdef1234567890"}
+    warnings5 = detect_secrets(config5)
+    assert len(warnings5) == 1
+    assert "key" in warnings5[0]
+
+
+def test_detect_secrets_key_heuristic_short_value():
+    """No warning for heuristic key names with short values."""
+    from butlers.credentials import detect_secrets
+
+    config = {
+        "password": "1234567890",  # Less than 16 chars
+        "api_key": "12345",  # Less than 16 chars
+        "secret": "short",  # Less than 16 chars
+    }
+    warnings = detect_secrets(config)
+
+    assert len(warnings) == 0
+
+
+def test_detect_secrets_ignores_urls():
+    """Skip URL-like values to avoid false positives."""
+    from butlers.credentials import detect_secrets
+
+    config = {
+        "database_url": "postgresql://user:password@localhost:5432/db",
+        "api_endpoint": "https://api.example.com/v1/secret",
+        "webhook": "http://localhost:8080/webhook",
+    }
+    warnings = detect_secrets(config)
+
+    assert len(warnings) == 0
+
+
+def test_detect_secrets_ignores_file_paths():
+    """Skip file path values to avoid false positives."""
+    from butlers.credentials import detect_secrets
+
+    config = {
+        "cert_path": "/etc/certs/server.crt",
+        "key_path": "/home/user/.ssh/id_rsa",
+        "config_dir": "./config/settings",
+    }
+    warnings = detect_secrets(config)
+
+    assert len(warnings) == 0
+
+
+def test_detect_secrets_returns_empty_for_clean_config():
+    """Return empty list for config with no suspected secrets."""
+    from butlers.credentials import detect_secrets
+
+    config = {
+        "app_name": "my_butler",
+        "version": "1.2.3",
+        "debug_mode": "false",
+        "max_workers": "10",
+        "timeout": "30",
+    }
+    warnings = detect_secrets(config)
+
+    assert isinstance(warnings, list)
+    assert len(warnings) == 0
+
+
+def test_detect_secrets_skips_non_string_values():
+    """Skip non-string values in config dict."""
+    from butlers.credentials import detect_secrets
+
+    config = {
+        "debug": True,
+        "port": 8080,
+        "timeout": 30.5,
+        "workers": [1, 2, 3],
+        "settings": {"key": "sk-secret123456789"},
+        "text": "normal_text",
+    }
+    warnings = detect_secrets(config)
+
+    # Should only check the "text" key, which is safe
+    assert len(warnings) == 0
+
+
+def test_detect_secrets_multiple_warnings():
+    """Return multiple warnings for multiple suspected secrets."""
+    from butlers.credentials import detect_secrets
+
+    config = {
+        "openai_key": "sk-1234567890abcdef",
+        "github_token": "ghp_1234567890abcdefghij",
+        "slack_bot": "xoxb-1234567890abcdef",
+    }
+    warnings = detect_secrets(config)
+
+    assert len(warnings) == 3
+    assert any("openai_key" in w for w in warnings)
+    assert any("github_token" in w for w in warnings)
+    assert any("slack_bot" in w for w in warnings)
+
+
+def test_detect_secrets_case_sensitivity_keys():
+    """Key name heuristics should be case-insensitive."""
+    from butlers.credentials import detect_secrets
+
+    config = {
+        "PASSWORD": "1234567890abcdef1234567890",
+        "Api_Key": "1234567890abcdef1234567890",
+        "SECRET": "1234567890abcdef1234567890",
+    }
+    warnings = detect_secrets(config)
+
+    assert len(warnings) == 3
