@@ -206,3 +206,106 @@ def test_missing_port(tmp_path: Path):
     _write_toml(tmp_path, '[butler]\nname = "noport"\n')
     with pytest.raises(ConfigError, match="butler.port"):
         load_config(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Runtime config tests
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_default_to_claude_code(tmp_path: Path):
+    """When [runtime] section is missing, default to claude-code."""
+    toml = """\
+[butler]
+name = "runtimebot"
+port = 7003
+"""
+    config_dir = _write_toml(tmp_path, toml)
+    cfg = load_config(config_dir)
+
+    assert cfg.runtime.type == "claude-code"
+
+
+def test_runtime_explicit_claude_code(tmp_path: Path):
+    """Parse [runtime] section with explicit type = 'claude-code'."""
+    toml = """\
+[butler]
+name = "ccbot"
+port = 7004
+
+[runtime]
+type = "claude-code"
+"""
+    config_dir = _write_toml(tmp_path, toml)
+    cfg = load_config(config_dir)
+
+    assert cfg.runtime.type == "claude-code"
+
+
+def test_runtime_codex(tmp_path: Path):
+    """Parse [runtime] section with type = 'codex'."""
+    toml = """\
+[butler]
+name = "codexbot"
+port = 7005
+
+[runtime]
+type = "codex"
+"""
+    config_dir = _write_toml(tmp_path, toml)
+    cfg = load_config(config_dir)
+
+    assert cfg.runtime.type == "codex"
+
+
+def test_runtime_gemini(tmp_path: Path):
+    """Parse [runtime] section with type = 'gemini'."""
+    toml = """\
+[butler]
+name = "geminibot"
+port = 7006
+
+[runtime]
+type = "gemini"
+"""
+    config_dir = _write_toml(tmp_path, toml)
+    cfg = load_config(config_dir)
+
+    assert cfg.runtime.type == "gemini"
+
+
+def test_runtime_invalid_type_raises_error(tmp_path: Path):
+    """Invalid runtime type raises clear ConfigError at load time."""
+    toml = """\
+[butler]
+name = "invalidbot"
+port = 7007
+
+[runtime]
+type = "invalid-runtime"
+"""
+    config_dir = _write_toml(tmp_path, toml)
+
+    with pytest.raises(ConfigError, match="Unknown runtime type 'invalid-runtime'"):
+        load_config(config_dir)
+
+
+def test_runtime_config_accessible_from_butler_config(tmp_path: Path):
+    """Verify runtime config is accessible via config.runtime.type."""
+    toml = """\
+[butler]
+name = "accessbot"
+port = 7008
+
+[runtime]
+type = "gemini"
+"""
+    config_dir = _write_toml(tmp_path, toml)
+    cfg = load_config(config_dir)
+    
+    # Can access runtime.type directly
+    assert cfg.runtime.type == "gemini"
+    
+    # Runtime config is a RuntimeConfig instance
+    from butlers.config import RuntimeConfig
+    assert isinstance(cfg.runtime, RuntimeConfig)

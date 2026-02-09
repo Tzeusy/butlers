@@ -9,7 +9,7 @@ The ButlerDaemon manages the lifecycle of a butler:
 6. Initialize modules (topological order)
 7. Run module Alembic migrations
 8. Module on_startup (topological order)
-9. Create CCSpawner with ClaudeCodeAdapter
+9. Create CCSpawner with runtime adapter
 10. Sync TOML schedules to DB
 11. Create FastMCP server and register core tools
 12. Register module MCP tools
@@ -38,7 +38,7 @@ from opentelemetry import trace
 from pydantic import ConfigDict, ValidationError
 
 from butlers.config import ButlerConfig, load_config
-from butlers.core.runtimes.claude_code import ClaudeCodeAdapter
+from butlers.core.runtimes import get_adapter
 from butlers.core.scheduler import schedule_create as _schedule_create
 from butlers.core.scheduler import schedule_delete as _schedule_delete
 from butlers.core.scheduler import schedule_list as _schedule_list
@@ -223,8 +223,9 @@ self._accepting_connections = False
                     logger.exception("Error during cleanup shutdown of module: %s", mod.name)
             raise
 
-        # 9. Create CCSpawner with ClaudeCodeAdapter
-        runtime = ClaudeCodeAdapter()
+        # 9. Create CCSpawner with runtime adapter
+        adapter_cls = get_adapter(self.config.runtime.type)
+        runtime = adapter_cls()
         self.spawner = CCSpawner(
             config=self.config,
             config_dir=self.config_dir,
