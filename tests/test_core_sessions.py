@@ -1,0 +1,332 @@
+"""Tests for butlers.core.sessions — session log CRUD operations."""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import shutil
+import uuid
+
+import asyncpg
+import pytest
+
+# Skip all tests in this module if Docker is not available
+docker_available = shutil.which("docker") is not None
+pytestmark = pytest.mark.skipif(not docker_available, reason="Docker not available")
+
+
+def _unique_db_name() -> str:
+    """Generate a unique database name for test isolation."""
+    return f"test_{uuid.uuid4().hex[:12]}"
+
+
+@pytest.fixture(scope="module")
+def postgres_container():
+    """Start a PostgreSQL container for the test module."""
+    from testcontainers.postgres import PostgresContainer
+
+    with PostgresContainer("postgres:16") as postgres:
+        yield postgres
+
+
+@pytest.fixture
+async def pool(postgres_container):
+    """Create a fresh database with the sessions table and return a pool."""
+    db_name = _unique_db_name()
+
+    # Create the database via the admin connection
+    admin_conn = await asyncpg.connect(
+        host=postgres_container.get_container_host_ip(),
+        port=int(postgres_container.get_exposed_port(5432)),
+        user=postgres_container.username,
+        password=postgres_container.password,
+        database="postgres",
+    )
+    try:
+        safe_name = db_name.replace('"', '""')
+        await admin_conn.execute(f'CREATE DATABASE "{safe_name}"')
+    finally:
+        await admin_conn.close()
+
+    # Connect to the new database and create the sessions table
+    p = await asyncpg.create_pool(
+        host=postgres_container.get_container_host_ip(),
+        port=int(postgres_container.get_exposed_port(5432)),
+        user=postgres_container.username,
+        password=postgres_container.password,
+        database=db_name,
+        min_size=1,
+        max_size=3,
+    )
+    await p.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            prompt TEXT NOT NULL,
+            trigger_source TEXT NOT NULL,
+            result TEXT,
+            tool_calls JSONB NOT NULL DEFAULT '[]',
+            duration_ms INTEGER,
+            trace_id TEXT,
+            cost JSONB,
+            started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            completed_at TIMESTAMPTZ
+        )
+    """)
+    yield p
+    await p.close()
+
+
+# ---------------------------------------------------------------------------
+# session_create
+# ---------------------------------------------------------------------------
+
+
+async def test_create_session_returns_uuid(pool):
+    """session_create returns a valid UUID."""
+    from butlers.core.sessions import session_create
+
+    session_id = await session_create(pool, prompt="Hello", trigger_source="schedule")
+    assert isinstance(session_id, uuid.UUID)
+
+
+async def test_create_session_persists_fields(pool):
+    """Created session has correct prompt, trigger_source, and defaults."""
+    from butlers.core.sessions import session_create, sessions_get
+
+    session_id = await session_create(
+        pool,
+        prompt="Run daily report",
+        trigger_source="tick",
+        trace_id="abc-123",
+    )
+    session = await sessions_get(pool, session_id)
+    assert session is not None
+    assert session["prompt"] == "Run daily report"
+    assert session["trigger_source"] == "tick"
+    assert session["trace_id"] == "abc-123"
+    assert session["result"] is None
+    assert session["tool_calls"] == []
+    assert session["duration_ms"] is None
+    assert session["completed_at"] is None
+    assert session["started_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# session_complete
+# ---------------------------------------------------------------------------
+
+
+async def test_complete_session_updates_fields(pool):
+    """session_complete sets result, tool_calls, duration_ms, and completed_at."""
+    from butlers.core.sessions import session_complete, session_create, sessions_get
+
+    session_id = await session_create(pool, prompt="Test", trigger_source="schedule")
+
+    tool_calls = [{"tool": "state_get", "args": {"key": "foo"}}]
+    await session_complete(
+        pool,
+        session_id=session_id,
+        result="All done",
+        tool_calls=tool_calls,
+        duration_ms=1234,
+        cost={"input_tokens": 100, "output_tokens": 50},
+    )
+
+    session = await sessions_get(pool, session_id)
+    assert session is not None
+    assert session["result"] == "All done"
+    assert session["tool_calls"] == tool_calls
+    assert session["duration_ms"] == 1234
+    assert session["cost"] == {"input_tokens": 100, "output_tokens": 50}
+    assert session["completed_at"] is not None
+
+
+async def test_complete_with_failure(pool):
+    """session_complete stores error information in the result field."""
+    from butlers.core.sessions import session_complete, session_create, sessions_get
+
+    session_id = await session_create(pool, prompt="Failing task", trigger_source="heartbeat")
+
+    await session_complete(
+        pool,
+        session_id=session_id,
+        result="ERROR: Connection timed out after 30s",
+        tool_calls=[],
+        duration_ms=30000,
+    )
+
+    session = await sessions_get(pool, session_id)
+    assert session is not None
+    assert "ERROR" in session["result"]
+    assert session["duration_ms"] == 30000
+    assert session["cost"] is None
+    assert session["completed_at"] is not None
+
+
+async def test_complete_nonexistent_session_raises(pool):
+    """session_complete raises ValueError for a missing session ID."""
+    from butlers.core.sessions import session_complete
+
+    fake_id = uuid.uuid4()
+    with pytest.raises(ValueError, match="not found"):
+        await session_complete(
+            pool,
+            session_id=fake_id,
+            result="nope",
+            tool_calls=[],
+            duration_ms=0,
+        )
+
+
+# ---------------------------------------------------------------------------
+# duration_ms
+# ---------------------------------------------------------------------------
+
+
+async def test_duration_ms_stored_correctly(pool):
+    """Verify various duration_ms values are stored and retrieved accurately."""
+    from butlers.core.sessions import session_complete, session_create, sessions_get
+
+    for ms in (0, 1, 999, 60_000, 3_600_000):
+        sid = await session_create(pool, prompt=f"dur-{ms}", trigger_source="tick")
+        await session_complete(pool, sid, result="ok", tool_calls=[], duration_ms=ms)
+        session = await sessions_get(pool, sid)
+        assert session is not None
+        assert session["duration_ms"] == ms
+
+
+# ---------------------------------------------------------------------------
+# trigger_source validation
+# ---------------------------------------------------------------------------
+
+
+async def test_trigger_source_valid_values(pool):
+    """All four valid trigger_source values are accepted."""
+    from butlers.core.sessions import session_create
+
+    for source in ("schedule", "trigger_tool", "tick", "heartbeat"):
+        sid = await session_create(pool, prompt="test", trigger_source=source)
+        assert isinstance(sid, uuid.UUID)
+
+
+async def test_trigger_source_invalid_raises(pool):
+    """Invalid trigger_source raises ValueError."""
+    from butlers.core.sessions import session_create
+
+    with pytest.raises(ValueError, match="Invalid trigger_source"):
+        await session_create(pool, prompt="test", trigger_source="unknown")
+
+
+# ---------------------------------------------------------------------------
+# sessions_list pagination
+# ---------------------------------------------------------------------------
+
+
+async def test_sessions_list_default(pool):
+    """sessions_list returns sessions ordered by started_at DESC."""
+    from butlers.core.sessions import session_create, sessions_list
+
+    ids = []
+    for i in range(3):
+        sid = await session_create(pool, prompt=f"list-{i}", trigger_source="schedule")
+        ids.append(sid)
+        # Insert a small delay so started_at ordering is deterministic
+        await asyncio.sleep(0.01)
+
+    result = await sessions_list(pool)
+    assert len(result) >= 3
+    # Most recent first — the last created should appear first
+    result_ids = [r["id"] for r in result]
+    # ids[2] was created last so should appear before ids[1] and ids[0]
+    assert result_ids.index(ids[2]) < result_ids.index(ids[1])
+    assert result_ids.index(ids[1]) < result_ids.index(ids[0])
+
+
+async def test_sessions_list_pagination(pool):
+    """sessions_list respects limit and offset."""
+    from butlers.core.sessions import session_create, sessions_list
+
+    created = []
+    for i in range(5):
+        sid = await session_create(pool, prompt=f"page-{i}", trigger_source="tick")
+        created.append(sid)
+        await asyncio.sleep(0.01)
+
+    # Get first page of 2
+    page1 = await sessions_list(pool, limit=2, offset=0)
+    assert len(page1) == 2
+
+    # Get second page of 2
+    page2 = await sessions_list(pool, limit=2, offset=2)
+    assert len(page2) == 2
+
+    # Pages should not overlap
+    page1_ids = {r["id"] for r in page1}
+    page2_ids = {r["id"] for r in page2}
+    assert page1_ids.isdisjoint(page2_ids)
+
+
+# ---------------------------------------------------------------------------
+# sessions_get
+# ---------------------------------------------------------------------------
+
+
+async def test_sessions_get_returns_full_record(pool):
+    """sessions_get returns all columns for an existing session."""
+    from butlers.core.sessions import session_create, sessions_get
+
+    sid = await session_create(pool, prompt="full", trigger_source="trigger_tool", trace_id="t-1")
+    session = await sessions_get(pool, sid)
+    assert session is not None
+
+    expected_keys = {
+        "id",
+        "prompt",
+        "trigger_source",
+        "result",
+        "tool_calls",
+        "duration_ms",
+        "trace_id",
+        "cost",
+        "started_at",
+        "completed_at",
+    }
+    assert set(session.keys()) == expected_keys
+    assert session["id"] == sid
+
+
+async def test_sessions_get_missing_returns_none(pool):
+    """sessions_get returns None for a non-existent session ID."""
+    from butlers.core.sessions import sessions_get
+
+    result = await sessions_get(pool, uuid.uuid4())
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# append-only contract
+# ---------------------------------------------------------------------------
+
+
+def test_no_delete_function_exists():
+    """The sessions module exposes no delete capability (append-only)."""
+    import butlers.core.sessions as mod
+
+    public_names = [
+        name for name in dir(mod) if not name.startswith("_") and callable(getattr(mod, name))
+    ]
+    for name in public_names:
+        assert "delete" not in name.lower(), f"Found delete-like function: {name}"
+        assert "remove" not in name.lower(), f"Found remove-like function: {name}"
+        assert "purge" not in name.lower(), f"Found purge-like function: {name}"
+
+
+def test_module_has_no_drop_or_truncate():
+    """The sessions module source contains no DROP or TRUNCATE statements."""
+    import butlers.core.sessions as mod
+
+    source = inspect.getsource(mod)
+    source_upper = source.upper()
+    assert "DROP TABLE" not in source_upper
+    assert "TRUNCATE" not in source_upper
+    assert "DELETE FROM" not in source_upper
