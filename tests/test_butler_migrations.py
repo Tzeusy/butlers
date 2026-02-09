@@ -1,0 +1,285 @@
+"""Tests for butler-specific migration chain support.
+
+Verifies that the daemon applies butler-name-specific Alembic migrations
+after core migrations and before module migrations, when such a chain exists.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from pydantic import BaseModel
+
+from butlers.daemon import ButlerDaemon
+from butlers.migrations import has_butler_chain
+from butlers.modules.base import Module
+from butlers.modules.registry import ModuleRegistry
+
+# ---------------------------------------------------------------------------
+# has_butler_chain unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestHasButlerChain:
+    """Unit tests for the has_butler_chain helper."""
+
+    def test_existing_chain_with_migrations(self, tmp_path: Path) -> None:
+        """Returns True when directory exists and contains .py migration files."""
+        chain_dir = tmp_path / "versions" / "my-butler"
+        chain_dir.mkdir(parents=True)
+        (chain_dir / "__init__.py").touch()
+        (chain_dir / "001_create_tables.py").write_text("# migration")
+
+        with patch("butlers.migrations.ALEMBIC_DIR", tmp_path):
+            assert has_butler_chain("my-butler") is True
+
+    def test_no_chain_directory(self, tmp_path: Path) -> None:
+        """Returns False when no directory exists for the butler name."""
+        (tmp_path / "versions").mkdir(parents=True)
+
+        with patch("butlers.migrations.ALEMBIC_DIR", tmp_path):
+            assert has_butler_chain("nonexistent-butler") is False
+
+    def test_empty_chain_directory(self, tmp_path: Path) -> None:
+        """Returns False when directory exists but contains only __init__.py."""
+        chain_dir = tmp_path / "versions" / "empty-butler"
+        chain_dir.mkdir(parents=True)
+        (chain_dir / "__init__.py").touch()
+
+        with patch("butlers.migrations.ALEMBIC_DIR", tmp_path):
+            assert has_butler_chain("empty-butler") is False
+
+    def test_chain_directory_with_non_py_files(self, tmp_path: Path) -> None:
+        """Returns False when directory only contains non-.py files."""
+        chain_dir = tmp_path / "versions" / "txt-butler"
+        chain_dir.mkdir(parents=True)
+        (chain_dir / "__init__.py").touch()
+        (chain_dir / "README.md").write_text("docs")
+
+        with patch("butlers.migrations.ALEMBIC_DIR", tmp_path):
+            assert has_butler_chain("txt-butler") is False
+
+    def test_real_relationship_chain(self) -> None:
+        """The 'relationship' chain should be detected from the real alembic dir."""
+        # This butler has a known migration chain in alembic/versions/relationship/
+        assert has_butler_chain("relationship") is True
+
+    def test_real_nonexistent_chain(self) -> None:
+        """A made-up butler name should not have a chain."""
+        assert has_butler_chain("does-not-exist-butler-xyz") is False
+
+
+# ---------------------------------------------------------------------------
+# Daemon integration tests for butler-specific migration ordering
+# ---------------------------------------------------------------------------
+
+
+class StubConfig(BaseModel):
+    """Config schema for stub module."""
+
+
+class StubModule(Module):
+    """Stub module for testing migration ordering."""
+
+    def __init__(self) -> None:
+        self.started = False
+        self.shutdown_called = False
+        self.tools_registered = False
+
+    @property
+    def name(self) -> str:
+        return "stub_mod"
+
+    @property
+    def config_schema(self) -> type[BaseModel]:
+        return StubConfig
+
+    @property
+    def dependencies(self) -> list[str]:
+        return []
+
+    async def register_tools(self, mcp: Any, config: Any, db: Any) -> None:
+        self.tools_registered = True
+
+    def migration_revisions(self) -> str | None:
+        return "stub_mod"
+
+    async def on_startup(self, config: Any, db: Any) -> None:
+        self.started = True
+
+    async def on_shutdown(self) -> None:
+        self.shutdown_called = True
+
+
+def _make_butler_toml(tmp_path: Path, name: str, modules: dict | None = None) -> Path:
+    """Write a butler.toml with a given butler name."""
+    modules = modules or {}
+    toml_lines = [
+        "[butler]",
+        f'name = "{name}"',
+        "port = 9100",
+        f'description = "Test butler {name}"',
+        "",
+        "[butler.db]",
+        f'name = "butler_{name.replace("-", "_")}"',
+    ]
+    for mod_name, mod_cfg in modules.items():
+        toml_lines.append(f"\n[modules.{mod_name}]")
+        for k, v in mod_cfg.items():
+            if isinstance(v, str):
+                toml_lines.append(f'{k} = "{v}"')
+            else:
+                toml_lines.append(f"{k} = {v}")
+    (tmp_path / "butler.toml").write_text("\n".join(toml_lines))
+    return tmp_path
+
+
+def _patch_infra():
+    """Return patches for all daemon infrastructure dependencies."""
+    mock_pool = AsyncMock()
+
+    mock_db = MagicMock()
+    mock_db.provision = AsyncMock()
+    mock_db.connect = AsyncMock(return_value=mock_pool)
+    mock_db.close = AsyncMock()
+    mock_db.pool = mock_pool
+    mock_db.user = "postgres"
+    mock_db.password = "postgres"
+    mock_db.host = "localhost"
+    mock_db.port = 5432
+    mock_db.db_name = "butler_test"
+
+    return {
+        "db_from_env": patch("butlers.daemon.Database.from_env", return_value=mock_db),
+        "run_migrations": patch("butlers.daemon.run_migrations", new_callable=AsyncMock),
+        "has_butler_chain": patch("butlers.daemon.has_butler_chain"),
+        "validate_credentials": patch("butlers.daemon.validate_credentials"),
+        "init_telemetry": patch("butlers.daemon.init_telemetry"),
+        "sync_schedules": patch("butlers.daemon.sync_schedules", new_callable=AsyncMock),
+        "FastMCP": patch("butlers.daemon.FastMCP"),
+        "CCSpawner": patch("butlers.daemon.CCSpawner"),
+        "mock_db": mock_db,
+        "mock_pool": mock_pool,
+    }
+
+
+class TestButlerSpecificMigrationInDaemon:
+    """Verify the daemon runs butler-specific migrations at the right time."""
+
+    async def test_butler_with_chain_runs_butler_migrations(self, tmp_path: Path) -> None:
+        """When has_butler_chain returns True, butler-specific migrations run
+        after core and before module migrations."""
+        butler_dir = _make_butler_toml(tmp_path, "relationship", modules={"stub_mod": {}})
+        registry = ModuleRegistry()
+        registry.register(StubModule)
+        patches = _patch_infra()
+
+        call_log: list[str] = []
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"] as mock_mig,
+            patches["has_butler_chain"] as mock_has_chain,
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["CCSpawner"],
+        ):
+            mock_has_chain.return_value = True
+
+            async def track_migration(db_url, chain="core"):
+                call_log.append(f"migrate:{chain}")
+
+            mock_mig.side_effect = track_migration
+
+            daemon = ButlerDaemon(butler_dir, registry=registry)
+            await daemon.start()
+
+        # Verify ordering: core -> butler-specific -> module
+        assert call_log == ["migrate:core", "migrate:relationship", "migrate:stub_mod"]
+
+    async def test_butler_without_chain_skips_butler_migrations(self, tmp_path: Path) -> None:
+        """When has_butler_chain returns False, no butler-specific migration runs."""
+        butler_dir = _make_butler_toml(tmp_path, "test-butler", modules={"stub_mod": {}})
+        registry = ModuleRegistry()
+        registry.register(StubModule)
+        patches = _patch_infra()
+
+        call_log: list[str] = []
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"] as mock_mig,
+            patches["has_butler_chain"] as mock_has_chain,
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["CCSpawner"],
+        ):
+            mock_has_chain.return_value = False
+
+            async def track_migration(db_url, chain="core"):
+                call_log.append(f"migrate:{chain}")
+
+            mock_mig.side_effect = track_migration
+
+            daemon = ButlerDaemon(butler_dir, registry=registry)
+            await daemon.start()
+
+        # Only core and module, no butler-specific
+        assert call_log == ["migrate:core", "migrate:stub_mod"]
+
+    async def test_butler_chain_checked_with_butler_name(self, tmp_path: Path) -> None:
+        """has_butler_chain should be called with the butler's name from config."""
+        butler_dir = _make_butler_toml(tmp_path, "my-special-butler")
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["has_butler_chain"] as mock_has_chain,
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["CCSpawner"],
+        ):
+            mock_has_chain.return_value = False
+
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        mock_has_chain.assert_called_once_with("my-special-butler")
+
+    async def test_no_modules_butler_with_chain(self, tmp_path: Path) -> None:
+        """Butler with chain but no modules still runs butler-specific migrations."""
+        butler_dir = _make_butler_toml(tmp_path, "relationship")
+        patches = _patch_infra()
+
+        call_log: list[str] = []
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"] as mock_mig,
+            patches["has_butler_chain"] as mock_has_chain,
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["CCSpawner"],
+        ):
+            mock_has_chain.return_value = True
+
+            async def track_migration(db_url, chain="core"):
+                call_log.append(f"migrate:{chain}")
+
+            mock_mig.side_effect = track_migration
+
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        assert call_log == ["migrate:core", "migrate:relationship"]
