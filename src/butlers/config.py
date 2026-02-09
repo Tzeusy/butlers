@@ -10,6 +10,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from butlers.core.runtimes import get_adapter
+
 
 class ConfigError(Exception):
     """Raised when butler configuration is missing, malformed, or invalid."""
@@ -25,6 +27,13 @@ class ScheduleConfig:
 
 
 @dataclass
+class RuntimeConfig:
+    """Runtime configuration from [runtime] section."""
+
+    type: str = "claude-code"
+
+
+@dataclass
 class ButlerConfig:
     """Parsed and validated butler configuration."""
 
@@ -36,6 +45,7 @@ class ButlerConfig:
     modules: dict[str, dict] = field(default_factory=dict)
     env_required: list[str] = field(default_factory=list)
     env_optional: list[str] = field(default_factory=list)
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
 
 def load_config(config_dir: Path) -> ButlerConfig:
@@ -109,6 +119,18 @@ def load_config(config_dir: Path) -> ButlerConfig:
     for mod_name, mod_cfg in raw_modules.items():
         modules[mod_name] = dict(mod_cfg) if isinstance(mod_cfg, dict) else {}
 
+    # --- [runtime] section ---
+    runtime_section = data.get("runtime", {})
+    runtime_type = runtime_section.get("type", "claude-code")
+
+    # Validate runtime type early (fail fast at config load time)
+    try:
+        get_adapter(runtime_type)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
+    runtime = RuntimeConfig(type=runtime_type)
+
     return ButlerConfig(
         name=name,
         port=port,
@@ -118,4 +140,5 @@ def load_config(config_dir: Path) -> ButlerConfig:
         modules=modules,
         env_required=env_required,
         env_optional=env_optional,
+        runtime=runtime,
     )
