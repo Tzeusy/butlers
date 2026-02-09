@@ -207,23 +207,26 @@ async def schedule_create(pool: asyncpg.Pool, name: str, cron: str, prompt: str)
         The new task's UUID.
 
     Raises:
-        ValueError: If the cron expression is invalid.
+        ValueError: If the cron expression is invalid or if the name already exists.
     """
     if not croniter.is_valid(cron):
         raise ValueError(f"Invalid cron expression: {cron!r}")
 
     next_run_at = _next_run(cron)
-    task_id: uuid.UUID = await pool.fetchval(
-        """
-        INSERT INTO scheduled_tasks (name, cron, prompt, source, enabled, next_run_at)
-        VALUES ($1, $2, $3, 'runtime', true, $4)
-        RETURNING id
-        """,
-        name,
-        cron,
-        prompt,
-        next_run_at,
-    )
+    try:
+        task_id: uuid.UUID = await pool.fetchval(
+            """
+            INSERT INTO scheduled_tasks (name, cron, prompt, source, enabled, next_run_at)
+            VALUES ($1, $2, $3, 'runtime', true, $4)
+            RETURNING id
+            """,
+            name,
+            cron,
+            prompt,
+            next_run_at,
+        )
+    except asyncpg.UniqueViolationError:
+        raise ValueError(f"Task name {name!r} already exists")
     logger.info("Created runtime schedule: %s (%s)", name, task_id)
     return task_id
 

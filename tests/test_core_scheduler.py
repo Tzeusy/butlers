@@ -59,7 +59,7 @@ async def pool(postgres_container):
     await p.execute("""
         CREATE TABLE IF NOT EXISTS scheduled_tasks (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            name TEXT NOT NULL,
+            name TEXT UNIQUE NOT NULL,
             cron TEXT NOT NULL,
             prompt TEXT NOT NULL,
             source TEXT NOT NULL DEFAULT 'db',
@@ -608,3 +608,56 @@ async def test_delete_nonexistent_raises(pool):
 
     with pytest.raises(ValueError, match="not found"):
         await schedule_delete(pool, uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# CRUD — schedule_create duplicate name rejection
+# ---------------------------------------------------------------------------
+
+
+async def test_create_duplicate_name_raises(pool):
+    """schedule_create raises ValueError when name already exists."""
+    from butlers.core.scheduler import schedule_create
+
+    await schedule_create(pool, "duplicate-name", "0 9 * * *", "first task")
+
+    with pytest.raises(ValueError, match="already exists"):
+        await schedule_create(pool, "duplicate-name", "0 10 * * *", "second task")
+
+
+async def test_create_duplicate_name_no_insert(pool):
+    """When duplicate name is rejected, no second row is inserted."""
+    from butlers.core.scheduler import schedule_create
+
+    await schedule_create(pool, "unique-check", "0 9 * * *", "first")
+
+    try:
+        await schedule_create(pool, "unique-check", "0 10 * * *", "second")
+    except ValueError:
+        pass
+
+    # Verify only one row exists
+    count = await pool.fetchval("SELECT COUNT(*) FROM scheduled_tasks WHERE name = 'unique-check'")
+    assert count == 1
+
+
+async def test_unique_constraint_in_migration(pool):
+    """Verify the UNIQUE constraint exists on scheduled_tasks.name."""
+    # Try to insert duplicate names directly (bypassing schedule_create)
+    await pool.execute(
+        "INSERT INTO scheduled_tasks (name, cron, prompt, source) VALUES ($1, $2, $3, $4)",
+        "constraint-test",
+        "0 9 * * *",
+        "test",
+        "runtime",
+    )
+
+    # Second insert with same name should fail
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await pool.execute(
+            "INSERT INTO scheduled_tasks (name, cron, prompt, source) VALUES ($1, $2, $3, $4)",
+            "constraint-test",
+            "0 10 * * *",
+            "test2",
+            "runtime",
+        )

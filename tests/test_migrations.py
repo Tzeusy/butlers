@@ -109,4 +109,4 @@ def test_alembic_version_tracking(postgres_container):
         versions = [row[0] for row in result]
     engine.dispose()
 
-    assert "001" in versions, f"Expected revision '001' in {versions}"
+    assert "002" in versions, f"Expected revision '002' in {versions}"
