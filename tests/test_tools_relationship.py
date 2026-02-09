@@ -95,7 +95,10 @@ async def pool(postgres_container):
             type TEXT NOT NULL,
             summary TEXT,
             occurred_at TIMESTAMPTZ DEFAULT now(),
-            created_at TIMESTAMPTZ DEFAULT now()
+            created_at TIMESTAMPTZ DEFAULT now(),
+            direction VARCHAR(10),
+            duration_minutes INTEGER,
+            metadata JSONB
         )
     """)
     await p.execute("""
@@ -508,6 +511,170 @@ async def test_interaction_list_with_limit(pool):
 
     results = await interaction_list(pool, c["id"], limit=3)
     assert len(results) == 3
+
+
+async def test_interaction_log_with_direction(pool):
+    """interaction_log stores direction field."""
+    from butlers.tools.relationship import contact_create, interaction_log
+
+    c = await contact_create(pool, "Inter-Direction")
+    i = await interaction_log(pool, c["id"], "call", direction="incoming")
+    assert i["direction"] == "incoming"
+
+
+async def test_interaction_log_with_duration(pool):
+    """interaction_log stores duration_minutes field."""
+    from butlers.tools.relationship import contact_create, interaction_log
+
+    c = await contact_create(pool, "Inter-Duration")
+    i = await interaction_log(pool, c["id"], "meeting", duration_minutes=45)
+    assert i["duration_minutes"] == 45
+
+
+async def test_interaction_log_with_metadata(pool):
+    """interaction_log stores metadata JSONB field."""
+    from butlers.tools.relationship import contact_create, interaction_log
+
+    c = await contact_create(pool, "Inter-Metadata")
+    meta = {"location": "coffee shop", "topic": "project planning"}
+    i = await interaction_log(pool, c["id"], "meeting", metadata=meta)
+    assert i["metadata"] == meta
+
+
+async def test_interaction_log_all_new_fields(pool):
+    """interaction_log accepts all new fields together."""
+    from butlers.tools.relationship import contact_create, interaction_log
+
+    c = await contact_create(pool, "Inter-AllNew")
+    meta = {"via": "zoom", "recording": True}
+    i = await interaction_log(
+        pool,
+        c["id"],
+        "video_call",
+        summary="Quarterly review",
+        direction="mutual",
+        duration_minutes=60,
+        metadata=meta,
+    )
+    assert i["type"] == "video_call"
+    assert i["summary"] == "Quarterly review"
+    assert i["direction"] == "mutual"
+    assert i["duration_minutes"] == 60
+    assert i["metadata"] == meta
+
+
+async def test_interaction_log_invalid_direction(pool):
+    """interaction_log rejects invalid direction values."""
+    from butlers.tools.relationship import contact_create, interaction_log
+
+    c = await contact_create(pool, "Inter-BadDir")
+    with pytest.raises(ValueError, match="Invalid direction"):
+        await interaction_log(pool, c["id"], "call", direction="sideways")
+
+
+async def test_interaction_log_backward_compat(pool):
+    """interaction_log works without new fields (backward compat)."""
+    from butlers.tools.relationship import contact_create, interaction_log
+
+    c = await contact_create(pool, "Inter-Compat")
+    i = await interaction_log(pool, c["id"], "email", summary="Quick question")
+    assert i["type"] == "email"
+    assert i["summary"] == "Quick question"
+    assert i["direction"] is None
+    assert i["duration_minutes"] is None
+    assert i["metadata"] is None
+
+
+async def test_interaction_list_filter_by_direction(pool):
+    """interaction_list filters by direction."""
+    from butlers.tools.relationship import contact_create, interaction_list, interaction_log
+
+    c = await contact_create(pool, "Inter-FilterDir")
+    await interaction_log(pool, c["id"], "call", direction="incoming")
+    await interaction_log(pool, c["id"], "call", direction="outgoing")
+    await interaction_log(pool, c["id"], "email", direction="incoming")
+
+    incoming = await interaction_list(pool, c["id"], direction="incoming")
+    assert len(incoming) == 2
+    assert all(r["direction"] == "incoming" for r in incoming)
+
+    outgoing = await interaction_list(pool, c["id"], direction="outgoing")
+    assert len(outgoing) == 1
+    assert outgoing[0]["direction"] == "outgoing"
+
+
+async def test_interaction_list_filter_by_type(pool):
+    """interaction_list filters by type."""
+    from butlers.tools.relationship import contact_create, interaction_list, interaction_log
+
+    c = await contact_create(pool, "Inter-FilterType")
+    await interaction_log(pool, c["id"], "call")
+    await interaction_log(pool, c["id"], "email")
+    await interaction_log(pool, c["id"], "call")
+
+    calls = await interaction_list(pool, c["id"], type="call")
+    assert len(calls) == 2
+    assert all(r["type"] == "call" for r in calls)
+
+    emails = await interaction_list(pool, c["id"], type="email")
+    assert len(emails) == 1
+
+
+async def test_interaction_list_filter_by_direction_and_type(pool):
+    """interaction_list supports combined direction + type filters."""
+    from butlers.tools.relationship import contact_create, interaction_list, interaction_log
+
+    c = await contact_create(pool, "Inter-CombinedFilter")
+    await interaction_log(pool, c["id"], "call", direction="incoming")
+    await interaction_log(pool, c["id"], "call", direction="outgoing")
+    await interaction_log(pool, c["id"], "email", direction="incoming")
+    await interaction_log(pool, c["id"], "email", direction="outgoing")
+
+    results = await interaction_list(pool, c["id"], direction="incoming", type="call")
+    assert len(results) == 1
+    assert results[0]["type"] == "call"
+    assert results[0]["direction"] == "incoming"
+
+
+async def test_interaction_list_no_filters_returns_all(pool):
+    """interaction_list without filters returns all interactions."""
+    from butlers.tools.relationship import contact_create, interaction_list, interaction_log
+
+    c = await contact_create(pool, "Inter-NoFilter")
+    await interaction_log(pool, c["id"], "call", direction="incoming")
+    await interaction_log(pool, c["id"], "email")  # no direction
+
+    all_results = await interaction_list(pool, c["id"])
+    assert len(all_results) == 2
+
+
+async def test_interaction_feed_includes_direction(pool):
+    """Activity feed entry includes direction when present."""
+    from butlers.tools.relationship import contact_create, feed_get, interaction_log
+
+    c = await contact_create(pool, "Inter-FeedDir")
+    await interaction_log(pool, c["id"], "call", direction="outgoing")
+
+    feed = await feed_get(pool, contact_id=c["id"])
+    interaction_entries = [f for f in feed if f["type"] == "interaction_logged"]
+    assert len(interaction_entries) >= 1
+    assert "(outgoing)" in interaction_entries[0]["description"]
+
+
+async def test_interaction_feed_no_direction(pool):
+    """Activity feed entry omits direction when not present."""
+    from butlers.tools.relationship import contact_create, feed_get, interaction_log
+
+    c = await contact_create(pool, "Inter-FeedNoDir")
+    await interaction_log(pool, c["id"], "email")
+
+    feed = await feed_get(pool, contact_id=c["id"])
+    interaction_entries = [f for f in feed if f["type"] == "interaction_logged"]
+    assert len(interaction_entries) >= 1
+    # Should not contain parenthetical direction
+    assert "(incoming)" not in interaction_entries[0]["description"]
+    assert "(outgoing)" not in interaction_entries[0]["description"]
+    assert "(mutual)" not in interaction_entries[0]["description"]
 
 
 # ------------------------------------------------------------------
