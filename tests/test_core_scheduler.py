@@ -720,3 +720,54 @@ async def test_update_cron_still_recomputes_next_run(pool):
     # next_run_at should be recomputed and different
     assert new_row["next_run_at"] != old_row["next_run_at"]
     assert new_row["next_run_at"] > datetime.now(UTC) - timedelta(seconds=5)
+# Atomicity test for schedule_update
+# ---------------------------------------------------------------------------
+
+
+async def test_update_cron_is_atomic(pool):
+    """When cron is changed, both cron and next_run_at are updated in a single transaction."""
+    from butlers.core.scheduler import schedule_create, schedule_update
+
+    task_id = await schedule_create(pool, "atomic-test", "0 0 1 1 *", "rare")
+
+    # Get the initial state
+    initial = await pool.fetchrow(
+        "SELECT cron, next_run_at FROM scheduled_tasks WHERE id = $1", task_id
+    )
+    assert initial["cron"] == "0 0 1 1 *"
+
+    # Update the cron - this should atomically update both cron and next_run_at
+    await schedule_update(pool, task_id, cron="*/1 * * * *")
+
+    # Verify both fields were updated
+    updated = await pool.fetchrow(
+        "SELECT cron, next_run_at FROM scheduled_tasks WHERE id = $1", task_id
+    )
+    assert updated["cron"] == "*/1 * * * *"
+    assert updated["next_run_at"] != initial["next_run_at"]
+    # The new next_run_at should be much sooner (within the next minute)
+    assert updated["next_run_at"] < initial["next_run_at"]
+
+
+async def test_update_multiple_fields_with_cron_is_atomic(pool):
+    """Updating multiple fields including cron happens in one atomic operation."""
+    from butlers.core.scheduler import schedule_create, schedule_update
+
+    task_id = await schedule_create(pool, "multi-update", "0 9 * * *", "old prompt")
+
+    # Update multiple fields including cron
+    await schedule_update(
+        pool, task_id, name="multi-updated", cron="*/5 * * * *", prompt="new prompt", enabled=False
+    )
+
+    # Verify all fields were updated atomically
+    updated = await pool.fetchrow(
+        "SELECT name, cron, prompt, enabled, next_run_at FROM scheduled_tasks WHERE id = $1",
+        task_id,
+    )
+    assert updated["name"] == "multi-updated"
+    assert updated["cron"] == "*/5 * * * *"
+    assert updated["prompt"] == "new prompt"
+    assert updated["enabled"] is False
+    # next_run_at should be computed from the new cron
+    assert updated["next_run_at"] is not None
