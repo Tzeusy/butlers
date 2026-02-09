@@ -1,0 +1,155 @@
+# Docker Compose configuration for Butlers AI agent framework
+#
+# USAGE:
+#
+# Development mode (local butlers with containerized DB and observability):
+#   docker compose up -d postgres jaeger
+#   butlers up
+#
+# Production mode (all services containerized):
+#   cp .env.example .env
+#   # Edit .env and add your ANTHROPIC_API_KEY
+#   docker compose up -d
+#
+# All butler services will be available on their configured ports:
+#   - switchboard: 8100
+#   - general: 8101
+#   - relationship: 8102
+#   - health: 8103
+#   - heartbeat: 8199
+#   - jaeger UI: 16686
+#
+# Observability: Jaeger tracing UI at http://localhost:16686
+
+services:
+  # PostgreSQL database server
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: butlers
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Jaeger all-in-one for distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC receiver
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
+  # Switchboard butler - message router
+  switchboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./butlers/switchboard:/app/butler-config:ro
+    command: ["run", "--config", "/app/butler-config/butler.toml"]
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=butlers
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # General butler - catch-all assistant
+  general:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8101:8101"
+    volumes:
+      - ./butlers/general:/app/butler-config:ro
+    command: ["run", "--config", "/app/butler-config/butler.toml"]
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=butlers
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Relationship butler - contacts and interactions
+  relationship:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8102:8102"
+    volumes:
+      - ./butlers/relationship:/app/butler-config:ro
+    command: ["run", "--config", "/app/butler-config/butler.toml"]
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=butlers
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Health butler - medications and health tracking
+  health:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8103:8103"
+    volumes:
+      - ./butlers/health:/app/butler-config:ro
+    command: ["run", "--config", "/app/butler-config/butler.toml"]
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=butlers
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Heartbeat butler - system monitor
+  heartbeat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8199:8199"
+    volumes:
+      - ./butlers/heartbeat:/app/butler-config:ro
+    command: ["run", "--config", "/app/butler-config/butler.toml"]
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=butlers
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
