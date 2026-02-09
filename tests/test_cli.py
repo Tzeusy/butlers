@@ -170,3 +170,86 @@ class TestRunCommand:
         result = runner.invoke(cli, ["run", "--config", config_path])
         assert result.exit_code == 0
         assert "Starting butler from" in result.output
+
+
+class TestListCommandStatus:
+    """Tests for running/stopped status detection in list command."""
+
+    def test_list_shows_running_status(self, runner, butler_config_dir, monkeypatch):
+        """Test that list shows running status when port is open."""
+
+        # Mock socket to return success (port is open)
+        class MockSocket:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def settimeout(self, timeout):
+                pass
+
+            def connect(self, address):
+                pass  # Success - no exception
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("socket.socket", MockSocket)
+
+        result = runner.invoke(cli, ["list", "--dir", str(butler_config_dir)])
+        assert result.exit_code == 0
+        assert "test_butler" in result.output
+        assert "running" in result.output.lower()
+
+    def test_list_shows_stopped_status(self, runner, butler_config_dir, monkeypatch):
+        """Test that list shows stopped status when port is closed."""
+
+        # Mock socket to raise exception (port is closed)
+        class MockSocket:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def settimeout(self, timeout):
+                pass
+
+            def connect(self, address):
+
+                raise OSError("Connection refused")
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("socket.socket", MockSocket)
+
+        result = runner.invoke(cli, ["list", "--dir", str(butler_config_dir)])
+        assert result.exit_code == 0
+        assert "test_butler" in result.output
+        assert "stopped" in result.output.lower()
+
+    def test_list_shows_mixed_statuses(self, runner, multi_butler_dir, monkeypatch):
+        """Test list shows different statuses for different butlers."""
+        # Mock socket to succeed for port 9001, fail for others
+
+        class MockSocket:
+            def __init__(self, *args, **kwargs):
+                self.address = None
+
+            def settimeout(self, timeout):
+                pass
+
+            def connect(self, address):
+                self.address = address
+                if address[1] == 9001:  # alpha butler
+                    pass  # Success
+                else:
+                    raise OSError("Connection refused")
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("socket.socket", MockSocket)
+
+        result = runner.invoke(cli, ["list", "--dir", str(multi_butler_dir)])
+        assert result.exit_code == 0
+        # Check that we have both running and stopped
+        output_lower = result.output.lower()
+        assert "running" in output_lower
+        assert "stopped" in output_lower

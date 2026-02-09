@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import socket
 import sys
 from pathlib import Path
 
@@ -16,6 +17,31 @@ logger = logging.getLogger(__name__)
 
 # Default directory containing butler configurations
 DEFAULT_BUTLERS_DIR = Path("butlers")
+
+
+def _check_port_status(port: int, timeout: float = 0.5) -> bool:
+    """Check if a butler is running by attempting to connect to its port.
+
+    Parameters
+    ----------
+    port:
+        The port number to check.
+    timeout:
+        Connection timeout in seconds.
+
+    Returns
+    -------
+    bool
+        True if the port is open (butler is running), False otherwise.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(("localhost", port))
+        sock.close()
+        return True
+    except (TimeoutError, OSError):
+        return False
 
 
 @click.group()
@@ -82,17 +108,21 @@ def list_cmd(butlers_dir: Path) -> None:
         return
 
     # Print header
-    click.echo(f"{'Name':<20} {'Port':<8} {'Modules':<30} {'Description'}")
-    click.echo("-" * 80)
+    click.echo(f"{'Name':<20} {'Port':<8} {'Status':<10} {'Modules':<30} {'Description'}")
+    click.echo("-" * 90)
 
     for name, config_dir in sorted(configs.items()):
         try:
             config = load_config(config_dir)
             modules = ", ".join(sorted(config.modules.keys())) or "(none)"
             desc = config.description or ""
-            click.echo(f"{config.name:<20} {config.port:<8} {modules:<30} {desc}")
+
+            # Check if butler is running
+            status = "running" if _check_port_status(config.port) else "stopped"
+
+            click.echo(f"{config.name:<20} {config.port:<8} {status:<10} {modules:<30} {desc}")
         except ConfigError as exc:
-            click.echo(f"{name:<20} {'ERROR':<8} {exc!s}")
+            click.echo(f"{name:<20} {'ERROR':<8} {'N/A':<10} {exc!s}")
 
 
 @cli.command()
