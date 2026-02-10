@@ -11,6 +11,9 @@ import TimelinePage from './pages/TimelinePage.tsx'
 import NotificationsPage from './pages/NotificationsPage.tsx'
 import CostsPage from './pages/CostsPage.tsx'
 import SettingsPage from './pages/SettingsPage.tsx'
+import ContactsPage from './pages/ContactsPage.tsx'
+import ContactDetailPage from './pages/ContactDetailPage.tsx'
+import GroupsPage from './pages/GroupsPage.tsx'
 
 export const router = createBrowserRouter([
   {
@@ -25,6 +28,9 @@ export const router = createBrowserRouter([
       { path: '/traces/:traceId', element: <TraceDetailPage /> },
       { path: '/timeline', element: <TimelinePage /> },
       { path: '/notifications', element: <NotificationsPage /> },
+      { path: '/contacts', element: <ContactsPage /> },
+      { path: '/contacts/:contactId', element: <ContactDetailPage /> },
+      { path: '/groups', element: <GroupsPage /> },
       { path: '/costs', element: <CostsPage /> },
       { path: '/settings', element: <SettingsPage /> },
     ],
