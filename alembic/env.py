@@ -3,7 +3,7 @@
 Supports:
 - Programmatic invocation from the daemon (not just CLI)
 - Targeting a specific butler's database via connection URL
-- Multiple version chains (core + butler-specific)
+- Multiple version chains (core + module + butler-specific)
 - Raw SQL via op.execute() (no SQLAlchemy models)
 """
 
@@ -16,14 +16,40 @@ from sqlalchemy import create_engine, pool
 
 from alembic import context
 
-# The directory containing shared version chain subdirectories (core, mailbox)
+# The directory containing shared version chain subdirectories (core only)
 VERSIONS_DIR = Path(__file__).parent / "versions"
 
 # The directory containing butler config dirs (each may have a migrations/ folder)
 ROSTER_DIR = Path(__file__).parent.parent / "roster"
 
-# Shared chains that live in alembic/versions/
-_SHARED_CHAINS = ["core", "mailbox", "approvals"]
+# The directory containing module packages (each may have a migrations/ folder)
+MODULES_DIR = Path(__file__).parent.parent / "src" / "butlers" / "modules"
+
+# Shared chains that live in alembic/versions/ (core only)
+_SHARED_CHAINS = ["core"]
+
+
+def _discover_module_chains() -> list[str]:
+    """Discover module-local migration chains from module directories.
+
+    Scans ``src/butlers/modules/*/migrations/`` for directories that contain
+    at least one ``.py`` migration file (excluding ``__init__.py``).
+    """
+    if not MODULES_DIR.is_dir():
+        return []
+    chains = []
+    for entry in sorted(MODULES_DIR.iterdir()):
+        if not entry.is_dir():
+            continue
+        mig_dir = entry / "migrations"
+        if not mig_dir.is_dir():
+            continue
+        migration_files = [
+            f for f in mig_dir.iterdir() if f.suffix == ".py" and f.name != "__init__.py"
+        ]
+        if migration_files:
+            chains.append(entry.name)
+    return chains
 
 
 def _discover_butler_chains() -> list[str]:
@@ -63,16 +89,22 @@ def get_url() -> str:
 def get_version_locations() -> list[str]:
     """Build the version_locations list for all chains.
 
-    Includes shared chains from alembic/versions/ and butler-specific chains
-    from roster/<name>/migrations/.
+    Includes shared chains from alembic/versions/, module chains from
+    src/butlers/modules/*/migrations/, and butler-specific chains from
+    roster/<name>/migrations/.
     """
     locations = []
 
-    # Shared chains (core, mailbox) in alembic/versions/
+    # Shared chains (core) in alembic/versions/
     for chain in _SHARED_CHAINS:
         chain_dir = VERSIONS_DIR / chain
         if chain_dir.is_dir():
             locations.append(str(chain_dir))
+
+    # Module-local chains in src/butlers/modules/<name>/migrations/
+    for module_name in _discover_module_chains():
+        mig_dir = MODULES_DIR / module_name / "migrations"
+        locations.append(str(mig_dir))
 
     # Butler-specific chains in roster/<name>/migrations/
     for butler_name in _discover_butler_chains():
