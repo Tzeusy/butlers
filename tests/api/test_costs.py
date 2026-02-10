@@ -357,9 +357,10 @@ class TestCostSummary:
 
 
 class TestDailyCosts:
-    async def test_daily_returns_empty_list(self):
-        """Daily endpoint returns empty list placeholder."""
-        app = create_app()
+    async def test_daily_returns_empty_list_when_no_butlers(self):
+        """Daily endpoint returns empty list when no butlers are configured."""
+        mgr = MagicMock(spec=MCPClientManager)
+        app = _app_with_overrides(mgr, [], _make_pricing())
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -382,6 +383,325 @@ class TestDailyCosts:
         assert record.date == "2026-02-10"
         assert record.cost_usd == 1.23
         assert record.sessions == 5
+
+    async def test_daily_defaults_to_last_7_days(self):
+        """Without from/to params the endpoint still returns 200."""
+        mgr = MagicMock(spec=MCPClientManager)
+        app = _app_with_overrides(mgr, [], _make_pricing())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/costs/daily")
+
+        assert response.status_code == 200
+        assert response.json()["data"] == []
+
+    async def test_daily_accepts_from_and_to_params(self):
+        """Explicit from/to date params are accepted."""
+        mgr = MagicMock(spec=MCPClientManager)
+        app = _app_with_overrides(mgr, [], _make_pricing())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/costs/daily",
+                params={"from": "2026-02-01", "to": "2026-02-07"},
+            )
+
+        assert response.status_code == 200
+        assert isinstance(response.json()["data"], list)
+
+    async def test_daily_aggregates_across_butlers(self):
+        """Daily costs from multiple butlers are merged by date."""
+        configs = _make_configs()
+        pricing = _make_pricing()
+
+        switchboard_daily = {
+            "days": [
+                {
+                    "date": "2026-02-09",
+                    "sessions": 3,
+                    "input_tokens": 6000,
+                    "output_tokens": 3000,
+                    "by_model": {
+                        "claude-sonnet-4-20250514": {
+                            "input_tokens": 6000,
+                            "output_tokens": 3000,
+                        },
+                    },
+                },
+                {
+                    "date": "2026-02-10",
+                    "sessions": 2,
+                    "input_tokens": 4000,
+                    "output_tokens": 2000,
+                    "by_model": {
+                        "claude-sonnet-4-20250514": {
+                            "input_tokens": 4000,
+                            "output_tokens": 2000,
+                        },
+                    },
+                },
+            ]
+        }
+        general_daily = {
+            "days": [
+                {
+                    "date": "2026-02-09",
+                    "sessions": 1,
+                    "input_tokens": 2000,
+                    "output_tokens": 1000,
+                    "by_model": {
+                        "claude-haiku-35-20241022": {
+                            "input_tokens": 2000,
+                            "output_tokens": 1000,
+                        },
+                    },
+                },
+            ]
+        }
+
+        mgr = _make_manager_with_responses(
+            configs,
+            {
+                "switchboard": _make_tool_result(switchboard_daily),
+                "general": _make_tool_result(general_daily),
+            },
+        )
+        app = _app_with_overrides(mgr, configs, pricing)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/costs/daily",
+                params={"from": "2026-02-09", "to": "2026-02-10"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+
+        # Two distinct dates
+        assert len(data) == 2
+        dates = [d["date"] for d in data]
+        assert dates == ["2026-02-09", "2026-02-10"]
+
+        # 2026-02-09: switchboard + general merged
+        day_09 = data[0]
+        assert day_09["sessions"] == 4  # 3 + 1
+        assert day_09["input_tokens"] == 8000  # 6000 + 2000
+        assert day_09["output_tokens"] == 4000  # 3000 + 1000
+        # switchboard: 6000*0.000003 + 3000*0.000015 = 0.018 + 0.045 = 0.063
+        # general: 2000*0.0000008 + 1000*0.000004 = 0.0016 + 0.004 = 0.0056
+        assert day_09["cost_usd"] == pytest.approx(0.0686, abs=1e-4)
+
+        # 2026-02-10: switchboard only
+        day_10 = data[1]
+        assert day_10["sessions"] == 2
+        assert day_10["input_tokens"] == 4000
+        assert day_10["output_tokens"] == 2000
+        # 4000*0.000003 + 2000*0.000015 = 0.012 + 0.030 = 0.042
+        assert day_10["cost_usd"] == pytest.approx(0.042, abs=1e-4)
+
+    async def test_daily_handles_unreachable_butler(self):
+        """Unreachable butler is skipped gracefully."""
+        configs = _make_configs()
+        pricing = _make_pricing()
+
+        switchboard_daily = {
+            "days": [
+                {
+                    "date": "2026-02-10",
+                    "sessions": 1,
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "by_model": {
+                        "claude-sonnet-4-20250514": {
+                            "input_tokens": 1000,
+                            "output_tokens": 500,
+                        },
+                    },
+                },
+            ]
+        }
+
+        mgr = _make_manager_with_responses(
+            configs,
+            {
+                "switchboard": _make_tool_result(switchboard_daily),
+                "general": ButlerUnreachableError("general"),
+            },
+        )
+        app = _app_with_overrides(mgr, configs, pricing)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/costs/daily",
+                params={"from": "2026-02-10", "to": "2026-02-10"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data) == 1
+        assert data[0]["sessions"] == 1
+
+    async def test_daily_handles_empty_tool_result(self):
+        """Butler returning empty tool result contributes nothing."""
+        configs = [ButlerConnectionInfo(name="empty", port=8100)]
+        pricing = _make_pricing()
+
+        mgr = _make_manager_with_responses(
+            configs,
+            {"empty": _make_empty_tool_result()},
+        )
+        app = _app_with_overrides(mgr, configs, pricing)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/costs/daily",
+                params={"from": "2026-02-10", "to": "2026-02-10"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["data"] == []
+
+    async def test_daily_results_sorted_by_date(self):
+        """Results are sorted by date ascending even if butler returns unordered."""
+        configs = [ButlerConnectionInfo(name="test", port=8100)]
+        pricing = _make_pricing()
+
+        daily_data = {
+            "days": [
+                {
+                    "date": "2026-02-10",
+                    "sessions": 1,
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "by_model": {},
+                },
+                {
+                    "date": "2026-02-08",
+                    "sessions": 2,
+                    "input_tokens": 200,
+                    "output_tokens": 100,
+                    "by_model": {},
+                },
+                {
+                    "date": "2026-02-09",
+                    "sessions": 3,
+                    "input_tokens": 300,
+                    "output_tokens": 150,
+                    "by_model": {},
+                },
+            ]
+        }
+
+        mgr = _make_manager_with_responses(
+            configs,
+            {"test": _make_tool_result(daily_data)},
+        )
+        app = _app_with_overrides(mgr, configs, pricing)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/costs/daily",
+                params={"from": "2026-02-08", "to": "2026-02-10"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        dates = [d["date"] for d in data]
+        assert dates == ["2026-02-08", "2026-02-09", "2026-02-10"]
+
+    async def test_daily_unknown_model_contributes_zero_cost(self):
+        """A model not in pricing config contributes zero cost."""
+        configs = [ButlerConnectionInfo(name="test", port=8100)]
+        pricing = _make_pricing()
+
+        daily_data = {
+            "days": [
+                {
+                    "date": "2026-02-10",
+                    "sessions": 1,
+                    "input_tokens": 5000,
+                    "output_tokens": 2000,
+                    "by_model": {
+                        "unknown-model-v9": {
+                            "input_tokens": 5000,
+                            "output_tokens": 2000,
+                        },
+                    },
+                },
+            ]
+        }
+
+        mgr = _make_manager_with_responses(
+            configs,
+            {"test": _make_tool_result(daily_data)},
+        )
+        app = _app_with_overrides(mgr, configs, pricing)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/costs/daily",
+                params={"from": "2026-02-10", "to": "2026-02-10"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data) == 1
+        assert data[0]["cost_usd"] == 0.0
+        assert data[0]["sessions"] == 1
+        assert data[0]["input_tokens"] == 5000
+
+    async def test_daily_response_validates_as_model(self):
+        """Daily response items can be parsed as DailyCost models."""
+        configs = [ButlerConnectionInfo(name="test", port=8100)]
+        pricing = _make_pricing()
+
+        daily_data = {
+            "days": [
+                {
+                    "date": "2026-02-10",
+                    "sessions": 2,
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "by_model": {
+                        "claude-sonnet-4-20250514": {
+                            "input_tokens": 1000,
+                            "output_tokens": 500,
+                        },
+                    },
+                },
+            ]
+        }
+
+        mgr = _make_manager_with_responses(
+            configs,
+            {"test": _make_tool_result(daily_data)},
+        )
+        app = _app_with_overrides(mgr, configs, pricing)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/costs/daily",
+                params={"from": "2026-02-10", "to": "2026-02-10"},
+            )
+
+        body = response.json()
+        for item in body["data"]:
+            record = DailyCost.model_validate(item)
+            assert record.date == "2026-02-10"
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +759,8 @@ class TestResponseShape:
 
     async def test_daily_has_meta(self):
         """Daily response includes the meta field."""
-        app = create_app()
+        mgr = MagicMock(spec=MCPClientManager)
+        app = _app_with_overrides(mgr, [], _make_pricing())
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
