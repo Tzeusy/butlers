@@ -6,11 +6,11 @@ _Updated: 2026-02-09 by claude-opus-4-6_
 
 Every butler DB has three core tables: `state` (KV JSONB), `scheduled_tasks` (cron-driven), `sessions` (CC invocation log). Migrations use Alembic with multiple version chains in `alembic/versions/` — a `core` chain (applied to every butler) and per-butler chains (e.g., `relationship`, `health`). Modules contribute their own Alembic branch via `migration_revisions()`. The runtime runs `alembic.command.upgrade` programmatically at startup.
 
-## Project has full v1 MVP specification but no implementation code yet
+## v1 MVP is complete; post-v1 work underway
 
-_Added: 2026-02-09 by claude-opus-4-6_
+_Updated: 2026-02-10 by claude-opus-4-6_
 
-As of 2026-02-09, this repo has planning docs (`PROJECT_PLAN.md`) and a complete OpenSpec change at `openspec/changes/v1-mvp-spec/` with 4 artifacts: proposal, design, 15 capability specs (~500+ test scenarios), and 90+ implementation tasks across 22 groups. No implementation code exists yet.
+The v1 MVP (epic `butlers-0qp`) is closed — all 5 butlers (Switchboard, General, Relationship, Health, Heartbeat), 2 modules (Telegram, Email), CLI, Docker deployment, and OTel instrumentation are implemented with 449 tests passing. Post-v1 work includes the action approval mechanism (`butlers-clc`) and frontend dashboard.
 
 ## OpenSpec workflow for this project
 
@@ -36,17 +36,29 @@ _Added: 2026-02-09 by claude-opus-4-6_
 
 FastMCP for MCP servers. asyncpg (no ORM). croniter for cron. Click for CLI. SSE transport for inter-butler MCP. Ephemeral MCP configs lock down CC instances. Alembic for migrations (raw SQL via op.execute, multi-chain). OTel + LGTM stack (Alloy/Tempo/Grafana) for observability. Serial CC dispatch in v1. No auth between butlers in v1.
 
-## Beads backlog covers full v1 MVP (122 issues)
+## Beads backlog structure
 
-_Added: 2026-02-09 by claude-opus-4-6_
+_Updated: 2026-02-10 by claude-opus-4-6_
 
-The v1 MVP spec has been converted to 122 beads issues under root epic `butlers-0qp`. Structure: 1 root epic → 22 milestone epics → 99 child tasks. Cross-milestone dependencies are wired (25 total). Run `bd ready` to find unblocked work. Milestones 1-4 (skeleton, config, modules, DB) are the starting point — they unblock everything downstream.
+The v1 MVP backlog (`butlers-0qp`, now closed) had 122 issues across 22 milestone epics. Post-v1 epics: `butlers-clc` (action approval mechanism, 7 children), `butlers-r1v` (signal extraction, closed). Run `bd ready` to find unblocked work.
 
 ## Beads CLI: use `bd create --silent` for scripting, not `bd q`
 
 _Added: 2026-02-09 by claude-opus-4-6_
 
 `bd q` (quick capture) only supports `-t`, `-p`, `-l` flags. It does NOT support `--parent`, `--description`, `--acceptance`, `--design`, `--notes`, `--deps`, or `--estimate`. For scripting that needs full fields, use `bd create --silent` which outputs only the ID but accepts all flags. `bd create --silent` is the correct replacement for the `bd q` pattern shown in beads-writer skill examples.
+
+## Memory system is a shared Memory Butler, not per-butler
+
+_Added: 2026-02-10 by claude-opus-4-6_
+
+The memory system (`MEMORY_PROJECT_PLAN.md`) uses a dedicated **Memory Butler** (port 8150, DB `butler_memory`) that serves as a shared MCP server for all butlers — NOT per-butler isolated memory. Three separate tables by memory type: `episodes` (raw session observations, 7-day TTL), `facts` (subject-predicate structured knowledge with subjective confidence decay), `rules` (procedural playbook with maturity progression: candidate → established → proven). Local embeddings via `sentence-transformers/all-MiniLM-L6-v2` (384-dim, pgvector), hybrid search (semantic + full-text + RRF). Facts have per-fact `decay_rate` assigned by the Memory Butler during consolidation — permanence categories: permanent (λ=0), stable (~346d half-life), standard (~87d), volatile (~23d), ephemeral (~7d). Rules use CASS-inspired 4× harmful penalty for effectiveness scoring. Memory is scoped (`global` or butler-name) but lives in one shared DB.
+
+## Prior art for human-in-the-loop: extraction confirmation queue
+
+_Added: 2026-02-10 by claude-opus-4-6_
+
+`butlers-r1v.3` implemented a Switchboard-specific confirmation queue for low-confidence extractions (table `extraction_queue`, 7 tools, statuses: pending/confirmed/dismissed/expired). The generalized action approval mechanism (`butlers-clc`) follows a similar pattern but is cross-butler: hybrid core+module design where interception lives in the daemon (wraps MCP tool dispatch) and approval tools live in an opt-in module. Key addition over r1v.3: standing approval rules that auto-approve recurring action patterns via tool_name + arg constraints (exact/pattern/any).
 
 ## Moltbot/OpenClaw as a reference architecture
 

@@ -47,9 +47,9 @@
 
 The dashboard API uses **two access patterns**:
 
-| Pattern | When | Why |
-|---------|------|-----|
-| **MCP client** | Real-time operations: `status()`, `trigger()`, `tick()`, butler discovery | These need live data from running daemons. Also the authoritative path for write operations. |
+| Pattern             | When                                                                        | Why                                                                                                   |
+| ------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| **MCP client**      | Real-time operations: `status()`, `trigger()`, `tick()`, butler discovery   | These need live data from running daemons. Also the authoritative path for write operations.          |
 | **Direct DB reads** | Data browsing: sessions, schedules, state, contacts, measurements, entities | Efficient for paginated lists, search, aggregation. Reads from each butler's dedicated PostgreSQL DB. |
 
 > **Note:** Direct DB reads are a pragmatic exception to the "strict DB isolation" rule. The dashboard is an administrative tool, not a butler. It reads but never writes to butler DBs directly — all writes go through MCP tools.
@@ -123,27 +123,27 @@ CREATE INDEX idx_notifications_status ON notifications(status);
 
 ### Frontend (`frontend/`)
 
-| Layer | Choice | Why |
-|-------|--------|-----|
-| Framework | React 18+ with TypeScript | Standard, wide ecosystem |
-| Build | Vite | Fast dev server, good defaults |
-| Router | React Router v7 | Standard, well-documented |
-| Server state | TanStack Query (React Query) | Caching, refetching, optimistic updates |
-| UI components | shadcn/ui + Radix primitives | Copy-paste components, full control, modern |
-| Styling | Tailwind CSS | Utility-first, pairs with shadcn |
-| Topology graph | React Flow | Interactive node-based diagrams |
-| Charts | Recharts | Health measurements, session trends, cost charts |
-| Date handling | date-fns | Lightweight, tree-shakeable |
-| Search | cmdk (Command Menu) | Global search palette (Cmd+K) |
+| Layer          | Choice                       | Why                                              |
+| -------------- | ---------------------------- | ------------------------------------------------ |
+| Framework      | React 18+ with TypeScript    | Standard, wide ecosystem                         |
+| Build          | Vite                         | Fast dev server, good defaults                   |
+| Router         | React Router v7              | Standard, well-documented                        |
+| Server state   | TanStack Query (React Query) | Caching, refetching, optimistic updates          |
+| UI components  | shadcn/ui + Radix primitives | Copy-paste components, full control, modern      |
+| Styling        | Tailwind CSS                 | Utility-first, pairs with shadcn                 |
+| Topology graph | React Flow                   | Interactive node-based diagrams                  |
+| Charts         | Recharts                     | Health measurements, session trends, cost charts |
+| Date handling  | date-fns                     | Lightweight, tree-shakeable                      |
+| Search         | cmdk (Command Menu)          | Global search palette (Cmd+K)                    |
 
 ### Backend API (`src/butlers/api/`)
 
-| Layer | Choice | Why |
-|-------|--------|-----|
-| Framework | FastAPI | Already in the Python ecosystem, async-native |
-| Database | asyncpg (direct pool per butler DB) | Already used by the butler framework |
-| MCP Client | FastMCP client | Same library used by butlers for inter-butler calls |
-| Validation | Pydantic v2 | FastAPI native, shared with butler config models |
+| Layer      | Choice                              | Why                                                 |
+| ---------- | ----------------------------------- | --------------------------------------------------- |
+| Framework  | FastAPI                             | Already in the Python ecosystem, async-native       |
+| Database   | asyncpg (direct pool per butler DB) | Already used by the butler framework                |
+| MCP Client | FastMCP client                      | Same library used by butlers for inter-butler calls |
+| Validation | Pydantic v2                         | FastAPI native, shared with butler config models    |
 
 ---
 
@@ -843,7 +843,7 @@ butlers/
 │   └── ...                            # existing butler code
 │
 ├── docker-compose.yml                 # add: dashboard-api, frontend services
-└── FRONTEND_PROJECT_PLAN.md           # this file
+└── docs/FRONTEND_PROJECT_PLAN.md           # this file
 ```
 
 ---
@@ -1240,20 +1240,20 @@ UX polish and groundwork for real-time updates.
 
 ## Open Questions
 
-| Question | Notes |
-|----------|-------|
-| Auth for the dashboard? | Not needed for v1 (personal system, localhost). Add basic auth or API key later. |
-| How to discover butler MCP endpoints at runtime? | Read butler.toml configs for ports, or use Switchboard's `list_butlers()`. Config-based is simpler and doesn't require a running Switchboard. |
-| Trace reconstruction fidelity? | Requires `trace_id` and `parent_session_id` on sessions table (added in M4/M5). Without these, traces are reconstructed heuristically from `trigger_source` timestamps — lossy. |
-| Frontend build integration? | `butlers dashboard` in production should serve the built frontend. Need a build step that copies `frontend/dist/` to a location the API can serve. |
-| How to handle butler DB schema differences? | API router for each butler type (relationship, health, general) hardcodes the schema knowledge. If a new butler type is added, a new router is needed. |
-| Real-time: WebSocket vs SSE? | SSE is simpler for server-push status updates. WebSocket if we want bidirectional (e.g., streaming CC session output). Start with SSE. |
-| Token usage from CC SDK? | Need to verify the Claude Code SDK exposes input/output token counts in its response. If not, we may need to instrument at the MCP tool level or parse usage from session transcripts. |
-| Cost model pricing config? | Where does the per-model pricing live? Likely a simple YAML/TOML config file or env vars on the dashboard API. Needs to be updatable without redeployment. |
-| Module health checks — how? | Modules don't currently expose a `health()` method. We'd need to add an optional `health_check()` to the Module ABC, or the dashboard API probes externally (e.g., Telegram bot API ping, IMAP connect). |
-| Global search performance? | Fan-out search across N butler DBs could be slow. Consider: background indexing, materialized views, or a lightweight search index (SQLite FTS) on the dashboard API side. |
-| Timeline event sourcing? | The unified timeline aggregates events from multiple tables across multiple DBs. Some events (state changes, heartbeat ticks) aren't currently logged anywhere. May need a lightweight `events` table in each butler DB, or the dashboard API polls and caches. |
-| Active session detection? | How does the dashboard know a CC instance is currently running? Options: (1) spawner writes a "running" row to sessions table before spawning, updates on completion; (2) MCP status() tool reports active sessions; (3) SSE push from butler daemon. |
-| Memory system dependency? | M11 is blocked on the memory plan finalizing and the `memories` table + MCP tools being implemented. Track this dependency explicitly. |
-| Core `notify()` tool dependency? | M7 (Notifications) is blocked on the framework implementing the core `notify()` tool + Switchboard `deliver()` tool + `notifications` table. This is a framework-level change that should be added to `PROJECT_PLAN.md` as a new milestone or task under the Switchboard milestone. |
-| Notification delivery guarantees? | What happens if Switchboard is down when a butler calls `notify()`? Options: (1) fail and let CC decide (store in state, retry later), (2) butler-local queue with retry, (3) accept message loss for v1. Recommend option 1 — simplest, CC can handle fallback. |
+| Question                                         | Notes                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth for the dashboard?                          | Not needed for v1 (personal system, localhost). Add basic auth or API key later.                                                                                                                                                                                                    |
+| How to discover butler MCP endpoints at runtime? | Read butler.toml configs for ports, or use Switchboard's `list_butlers()`. Config-based is simpler and doesn't require a running Switchboard.                                                                                                                                       |
+| Trace reconstruction fidelity?                   | Requires `trace_id` and `parent_session_id` on sessions table (added in M4/M5). Without these, traces are reconstructed heuristically from `trigger_source` timestamps — lossy.                                                                                                     |
+| Frontend build integration?                      | `butlers dashboard` in production should serve the built frontend. Need a build step that copies `frontend/dist/` to a location the API can serve.                                                                                                                                  |
+| How to handle butler DB schema differences?      | API router for each butler type (relationship, health, general) hardcodes the schema knowledge. If a new butler type is added, a new router is needed.                                                                                                                              |
+| Real-time: WebSocket vs SSE?                     | SSE is simpler for server-push status updates. WebSocket if we want bidirectional (e.g., streaming CC session output). Start with SSE.                                                                                                                                              |
+| Token usage from CC SDK?                         | Need to verify the Claude Code SDK exposes input/output token counts in its response. If not, we may need to instrument at the MCP tool level or parse usage from session transcripts.                                                                                              |
+| Cost model pricing config?                       | Where does the per-model pricing live? Likely a simple YAML/TOML config file or env vars on the dashboard API. Needs to be updatable without redeployment.                                                                                                                          |
+| Module health checks — how?                      | Modules don't currently expose a `health()` method. We'd need to add an optional `health_check()` to the Module ABC, or the dashboard API probes externally (e.g., Telegram bot API ping, IMAP connect).                                                                            |
+| Global search performance?                       | Fan-out search across N butler DBs could be slow. Consider: background indexing, materialized views, or a lightweight search index (SQLite FTS) on the dashboard API side.                                                                                                          |
+| Timeline event sourcing?                         | The unified timeline aggregates events from multiple tables across multiple DBs. Some events (state changes, heartbeat ticks) aren't currently logged anywhere. May need a lightweight `events` table in each butler DB, or the dashboard API polls and caches.                     |
+| Active session detection?                        | How does the dashboard know a CC instance is currently running? Options: (1) spawner writes a "running" row to sessions table before spawning, updates on completion; (2) MCP status() tool reports active sessions; (3) SSE push from butler daemon.                               |
+| Memory system dependency?                        | M11 is blocked on the memory plan finalizing and the `memories` table + MCP tools being implemented. Track this dependency explicitly.                                                                                                                                              |
+| Core `notify()` tool dependency?                 | M7 (Notifications) is blocked on the framework implementing the core `notify()` tool + Switchboard `deliver()` tool + `notifications` table. This is a framework-level change that should be added to `PROJECT_PLAN.md` as a new milestone or task under the Switchboard milestone. |
+| Notification delivery guarantees?                | What happens if Switchboard is down when a butler calls `notify()`? Options: (1) fail and let CC decide (store in state, retry later), (2) butler-local queue with retry, (3) accept message loss for v1. Recommend option 1 — simplest, CC can handle fallback.                    |
