@@ -153,6 +153,69 @@ async def fetch_memory_context(
         return None
 
 
+
+async def store_session_episode(
+    butler_name: str,
+    session_output: str,
+    session_id: uuid.UUID | None = None,
+    *,
+    timeout: float = 5.0,
+    memory_butler_port: int = 8150,
+) -> bool:
+    """Store a session episode to the Memory Butler after CC session completes.
+
+    Posts to the Memory Butler's ``/call-tool`` endpoint to store the session
+    output as an episode via the ``memory_store_episode`` tool.
+
+    Parameters
+    ----------
+    butler_name:
+        Name of the butler whose session completed.
+    session_output:
+        The output text from the completed CC session.
+    session_id:
+        Optional session UUID to associate with the episode.
+    timeout:
+        HTTP request timeout in seconds. Defaults to 5.0.
+    memory_butler_port:
+        Port the Memory Butler listens on. Defaults to 8150.
+
+    Returns
+    -------
+    bool
+        True on success, False on any failure.
+    """
+    url = f"http://localhost:{memory_butler_port}/call-tool"
+    arguments: dict[str, str] = {
+        "content": session_output,
+        "butler": butler_name,
+    }
+    if session_id is not None:
+        arguments["session_id"] = str(session_id)
+    payload = {
+        "name": "memory_store_episode",
+        "arguments": arguments,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, json=payload)
+            if response.status_code != 200:
+                logger.warning(
+                    "Memory Butler returned status %d storing episode for butler %s",
+                    response.status_code,
+                    butler_name,
+                )
+                return False
+            return True
+    except Exception:
+        logger.warning(
+            "Failed to store session episode for butler %s",
+            butler_name,
+            exc_info=True,
+        )
+        return False
+
+
 class Spawner:
     """Core component that invokes ephemeral AI runtime instances for a butler.
 
@@ -414,6 +477,14 @@ class Spawner:
                     success=True,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
+                )
+
+            # Store episode to Memory Butler (fire-and-forget, failure doesn't block)
+            if spawner_result.success and spawner_result.output:
+                await store_session_episode(
+                    self._config.name,
+                    spawner_result.output,
+                    session_id=session_id,
                 )
 
             return spawner_result
