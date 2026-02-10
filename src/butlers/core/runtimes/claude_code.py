@@ -54,7 +54,7 @@ class ClaudeCodeAdapter(RuntimeAdapter):
         model: str | None = None,
         cwd: Path | None = None,
         timeout: int | None = None,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
         """Invoke Claude Code SDK with the given prompt and configuration.
 
         Builds ClaudeCodeOptions with MCP server configs (as
@@ -63,8 +63,9 @@ class ClaudeCodeAdapter(RuntimeAdapter):
 
         Returns
         -------
-        tuple[str | None, list[dict[str, Any]]]
-            A tuple of (result_text, tool_calls).
+        tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]
+            A tuple of (result_text, tool_calls, usage). Usage contains
+            token counts extracted from the SDK's ResultMessage.
         """
         # Build MCP server config objects for SDK
         sdk_mcp_servers: dict[str, McpSSEServerConfig] = {}
@@ -90,10 +91,14 @@ class ClaudeCodeAdapter(RuntimeAdapter):
 
         result_text: str | None = None
         tool_calls: list[dict[str, Any]] = []
+        usage: dict[str, Any] | None = None
 
         async for message in self._sdk_query(prompt=prompt, options=options):
             if isinstance(message, ResultMessage):
                 result_text = message.result or ""
+                # Extract token usage from the ResultMessage
+                if message.usage:
+                    usage = dict(message.usage)
             elif hasattr(message, "content"):
                 for block in getattr(message, "content", []):
                     if isinstance(block, ToolUseBlock):
@@ -105,7 +110,7 @@ class ClaudeCodeAdapter(RuntimeAdapter):
                             }
                         )
 
-        return result_text, tool_calls
+        return result_text, tool_calls, usage
 
     def build_config_file(
         self,

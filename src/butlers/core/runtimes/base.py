@@ -40,7 +40,7 @@ class RuntimeAdapter(abc.ABC):
         model: str | None = None,
         cwd: Path | None = None,
         timeout: int | None = None,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
         """Invoke the runtime with the given prompt and configuration.
 
         Parameters
@@ -60,8 +60,10 @@ class RuntimeAdapter(abc.ABC):
 
         Returns
         -------
-        tuple[str | None, list[dict[str, Any]]]
-            A tuple of (result_text, tool_calls).
+        tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]
+            A tuple of (result_text, tool_calls, usage). Usage is a dict
+            with keys like ``input_tokens``, ``output_tokens``, etc.,
+            or None if the runtime does not report token usage.
         """
         ...
 

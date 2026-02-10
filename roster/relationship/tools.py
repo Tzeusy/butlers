@@ -2075,6 +2075,7 @@ async def task_delete(pool: asyncpg.Pool, task_id: uuid.UUID) -> None:
         raise ValueError(f"Task {task_id} not found")
     await _log_activity(pool, row["contact_id"], "task_deleted", f"Deleted task: '{row['title']}'")
 
+
 # Stay-in-touch cadence
 # ------------------------------------------------------------------
 

@@ -102,6 +102,8 @@ async def session_complete(
     success: bool,
     error: str | None = None,
     cost: dict[str, Any] | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
 ) -> None:
     """Mark a session as completed with its outcome data.
 
@@ -116,6 +118,8 @@ async def session_complete(
         success: Whether the session completed successfully.
         error: Error message if the session failed, None otherwise.
         cost: Optional cost/token usage dict (serialised as JSONB).
+        input_tokens: Optional count of input tokens consumed by the session.
+        output_tokens: Optional count of output tokens produced by the session.
 
     Raises:
         ValueError: If ``session_id`` does not match an existing session.
@@ -123,13 +127,15 @@ async def session_complete(
     row = await pool.fetchval(
         """
         UPDATE sessions
-        SET result       = $2,
-            tool_calls   = $3::jsonb,
-            duration_ms  = $4,
-            cost         = $5::jsonb,
-            success      = $6,
-            error        = $7,
-            completed_at = now()
+        SET result        = $2,
+            tool_calls    = $3::jsonb,
+            duration_ms   = $4,
+            cost          = $5::jsonb,
+            success       = $6,
+            error         = $7,
+            input_tokens  = $8,
+            output_tokens = $9,
+            completed_at  = now()
         WHERE id = $1
         RETURNING id
         """,
@@ -140,10 +146,19 @@ async def session_complete(
         json.dumps(cost) if cost is not None else None,
         success,
         error,
+        input_tokens,
+        output_tokens,
     )
     if row is None:
         raise ValueError(f"Session {session_id} not found")
-    logger.info("Session completed: %s (%d ms, success=%s)", session_id, duration_ms, success)
+    logger.info(
+        "Session completed: %s (%d ms, success=%s, in=%s, out=%s)",
+        session_id,
+        duration_ms,
+        success,
+        input_tokens,
+        output_tokens,
+    )
 
 
 async def sessions_list(
@@ -164,7 +179,9 @@ async def sessions_list(
     rows = await pool.fetch(
         """
         SELECT id, prompt, trigger_source, result, tool_calls,
-               duration_ms, trace_id, model, cost, success, error, started_at, completed_at
+               duration_ms, trace_id, model, cost, success, error,
+               input_tokens, output_tokens,
+               started_at, completed_at
         FROM sessions
         ORDER BY started_at DESC
         LIMIT $1 OFFSET $2
@@ -219,7 +236,9 @@ async def sessions_get(
     row = await pool.fetchrow(
         """
         SELECT id, prompt, trigger_source, result, tool_calls,
-               duration_ms, trace_id, model, cost, success, error, started_at, completed_at
+               duration_ms, trace_id, model, cost, success, error,
+               input_tokens, output_tokens,
+               started_at, completed_at
         FROM sessions
         WHERE id = $1
         """,

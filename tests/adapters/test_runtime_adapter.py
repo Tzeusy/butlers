@@ -33,8 +33,8 @@ class FullAdapter(RuntimeAdapter):
         env: dict[str, str],
         cwd: Path | None = None,
         timeout: int | None = None,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
-        return ("ok", [])
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
+        return ("ok", [], None)
 
     def build_config_file(
         self,
@@ -80,8 +80,8 @@ class MissingBuildConfigAdapter(RuntimeAdapter):
         env: dict[str, str],
         cwd: Path | None = None,
         timeout: int | None = None,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
-        return (None, [])
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
+        return (None, [], None)
 
     def parse_system_prompt_file(self, config_dir: Path) -> str:
         return ""
@@ -102,8 +102,8 @@ class MissingParsePromptAdapter(RuntimeAdapter):
         env: dict[str, str],
         cwd: Path | None = None,
         timeout: int | None = None,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
-        return (None, [])
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
+        return (None, [], None)
 
     def build_config_file(
         self,
@@ -149,9 +149,9 @@ def test_full_adapter_instantiates():
 
 
 async def test_full_adapter_invoke():
-    """invoke() returns a (result_text, tool_calls) tuple."""
+    """invoke() returns a (result_text, tool_calls, usage) tuple."""
     adapter = FullAdapter()
-    result_text, tool_calls = await adapter.invoke(
+    result_text, tool_calls, usage = await adapter.invoke(
         prompt="hello",
         system_prompt="you are helpful",
         mcp_servers={},
@@ -159,6 +159,7 @@ async def test_full_adapter_invoke():
     )
     assert result_text == "ok"
     assert tool_calls == []
+    assert usage is None
 
 
 def test_full_adapter_build_config_file(tmp_path: Path):
@@ -300,7 +301,7 @@ async def test_claude_code_adapter_invoke_with_mock():
         )
 
     adapter = ClaudeCodeAdapter(sdk_query=mock_query)
-    result_text, tool_calls = await adapter.invoke(
+    result_text, tool_calls, usage = await adapter.invoke(
         prompt="hi",
         system_prompt="you are helpful",
         mcp_servers={"test": {"url": "http://localhost:9100/sse"}},
@@ -308,6 +309,7 @@ async def test_claude_code_adapter_invoke_with_mock():
     )
     assert result_text == "Hello!"
     assert tool_calls == []
+    assert usage is None  # empty dict becomes None
 
 
 async def test_claude_code_adapter_invoke_with_tool_calls():
@@ -332,7 +334,7 @@ async def test_claude_code_adapter_invoke_with_tool_calls():
         )
 
     adapter = ClaudeCodeAdapter(sdk_query=mock_query)
-    result_text, tool_calls = await adapter.invoke(
+    result_text, tool_calls, usage = await adapter.invoke(
         prompt="use tools",
         system_prompt="you are helpful",
         mcp_servers={"test": {"url": "http://localhost:9100/sse"}},
@@ -342,6 +344,64 @@ async def test_claude_code_adapter_invoke_with_tool_calls():
     assert len(tool_calls) == 1
     assert tool_calls[0]["name"] == "state_get"
     assert tool_calls[0]["input"] == {"key": "foo"}
+
+
+async def test_claude_code_adapter_invoke_captures_usage():
+    """ClaudeCodeAdapter.invoke() extracts token usage from ResultMessage."""
+    from claude_code_sdk import ResultMessage
+
+    async def mock_query(*, prompt, options):
+        yield ResultMessage(
+            subtype="result",
+            duration_ms=10,
+            duration_api_ms=8,
+            is_error=False,
+            num_turns=1,
+            session_id="test",
+            total_cost_usd=0.01,
+            usage={"input_tokens": 150, "output_tokens": 300},
+            result="With usage!",
+        )
+
+    adapter = ClaudeCodeAdapter(sdk_query=mock_query)
+    result_text, tool_calls, usage = await adapter.invoke(
+        prompt="test",
+        system_prompt="you are helpful",
+        mcp_servers={"test": {"url": "http://localhost:9100/sse"}},
+        env={},
+    )
+    assert result_text == "With usage!"
+    assert usage is not None
+    assert usage["input_tokens"] == 150
+    assert usage["output_tokens"] == 300
+
+
+async def test_claude_code_adapter_invoke_none_usage():
+    """ClaudeCodeAdapter.invoke() returns None usage when SDK usage is None."""
+    from claude_code_sdk import ResultMessage
+
+    async def mock_query(*, prompt, options):
+        yield ResultMessage(
+            subtype="result",
+            duration_ms=10,
+            duration_api_ms=8,
+            is_error=False,
+            num_turns=1,
+            session_id="test",
+            total_cost_usd=0.0,
+            usage=None,
+            result="No usage",
+        )
+
+    adapter = ClaudeCodeAdapter(sdk_query=mock_query)
+    result_text, tool_calls, usage = await adapter.invoke(
+        prompt="test",
+        system_prompt="you are helpful",
+        mcp_servers={"test": {"url": "http://localhost:9100/sse"}},
+        env={},
+    )
+    assert result_text == "No usage"
+    assert usage is None
 
 
 # ---------------------------------------------------------------------------

@@ -468,7 +468,7 @@ async def test_invoke_success():
     mock_proc.returncode = 0
 
     with patch(_EXEC, return_value=mock_proc) as mock_sub:
-        result_text, tool_calls = await adapter.invoke(
+        result_text, tool_calls, usage = await adapter.invoke(
             prompt="do something",
             system_prompt="you are helpful",
             mcp_servers={"test": {"url": "http://localhost:9100/sse"}},
@@ -477,6 +477,7 @@ async def test_invoke_success():
 
     assert result_text == "Task done."
     assert tool_calls == []
+    assert usage is None
 
     # Verify subprocess was called with correct args
     call_args = mock_sub.call_args
@@ -511,7 +512,7 @@ async def test_invoke_with_tool_calls():
     mock_proc.returncode = 0
 
     with patch(_EXEC, return_value=mock_proc):
-        result_text, tool_calls = await adapter.invoke(
+        result_text, tool_calls, usage = await adapter.invoke(
             prompt="use tools",
             system_prompt="helpful",
             mcp_servers={},
@@ -522,6 +523,7 @@ async def test_invoke_with_tool_calls():
     assert len(tool_calls) == 1
     assert tool_calls[0]["name"] == "state_get"
     assert tool_calls[0]["input"] == {"key": "foo"}
+    assert usage is None
 
 
 async def test_invoke_nonzero_exit():
@@ -533,7 +535,7 @@ async def test_invoke_nonzero_exit():
     mock_proc.returncode = 1
 
     with patch(_EXEC, return_value=mock_proc):
-        result_text, tool_calls = await adapter.invoke(
+        result_text, tool_calls, usage = await adapter.invoke(
             prompt="test",
             system_prompt="",
             mcp_servers={},
@@ -543,6 +545,7 @@ async def test_invoke_nonzero_exit():
     assert result_text is not None
     assert "quota exceeded" in result_text
     assert tool_calls == []
+    assert usage is None
 
 
 async def test_invoke_no_system_prompt():
@@ -678,7 +681,7 @@ async def test_invoke_with_gemini_function_call_output():
     mock_proc.returncode = 0
 
     with patch(_EXEC, return_value=mock_proc):
-        result_text, tool_calls = await adapter.invoke(
+        result_text, tool_calls, usage = await adapter.invoke(
             prompt="use gemini tools",
             system_prompt="",
             mcp_servers={},
@@ -689,6 +692,7 @@ async def test_invoke_with_gemini_function_call_output():
     assert len(tool_calls) == 1
     assert tool_calls[0]["name"] == "state_get"
     assert tool_calls[0]["input"] == {"key": "bar"}
+    assert usage is None
 
 
 # ---------------------------------------------------------------------------
