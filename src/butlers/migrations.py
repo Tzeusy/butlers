@@ -22,8 +22,37 @@ ALEMBIC_DIR = Path(__file__).resolve().parent.parent.parent / "alembic"
 # Root of the butler config directories (sibling to src/)
 ROSTER_DIR = Path(__file__).resolve().parent.parent.parent / "roster"
 
-# Shared chains that live in alembic/versions/ (core infra + shared modules)
-_SHARED_CHAINS = ["core", "mailbox", "approvals"]
+# Root of the modules directory (src/butlers/modules/)
+MODULES_DIR = Path(__file__).resolve().parent / "modules"
+
+# Shared chains that live in alembic/versions/ (core infra only)
+_SHARED_CHAINS = ["core"]
+
+
+def _discover_module_chains() -> list[str]:
+    """Discover module-local migration chains from module directories.
+
+    Scans ``src/butlers/modules/*/migrations/`` for directories that contain
+    at least one ``.py`` migration file (excluding ``__init__.py``).
+
+    Returns:
+        Sorted list of module names that have a migrations/ folder with files.
+    """
+    if not MODULES_DIR.is_dir():
+        return []
+    chains = []
+    for entry in sorted(MODULES_DIR.iterdir()):
+        if not entry.is_dir():
+            continue
+        mig_dir = entry / "migrations"
+        if not mig_dir.is_dir():
+            continue
+        migration_files = [
+            f for f in mig_dir.iterdir() if f.suffix == ".py" and f.name != "__init__.py"
+        ]
+        if migration_files:
+            chains.append(entry.name)
+    return chains
 
 
 def _discover_butler_chains() -> list[str]:
@@ -55,7 +84,8 @@ def _discover_butler_chains() -> list[str]:
 def _resolve_chain_dir(chain: str) -> Path | None:
     """Resolve the filesystem path for a given chain name.
 
-    Shared chains (core, mailbox) live in ``alembic/versions/<chain>/``.
+    Shared chains (core) live in ``alembic/versions/<chain>/``.
+    Module chains live in ``src/butlers/modules/<chain>/migrations/``.
     Butler-specific chains live in ``roster/<chain>/migrations/``.
 
     Returns:
@@ -63,19 +93,30 @@ def _resolve_chain_dir(chain: str) -> Path | None:
     """
     if chain in _SHARED_CHAINS:
         chain_dir = ALEMBIC_DIR / "versions" / chain
-    else:
-        chain_dir = ROSTER_DIR / chain / "migrations"
-    return chain_dir if chain_dir.is_dir() else None
+        if chain_dir.is_dir():
+            return chain_dir
+
+    # Check module-local migrations
+    module_chain_dir = MODULES_DIR / chain / "migrations"
+    if module_chain_dir.is_dir():
+        return module_chain_dir
+
+    # Check butler-specific migrations
+    butler_chain_dir = ROSTER_DIR / chain / "migrations"
+    if butler_chain_dir.is_dir():
+        return butler_chain_dir
+
+    return None
 
 
 def get_all_chains() -> list[str]:
-    """Return all recognized version chains (shared + butler-specific).
+    """Return all recognized version chains (shared + module + butler-specific).
 
-    Shared chains are listed first, followed by dynamically discovered
-    butler-specific chains.
+    Shared chains are listed first, followed by module chains, then dynamically
+    discovered butler-specific chains.
     """
     shared = [c for c in _SHARED_CHAINS if (ALEMBIC_DIR / "versions" / c).is_dir()]
-    return shared + _discover_butler_chains()
+    return shared + _discover_module_chains() + _discover_butler_chains()
 
 
 def _build_alembic_config(db_url: str, chains: list[str] | None = None) -> Config:
@@ -138,8 +179,8 @@ async def run_migrations(db_url: str, chain: str = "core") -> None:
         db_url: SQLAlchemy-compatible database URL
             (e.g. ``postgresql://user:pass@host:port/dbname``).
         chain: Version chain to migrate. Must be one of the recognized chains
-            (core, mailbox, or any butler name with a migrations/ directory).
-            Pass ``"all"`` to migrate all chains.
+            (core, mailbox, approvals, or any butler name with a migrations/
+            directory). Pass ``"all"`` to migrate all chains.
     """
     if chain == "all":
         chains = get_all_chains()
