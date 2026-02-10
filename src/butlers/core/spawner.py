@@ -43,6 +43,7 @@ class SpawnerResult:
     error: str | None = None
     duration_ms: int = 0
     model: str | None = None
+    session_id: uuid.UUID | None = None
 
 
 def _build_env(
@@ -315,6 +316,7 @@ class Spawner:
                 tool_calls=tool_calls,
                 duration_ms=duration_ms,
                 model=model,
+                session_id=session_id,
             )
 
             # Log session completion
@@ -344,6 +346,7 @@ class Spawner:
                 success=False,
                 duration_ms=duration_ms,
                 model=model,
+                session_id=session_id,
             )
 
             # Log failed session

@@ -175,6 +175,34 @@ async def sessions_list(
     return [_decode_row(row) for row in rows]
 
 
+async def sessions_active(
+    pool: asyncpg.Pool,
+) -> list[dict[str, Any]]:
+    """Return all currently active (in-progress) sessions.
+
+    A session is considered active when ``completed_at IS NULL`` — it has been
+    created by the spawner but the CC instance has not yet returned.
+
+    This is the primary mechanism for the dashboard to detect running sessions.
+
+    Args:
+        pool: asyncpg connection pool for the butler's database.
+
+    Returns:
+        List of active session records as dicts, ordered by started_at DESC.
+    """
+    rows = await pool.fetch(
+        """
+        SELECT id, prompt, trigger_source, result, tool_calls,
+               duration_ms, trace_id, model, cost, success, error, started_at, completed_at
+        FROM sessions
+        WHERE completed_at IS NULL
+        ORDER BY started_at DESC
+        """,
+    )
+    return [_decode_row(row) for row in rows]
+
+
 async def sessions_get(
     pool: asyncpg.Pool,
     session_id: uuid.UUID,
