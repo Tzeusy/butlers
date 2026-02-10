@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -850,3 +851,118 @@ async def invert_to_anti_pattern(
             row["metadata"] = metadata
 
             return row
+
+
+# ---------------------------------------------------------------------------
+# Decay sweep — fading & expiring low-confidence memories
+# ---------------------------------------------------------------------------
+
+
+async def run_decay_sweep(pool: Pool) -> dict:
+    """Run a confidence decay sweep across all active facts and rules.
+
+    For each active fact and rule (excluding permanent ones with decay_rate=0.0):
+    1. Compute effective_confidence = confidence * exp(-decay_rate * days_elapsed)
+       where days_elapsed = (now - last_confirmed_at).total_seconds() / 86400
+    2. If effective_confidence < 0.05: set validity='expired' (facts) or
+       metadata.forgotten=true (rules)
+    3. If 0.05 <= effective_confidence < 0.2: set metadata.status='fading'
+    4. Otherwise: clear metadata.status if it was 'fading'
+
+    Returns:
+        dict with keys: facts_checked, rules_checked, facts_fading, rules_fading,
+        facts_expired, rules_expired
+    """
+    now = datetime.now(UTC)
+    stats = {
+        "facts_checked": 0,
+        "rules_checked": 0,
+        "facts_fading": 0,
+        "rules_fading": 0,
+        "facts_expired": 0,
+        "rules_expired": 0,
+    }
+
+    async with pool.acquire() as conn:
+        # ----- Process facts -----
+        facts = await conn.fetch(
+            "SELECT id, confidence, decay_rate, last_confirmed_at, created_at, metadata "
+            "FROM facts WHERE validity = 'active' AND decay_rate > 0.0"
+        )
+
+        for fact in facts:
+            stats["facts_checked"] += 1
+            anchor = fact["last_confirmed_at"] or fact["created_at"]
+            days = (now - anchor).total_seconds() / 86400.0
+            eff = fact["confidence"] * math.exp(-fact["decay_rate"] * days)
+
+            metadata = fact["metadata"]
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+
+            if eff < 0.05:
+                await conn.execute(
+                    "UPDATE facts SET validity = 'expired' WHERE id = $1",
+                    fact["id"],
+                )
+                stats["facts_expired"] += 1
+            elif eff < 0.2:
+                metadata["status"] = "fading"
+                await conn.execute(
+                    "UPDATE facts SET metadata = $1 WHERE id = $2",
+                    json.dumps(metadata),
+                    fact["id"],
+                )
+                stats["facts_fading"] += 1
+            else:
+                if metadata.get("status") == "fading":
+                    del metadata["status"]
+                    await conn.execute(
+                        "UPDATE facts SET metadata = $1 WHERE id = $2",
+                        json.dumps(metadata),
+                        fact["id"],
+                    )
+
+        # ----- Process rules -----
+        rules = await conn.fetch(
+            "SELECT id, confidence, decay_rate, last_confirmed_at, created_at, metadata "
+            "FROM rules WHERE maturity != 'anti_pattern' AND decay_rate > 0.0 "
+            "AND (metadata->>'forgotten')::boolean IS NOT TRUE"
+        )
+
+        for rule in rules:
+            stats["rules_checked"] += 1
+            anchor = rule["last_confirmed_at"] or rule["created_at"]
+            days = (now - anchor).total_seconds() / 86400.0
+            eff = rule["confidence"] * math.exp(-rule["decay_rate"] * days)
+
+            metadata = rule["metadata"]
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+
+            if eff < 0.05:
+                metadata["forgotten"] = True
+                await conn.execute(
+                    "UPDATE rules SET metadata = $1 WHERE id = $2",
+                    json.dumps(metadata),
+                    rule["id"],
+                )
+                stats["rules_expired"] += 1
+            elif eff < 0.2:
+                metadata["status"] = "fading"
+                await conn.execute(
+                    "UPDATE rules SET metadata = $1 WHERE id = $2",
+                    json.dumps(metadata),
+                    rule["id"],
+                )
+                stats["rules_fading"] += 1
+            else:
+                if metadata.get("status") == "fading":
+                    del metadata["status"]
+                    await conn.execute(
+                        "UPDATE rules SET metadata = $1 WHERE id = $2",
+                        json.dumps(metadata),
+                        rule["id"],
+                    )
+
+    return stats
