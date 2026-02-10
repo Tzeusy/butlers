@@ -571,3 +571,85 @@ async def confirm_memory(
         memory_id,
     )
     return result.endswith("1")
+
+
+# ---------------------------------------------------------------------------
+# Rule feedback — mark_helpful
+# ---------------------------------------------------------------------------
+
+
+async def mark_helpful(
+    pool: Pool,
+    rule_id: uuid.UUID,
+) -> dict | None:
+    """Mark a rule as having been applied successfully.
+
+    Atomically increments ``applied_count`` and ``success_count``,
+    recalculates ``effectiveness_score``, updates ``last_applied_at``,
+    and evaluates whether the rule qualifies for maturity promotion.
+
+    Effectiveness formula::
+
+        effectiveness = success_count / applied_count
+
+    Promotion thresholds:
+
+    - candidate -> established: success_count >= 5 AND effectiveness >= 0.6
+    - established -> proven: success_count >= 15 AND effectiveness >= 0.8
+      AND age >= 30 days
+
+    Args:
+        pool: asyncpg connection pool.
+        rule_id: UUID of the rule.
+
+    Returns:
+        Updated rule as dict, or None if rule not found.
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Increment counts and update timestamp in one atomic UPDATE
+            row = await conn.fetchrow(
+                "UPDATE rules "
+                "SET applied_count = applied_count + 1, "
+                "    success_count = success_count + 1, "
+                "    last_applied_at = now() "
+                "WHERE id = $1 "
+                "RETURNING *",
+                rule_id,
+            )
+            if row is None:
+                return None
+
+            row = dict(row)
+
+            # Recalculate effectiveness
+            applied = row["applied_count"]
+            success = row["success_count"]
+            effectiveness = success / applied if applied > 0 else 0.0
+
+            # Evaluate maturity promotion
+            current_maturity = row["maturity"]
+            new_maturity = current_maturity
+
+            if current_maturity == "candidate":
+                if success >= 5 and effectiveness >= 0.6:
+                    new_maturity = "established"
+            elif current_maturity == "established":
+                age_days = (datetime.now(UTC) - row["created_at"]).days
+                if success >= 15 and effectiveness >= 0.8 and age_days >= 30:
+                    new_maturity = "proven"
+
+            # Persist effectiveness score and (possibly promoted) maturity
+            await conn.execute(
+                "UPDATE rules "
+                "SET effectiveness_score = $1, maturity = $2 "
+                "WHERE id = $3",
+                effectiveness,
+                new_maturity,
+                rule_id,
+            )
+
+            row["effectiveness_score"] = effectiveness
+            row["maturity"] = new_maturity
+
+            return row
