@@ -124,8 +124,11 @@ class TestNotificationSummary:
             "channel",
             "recipient",
             "message",
+            "metadata",
             "status",
             "error",
+            "session_id",
+            "trace_id",
             "created_at",
         }
 
