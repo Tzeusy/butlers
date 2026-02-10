@@ -1,16 +1,21 @@
 """Tests for relationship/CRM API endpoints.
 
 Verifies the API contract (status codes, response shapes) for relationship
-endpoints.  These tests work against both the current placeholder endpoints
-(which return empty collections) and future real implementations.
+endpoints.  Uses a mocked DatabaseManager so no real database is required.
+
+Issue: butlers-26h.10.3
 """
 
 from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
 from butlers.api.app import create_app
+from butlers.api.db import DatabaseManager
+from butlers.api.routers.relationship import _get_db_manager
 
 pytestmark = pytest.mark.unit
 
@@ -20,9 +25,31 @@ pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 
 
-def _app():
-    """Create a fresh FastAPI app with the relationship router included."""
-    return create_app()
+def _app_with_mock_db(
+    *,
+    fetch_rows: list | None = None,
+    fetchval_result: int = 0,
+    fetchrow_result: dict | None = None,
+):
+    """Create a FastAPI app with a mocked DatabaseManager.
+
+    The mock pool returns:
+    - ``fetch_rows`` for pool.fetch() calls (default: [])
+    - ``fetchval_result`` for pool.fetchval() calls (default: 0)
+    - ``fetchrow_result`` for pool.fetchrow() calls (default: None → 404)
+    """
+    mock_pool = AsyncMock()
+    mock_pool.fetch = AsyncMock(return_value=fetch_rows or [])
+    mock_pool.fetchval = AsyncMock(return_value=fetchval_result)
+    mock_pool.fetchrow = AsyncMock(return_value=fetchrow_result)
+
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.pool.return_value = mock_pool
+
+    app = create_app()
+    app.dependency_overrides[_get_db_manager] = lambda: mock_db
+
+    return app
 
 
 # ---------------------------------------------------------------------------
@@ -33,7 +60,7 @@ def _app():
 class TestListContacts:
     async def test_returns_contact_list_response_structure(self):
         """Response must have 'contacts' array and 'total' integer."""
-        app = _app()
+        app = _app_with_mock_db()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -48,7 +75,7 @@ class TestListContacts:
 
     async def test_search_param_accepted(self):
         """The ?q= query parameter must not cause an error."""
-        app = _app()
+        app = _app_with_mock_db()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -58,7 +85,7 @@ class TestListContacts:
 
     async def test_label_filter_accepted(self):
         """The ?label= query parameter must not cause an error."""
-        app = _app()
+        app = _app_with_mock_db()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -73,9 +100,9 @@ class TestListContacts:
 
 
 class TestGetContact:
-    async def test_missing_contact_returns_404_or_empty(self):
-        """A non-existent contact should return 404 or empty placeholder dict."""
-        app = _app()
+    async def test_missing_contact_returns_404(self):
+        """A non-existent contact should return 404 when fetchrow returns None."""
+        app = _app_with_mock_db(fetchrow_result=None)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -83,8 +110,7 @@ class TestGetContact:
                 "/api/relationship/contacts/00000000-0000-0000-0000-000000000000"
             )
 
-        # Placeholder returns 200 with {}; real impl should return 404.
-        assert resp.status_code in (200, 404)
+        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +121,7 @@ class TestGetContact:
 class TestListGroups:
     async def test_returns_group_list_response_structure(self):
         """Response must have 'groups' array and 'total' integer."""
-        app = _app()
+        app = _app_with_mock_db()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -117,7 +143,7 @@ class TestListGroups:
 class TestListLabels:
     async def test_returns_list_of_labels(self):
         """Response must be a JSON array (each element a Label object)."""
-        app = _app()
+        app = _app_with_mock_db()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -136,7 +162,7 @@ class TestListLabels:
 class TestListUpcomingDates:
     async def test_returns_list_of_upcoming_dates(self):
         """Response must be a JSON array of UpcomingDate objects."""
-        app = _app()
+        app = _app_with_mock_db()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -148,7 +174,7 @@ class TestListUpcomingDates:
 
     async def test_days_param_accepted(self):
         """The ?days= query parameter must not cause an error."""
-        app = _app()
+        app = _app_with_mock_db()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -166,8 +192,8 @@ class TestListUpcomingDates:
 
 class TestListContactNotes:
     async def test_returns_list_of_notes(self):
-        """Response must be a JSON array of Note objects (or 404 if not yet implemented)."""
-        app = _app()
+        """Response must be a JSON array of Note objects."""
+        app = _app_with_mock_db()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -175,11 +201,8 @@ class TestListContactNotes:
                 "/api/relationship/contacts/00000000-0000-0000-0000-000000000000/notes"
             )
 
-        # 404 acceptable when endpoint is not yet implemented; 200 with list when it is.
-        if resp.status_code == 200:
-            assert isinstance(resp.json(), list)
-        else:
-            assert resp.status_code == 404
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
 
 
 # ---------------------------------------------------------------------------
@@ -189,8 +212,8 @@ class TestListContactNotes:
 
 class TestListContactInteractions:
     async def test_returns_list_of_interactions(self):
-        """Response must be a JSON array of Interaction objects (or 404)."""
-        app = _app()
+        """Response must be a JSON array of Interaction objects."""
+        app = _app_with_mock_db()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -198,10 +221,8 @@ class TestListContactInteractions:
                 "/api/relationship/contacts/00000000-0000-0000-0000-000000000000/interactions"
             )
 
-        if resp.status_code == 200:
-            assert isinstance(resp.json(), list)
-        else:
-            assert resp.status_code == 404
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
 
 
 # ---------------------------------------------------------------------------
@@ -211,8 +232,8 @@ class TestListContactInteractions:
 
 class TestListContactGifts:
     async def test_returns_list_of_gifts(self):
-        """Response must be a JSON array of Gift objects (or 404)."""
-        app = _app()
+        """Response must be a JSON array of Gift objects."""
+        app = _app_with_mock_db()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -220,10 +241,8 @@ class TestListContactGifts:
                 "/api/relationship/contacts/00000000-0000-0000-0000-000000000000/gifts"
             )
 
-        if resp.status_code == 200:
-            assert isinstance(resp.json(), list)
-        else:
-            assert resp.status_code == 404
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +252,8 @@ class TestListContactGifts:
 
 class TestListContactLoans:
     async def test_returns_list_of_loans(self):
-        """Response must be a JSON array of Loan objects (or 404)."""
-        app = _app()
+        """Response must be a JSON array of Loan objects."""
+        app = _app_with_mock_db()
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -242,7 +261,5 @@ class TestListContactLoans:
                 "/api/relationship/contacts/00000000-0000-0000-0000-000000000000/loans"
             )
 
-        if resp.status_code == 200:
-            assert isinstance(resp.json(), list)
-        else:
-            assert resp.status_code == 404
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
