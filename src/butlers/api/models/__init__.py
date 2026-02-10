@@ -264,6 +264,21 @@ class ScheduleCost(BaseModel):
 
 from butlers.api.models.audit import AuditEntry  # noqa: E402
 from butlers.api.models.butler import ModuleStatus  # noqa: E402
+from butlers.api.models.general import (  # noqa: E402
+    Collection,
+    Entity,
+    RegistryEntry,
+    RoutingEntry,
+)
+from butlers.api.models.health import (  # noqa: E402
+    Condition,
+    Dose,
+    Meal,
+    Measurement,
+    Medication,
+    Research,
+    Symptom,
+)
 from butlers.api.models.notification import NotificationStats, NotificationSummary  # noqa: E402
 from butlers.api.models.relationship import (  # noqa: E402
     ActivityFeedItem,
@@ -292,6 +307,8 @@ __all__ = [
     "ApiMeta",
     "ApiResponse",
     "ButlerConfigResponse",
+    "Collection",
+    "Condition",
     "ContactDetail",
     "ContactListResponse",
     "ContactSummary",
@@ -299,6 +316,8 @@ __all__ = [
     "ButlerDetail",
     "ButlerSummary",
     "DailyCost",
+    "Dose",
+    "Entity",
     "ErrorDetail",
     "ErrorResponse",
     "Gift",
@@ -309,6 +328,9 @@ __all__ = [
     "Issue",
     "Label",
     "Loan",
+    "Meal",
+    "Measurement",
+    "Medication",
     "ModuleInfo",
     "ModuleStatus",
     "Note",
@@ -316,6 +338,9 @@ __all__ = [
     "NotificationSummary",
     "PaginatedResponse",
     "PaginationMeta",
+    "RegistryEntry",
+    "Research",
+    "RoutingEntry",
     "Schedule",
     "ScheduleCost",
     "SearchResponse",
@@ -329,6 +354,7 @@ __all__ = [
     "SpanNode",
     "StateEntry",
     "StateSetRequest",
+    "Symptom",
     "TraceDetail",
     "TraceSummary",
     "TickResponse",

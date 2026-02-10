@@ -23,6 +23,8 @@ from butlers.api.middleware import register_error_handlers
 from butlers.api.routers.audit import router as audit_router
 from butlers.api.routers.butlers import router as butlers_router
 from butlers.api.routers.costs import router as costs_router
+from butlers.api.routers.general import router as general_router
+from butlers.api.routers.health import router as health_router
 from butlers.api.routers.issues import router as issues_router
 from butlers.api.routers.notifications import (
     butler_notifications_router,
@@ -40,6 +42,7 @@ from butlers.api.routers.sessions import (
     router as sessions_router,
 )
 from butlers.api.routers.state import router as state_router
+from butlers.api.routers.switchboard_views import router as switchboard_views_router
 from butlers.api.routers.timeline import router as timeline_router
 from butlers.api.routers.traces import router as traces_router
 
@@ -114,6 +117,9 @@ def create_app(
     app.include_router(timeline_router)
     app.include_router(search_router)
     app.include_router(audit_router)
+    app.include_router(health_router)
+    app.include_router(general_router)
+    app.include_router(switchboard_views_router)
 
     @app.get("/api/health")
     async def health():
