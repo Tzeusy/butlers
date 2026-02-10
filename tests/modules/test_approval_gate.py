@@ -15,11 +15,11 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
-from butlers.config import ApprovalConfig, GatedToolConfig, parse_approval_config
+from butlers.config import ApprovalConfig, GatedToolConfig
 from butlers.modules.approvals.gate import (
     apply_approval_gates,
     match_standing_rule,
@@ -57,18 +57,20 @@ class MockPool:
     ) -> uuid.UUID:
         """Add a standing approval rule and return its ID."""
         rule_id = uuid.uuid4()
-        self.approval_rules.append({
-            "id": rule_id,
-            "tool_name": tool_name,
-            "arg_constraints": json.dumps(arg_constraints or {}),
-            "description": f"Rule for {tool_name}",
-            "created_from": None,
-            "created_at": datetime.now(UTC),
-            "expires_at": expires_at,
-            "max_uses": max_uses,
-            "use_count": use_count,
-            "active": active,
-        })
+        self.approval_rules.append(
+            {
+                "id": rule_id,
+                "tool_name": tool_name,
+                "arg_constraints": json.dumps(arg_constraints or {}),
+                "description": f"Rule for {tool_name}",
+                "created_from": None,
+                "created_at": datetime.now(UTC),
+                "expires_at": expires_at,
+                "max_uses": max_uses,
+                "use_count": use_count,
+                "active": active,
+            }
+        )
         return rule_id
 
     async def execute(self, query: str, *args: Any) -> None:
@@ -151,6 +153,7 @@ def _make_mock_mcp(tools: dict[str, Any] | None = None) -> MagicMock:
             _tools_dict[fn.__name__] = FakeTool(fn.__name__, fn)
             tools[fn.__name__] = fn
             return fn
+
         return decorator
 
     mock_mcp.tool = tool_decorator
@@ -185,15 +188,17 @@ class TestMatchStandingRule:
     def test_exact_match_returns_rule(self):
         """Exact arg match should return the matching rule."""
         rule_id = uuid.uuid4()
-        rules = [{
-            "id": rule_id,
-            "tool_name": "email_send",
-            "arg_constraints": json.dumps({"to": "alice@example.com"}),
-            "active": True,
-            "expires_at": None,
-            "max_uses": None,
-            "use_count": 0,
-        }]
+        rules = [
+            {
+                "id": rule_id,
+                "tool_name": "email_send",
+                "arg_constraints": json.dumps({"to": "alice@example.com"}),
+                "active": True,
+                "expires_at": None,
+                "max_uses": None,
+                "use_count": 0,
+            }
+        ]
         result = match_standing_rule("email_send", {"to": "alice@example.com"}, rules)
         assert result is not None
         assert result["id"] == rule_id
@@ -201,15 +206,17 @@ class TestMatchStandingRule:
     def test_empty_constraints_matches_any(self):
         """Empty arg_constraints should match any args for the tool."""
         rule_id = uuid.uuid4()
-        rules = [{
-            "id": rule_id,
-            "tool_name": "email_send",
-            "arg_constraints": json.dumps({}),
-            "active": True,
-            "expires_at": None,
-            "max_uses": None,
-            "use_count": 0,
-        }]
+        rules = [
+            {
+                "id": rule_id,
+                "tool_name": "email_send",
+                "arg_constraints": json.dumps({}),
+                "active": True,
+                "expires_at": None,
+                "max_uses": None,
+                "use_count": 0,
+            }
+        ]
         result = match_standing_rule("email_send", {"to": "bob@example.com"}, rules)
         assert result is not None
         assert result["id"] == rule_id
@@ -217,15 +224,17 @@ class TestMatchStandingRule:
     def test_partial_constraint_match(self):
         """Constraint on a subset of args should match if those args are present."""
         rule_id = uuid.uuid4()
-        rules = [{
-            "id": rule_id,
-            "tool_name": "email_send",
-            "arg_constraints": json.dumps({"to": "alice@example.com"}),
-            "active": True,
-            "expires_at": None,
-            "max_uses": None,
-            "use_count": 0,
-        }]
+        rules = [
+            {
+                "id": rule_id,
+                "tool_name": "email_send",
+                "arg_constraints": json.dumps({"to": "alice@example.com"}),
+                "active": True,
+                "expires_at": None,
+                "max_uses": None,
+                "use_count": 0,
+            }
+        ]
         # Tool called with extra args — should still match
         result = match_standing_rule(
             "email_send",
@@ -236,87 +245,99 @@ class TestMatchStandingRule:
 
     def test_constraint_mismatch(self):
         """If a constraint value doesn't match, rule should not match."""
-        rules = [{
-            "id": uuid.uuid4(),
-            "tool_name": "email_send",
-            "arg_constraints": json.dumps({"to": "alice@example.com"}),
-            "active": True,
-            "expires_at": None,
-            "max_uses": None,
-            "use_count": 0,
-        }]
+        rules = [
+            {
+                "id": uuid.uuid4(),
+                "tool_name": "email_send",
+                "arg_constraints": json.dumps({"to": "alice@example.com"}),
+                "active": True,
+                "expires_at": None,
+                "max_uses": None,
+                "use_count": 0,
+            }
+        ]
         result = match_standing_rule("email_send", {"to": "bob@example.com"}, rules)
         assert result is None
 
     def test_pattern_constraint_with_wildcard(self):
         """Constraint value '*' should match any value for that key."""
         rule_id = uuid.uuid4()
-        rules = [{
-            "id": rule_id,
-            "tool_name": "email_send",
-            "arg_constraints": json.dumps({"to": "*"}),
-            "active": True,
-            "expires_at": None,
-            "max_uses": None,
-            "use_count": 0,
-        }]
+        rules = [
+            {
+                "id": rule_id,
+                "tool_name": "email_send",
+                "arg_constraints": json.dumps({"to": "*"}),
+                "active": True,
+                "expires_at": None,
+                "max_uses": None,
+                "use_count": 0,
+            }
+        ]
         result = match_standing_rule("email_send", {"to": "anyone@example.com"}, rules)
         assert result is not None
 
     def test_expired_rule_not_matched(self):
         """An expired rule (expires_at in the past) should not match."""
-        rules = [{
-            "id": uuid.uuid4(),
-            "tool_name": "email_send",
-            "arg_constraints": json.dumps({}),
-            "active": True,
-            "expires_at": datetime.now(UTC) - timedelta(hours=1),
-            "max_uses": None,
-            "use_count": 0,
-        }]
+        rules = [
+            {
+                "id": uuid.uuid4(),
+                "tool_name": "email_send",
+                "arg_constraints": json.dumps({}),
+                "active": True,
+                "expires_at": datetime.now(UTC) - timedelta(hours=1),
+                "max_uses": None,
+                "use_count": 0,
+            }
+        ]
         result = match_standing_rule("email_send", {}, rules)
         assert result is None
 
     def test_max_uses_exhausted_not_matched(self):
         """A rule with use_count >= max_uses should not match."""
-        rules = [{
-            "id": uuid.uuid4(),
-            "tool_name": "email_send",
-            "arg_constraints": json.dumps({}),
-            "active": True,
-            "expires_at": None,
-            "max_uses": 5,
-            "use_count": 5,
-        }]
+        rules = [
+            {
+                "id": uuid.uuid4(),
+                "tool_name": "email_send",
+                "arg_constraints": json.dumps({}),
+                "active": True,
+                "expires_at": None,
+                "max_uses": 5,
+                "use_count": 5,
+            }
+        ]
         result = match_standing_rule("email_send", {}, rules)
         assert result is None
 
     def test_max_uses_not_yet_exhausted(self):
         """A rule with use_count < max_uses should still match."""
         rule_id = uuid.uuid4()
-        rules = [{
-            "id": rule_id,
-            "tool_name": "email_send",
-            "arg_constraints": json.dumps({}),
-            "active": True,
-            "expires_at": None,
-            "max_uses": 5,
-            "use_count": 4,
-        }]
+        rules = [
+            {
+                "id": rule_id,
+                "tool_name": "email_send",
+                "arg_constraints": json.dumps({}),
+                "active": True,
+                "expires_at": None,
+                "max_uses": 5,
+                "use_count": 4,
+            }
+        ]
         result = match_standing_rule("email_send", {}, rules)
         assert result is not None
 
     def test_wrong_tool_name_not_matched(self):
         """A rule for a different tool should not match."""
-        rules = [{
-            "id": uuid.uuid4(),
-            "tool_name": "telegram_send",
-            "arg_constraints": json.dumps({}),
-            "active": True,
-            "expires_at": None,
-            "max_uses": None,
-            "use_count": 0,
-        }]
+        rules = [
+            {
+                "id": uuid.uuid4(),
+                "tool_name": "telegram_send",
+                "arg_constraints": json.dumps({}),
+                "active": True,
+                "expires_at": None,
+                "max_uses": None,
+                "use_count": 0,
+            }
+        ]
         result = match_standing_rule("email_send", {}, rules)
         assert result is None
 
@@ -342,7 +363,6 @@ class TestApplyApprovalGates:
 
         config = _make_approval_config(gated_tools={})
 
-        original_fn = tools["safe_tool"]
         originals = apply_approval_gates(mock_mcp, config, pool)
 
         # The tool should not appear in the originals dict (not wrapped)
@@ -492,9 +512,9 @@ class TestApplyApprovalGates:
         )
 
         # Add a standing rule that matches
-        rule_id = pool.add_rule("email_send", arg_constraints={"to": "alice@example.com"})
+        pool.add_rule("email_send", arg_constraints={"to": "alice@example.com"})
 
-        originals = apply_approval_gates(mock_mcp, config, pool)
+        apply_approval_gates(mock_mcp, config, pool)
 
         wrapper = mock_mcp._tool_manager.get_tools()["email_send"].fn
         result = await wrapper(to="alice@example.com", body="hello")
@@ -522,7 +542,7 @@ class TestApplyApprovalGates:
         apply_approval_gates(mock_mcp, config, pool)
 
         wrapper = mock_mcp._tool_manager.get_tools()["email_send"].fn
-        result = await wrapper(to="alice@example.com")
+        await wrapper(to="alice@example.com")
 
         # The action should have been persisted and auto-approved
         assert len(pool.pending_actions) == 1
@@ -668,9 +688,7 @@ class TestApplyApprovalGates:
         pool = MockPool()
 
         @mock_mcp.tool()
-        async def complex_tool(
-            name: str, count: int, tags: list | None = None
-        ) -> dict:
+        async def complex_tool(name: str, count: int, tags: list | None = None) -> dict:
             return {"ok": True}
 
         config = _make_approval_config(

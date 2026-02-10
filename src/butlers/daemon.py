@@ -13,6 +13,7 @@ The ButlerDaemon manages the lifecycle of a butler:
 10. Sync TOML schedules to DB
 11. Create FastMCP server and register core tools
 12. Register module MCP tools
+12b. Apply approval gates to configured gated tools
 13. Start FastMCP SSE server on configured port
 
 On startup failure, already-initialized modules get on_shutdown() called.
@@ -38,7 +39,7 @@ from fastmcp import FastMCP
 from opentelemetry import trace
 from pydantic import ConfigDict, ValidationError
 
-from butlers.config import ButlerConfig, load_config
+from butlers.config import ButlerConfig, load_config, parse_approval_config
 from butlers.core.runtimes import get_adapter
 from butlers.core.scheduler import schedule_create as _schedule_create
 from butlers.core.scheduler import schedule_delete as _schedule_delete
@@ -57,6 +58,7 @@ from butlers.core.telemetry import extract_trace_context, init_telemetry, tool_s
 from butlers.credentials import detect_secrets, validate_credentials
 from butlers.db import Database
 from butlers.migrations import has_butler_chain, run_migrations
+from butlers.modules.approvals.gate import apply_approval_gates
 from butlers.modules.base import Module
 from butlers.modules.registry import ModuleRegistry
 
@@ -132,6 +134,7 @@ class _SpanWrappingMCP:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._mcp, name)
 
+
 class RuntimeBinaryNotFoundError(RuntimeError):
     """Raised when the runtime adapter's binary is not found on PATH."""
 
@@ -152,6 +155,7 @@ class ButlerDaemon:
         self.spawner: Spawner | None = None
         self._modules: list[Module] = []
         self._module_configs: dict[str, Any] = {}
+        self._gated_tool_originals: dict[str, Any] = {}
         self._started_at: float | None = None
         self._accepting_connections = False
         self._server: uvicorn.Server | None = None
@@ -258,6 +262,9 @@ class ButlerDaemon:
 
         # 12. Register module MCP tools
         await self._register_module_tools()
+
+        # 12b. Apply approval gates to configured gated tools
+        self._gated_tool_originals = self._apply_approval_gates()
 
         # 13. Start FastMCP SSE server on configured port
         await self._start_mcp_server()
@@ -541,6 +548,51 @@ class ButlerDaemon:
         for mod in self._modules:
             validated_config = self._module_configs.get(mod.name)
             await mod.register_tools(wrapped_mcp, validated_config, self.db)
+
+    def _apply_approval_gates(self) -> dict[str, Any]:
+        """Parse approval config and wrap gated tools with approval interception.
+
+        Parses the ``[modules.approvals]`` section from the butler config,
+        then calls ``apply_approval_gates`` to wrap tools whose names appear
+        in the ``gated_tools`` configuration.
+
+        Returns the mapping of tool_name -> original handler for gated tools.
+        """
+        approvals_raw = self.config.modules.get("approvals")
+        approval_config = parse_approval_config(approvals_raw)
+
+        if approval_config is None or not approval_config.enabled:
+            return {}
+
+        pool = self.db.pool
+        originals = apply_approval_gates(self.mcp, approval_config, pool)
+
+        # Wire the originals into the ApprovalsModule if it's loaded,
+        # so the post-approval executor can invoke them directly
+        if originals:
+            for mod in self._modules:
+                if mod.name == "approvals":
+                    # Set up a tool executor that calls the original tool function
+                    async def _execute_original(
+                        tool_name: str,
+                        tool_args: dict[str, Any],
+                        _originals: dict[str, Any] = originals,
+                    ) -> dict[str, Any]:
+                        original_fn = _originals.get(tool_name)
+                        if original_fn is None:
+                            return {"error": f"No original handler for tool: {tool_name}"}
+                        return await original_fn(**tool_args)
+
+                    mod.set_tool_executor(_execute_original)
+                    break
+
+            logger.info(
+                "Applied approval gates to %d tool(s): %s",
+                len(originals),
+                ", ".join(sorted(originals.keys())),
+            )
+
+        return originals
 
     async def shutdown(self) -> None:
         """Graceful shutdown.
