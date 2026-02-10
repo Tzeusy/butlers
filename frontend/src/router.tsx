@@ -21,6 +21,9 @@ import ConditionsPage from './pages/ConditionsPage.tsx'
 import SymptomsPage from './pages/SymptomsPage.tsx'
 import MealsPage from './pages/MealsPage.tsx'
 import ResearchPage from './pages/ResearchPage.tsx'
+import CollectionsPage from './pages/CollectionsPage.tsx'
+import EntitiesPage from './pages/EntitiesPage.tsx'
+import EntityDetailPage from './pages/EntityDetailPage.tsx'
 
 export const router = createBrowserRouter([
   {
@@ -45,6 +48,9 @@ export const router = createBrowserRouter([
       { path: '/health/symptoms', element: <SymptomsPage /> },
       { path: '/health/meals', element: <MealsPage /> },
       { path: '/health/research', element: <ResearchPage /> },
+      { path: '/collections', element: <CollectionsPage /> },
+      { path: '/entities', element: <EntitiesPage /> },
+      { path: '/entities/:entityId', element: <EntityDetailPage /> },
       { path: '/costs', element: <CostsPage /> },
       { path: '/settings', element: <SettingsPage /> },
     ],

@@ -11,6 +11,8 @@ const navItems = [
   { path: '/contacts', label: 'Contacts' },
   { path: '/groups', label: 'Groups' },
   { path: '/health/measurements', label: 'Health' },
+  { path: '/collections', label: 'Collections' },
+  { path: '/entities', label: 'Entities' },
   { path: '/settings', label: 'Settings' },
 ]
 
