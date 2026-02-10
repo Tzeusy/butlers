@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import tomllib
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -23,6 +24,7 @@ from butlers.api.deps import (
 )
 from butlers.api.models import (
     ApiResponse,
+    ButlerConfigResponse,
     ButlerDetail,
     ButlerSummary,
     ModuleInfo,
@@ -153,6 +155,58 @@ async def get_butler_detail(
     )
 
     return ApiResponse[ButlerDetail](data=detail)
+
+
+# ---------------------------------------------------------------------------
+# Config endpoint
+# ---------------------------------------------------------------------------
+
+
+def _read_optional_text(path: Path) -> str | None:
+    """Read a text file and return its contents, or None if the file does not exist."""
+    if path.is_file():
+        return path.read_text(encoding="utf-8")
+    return None
+
+
+@router.get("/{name}/config", response_model=ApiResponse[ButlerConfigResponse])
+async def get_butler_config(
+    name: str,
+    configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
+    roster_dir: Path = Depends(_get_roster_dir),
+) -> ApiResponse[ButlerConfigResponse]:
+    """Return the butler's configuration files as a structured response.
+
+    Reads ``butler.toml`` and parses it as a dict.  Also reads the markdown
+    config files (``CLAUDE.md``, ``AGENTS.md``, ``MANIFESTO.md``) as raw text.
+    Missing markdown files are returned as ``null``.
+    """
+    # Validate butler exists in discovered configs
+    if not any(cfg.name == name for cfg in configs):
+        raise HTTPException(status_code=404, detail=f"Butler not found: {name}")
+
+    butler_dir = roster_dir / name
+    toml_path = butler_dir / "butler.toml"
+
+    if not toml_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Butler not found: {name}")
+
+    try:
+        butler_toml = tomllib.loads(toml_path.read_bytes().decode())
+    except (tomllib.TOMLDecodeError, OSError) as exc:
+        logger.error("Failed to read butler.toml for %s: %s", name, exc)
+        raise HTTPException(
+            status_code=500, detail=f"Failed to read config for butler: {name}"
+        )
+
+    config_response = ButlerConfigResponse(
+        butler_toml=butler_toml,
+        claude_md=_read_optional_text(butler_dir / "CLAUDE.md"),
+        agents_md=_read_optional_text(butler_dir / "AGENTS.md"),
+        manifesto_md=_read_optional_text(butler_dir / "MANIFESTO.md"),
+    )
+
+    return ApiResponse[ButlerConfigResponse](data=config_response)
 
 
 def _discover_skills(butler_dir: Path) -> list[str]:

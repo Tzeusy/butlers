@@ -137,6 +137,20 @@ class SessionSummary(BaseModel):
     duration_ms: int | None = None
 
 
+class ButlerConfigResponse(BaseModel):
+    """Full butler configuration returned by the config endpoint.
+
+    Contains the parsed butler.toml as a dict plus the raw text content
+    of the markdown config files (CLAUDE.md, AGENTS.md, MANIFESTO.md).
+    Missing markdown files are represented as ``None``.
+    """
+
+    butler_toml: dict
+    claude_md: str | None = None
+    agents_md: str | None = None
+    manifesto_md: str | None = None
+
+
 class HealthResponse(BaseModel):
     """Health-check response."""
 
@@ -153,6 +167,7 @@ from butlers.api.models.notification import NotificationStats, NotificationSumma
 __all__ = [
     "ApiMeta",
     "ApiResponse",
+    "ButlerConfigResponse",
     "ButlerDetail",
     "ButlerSummary",
     "ErrorDetail",
