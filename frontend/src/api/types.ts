@@ -60,6 +60,14 @@ export interface ButlerSummary {
   port: number;
 }
 
+/** Butler configuration files returned by GET /api/butlers/:name/config. */
+export interface ButlerConfigResponse {
+  butler_toml: Record<string, unknown>;
+  claude_md: string | null;
+  agents_md: string | null;
+  manifesto_md: string | null;
+}
+
 /** Lightweight session representation for list views. */
 export interface SessionSummary {
   id: string;
