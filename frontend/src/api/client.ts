@@ -48,6 +48,18 @@ import type {
   TraceParams,
   TraceSummary,
   TriggerResponse,
+  Dose,
+  HealthCondition,
+  HealthResearch,
+  Meal,
+  MealParams,
+  Measurement,
+  MeasurementParams,
+  Medication,
+  MedicationParams,
+  ResearchParams,
+  Symptom,
+  SymptomParams,
   UpcomingDate,
 } from "./types.ts";
 
@@ -561,4 +573,84 @@ export function getLabels(): Promise<Label[]> {
 export function getUpcomingDates(days?: number): Promise<UpcomingDate[]> {
   const params = days != null ? `?days=${days}` : "";
   return apiFetch<UpcomingDate[]>(`/relationship/upcoming-dates${params}`);
+}
+
+// ---------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------
+
+/** Fetch a paginated list of health measurements. */
+export function getMeasurements(params?: MeasurementParams): Promise<PaginatedResponse<Measurement>> {
+  const sp = new URLSearchParams();
+  if (params?.type) sp.set("type", params.type);
+  if (params?.since) sp.set("since", params.since);
+  if (params?.until) sp.set("until", params.until);
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  const qs = sp.toString();
+  return apiFetch<PaginatedResponse<Measurement>>(qs ? `/health/measurements?${qs}` : "/health/measurements");
+}
+
+/** Fetch a paginated list of medications. */
+export function getMedications(params?: MedicationParams): Promise<PaginatedResponse<Medication>> {
+  const sp = new URLSearchParams();
+  if (params?.active != null) sp.set("active", String(params.active));
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  const qs = sp.toString();
+  return apiFetch<PaginatedResponse<Medication>>(qs ? `/health/medications?${qs}` : "/health/medications");
+}
+
+/** Fetch dose log entries for a specific medication. */
+export function getMedicationDoses(medicationId: string, params?: { since?: string; until?: string }): Promise<Dose[]> {
+  const sp = new URLSearchParams();
+  if (params?.since) sp.set("since", params.since);
+  if (params?.until) sp.set("until", params.until);
+  const qs = sp.toString();
+  const base = `/health/medications/${encodeURIComponent(medicationId)}/doses`;
+  return apiFetch<Dose[]>(qs ? `${base}?${qs}` : base);
+}
+
+/** Fetch a paginated list of health conditions. */
+export function getConditions(params?: { offset?: number; limit?: number }): Promise<PaginatedResponse<HealthCondition>> {
+  const sp = new URLSearchParams();
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  const qs = sp.toString();
+  return apiFetch<PaginatedResponse<HealthCondition>>(qs ? `/health/conditions?${qs}` : "/health/conditions");
+}
+
+/** Fetch a paginated list of symptoms. */
+export function getSymptoms(params?: SymptomParams): Promise<PaginatedResponse<Symptom>> {
+  const sp = new URLSearchParams();
+  if (params?.name) sp.set("name", params.name);
+  if (params?.since) sp.set("since", params.since);
+  if (params?.until) sp.set("until", params.until);
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  const qs = sp.toString();
+  return apiFetch<PaginatedResponse<Symptom>>(qs ? `/health/symptoms?${qs}` : "/health/symptoms");
+}
+
+/** Fetch a paginated list of meals. */
+export function getMeals(params?: MealParams): Promise<PaginatedResponse<Meal>> {
+  const sp = new URLSearchParams();
+  if (params?.type) sp.set("type", params.type);
+  if (params?.since) sp.set("since", params.since);
+  if (params?.until) sp.set("until", params.until);
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  const qs = sp.toString();
+  return apiFetch<PaginatedResponse<Meal>>(qs ? `/health/meals?${qs}` : "/health/meals");
+}
+
+/** Fetch a paginated list of health research notes. */
+export function getResearch(params?: ResearchParams): Promise<PaginatedResponse<HealthResearch>> {
+  const sp = new URLSearchParams();
+  if (params?.q) sp.set("q", params.q);
+  if (params?.tag) sp.set("tag", params.tag);
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  const qs = sp.toString();
+  return apiFetch<PaginatedResponse<HealthResearch>>(qs ? `/health/research?${qs}` : "/health/research");
 }
