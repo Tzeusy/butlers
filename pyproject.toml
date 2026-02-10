@@ -20,6 +20,9 @@ dependencies = [
     "sqlalchemy",
     "psycopg2-binary",
     "vobject>=0.9.9",
+    "fastapi",
+    "uvicorn",
+    "httpx",
 ]
 
 [dependency-groups]
