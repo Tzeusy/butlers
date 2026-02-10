@@ -36,6 +36,7 @@ from butlers.api.routers.sessions import (
 from butlers.api.routers.sessions import (
     router as sessions_router,
 )
+from butlers.api.routers.state import router as state_router
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,7 @@ def create_app(
     app.include_router(relationship_router)
     app.include_router(sessions_router)
     app.include_router(butler_sessions_router)
+    app.include_router(state_router)
 
     @app.get("/api/health")
     async def health():
