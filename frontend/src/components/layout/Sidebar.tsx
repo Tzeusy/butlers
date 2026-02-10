@@ -4,6 +4,7 @@ const navItems = [
   { path: '/', label: 'Overview', end: true },
   { path: '/butlers', label: 'Butlers' },
   { path: '/sessions', label: 'Sessions' },
+  { path: '/traces', label: 'Traces' },
   { path: '/notifications', label: 'Notifications' },
   { path: '/settings', label: 'Settings' },
 ]

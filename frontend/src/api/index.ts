@@ -21,6 +21,8 @@ export {
   getSession,
   getSessions,
   getTopSessions,
+  getTrace,
+  getTraces,
   triggerButler,
 } from "./client.ts";
 
@@ -44,6 +46,10 @@ export type {
   SessionDetail,
   SessionParams,
   SessionSummary,
+  SpanNode,
   TopSession,
+  TraceDetail,
+  TraceParams,
+  TraceSummary,
   TriggerResponse,
 } from "./types.ts";
