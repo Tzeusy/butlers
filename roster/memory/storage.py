@@ -12,8 +12,10 @@ import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from asyncpg import Pool
+if TYPE_CHECKING:
+    from asyncpg import Pool
 
 # ---------------------------------------------------------------------------
 # Load sibling modules from disk (roster/ is not a Python package).
@@ -40,6 +42,22 @@ tsvector_sql = _search_mod.tsvector_sql
 
 # Default episode time-to-live.
 _DEFAULT_EPISODE_TTL_DAYS = 7
+
+# ---------------------------------------------------------------------------
+# Permanence -> decay-rate mapping (from butler.toml)
+# ---------------------------------------------------------------------------
+_PERMANENCE_DECAY: dict[str, float] = {
+    "permanent": 0.0,
+    "stable": 0.002,
+    "standard": 0.008,
+    "volatile": 0.03,
+    "ephemeral": 0.1,
+}
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 async def store_episode(
@@ -96,3 +114,106 @@ async def store_episode(
     )
 
     return episode_id
+
+
+async def store_fact(
+    pool: Pool,
+    subject: str,
+    predicate: str,
+    content: str,
+    embedding_engine: EmbeddingEngine,
+    *,
+    importance: float = 5.0,
+    permanence: str = "standard",
+    scope: str = "global",
+    tags: list[str] | None = None,
+    source_butler: str | None = None,
+    source_episode_id: uuid.UUID | None = None,
+    metadata: dict | None = None,
+) -> uuid.UUID:
+    """Store a distilled fact with optional supersession.
+
+    If an active fact with the same ``(subject, predicate)`` already exists:
+
+    1. Set the old fact's ``validity`` to ``'superseded'``.
+    2. Link the new fact to the old one via ``supersedes_id``.
+    3. Create a ``memory_links`` row with ``relation='supersedes'``.
+
+    Returns:
+        The UUID of the newly created fact.
+    """
+    fact_id = uuid.uuid4()
+    embedding = embedding_engine.embed(content)
+    search_text = preprocess_text(content)
+    decay_rate = _PERMANENCE_DECAY.get(permanence, 0.008)
+    now = datetime.now(UTC)
+    tags_json = json.dumps(tags or [])
+    meta_json = json.dumps(metadata or {})
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Check for existing active fact with same subject+predicate
+            existing = await conn.fetchrow(
+                "SELECT id FROM facts "
+                "WHERE subject = $1 AND predicate = $2 AND validity = 'active'",
+                subject,
+                predicate,
+            )
+
+            supersedes_id = None
+            if existing:
+                old_id = existing["id"]
+                supersedes_id = old_id
+                # Mark old fact as superseded
+                await conn.execute(
+                    "UPDATE facts SET validity = 'superseded' WHERE id = $1",
+                    old_id,
+                )
+
+            # Insert new fact
+            sql = f"""
+                INSERT INTO facts (
+                    id, subject, predicate, content, embedding, search_vector,
+                    importance, confidence, decay_rate, permanence, source_butler,
+                    source_episode_id, supersedes_id, validity, scope,
+                    created_at, last_confirmed_at, tags, metadata
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5, {tsvector_sql("$6")},
+                    $7, $8, $9, $10, $11,
+                    $12, $13, 'active', $14,
+                    $15, $15, $16, $17
+                )
+            """
+            await conn.execute(
+                sql,
+                fact_id,
+                subject,
+                predicate,
+                content,
+                str(embedding),
+                search_text,
+                importance,
+                1.0,  # confidence
+                decay_rate,
+                permanence,
+                source_butler,
+                source_episode_id,
+                supersedes_id,
+                scope,
+                now,
+                tags_json,
+                meta_json,
+            )
+
+            # Create supersedes link if applicable
+            if supersedes_id:
+                await conn.execute(
+                    "INSERT INTO memory_links "
+                    "(source_type, source_id, target_type, target_id, relation) "
+                    "VALUES ('fact', $1, 'fact', $2, 'supersedes')",
+                    fact_id,
+                    supersedes_id,
+                )
+
+    return fact_id
