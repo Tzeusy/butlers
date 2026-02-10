@@ -6,7 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from butlers.config import ButlerConfig, ConfigError, RuntimeConfig, ScheduleConfig, load_config
+from butlers.config import (
+    ApprovalConfig,
+    ButlerConfig,
+    ConfigError,
+    GatedToolConfig,
+    RuntimeConfig,
+    ScheduleConfig,
+    load_config,
+    parse_approval_config,
+    validate_approval_config,
+)
 
 pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
@@ -446,3 +456,352 @@ type = "gemini"
     from butlers.config import RuntimeConfig
 
     assert isinstance(cfg.runtime, RuntimeConfig)
+
+
+# ---------------------------------------------------------------------------
+# Approval config tests
+# ---------------------------------------------------------------------------
+
+
+class TestApprovalConfig:
+    """Tests for [modules.approvals] section parsing."""
+
+    def test_approvals_minimal(self, tmp_path: Path):
+        """Minimal approvals config with just enabled flag."""
+        toml = """\
+[butler]
+name = "approvalsbot"
+port = 8200
+
+[modules.approvals]
+enabled = true
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert "approvals" in cfg.modules
+        approvals = cfg.modules["approvals"]
+        assert approvals["enabled"] is True
+        assert approvals.get("default_expiry_hours", 48) == 48
+        assert approvals.get("gated_tools", {}) == {}
+
+    def test_approvals_full_config(self, tmp_path: Path):
+        """Full approvals config with gated tools and custom expiry."""
+        toml = """\
+[butler]
+name = "approvalsbot"
+port = 8200
+
+[modules.approvals]
+enabled = true
+default_expiry_hours = 72
+
+[modules.approvals.gated_tools]
+email_send = {}
+purchase_create = {expiry_hours = 24}
+calendar_invite = {}
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert "approvals" in cfg.modules
+        approvals = cfg.modules["approvals"]
+        assert approvals["enabled"] is True
+        assert approvals["default_expiry_hours"] == 72
+        assert "gated_tools" in approvals
+        gated_tools = approvals["gated_tools"]
+        assert "email_send" in gated_tools
+        assert gated_tools["email_send"] == {}
+        assert "purchase_create" in gated_tools
+        assert gated_tools["purchase_create"] == {"expiry_hours": 24}
+        assert "calendar_invite" in gated_tools
+        assert gated_tools["calendar_invite"] == {}
+
+    def test_approvals_disabled(self, tmp_path: Path):
+        """Approvals module can be disabled."""
+        toml = """\
+[butler]
+name = "approvalsbot"
+port = 8200
+
+[modules.approvals]
+enabled = false
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert "approvals" in cfg.modules
+        assert cfg.modules["approvals"]["enabled"] is False
+
+    def test_approvals_default_expiry(self, tmp_path: Path):
+        """Default expiry hours defaults to 48."""
+        toml = """\
+[butler]
+name = "approvalsbot"
+port = 8200
+
+[modules.approvals]
+enabled = true
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        approvals = cfg.modules["approvals"]
+        # Default should be absent (will be handled by ApprovalConfig dataclass)
+        assert (
+            approvals.get("default_expiry_hours") is None
+            or approvals.get("default_expiry_hours") == 48
+        )
+
+    def test_approvals_no_gated_tools(self, tmp_path: Path):
+        """Approvals config without gated_tools section."""
+        toml = """\
+[butler]
+name = "approvalsbot"
+port = 8200
+
+[modules.approvals]
+enabled = true
+default_expiry_hours = 48
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        approvals = cfg.modules["approvals"]
+        assert approvals.get("gated_tools", {}) == {}
+
+    def test_approvals_gated_tool_with_custom_expiry(self, tmp_path: Path):
+        """Gated tool can override default expiry."""
+        toml = """\
+[butler]
+name = "approvalsbot"
+port = 8200
+
+[modules.approvals]
+enabled = true
+default_expiry_hours = 48
+
+[modules.approvals.gated_tools]
+high_risk_action = {expiry_hours = 1}
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        gated_tools = cfg.modules["approvals"]["gated_tools"]
+        assert "high_risk_action" in gated_tools
+        assert gated_tools["high_risk_action"]["expiry_hours"] == 1
+
+    def test_approvals_multiple_gated_tools(self, tmp_path: Path):
+        """Multiple gated tools with mixed configurations."""
+        toml = """\
+[butler]
+name = "approvalsbot"
+port = 8200
+
+[modules.approvals]
+enabled = true
+default_expiry_hours = 48
+
+[modules.approvals.gated_tools]
+email_send = {}
+purchase_create = {expiry_hours = 24}
+database_delete = {expiry_hours = 6}
+calendar_invite = {}
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        gated_tools = cfg.modules["approvals"]["gated_tools"]
+        assert len(gated_tools) == 4
+        assert gated_tools["email_send"] == {}
+        assert gated_tools["purchase_create"]["expiry_hours"] == 24
+        assert gated_tools["database_delete"]["expiry_hours"] == 6
+        assert gated_tools["calendar_invite"] == {}
+
+    def test_approvals_absent_from_config(self, tmp_path: Path):
+        """Butler config without approvals module."""
+        toml = """\
+[butler]
+name = "noapprovalsbot"
+port = 8200
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert "approvals" not in cfg.modules
+
+
+# ---------------------------------------------------------------------------
+# ApprovalConfig dataclass tests
+# ---------------------------------------------------------------------------
+
+
+class TestApprovalConfigDataclass:
+    """Tests for ApprovalConfig and GatedToolConfig dataclasses."""
+
+    def test_gated_tool_config_defaults(self):
+        """GatedToolConfig with no override uses None."""
+        gtc = GatedToolConfig()
+        assert gtc.expiry_hours is None
+
+    def test_gated_tool_config_with_override(self):
+        """GatedToolConfig with expiry override."""
+        gtc = GatedToolConfig(expiry_hours=12)
+        assert gtc.expiry_hours == 12
+
+    def test_approval_config_defaults(self):
+        """ApprovalConfig defaults."""
+        ac = ApprovalConfig(enabled=True)
+        assert ac.enabled is True
+        assert ac.default_expiry_hours == 48
+        assert ac.gated_tools == {}
+
+    def test_approval_config_custom_default_expiry(self):
+        """ApprovalConfig with custom default expiry."""
+        ac = ApprovalConfig(enabled=True, default_expiry_hours=72)
+        assert ac.default_expiry_hours == 72
+
+    def test_approval_config_with_gated_tools(self):
+        """ApprovalConfig with gated tools."""
+        gated_tools = {
+            "email_send": GatedToolConfig(),
+            "purchase_create": GatedToolConfig(expiry_hours=24),
+        }
+        ac = ApprovalConfig(enabled=True, gated_tools=gated_tools)
+        assert len(ac.gated_tools) == 2
+        assert ac.gated_tools["email_send"].expiry_hours is None
+        assert ac.gated_tools["purchase_create"].expiry_hours == 24
+
+    def test_parse_approval_config_minimal(self):
+        """Parse minimal approval config dict."""
+        raw = {"enabled": True}
+        ac = parse_approval_config(raw)
+        assert ac.enabled is True
+        assert ac.default_expiry_hours == 48
+        assert ac.gated_tools == {}
+
+    def test_parse_approval_config_full(self):
+        """Parse full approval config dict."""
+        raw = {
+            "enabled": True,
+            "default_expiry_hours": 72,
+            "gated_tools": {
+                "email_send": {},
+                "purchase_create": {"expiry_hours": 24},
+            },
+        }
+        ac = parse_approval_config(raw)
+        assert ac.enabled is True
+        assert ac.default_expiry_hours == 72
+        assert len(ac.gated_tools) == 2
+        assert ac.gated_tools["email_send"].expiry_hours is None
+        assert ac.gated_tools["purchase_create"].expiry_hours == 24
+
+    def test_parse_approval_config_disabled(self):
+        """Parse disabled approval config."""
+        raw = {"enabled": False}
+        ac = parse_approval_config(raw)
+        assert ac.enabled is False
+
+    def test_parse_approval_config_none_returns_none(self):
+        """parse_approval_config with None returns None."""
+        assert parse_approval_config(None) is None
+
+    def test_approval_config_get_effective_expiry_default(self):
+        """Get effective expiry for a tool without override."""
+        ac = ApprovalConfig(
+            enabled=True,
+            default_expiry_hours=48,
+            gated_tools={"email_send": GatedToolConfig()},
+        )
+        assert ac.get_effective_expiry("email_send") == 48
+
+    def test_approval_config_get_effective_expiry_override(self):
+        """Get effective expiry for a tool with override."""
+        ac = ApprovalConfig(
+            enabled=True,
+            default_expiry_hours=48,
+            gated_tools={"purchase_create": GatedToolConfig(expiry_hours=24)},
+        )
+        assert ac.get_effective_expiry("purchase_create") == 24
+
+    def test_approval_config_get_effective_expiry_unknown_tool(self):
+        """Get effective expiry for an unknown tool returns default."""
+        ac = ApprovalConfig(enabled=True, default_expiry_hours=48)
+        assert ac.get_effective_expiry("unknown_tool") == 48
+
+
+# ---------------------------------------------------------------------------
+# Approval config validation tests
+# ---------------------------------------------------------------------------
+
+
+class TestApprovalConfigValidation:
+    """Tests for validating approval config against registered tools."""
+
+    def test_validate_approval_config_all_tools_registered(self):
+        """Validation passes when all gated tools are registered."""
+        ac = ApprovalConfig(
+            enabled=True,
+            gated_tools={
+                "email_send": GatedToolConfig(),
+                "purchase_create": GatedToolConfig(expiry_hours=24),
+            },
+        )
+        registered_tools = {"email_send", "purchase_create", "calendar_invite"}
+        # Should not raise
+        validate_approval_config(ac, registered_tools)
+
+    def test_validate_approval_config_unregistered_tool(self):
+        """Validation fails when a gated tool is not registered."""
+        ac = ApprovalConfig(
+            enabled=True,
+            gated_tools={
+                "email_send": GatedToolConfig(),
+                "unknown_tool": GatedToolConfig(),
+            },
+        )
+        registered_tools = {"email_send", "purchase_create"}
+
+        with pytest.raises(ConfigError, match="Unknown gated tool.*unknown_tool.*not registered"):
+            validate_approval_config(ac, registered_tools)
+
+    def test_validate_approval_config_multiple_unregistered_tools(self):
+        """Validation reports all unregistered tools."""
+        ac = ApprovalConfig(
+            enabled=True,
+            gated_tools={
+                "email_send": GatedToolConfig(),
+                "unknown_tool_1": GatedToolConfig(),
+                "unknown_tool_2": GatedToolConfig(),
+            },
+        )
+        registered_tools = {"email_send"}
+
+        with pytest.raises(ConfigError) as exc_info:
+            validate_approval_config(ac, registered_tools)
+
+        error_msg = str(exc_info.value)
+        assert "unknown_tool_1" in error_msg
+        assert "unknown_tool_2" in error_msg
+
+    def test_validate_approval_config_disabled_skips_validation(self):
+        """Validation is skipped when approvals are disabled."""
+        ac = ApprovalConfig(
+            enabled=False,
+            gated_tools={"unknown_tool": GatedToolConfig()},
+        )
+        registered_tools = {"email_send"}
+        # Should not raise even though unknown_tool is not registered
+        validate_approval_config(ac, registered_tools)
+
+    def test_validate_approval_config_none_is_noop(self):
+        """Validation with None config is a no-op."""
+        validate_approval_config(None, {"email_send"})
+
+    def test_validate_approval_config_empty_gated_tools(self):
+        """Validation passes with no gated tools."""
+        ac = ApprovalConfig(enabled=True, gated_tools={})
+        registered_tools = {"email_send", "purchase_create"}
+        # Should not raise
+        validate_approval_config(ac, registered_tools)

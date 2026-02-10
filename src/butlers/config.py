@@ -46,6 +46,52 @@ class RuntimeConfig:
 
 
 @dataclass
+class GatedToolConfig:
+    """Configuration for a single gated tool in the approvals module.
+
+    Specifies an optional expiry override for this specific tool. If
+    expiry_hours is None, the default_expiry_hours from ApprovalConfig
+    is used.
+    """
+
+    expiry_hours: int | None = None
+
+
+@dataclass
+class ApprovalConfig:
+    """Configuration for the approvals module from [modules.approvals].
+
+    Controls approval gating behavior, default expiry, and which tools
+    require approval.
+    """
+
+    enabled: bool
+    default_expiry_hours: int = 48
+    gated_tools: dict[str, GatedToolConfig] = field(default_factory=dict)
+
+    def get_effective_expiry(self, tool_name: str) -> int:
+        """Get the effective expiry hours for a tool.
+
+        If the tool has a custom expiry override, use that. Otherwise,
+        use the default expiry hours.
+
+        Parameters
+        ----------
+        tool_name:
+            The name of the tool to check.
+
+        Returns
+        -------
+        int
+            The effective expiry hours for this tool.
+        """
+        tool_config = self.gated_tools.get(tool_name)
+        if tool_config and tool_config.expiry_hours is not None:
+            return tool_config.expiry_hours
+        return self.default_expiry_hours
+
+
+@dataclass
 class ButlerConfig:
     """Parsed and validated butler configuration."""
 
@@ -137,6 +183,76 @@ def _parse_runtime(butler_section: dict) -> RuntimeConfig:
         model = None
 
     return RuntimeConfig(model=model)
+
+
+def parse_approval_config(raw: dict[str, Any] | None) -> ApprovalConfig | None:
+    """Parse approval configuration from [modules.approvals] section.
+
+    Parameters
+    ----------
+    raw:
+        Raw config dict from TOML, or None if the section is absent.
+
+    Returns
+    -------
+    ApprovalConfig | None
+        Parsed config, or None if *raw* is None.
+    """
+    if raw is None:
+        return None
+
+    enabled = raw.get("enabled", False)
+    default_expiry_hours = raw.get("default_expiry_hours", 48)
+
+    # Parse gated tools
+    gated_tools_raw = raw.get("gated_tools", {})
+    gated_tools: dict[str, GatedToolConfig] = {}
+
+    for tool_name, tool_cfg in gated_tools_raw.items():
+        if not isinstance(tool_cfg, dict):
+            tool_cfg = {}
+        expiry_hours = tool_cfg.get("expiry_hours")
+        gated_tools[tool_name] = GatedToolConfig(expiry_hours=expiry_hours)
+
+    return ApprovalConfig(
+        enabled=enabled,
+        default_expiry_hours=default_expiry_hours,
+        gated_tools=gated_tools,
+    )
+
+
+def validate_approval_config(
+    approval_config: ApprovalConfig | None, registered_tools: set[str]
+) -> None:
+    """Validate that all gated tools are actually registered.
+
+    This should be called at butler startup after all modules have
+    registered their tools.
+
+    Parameters
+    ----------
+    approval_config:
+        The parsed approval configuration, or None if approvals are not
+        configured.
+    registered_tools:
+        Set of all tool names registered by the butler's modules.
+
+    Raises
+    ------
+    ConfigError
+        If any gated tool names are not in *registered_tools*.
+    """
+    if approval_config is None or not approval_config.enabled:
+        return
+
+    unknown_tools = set(approval_config.gated_tools.keys()) - registered_tools
+
+    if unknown_tools:
+        tools_str = ", ".join(sorted(unknown_tools))
+        raise ConfigError(
+            f"Unknown gated tool(s) in approval config: {tools_str}. "
+            f"These tools are not registered by any module."
+        )
 
 
 def load_config(config_dir: Path) -> ButlerConfig:
