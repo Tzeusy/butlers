@@ -82,12 +82,38 @@ class PaginatedResponse[T](BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class ScheduleEntry(BaseModel):
+    """A single scheduled task from butler.toml."""
+
+    name: str
+    cron: str
+    prompt: str
+
+
+class ModuleInfo(BaseModel):
+    """Module status information."""
+
+    name: str
+    enabled: bool = True
+    config: dict | None = None
+
+
 class ButlerSummary(BaseModel):
     """Lightweight butler representation for list views."""
 
     name: str
     status: str
     port: int
+
+
+class ButlerDetail(ButlerSummary):
+    """Full butler detail with config, modules, skills, and schedule."""
+
+    description: str | None = None
+    db_name: str | None = None
+    modules: list[ModuleInfo] = Field(default_factory=list)
+    schedules: list[ScheduleEntry] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):
@@ -117,13 +143,16 @@ from butlers.api.models.notification import NotificationStats, NotificationSumma
 __all__ = [
     "ApiMeta",
     "ApiResponse",
+    "ButlerDetail",
     "ButlerSummary",
     "ErrorDetail",
     "ErrorResponse",
     "HealthResponse",
+    "ModuleInfo",
     "NotificationStats",
     "NotificationSummary",
     "PaginatedResponse",
     "PaginationMeta",
+    "ScheduleEntry",
     "SessionSummary",
 ]

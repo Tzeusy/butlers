@@ -24,9 +24,7 @@ from butlers.api.models.notification import NotificationStats, NotificationSumma
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
-butler_notifications_router = APIRouter(
-    prefix="/api/butlers", tags=["butlers", "notifications"]
-)
+butler_notifications_router = APIRouter(prefix="/api/butlers", tags=["butlers", "notifications"])
 
 
 def _get_db_manager() -> DatabaseManager:
@@ -209,12 +207,8 @@ async def notification_stats(
     pool = db.pool("switchboard")
 
     total = await pool.fetchval("SELECT count(*) FROM notifications") or 0
-    sent = await pool.fetchval(
-        "SELECT count(*) FROM notifications WHERE status = 'sent'"
-    ) or 0
-    failed = await pool.fetchval(
-        "SELECT count(*) FROM notifications WHERE status = 'failed'"
-    ) or 0
+    sent = await pool.fetchval("SELECT count(*) FROM notifications WHERE status = 'sent'") or 0
+    failed = await pool.fetchval("SELECT count(*) FROM notifications WHERE status = 'failed'") or 0
 
     channel_rows = await pool.fetch(
         "SELECT channel, count(*) AS cnt FROM notifications GROUP BY channel"
