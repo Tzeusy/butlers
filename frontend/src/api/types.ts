@@ -127,3 +127,17 @@ export interface Issue {
   description: string;
   link: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Activity / Timeline
+// ---------------------------------------------------------------------------
+
+/** A timeline event from the activity feed. */
+export interface ActivityEvent {
+  id: string;
+  butler: string;
+  type: string; // "session", "schedule", "notification", "startup", etc.
+  summary: string;
+  timestamp: string; // ISO 8601
+  task_name?: string;
+}
