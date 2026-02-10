@@ -95,21 +95,6 @@ export interface HealthResponse {
 // Notifications
 // ---------------------------------------------------------------------------
 
-/** Lightweight notification representation for list views. */
-export interface NotificationSummary {
-  id: string;
-  source_butler: string;
-  channel: string;
-  recipient: string;
-  message: string;
-  metadata: Record<string, unknown> | null;
-  status: string;
-  error: string | null;
-  session_id: string | null;
-  trace_id: string | null;
-  created_at: string;
-}
-
 /** Aggregate notification statistics. */
 export interface NotificationStats {
   total: number;
