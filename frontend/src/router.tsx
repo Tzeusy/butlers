@@ -15,6 +15,9 @@ import AuditLogPage from './pages/AuditLogPage.tsx'
 import ContactsPage from './pages/ContactsPage.tsx'
 import ContactDetailPage from './pages/ContactDetailPage.tsx'
 import GroupsPage from './pages/GroupsPage.tsx'
+import CollectionsPage from './pages/CollectionsPage.tsx'
+import EntitiesPage from './pages/EntitiesPage.tsx'
+import EntityDetailPage from './pages/EntityDetailPage.tsx'
 
 export const router = createBrowserRouter([
   {
@@ -33,6 +36,9 @@ export const router = createBrowserRouter([
       { path: '/contacts', element: <ContactsPage /> },
       { path: '/contacts/:contactId', element: <ContactDetailPage /> },
       { path: '/groups', element: <GroupsPage /> },
+      { path: '/collections', element: <CollectionsPage /> },
+      { path: '/entities', element: <EntitiesPage /> },
+      { path: '/entities/:entityId', element: <EntityDetailPage /> },
       { path: '/costs', element: <CostsPage /> },
       { path: '/settings', element: <SettingsPage /> },
     ],

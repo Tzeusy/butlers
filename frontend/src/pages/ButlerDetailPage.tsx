@@ -21,7 +21,7 @@ import { useButlerSessions } from "@/hooks/use-sessions";
 import { useUpcomingDates } from "@/hooks/use-contacts";
 
 // ---------------------------------------------------------------------------
-// Constants
+// Lazy-loaded tabs
 // ---------------------------------------------------------------------------
 
 const ButlerSchedulesTab = lazy(
@@ -37,13 +37,72 @@ const ButlerStateTab = lazy(
   () => import("@/components/butler-detail/ButlerStateTab.tsx"),
 );
 
-const TABS = ["overview", "sessions", "config", "skills", "schedules", "state", "trigger", "crm"] as const;
-type TabValue = (typeof TABS)[number];
+// General butler tabs (lazy)
+const ButlerCollectionsTab = lazy(
+  () => import("@/components/butler-detail/ButlerCollectionsTab.tsx"),
+);
+const ButlerEntitiesTab = lazy(
+  () => import("@/components/butler-detail/ButlerEntitiesTab.tsx"),
+);
+
+// Switchboard butler tabs (lazy)
+const ButlerRoutingLogTab = lazy(
+  () => import("@/components/butler-detail/ButlerRoutingLogTab.tsx"),
+);
+const ButlerRegistryTab = lazy(
+  () => import("@/components/butler-detail/ButlerRegistryTab.tsx"),
+);
+
+// ---------------------------------------------------------------------------
+// Tab configuration
+// ---------------------------------------------------------------------------
+
+const BASE_TABS = [
+  "overview",
+  "sessions",
+  "config",
+  "skills",
+  "schedules",
+  "state",
+  "trigger",
+  "crm",
+] as const;
+
+const GENERAL_TABS = ["collections", "entities"] as const;
+const SWITCHBOARD_TABS = ["routing-log", "registry"] as const;
+
+type TabValue =
+  | (typeof BASE_TABS)[number]
+  | (typeof GENERAL_TABS)[number]
+  | (typeof SWITCHBOARD_TABS)[number];
+
+function getAllTabs(butlerName: string): readonly string[] {
+  const tabs: string[] = [...BASE_TABS];
+  if (butlerName === "general") {
+    tabs.push(...GENERAL_TABS);
+  }
+  if (butlerName === "switchboard") {
+    tabs.push(...SWITCHBOARD_TABS);
+  }
+  return tabs;
+}
 
 const PAGE_SIZE = 20;
 
-function isValidTab(value: string | null): value is TabValue {
-  return TABS.includes(value as TabValue);
+function isValidTab(value: string | null, butlerName: string): value is TabValue {
+  return getAllTabs(butlerName).includes(value as string);
+}
+
+// ---------------------------------------------------------------------------
+// Suspense fallback
+// ---------------------------------------------------------------------------
+
+function TabFallback({ label }: { label: string }) {
+  return (
+    <div className="text-muted-foreground flex items-center justify-center py-12 text-sm">
+      Loading {label}...
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +295,10 @@ export default function ButlerDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const tabParam = searchParams.get("tab");
-  const activeTab: TabValue = isValidTab(tabParam) ? tabParam : "overview";
+  const activeTab: TabValue = isValidTab(tabParam, name) ? tabParam : "overview";
+
+  const isGeneral = name === "general";
+  const isSwitchboard = name === "switchboard";
 
   function handleTabChange(value: string) {
     if (value === "overview") {
@@ -261,6 +323,18 @@ export default function ButlerDetailPage() {
           <TabsTrigger value="trigger">Trigger</TabsTrigger>
           <TabsTrigger value="state">State</TabsTrigger>
           <TabsTrigger value="crm">CRM</TabsTrigger>
+          {isGeneral && (
+            <>
+              <TabsTrigger value="collections">Collections</TabsTrigger>
+              <TabsTrigger value="entities">Entities</TabsTrigger>
+            </>
+          )}
+          {isSwitchboard && (
+            <>
+              <TabsTrigger value="routing-log">Routing Log</TabsTrigger>
+              <TabsTrigger value="registry">Registry</TabsTrigger>
+            </>
+          )}
         </TabsList>
 
         <TabsContent value="overview">
@@ -276,49 +350,25 @@ export default function ButlerDetailPage() {
         </TabsContent>
 
         <TabsContent value="skills">
-          <Suspense
-            fallback={
-              <div className="text-muted-foreground flex items-center justify-center py-12 text-sm">
-                Loading skills...
-              </div>
-            }
-          >
+          <Suspense fallback={<TabFallback label="skills" />}>
             <ButlerSkillsTab butlerName={name} />
           </Suspense>
         </TabsContent>
 
         <TabsContent value="schedules">
-          <Suspense
-            fallback={
-              <div className="text-muted-foreground flex items-center justify-center py-12 text-sm">
-                Loading schedules...
-              </div>
-            }
-          >
+          <Suspense fallback={<TabFallback label="schedules" />}>
             <ButlerSchedulesTab butlerName={name} />
           </Suspense>
         </TabsContent>
 
         <TabsContent value="trigger">
-          <Suspense
-            fallback={
-              <div className="text-muted-foreground flex items-center justify-center py-12 text-sm">
-                Loading trigger...
-              </div>
-            }
-          >
+          <Suspense fallback={<TabFallback label="trigger" />}>
             <ButlerTriggerTab butlerName={name} />
           </Suspense>
         </TabsContent>
 
         <TabsContent value="state">
-          <Suspense
-            fallback={
-              <div className="text-muted-foreground flex items-center justify-center py-12 text-sm">
-                Loading state...
-              </div>
-            }
-          >
+          <Suspense fallback={<TabFallback label="state" />}>
             <ButlerStateTab butlerName={name} />
           </Suspense>
         </TabsContent>
@@ -326,6 +376,36 @@ export default function ButlerDetailPage() {
         <TabsContent value="crm">
           <ButlerCrmTab butlerName={name} />
         </TabsContent>
+
+        {isGeneral && (
+          <>
+            <TabsContent value="collections">
+              <Suspense fallback={<TabFallback label="collections" />}>
+                <ButlerCollectionsTab />
+              </Suspense>
+            </TabsContent>
+            <TabsContent value="entities">
+              <Suspense fallback={<TabFallback label="entities" />}>
+                <ButlerEntitiesTab />
+              </Suspense>
+            </TabsContent>
+          </>
+        )}
+
+        {isSwitchboard && (
+          <>
+            <TabsContent value="routing-log">
+              <Suspense fallback={<TabFallback label="routing log" />}>
+                <ButlerRoutingLogTab />
+              </Suspense>
+            </TabsContent>
+            <TabsContent value="registry">
+              <Suspense fallback={<TabFallback label="registry" />}>
+                <ButlerRegistryTab />
+              </Suspense>
+            </TabsContent>
+          </>
+        )}
       </Tabs>
     </div>
   );

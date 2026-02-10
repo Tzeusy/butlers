@@ -558,3 +558,68 @@ export interface GroupParams {
   offset?: number;
   limit?: number;
 }
+
+// ---------------------------------------------------------------------------
+// General / Switchboard
+// ---------------------------------------------------------------------------
+
+/** A collection in the General butler. */
+export interface GeneralCollection {
+  id: string;
+  name: string;
+  description: string | null;
+  entity_count: number;
+  created_at: string;
+}
+
+/** An entity stored in a General butler collection. */
+export interface GeneralEntity {
+  id: string;
+  collection_id: string;
+  collection_name: string | null;
+  data: Record<string, unknown>;
+  tags: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+/** Query parameters for entity search. */
+export interface EntityParams {
+  q?: string;
+  collection?: string;
+  tag?: string;
+  offset?: number;
+  limit?: number;
+}
+
+/** A routing log entry from the Switchboard. */
+export interface RoutingEntry {
+  id: string;
+  source_butler: string;
+  target_butler: string;
+  tool_name: string;
+  success: boolean;
+  duration_ms: number | null;
+  error: string | null;
+  created_at: string;
+}
+
+/** A butler registry entry from the Switchboard. */
+export interface RegistryEntry {
+  name: string;
+  endpoint_url: string;
+  description: string | null;
+  modules: unknown[];
+  last_seen_at: string | null;
+  registered_at: string;
+}
+
+/** Query parameters for routing log. */
+export interface RoutingLogParams {
+  source_butler?: string;
+  target_butler?: string;
+  since?: string;
+  until?: string;
+  offset?: number;
+  limit?: number;
+}

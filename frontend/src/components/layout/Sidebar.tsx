@@ -10,6 +10,8 @@ const navItems = [
   { path: '/audit-log', label: 'Audit Log' },
   { path: '/contacts', label: 'Contacts' },
   { path: '/groups', label: 'Groups' },
+  { path: '/collections', label: 'Collections' },
+  { path: '/entities', label: 'Entities' },
   { path: '/settings', label: 'Settings' },
 ]
 
