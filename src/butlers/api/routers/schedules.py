@@ -1,0 +1,209 @@
+"""Schedule CRUD endpoints for butler scheduled tasks.
+
+Provides:
+
+- ``router`` — butler-scoped schedule endpoints at
+  ``/api/butlers/{name}/schedules``
+
+Read operations query the butler's database directly via ``DatabaseManager``.
+Write operations (create, update, delete, toggle) are proxied through MCP
+tool calls to the butler daemon, preserving the architectural constraint that
+only the butler itself mutates its own database.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from butlers.api.db import DatabaseManager
+from butlers.api.deps import ButlerUnreachableError, MCPClientManager, get_mcp_manager
+from butlers.api.models import ApiResponse
+from butlers.api.models.schedule import Schedule, ScheduleCreate, ScheduleUpdate
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/butlers", tags=["butlers", "schedules"])
+
+
+def _get_db_manager() -> DatabaseManager:
+    """Dependency stub -- overridden at app startup or in tests."""
+    raise RuntimeError("DatabaseManager not initialized")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_SCHEDULE_COLUMNS = (
+    "id, name, cron, prompt, source, enabled, next_run_at, last_run_at, created_at, updated_at"
+)
+
+
+def _row_to_schedule(row) -> Schedule:
+    """Convert an asyncpg Record to a Schedule model."""
+    return Schedule(
+        id=row["id"],
+        name=row["name"],
+        cron=row["cron"],
+        prompt=row["prompt"],
+        source=row["source"],
+        enabled=row["enabled"],
+        next_run_at=row["next_run_at"],
+        last_run_at=row["last_run_at"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+async def _call_mcp_tool(
+    mgr: MCPClientManager,
+    butler_name: str,
+    tool_name: str,
+    arguments: dict,
+) -> dict:
+    """Call an MCP tool on a butler, returning the parsed result.
+
+    Raises HTTPException(503) if the butler is unreachable or the call fails.
+    """
+    try:
+        client = await mgr.get_client(butler_name)
+        result = await client.call_tool(tool_name, arguments)
+    except ButlerUnreachableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Butler '{butler_name}' is unreachable: {exc}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"MCP call to '{butler_name}' failed: {exc}",
+        ) from exc
+
+    # FastMCP call_tool returns a list of content blocks; extract text
+    if result and hasattr(result, "__iter__"):
+        for block in result:
+            text = getattr(block, "text", None)
+            if text:
+                try:
+                    return json.loads(text)
+                except (json.JSONDecodeError, TypeError):
+                    return {"result": text}
+    return {"result": str(result)}
+
+
+# ---------------------------------------------------------------------------
+# GET /api/butlers/{name}/schedules — list schedules
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{name}/schedules",
+    response_model=ApiResponse[list[Schedule]],
+)
+async def list_schedules(
+    name: str,
+    db: DatabaseManager = Depends(_get_db_manager),
+) -> ApiResponse[list[Schedule]]:
+    """Return all scheduled tasks for a single butler."""
+    try:
+        pool = db.pool(name)
+    except KeyError:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Butler '{name}' database is not available",
+        )
+
+    rows = await pool.fetch(f"SELECT {_SCHEDULE_COLUMNS} FROM scheduled_tasks ORDER BY created_at")
+    schedules = [_row_to_schedule(row) for row in rows]
+    return ApiResponse[list[Schedule]](data=schedules)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/butlers/{name}/schedules — create schedule (MCP proxy)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{name}/schedules",
+    response_model=ApiResponse[dict],
+    status_code=201,
+)
+async def create_schedule(
+    name: str,
+    body: ScheduleCreate,
+    mgr: MCPClientManager = Depends(get_mcp_manager),
+) -> ApiResponse[dict]:
+    """Create a new scheduled task via MCP tool call to the butler."""
+    result = await _call_mcp_tool(
+        mgr,
+        name,
+        "schedule_create",
+        {"name": body.name, "cron": body.cron, "prompt": body.prompt},
+    )
+    return ApiResponse[dict](data=result)
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/butlers/{name}/schedules/{schedule_id} — update schedule (MCP proxy)
+# ---------------------------------------------------------------------------
+
+
+@router.put(
+    "/{name}/schedules/{schedule_id}",
+    response_model=ApiResponse[dict],
+)
+async def update_schedule(
+    name: str,
+    schedule_id: UUID,
+    body: ScheduleUpdate,
+    mgr: MCPClientManager = Depends(get_mcp_manager),
+) -> ApiResponse[dict]:
+    """Update a scheduled task via MCP tool call to the butler."""
+    arguments: dict = {"id": str(schedule_id)}
+    updates = body.model_dump(exclude_none=True)
+    arguments.update(updates)
+
+    result = await _call_mcp_tool(mgr, name, "schedule_update", arguments)
+    return ApiResponse[dict](data=result)
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/butlers/{name}/schedules/{schedule_id} — delete schedule (MCP proxy)
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/{name}/schedules/{schedule_id}",
+    response_model=ApiResponse[dict],
+)
+async def delete_schedule(
+    name: str,
+    schedule_id: UUID,
+    mgr: MCPClientManager = Depends(get_mcp_manager),
+) -> ApiResponse[dict]:
+    """Delete a scheduled task via MCP tool call to the butler."""
+    result = await _call_mcp_tool(mgr, name, "schedule_delete", {"id": str(schedule_id)})
+    return ApiResponse[dict](data=result)
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/butlers/{name}/schedules/{schedule_id}/toggle — toggle (MCP proxy)
+# ---------------------------------------------------------------------------
+
+
+@router.patch(
+    "/{name}/schedules/{schedule_id}/toggle",
+    response_model=ApiResponse[dict],
+)
+async def toggle_schedule(
+    name: str,
+    schedule_id: UUID,
+    mgr: MCPClientManager = Depends(get_mcp_manager),
+) -> ApiResponse[dict]:
+    """Toggle a scheduled task's enabled/disabled state via MCP."""
+    result = await _call_mcp_tool(mgr, name, "schedule_toggle", {"id": str(schedule_id)})
+    return ApiResponse[dict](data=result)

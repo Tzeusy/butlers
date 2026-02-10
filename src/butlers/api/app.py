@@ -30,6 +30,7 @@ from butlers.api.routers.notifications import (
     router as notifications_router,
 )
 from butlers.api.routers.relationship import router as relationship_router
+from butlers.api.routers.schedules import router as schedules_router
 from butlers.api.routers.sessions import (
     butler_sessions_router,
 )
@@ -102,6 +103,7 @@ def create_app(
     app.include_router(relationship_router)
     app.include_router(sessions_router)
     app.include_router(butler_sessions_router)
+    app.include_router(schedules_router)
 
     @app.get("/api/health")
     async def health():

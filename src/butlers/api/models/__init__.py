@@ -278,6 +278,7 @@ from butlers.api.models.relationship import (  # noqa: E402
     Note,
     UpcomingDate,
 )
+from butlers.api.models.schedule import Schedule, ScheduleCreate, ScheduleUpdate  # noqa: E402
 from butlers.api.models.session import SessionDetail  # noqa: E402
 
 __all__ = [
@@ -309,8 +310,11 @@ __all__ = [
     "NotificationSummary",
     "PaginatedResponse",
     "PaginationMeta",
+    "Schedule",
     "ScheduleCost",
+    "ScheduleCreate",
     "ScheduleEntry",
+    "ScheduleUpdate",
     "SessionDetail",
     "SessionSummary",
     "SkillInfo",
