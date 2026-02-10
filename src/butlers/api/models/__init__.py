@@ -164,6 +164,13 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class TickResponse(BaseModel):
+    """Response from a forced scheduler tick."""
+
+    success: bool
+    message: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Notification models (re-exported from sub-module)
 # ---------------------------------------------------------------------------
@@ -189,4 +196,5 @@ __all__ = [
     "ScheduleEntry",
     "SessionSummary",
     "SkillInfo",
+    "TickResponse",
 ]

@@ -15,6 +15,7 @@ import tomllib
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 
 from butlers.api.deps import (
     ButlerConnectionInfo,
@@ -32,6 +33,7 @@ from butlers.api.models import (
     ModuleStatus,
     ScheduleEntry,
     SkillInfo,
+    TickResponse,
 )
 from butlers.config import ConfigError, load_config
 
@@ -387,3 +389,70 @@ async def get_butler_modules(
     )
 
     return ApiResponse[list[ModuleStatus]](data=module_statuses)
+
+
+
+# ---------------------------------------------------------------------------
+# Tick endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{name}/tick", response_model=ApiResponse[TickResponse])
+async def force_butler_tick(
+    name: str,
+    configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
+    mcp_manager: MCPClientManager = Depends(get_mcp_manager),
+) -> ApiResponse[TickResponse] | JSONResponse:
+    """Force a scheduler tick on the specified butler.
+
+    Connects to the butler's MCP server and calls the tick tool,
+    which triggers the scheduler to run immediately.  Returns 503 if the
+    butler is unreachable or the request times out.
+    """
+    # Validate butler exists in configs
+    if not any(cfg.name == name for cfg in configs):
+        raise HTTPException(status_code=404, detail=f"Butler not found: {name}")
+
+    try:
+        client = await asyncio.wait_for(
+            mcp_manager.get_client(name),
+            timeout=_STATUS_TIMEOUT_S,
+        )
+        result = await asyncio.wait_for(
+            client.call_tool("tick", {}),
+            timeout=_STATUS_TIMEOUT_S,
+        )
+
+        message: str | None = None
+        if result.content:
+            text = result.content[0].text if hasattr(result.content[0], "text") else ""
+            if text:
+                message = text
+
+        tick_resp = TickResponse(success=True, message=message)
+        return ApiResponse[TickResponse](data=tick_resp)
+
+    except ButlerUnreachableError:
+        logger.warning("Butler %s is unreachable for tick", name)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": "butler_unreachable",
+                    "message": f"Butler '{name}' is unreachable",
+                    "butler": name,
+                }
+            },
+        )
+    except TimeoutError:
+        logger.warning("Tick request to butler %s timed out", name)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": "butler_timeout",
+                    "message": f"Tick request to butler '{name}' timed out",
+                    "butler": name,
+                }
+            },
+        )
