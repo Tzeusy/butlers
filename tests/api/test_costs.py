@@ -710,9 +710,10 @@ class TestDailyCosts:
 
 
 class TestTopSessions:
-    async def test_top_sessions_returns_empty_list(self):
-        """Top-sessions endpoint returns empty list placeholder."""
-        app = create_app()
+    async def test_top_sessions_returns_empty_when_no_butlers(self):
+        """Top-sessions returns empty list when no butlers configured."""
+        mgr = MagicMock(spec=MCPClientManager)
+        app = _app_with_overrides(mgr, [], _make_pricing())
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -737,6 +738,299 @@ class TestTopSessions:
         assert session.session_id == "abc-123"
         assert session.butler == "general"
         assert session.model == "claude-sonnet-4-20250514"
+
+    async def test_top_sessions_default_limit_is_10(self):
+        """Default limit parameter is 10."""
+        mgr = MagicMock(spec=MCPClientManager)
+        app = _app_with_overrides(mgr, [], _make_pricing())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/costs/top-sessions")
+
+        assert response.status_code == 200
+        assert response.json()["data"] == []
+
+    async def test_top_sessions_limit_param_accepted(self):
+        """Custom limit parameter is accepted."""
+        mgr = MagicMock(spec=MCPClientManager)
+        app = _app_with_overrides(mgr, [], _make_pricing())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/costs/top-sessions?limit=5")
+
+        assert response.status_code == 200
+
+    async def test_top_sessions_limit_max_50(self):
+        """Limit above 50 returns 422."""
+        mgr = MagicMock(spec=MCPClientManager)
+        app = _app_with_overrides(mgr, [], _make_pricing())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/costs/top-sessions?limit=51")
+
+        assert response.status_code == 422
+
+    async def test_top_sessions_limit_min_1(self):
+        """Limit below 1 returns 422."""
+        mgr = MagicMock(spec=MCPClientManager)
+        app = _app_with_overrides(mgr, [], _make_pricing())
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/costs/top-sessions?limit=0")
+
+        assert response.status_code == 422
+
+    async def test_top_sessions_merges_and_sorts_by_cost(self):
+        """Sessions from multiple butlers are merged and sorted by cost descending."""
+        configs = _make_configs()
+        pricing = _make_pricing()
+
+        switchboard_sessions = {
+            "sessions": [
+                {
+                    "session_id": "sw-1",
+                    "model": "claude-sonnet-4-20250514",
+                    "input_tokens": 10000,
+                    "output_tokens": 5000,
+                    "started_at": "2026-02-10T10:00:00Z",
+                },
+            ],
+        }
+        general_sessions = {
+            "sessions": [
+                {
+                    "session_id": "gen-1",
+                    "model": "claude-sonnet-4-20250514",
+                    "input_tokens": 20000,
+                    "output_tokens": 10000,
+                    "started_at": "2026-02-10T11:00:00Z",
+                },
+                {
+                    "session_id": "gen-2",
+                    "model": "claude-haiku-35-20241022",
+                    "input_tokens": 5000,
+                    "output_tokens": 2000,
+                    "started_at": "2026-02-10T09:00:00Z",
+                },
+            ],
+        }
+
+        mgr = _make_manager_with_responses(
+            configs,
+            {
+                "switchboard": _make_tool_result(switchboard_sessions),
+                "general": _make_tool_result(general_sessions),
+            },
+        )
+        app = _app_with_overrides(mgr, configs, pricing)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/costs/top-sessions")
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data) == 3
+
+        # gen-1: 20000*0.000003 + 10000*0.000015 = 0.06 + 0.15 = 0.21
+        # sw-1: 10000*0.000003 + 5000*0.000015 = 0.03 + 0.075 = 0.105
+        # gen-2: 5000*0.0000008 + 2000*0.000004 = 0.004 + 0.008 = 0.012
+        assert data[0]["session_id"] == "gen-1"
+        assert data[0]["butler"] == "general"
+        assert data[0]["cost_usd"] == pytest.approx(0.21, abs=1e-4)
+
+        assert data[1]["session_id"] == "sw-1"
+        assert data[1]["butler"] == "switchboard"
+        assert data[1]["cost_usd"] == pytest.approx(0.105, abs=1e-4)
+
+        assert data[2]["session_id"] == "gen-2"
+        assert data[2]["butler"] == "general"
+        assert data[2]["cost_usd"] == pytest.approx(0.012, abs=1e-4)
+
+    async def test_top_sessions_respects_limit(self):
+        """Only the top N sessions are returned when limit is set."""
+        configs = _make_configs()
+        pricing = _make_pricing()
+
+        switchboard_sessions = {
+            "sessions": [
+                {
+                    "session_id": "sw-1",
+                    "model": "claude-sonnet-4-20250514",
+                    "input_tokens": 10000,
+                    "output_tokens": 5000,
+                    "started_at": "2026-02-10T10:00:00Z",
+                },
+            ],
+        }
+        general_sessions = {
+            "sessions": [
+                {
+                    "session_id": "gen-1",
+                    "model": "claude-sonnet-4-20250514",
+                    "input_tokens": 20000,
+                    "output_tokens": 10000,
+                    "started_at": "2026-02-10T11:00:00Z",
+                },
+                {
+                    "session_id": "gen-2",
+                    "model": "claude-haiku-35-20241022",
+                    "input_tokens": 5000,
+                    "output_tokens": 2000,
+                    "started_at": "2026-02-10T09:00:00Z",
+                },
+            ],
+        }
+
+        mgr = _make_manager_with_responses(
+            configs,
+            {
+                "switchboard": _make_tool_result(switchboard_sessions),
+                "general": _make_tool_result(general_sessions),
+            },
+        )
+        app = _app_with_overrides(mgr, configs, pricing)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/costs/top-sessions?limit=2")
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data) == 2
+        assert data[0]["session_id"] == "gen-1"
+        assert data[1]["session_id"] == "sw-1"
+
+    async def test_top_sessions_handles_unreachable_butler(self):
+        """Unreachable butlers are skipped gracefully."""
+        configs = _make_configs()
+        pricing = _make_pricing()
+
+        switchboard_sessions = {
+            "sessions": [
+                {
+                    "session_id": "sw-1",
+                    "model": "claude-sonnet-4-20250514",
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "started_at": "2026-02-10T10:00:00Z",
+                },
+            ],
+        }
+
+        mgr = _make_manager_with_responses(
+            configs,
+            {
+                "switchboard": _make_tool_result(switchboard_sessions),
+                "general": ButlerUnreachableError("general"),
+            },
+        )
+        app = _app_with_overrides(mgr, configs, pricing)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/costs/top-sessions")
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert len(data) == 1
+        assert data[0]["session_id"] == "sw-1"
+        assert data[0]["butler"] == "switchboard"
+
+    async def test_top_sessions_handles_empty_tool_result(self):
+        """Butler returning empty tool result contributes no sessions."""
+        configs = [ButlerConnectionInfo(name="empty", port=8100)]
+        pricing = _make_pricing()
+
+        mgr = _make_manager_with_responses(
+            configs,
+            {"empty": _make_empty_tool_result()},
+        )
+        app = _app_with_overrides(mgr, configs, pricing)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/costs/top-sessions")
+
+        assert response.status_code == 200
+        assert response.json()["data"] == []
+
+    async def test_top_sessions_unknown_model_contributes_zero_cost(self):
+        """Sessions with unknown models have zero cost but are still returned."""
+        configs = [ButlerConnectionInfo(name="test", port=8100)]
+        pricing = _make_pricing()
+
+        data = {
+            "sessions": [
+                {
+                    "session_id": "unk-1",
+                    "model": "unknown-model-v9",
+                    "input_tokens": 5000,
+                    "output_tokens": 2000,
+                    "started_at": "2026-02-10T10:00:00Z",
+                },
+            ],
+        }
+
+        mgr = _make_manager_with_responses(
+            configs,
+            {"test": _make_tool_result(data)},
+        )
+        app = _app_with_overrides(mgr, configs, pricing)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/costs/top-sessions")
+
+        assert response.status_code == 200
+        resp_data = response.json()["data"]
+        assert len(resp_data) == 1
+        assert resp_data[0]["cost_usd"] == 0.0
+        assert resp_data[0]["model"] == "unknown-model-v9"
+        assert resp_data[0]["butler"] == "test"
+
+    async def test_top_sessions_response_validates_as_model(self):
+        """Top-sessions response data can be parsed as TopSession models."""
+        configs = [ButlerConnectionInfo(name="test", port=8100)]
+        pricing = _make_pricing()
+
+        data = {
+            "sessions": [
+                {
+                    "session_id": "t-1",
+                    "model": "claude-sonnet-4-20250514",
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                    "started_at": "2026-02-10T12:00:00Z",
+                },
+            ],
+        }
+
+        mgr = _make_manager_with_responses(
+            configs,
+            {"test": _make_tool_result(data)},
+        )
+        app = _app_with_overrides(mgr, configs, pricing)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/costs/top-sessions")
+
+        body = response.json()
+        sessions = [TopSession.model_validate(s) for s in body["data"]]
+        assert len(sessions) == 1
+        assert sessions[0].session_id == "t-1"
+        assert sessions[0].butler == "test"
 
 
 # ---------------------------------------------------------------------------
@@ -771,7 +1065,8 @@ class TestResponseShape:
 
     async def test_top_sessions_has_meta(self):
         """Top-sessions response includes the meta field."""
-        app = create_app()
+        mgr = MagicMock(spec=MCPClientManager)
+        app = _app_with_overrides(mgr, [], _make_pricing())
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
