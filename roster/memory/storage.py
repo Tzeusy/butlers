@@ -653,3 +653,99 @@ async def mark_helpful(
             row["maturity"] = new_maturity
 
             return row
+
+
+# ---------------------------------------------------------------------------
+# Anti-pattern inversion
+# ---------------------------------------------------------------------------
+
+
+async def invert_to_anti_pattern(
+    pool: Pool,
+    rule_id: uuid.UUID,
+    embedding_engine: EmbeddingEngine,
+) -> dict | None:
+    """Invert a repeatedly harmful rule into an anti-pattern warning.
+
+    Rewrites the rule content to serve as a warning, re-embeds it,
+    and sets maturity to 'anti_pattern'. The original content is
+    preserved in metadata.original_content.
+
+    This is triggered when harmful_count >= 3 AND effectiveness < 0.3.
+
+    Args:
+        pool: asyncpg connection pool.
+        rule_id: UUID of the rule.
+        embedding_engine: EmbeddingEngine for re-embedding the new content.
+
+    Returns:
+        Updated rule as dict, or None if rule not found or doesn't
+        meet anti-pattern criteria.
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT * FROM rules WHERE id = $1",
+                rule_id,
+            )
+            if row is None:
+                return None
+
+            row = dict(row)
+
+            # Check criteria
+            if row["harmful_count"] < 3 or row["effectiveness_score"] >= 0.3:
+                return None
+
+            # Already an anti-pattern
+            if row["maturity"] == "anti_pattern":
+                return row
+
+            # Build anti-pattern content
+            original_content = row["content"]
+            metadata = row.get("metadata", {})
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+
+            reasons = metadata.get("harmful_reasons", [])
+            reasons_text = "; ".join(reasons) if reasons else "repeated failures"
+
+            anti_pattern_content = (
+                f"ANTI-PATTERN: Do NOT {original_content}. "
+                f"This caused problems because: {reasons_text}"
+            )
+
+            # Re-embed the new content
+            new_embedding = embedding_engine.embed(anti_pattern_content)
+            search_text = preprocess_text(anti_pattern_content)
+
+            # Preserve original content in metadata
+            metadata["original_content"] = original_content
+            metadata["needs_inversion"] = False
+            metadata_json = json.dumps(metadata)
+
+            # Update the rule
+            sql = f"""
+                UPDATE rules
+                SET content = $1,
+                    embedding = $2,
+                    search_vector = {tsvector_sql("$3")},
+                    maturity = 'anti_pattern',
+                    metadata = $4
+                WHERE id = $5
+            """
+            await conn.execute(
+                sql,
+                anti_pattern_content,
+                str(new_embedding),
+                search_text,
+                metadata_json,
+                rule_id,
+            )
+
+            row["content"] = anti_pattern_content
+            row["embedding"] = new_embedding
+            row["maturity"] = "anti_pattern"
+            row["metadata"] = metadata
+
+            return row
