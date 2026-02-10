@@ -176,12 +176,12 @@ class TestPermanenceDecayMapping:
         # decay_rate is parameter $9 -> index 9 in args
         assert args[9] == expected_decay
 
-    async def test_unknown_permanence_falls_back_to_standard(self, mock_pool, embedding_engine):
+    async def test_unknown_permanence_raises_value_error(self, mock_pool, embedding_engine):
         pool, conn = mock_pool
-        await store_fact(pool, "user", "data", "value", embedding_engine, permanence="invented")
-        insert_call = conn.execute.call_args_list[0]
-        args = insert_call.args
-        assert args[9] == 0.008
+        with pytest.raises(ValueError, match="Invalid permanence"):
+            await store_fact(
+                pool, "user", "data", "value", embedding_engine, permanence="invented"
+            )
 
 
 class TestSupersession:

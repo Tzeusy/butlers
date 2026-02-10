@@ -54,6 +54,27 @@ _PERMANENCE_DECAY: dict[str, float] = {
     "ephemeral": 0.1,
 }
 
+
+def validate_permanence(permanence: str) -> float:
+    """Validate a permanence level and return its decay rate.
+
+    Args:
+        permanence: One of 'permanent', 'stable', 'standard', 'volatile', 'ephemeral'.
+
+    Returns:
+        The corresponding decay rate float.
+
+    Raises:
+        ValueError: If *permanence* is not a recognised level.
+    """
+    try:
+        return _PERMANENCE_DECAY[permanence]
+    except KeyError:
+        valid = sorted(_PERMANENCE_DECAY)
+        raise ValueError(
+            f"Invalid permanence: {permanence!r}. Must be one of {valid}"
+        ) from None
+
 # ---------------------------------------------------------------------------
 # Constants for memory types and link relations
 # ---------------------------------------------------------------------------
@@ -166,7 +187,7 @@ async def store_fact(
     fact_id = uuid.uuid4()
     embedding = embedding_engine.embed(content)
     search_text = preprocess_text(content)
-    decay_rate = _PERMANENCE_DECAY.get(permanence, 0.008)
+    decay_rate = validate_permanence(permanence)
     now = datetime.now(UTC)
     tags_json = json.dumps(tags or [])
     meta_json = json.dumps(metadata or {})
