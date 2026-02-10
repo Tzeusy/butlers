@@ -17,6 +17,8 @@ import type {
   NotificationStats,
   NotificationSummary,
   PaginatedResponse,
+  SessionDetail,
+  SessionParams,
   SessionSummary,
   TopSession,
 } from "./types.ts";
@@ -116,22 +118,53 @@ export function getButlerConfig(name: string): Promise<ApiResponse<ButlerConfigR
   );
 }
 
-/** Fetch a paginated list of sessions. */
-export function getSessions(
-  params?: { offset?: number; limit?: number },
-): Promise<PaginatedResponse<SessionSummary>> {
-  const searchParams = new URLSearchParams();
-  if (params?.offset != null) searchParams.set("offset", String(params.offset));
-  if (params?.limit != null) searchParams.set("limit", String(params.limit));
+/** Build a URLSearchParams from session query parameters. */
+function sessionSearchParams(params?: SessionParams): URLSearchParams {
+  const sp = new URLSearchParams();
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  if (params?.butler != null && params.butler !== "") sp.set("butler", params.butler);
+  if (params?.trigger_source != null && params.trigger_source !== "")
+    sp.set("trigger_source", params.trigger_source);
+  if (params?.status != null && params.status !== "all") sp.set("status", params.status);
+  if (params?.since != null && params.since !== "") sp.set("since", params.since);
+  if (params?.until != null && params.until !== "") sp.set("until", params.until);
+  return sp;
+}
 
-  const qs = searchParams.toString();
+/** Fetch a paginated list of sessions across all butlers. */
+export function getSessions(
+  params?: SessionParams,
+): Promise<PaginatedResponse<SessionSummary>> {
+  const qs = sessionSearchParams(params).toString();
   const path = qs ? `/sessions?${qs}` : "/sessions";
   return apiFetch<PaginatedResponse<SessionSummary>>(path);
 }
 
-/** Fetch a single session by ID. */
-export function getSession(id: string): Promise<ApiResponse<SessionSummary>> {
-  return apiFetch<ApiResponse<SessionSummary>>(`/sessions/${encodeURIComponent(id)}`);
+/** Fetch a single session by ID (cross-butler). */
+export function getSession(id: string): Promise<ApiResponse<SessionDetail>> {
+  return apiFetch<ApiResponse<SessionDetail>>(`/sessions/${encodeURIComponent(id)}`);
+}
+
+/** Fetch sessions for a specific butler. */
+export function getButlerSessions(
+  name: string,
+  params?: SessionParams,
+): Promise<PaginatedResponse<SessionSummary>> {
+  const qs = sessionSearchParams(params).toString();
+  const base = `/butlers/${encodeURIComponent(name)}/sessions`;
+  const path = qs ? `${base}?${qs}` : base;
+  return apiFetch<PaginatedResponse<SessionSummary>>(path);
+}
+
+/** Fetch a single session by ID for a specific butler. */
+export function getButlerSession(
+  name: string,
+  id: string,
+): Promise<ApiResponse<SessionDetail>> {
+  return apiFetch<ApiResponse<SessionDetail>>(
+    `/butlers/${encodeURIComponent(name)}/sessions/${encodeURIComponent(id)}`,
+  );
 }
 
 // ---------------------------------------------------------------------------

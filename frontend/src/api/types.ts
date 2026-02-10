@@ -79,6 +79,27 @@ export interface SessionSummary {
   duration_ms: number | null;
 }
 
+/** Full session detail including result and tool usage. */
+export interface SessionDetail extends SessionSummary {
+  result: string | null;
+  tool_calls: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  model: string | null;
+  error: string | null;
+}
+
+/** Query parameters for session list endpoints. */
+export interface SessionParams {
+  offset?: number;
+  limit?: number;
+  butler?: string;
+  trigger_source?: string;
+  status?: string; // "all" | "success" | "failed"
+  since?: string;
+  until?: string;
+}
+
 /** Lightweight notification representation for list views. */
 export interface NotificationSummary {
   id: string;

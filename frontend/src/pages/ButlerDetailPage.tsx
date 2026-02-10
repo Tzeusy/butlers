@@ -1,25 +1,118 @@
-import { Link, useParams, useSearchParams } from "react-router";
+import { useState } from "react";
+import { useParams, useSearchParams } from "react-router";
 
-import { NotificationFeed } from "@/components/notifications/notification-feed";
-import { NotificationTableSkeleton } from "@/components/skeletons";
+import type { SessionParams, SessionSummary } from "@/api/types";
+import ButlerConfigTab from "@/components/butler-detail/ButlerConfigTab";
+import ButlerOverviewTab from "@/components/butler-detail/ButlerOverviewTab";
+import SessionDetailDrawer from "@/components/sessions/SessionDetailDrawer";
+import SessionTable from "@/components/sessions/SessionTable";
 import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useButlerNotifications } from "@/hooks/use-notifications";
+import { useButlerSessions } from "@/hooks/use-sessions";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const TABS = ["overview", "sessions", "config", "skills"] as const;
 type TabValue = (typeof TABS)[number];
 
+const PAGE_SIZE = 20;
+
 function isValidTab(value: string | null): value is TabValue {
   return TABS.includes(value as TabValue);
 }
+
+// ---------------------------------------------------------------------------
+// Sessions Tab sub-component
+// ---------------------------------------------------------------------------
+
+function ButlerSessionsTab({ butlerName }: { butlerName: string }) {
+  const [page, setPage] = useState(0);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+
+  const params: SessionParams = {
+    offset: page * PAGE_SIZE,
+    limit: PAGE_SIZE,
+  };
+
+  const { data: sessionsResponse, isLoading } = useButlerSessions(butlerName, params);
+  const sessions = sessionsResponse?.data ?? [];
+  const meta = sessionsResponse?.meta;
+  const total = meta?.total ?? 0;
+  const hasMore = meta?.has_more ?? false;
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentPage = page + 1;
+
+  function handleSessionClick(session: SessionSummary) {
+    setSelectedSessionId(session.id);
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Sessions</CardTitle>
+          <CardDescription>Session history for this butler</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SessionTable
+            sessions={sessions}
+            isLoading={isLoading}
+            onSessionClick={handleSessionClick}
+            showButlerColumn={false}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Pagination controls */}
+      {total > 0 && (
+        <div className="flex items-center justify-between">
+          <p className="text-muted-foreground text-sm">
+            Page {currentPage} of {totalPages}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!hasMore}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Session detail drawer */}
+      <SessionDetailDrawer
+        butler={butlerName}
+        sessionId={selectedSessionId}
+        onClose={() => setSelectedSessionId(null)}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ButlerDetailPage
+// ---------------------------------------------------------------------------
 
 export default function ButlerDetailPage() {
   const { name = "" } = useParams<{ name: string }>();
@@ -27,13 +120,6 @@ export default function ButlerDetailPage() {
 
   const tabParam = searchParams.get("tab");
   const activeTab: TabValue = isValidTab(tabParam) ? tabParam : "overview";
-
-  const {
-    data: notificationsResponse,
-    isLoading: notificationsLoading,
-  } = useButlerNotifications(name, { limit: 5 });
-
-  const notifications = notificationsResponse?.data ?? [];
 
   function handleTabChange(value: string) {
     if (value === "overview") {
@@ -57,62 +143,15 @@ export default function ButlerDetailPage() {
         </TabsList>
 
         <TabsContent value="overview">
-          <div className="space-y-6">
-            {/* Recent Notifications */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Recent Notifications</CardTitle>
-                <CardDescription>
-                  Last {notifications.length || 5} notifications from this butler
-                </CardDescription>
-                <CardAction>
-                  <Button variant="link" size="sm" asChild>
-                    <Link to={`/notifications?butler=${encodeURIComponent(name)}`}>
-                      View all
-                    </Link>
-                  </Button>
-                </CardAction>
-              </CardHeader>
-              <CardContent>
-                {notificationsLoading ? (
-                  <NotificationTableSkeleton rows={5} />
-                ) : (
-                  <NotificationFeed
-                    notifications={notifications}
-                    isLoading={false}
-                  />
-                )}
-              </CardContent>
-            </Card>
-          </div>
+          <ButlerOverviewTab butlerName={name} />
         </TabsContent>
 
         <TabsContent value="sessions">
-          <Card>
-            <CardHeader>
-              <CardTitle>Sessions</CardTitle>
-              <CardDescription>Session history for this butler</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-muted-foreground flex items-center justify-center py-12 text-sm">
-                Coming soon
-              </div>
-            </CardContent>
-          </Card>
+          <ButlerSessionsTab butlerName={name} />
         </TabsContent>
 
         <TabsContent value="config">
-          <Card>
-            <CardHeader>
-              <CardTitle>Configuration</CardTitle>
-              <CardDescription>Butler configuration and settings</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-muted-foreground flex items-center justify-center py-12 text-sm">
-                Coming soon
-              </div>
-            </CardContent>
-          </Card>
+          <ButlerConfigTab butlerName={name} />
         </TabsContent>
 
         <TabsContent value="skills">

@@ -7,17 +7,19 @@ export {
   apiFetch,
   getButler,
   getButlerConfig,
+  getButlerNotifications,
+  getButlerSession,
+  getButlerSessions,
+  getButlers,
   getCostSummary,
   getDailyCosts,
-  getButlerNotifications,
-  getButlers,
   getHealth,
   getIssues,
   getNotifications,
   getNotificationStats,
   getSession,
-  getTopSessions,
   getSessions,
+  getTopSessions,
 } from "./client.ts";
 
 export type {
@@ -36,6 +38,8 @@ export type {
   NotificationSummary,
   PaginatedResponse,
   PaginationMeta,
+  SessionDetail,
+  SessionParams,
   SessionSummary,
   TopSession,
 } from "./types.ts";
