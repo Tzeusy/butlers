@@ -83,12 +83,18 @@ class PaginatedResponse[T](BaseModel):
 
 
 class ButlerSummary(BaseModel):
-    """Lightweight butler representation for list views."""
+    """Lightweight butler representation for list views.
+
+    Combines static config data (name, port, description, modules) with
+    live status obtained by probing the butler's MCP server.  When a butler
+    is unreachable, ``status`` is set to ``"down"``.
+    """
 
     name: str
     status: str
     port: int
-    db: str
+    db: str = ""
+    description: str | None = None
     modules: list[str] = Field(default_factory=list)
     schedule_count: int = 0
 

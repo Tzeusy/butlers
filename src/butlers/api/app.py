@@ -101,8 +101,6 @@ def create_app(
             )
             logger.info("Mounted frontend static files from %s", dist_path)
         else:
-            logger.warning(
-                "static_dir %s does not exist; skipping static mount", dist_path
-            )
+            logger.warning("static_dir %s does not exist; skipping static mount", dist_path)
 
     return app
