@@ -116,17 +116,40 @@ async def list_notifications(
 
 
 @router.get("/stats", response_model=ApiResponse[NotificationStats])
-async def notification_stats() -> ApiResponse[NotificationStats]:
+async def notification_stats(
+    db: DatabaseManager = Depends(_get_db_manager),
+) -> ApiResponse[NotificationStats]:
     """Return aggregated notification statistics.
 
-    Stub implementation — returns zero counts.
+    Queries the Switchboard database for total counts, sent/failed breakdowns,
+    and per-channel / per-butler distributions.
     """
+    pool = db.pool("switchboard")
+
+    total = await pool.fetchval("SELECT count(*) FROM notifications") or 0
+    sent = await pool.fetchval(
+        "SELECT count(*) FROM notifications WHERE status = 'sent'"
+    ) or 0
+    failed = await pool.fetchval(
+        "SELECT count(*) FROM notifications WHERE status = 'failed'"
+    ) or 0
+
+    channel_rows = await pool.fetch(
+        "SELECT channel, count(*) AS cnt FROM notifications GROUP BY channel"
+    )
+    by_channel = {row["channel"]: row["cnt"] for row in channel_rows}
+
+    butler_rows = await pool.fetch(
+        "SELECT source_butler, count(*) AS cnt FROM notifications GROUP BY source_butler"
+    )
+    by_butler = {row["source_butler"]: row["cnt"] for row in butler_rows}
+
     return ApiResponse[NotificationStats](
         data=NotificationStats(
-            total=0,
-            sent=0,
-            failed=0,
-            by_channel={},
-            by_butler={},
+            total=total,
+            sent=sent,
+            failed=failed,
+            by_channel=by_channel,
+            by_butler=by_butler,
         ),
     )
