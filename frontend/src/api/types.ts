@@ -558,3 +558,127 @@ export interface GroupParams {
   offset?: number;
   limit?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------
+
+/** A health measurement record. */
+export interface Measurement {
+  id: string;
+  type: string;
+  value: Record<string, unknown>; // JSONB
+  measured_at: string;
+  notes: string | null;
+  created_at: string;
+}
+
+/** A medication record. */
+export interface Medication {
+  id: string;
+  name: string;
+  dosage: string;
+  frequency: string;
+  schedule: unknown[];
+  active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A dose log entry for a medication. */
+export interface Dose {
+  id: string;
+  medication_id: string;
+  taken_at: string;
+  skipped: boolean;
+  notes: string | null;
+  created_at: string;
+}
+
+/** A health condition record. */
+export interface HealthCondition {
+  id: string;
+  name: string;
+  status: string;
+  diagnosed_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A symptom record. */
+export interface Symptom {
+  id: string;
+  name: string;
+  severity: number;
+  condition_id: string | null;
+  occurred_at: string;
+  notes: string | null;
+  created_at: string;
+}
+
+/** A meal record. */
+export interface Meal {
+  id: string;
+  type: string;
+  description: string;
+  nutrition: Record<string, unknown> | null;
+  eaten_at: string;
+  notes: string | null;
+  created_at: string;
+}
+
+/** A health research note. */
+export interface HealthResearch {
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  source_url: string | null;
+  condition_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Query parameters for measurement endpoints. */
+export interface MeasurementParams {
+  type?: string;
+  since?: string;
+  until?: string;
+  offset?: number;
+  limit?: number;
+}
+
+/** Query parameters for medication endpoints. */
+export interface MedicationParams {
+  active?: boolean;
+  offset?: number;
+  limit?: number;
+}
+
+/** Query parameters for symptom endpoints. */
+export interface SymptomParams {
+  name?: string;
+  since?: string;
+  until?: string;
+  offset?: number;
+  limit?: number;
+}
+
+/** Query parameters for meal endpoints. */
+export interface MealParams {
+  type?: string;
+  since?: string;
+  until?: string;
+  offset?: number;
+  limit?: number;
+}
+
+/** Query parameters for research endpoints. */
+export interface ResearchParams {
+  q?: string;
+  tag?: string;
+  offset?: number;
+  limit?: number;
+}

@@ -37,7 +37,7 @@ const ButlerStateTab = lazy(
   () => import("@/components/butler-detail/ButlerStateTab.tsx"),
 );
 
-const TABS = ["overview", "sessions", "config", "skills", "schedules", "state", "trigger", "crm"] as const;
+const TABS = ["overview", "sessions", "config", "skills", "schedules", "state", "trigger", "crm", "health"] as const;
 type TabValue = (typeof TABS)[number];
 
 const PAGE_SIZE = 20;
@@ -228,6 +228,77 @@ function ButlerCrmTab({ butlerName }: { butlerName: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Health Tab sub-component
+// ---------------------------------------------------------------------------
+
+function ButlerHealthTab({ butlerName }: { butlerName: string }) {
+  const isHealth = butlerName === "health";
+
+  if (!isHealth) {
+    return (
+      <Card>
+        <CardContent className="py-12">
+          <p className="text-muted-foreground text-center text-sm">
+            Health features are only available for the health butler.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const sections = [
+    {
+      title: "Measurements",
+      description: "Track weight, blood pressure, heart rate, and more.",
+      link: "/health/measurements",
+    },
+    {
+      title: "Medications",
+      description: "Manage medications and track dose adherence.",
+      link: "/health/medications",
+    },
+    {
+      title: "Conditions",
+      description: "View and manage health conditions.",
+      link: "/health/conditions",
+    },
+    {
+      title: "Symptoms",
+      description: "Track symptoms with severity ratings.",
+      link: "/health/symptoms",
+    },
+    {
+      title: "Meals",
+      description: "Log meals and monitor nutrition.",
+      link: "/health/meals",
+    },
+    {
+      title: "Research",
+      description: "Health research notes and references.",
+      link: "/health/research",
+    },
+  ];
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {sections.map((section) => (
+        <Card key={section.title}>
+          <CardHeader>
+            <CardTitle className="text-base">{section.title}</CardTitle>
+            <CardDescription>{section.description}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" size="sm" asChild>
+              <Link to={section.link}>View</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ButlerDetailPage
 // ---------------------------------------------------------------------------
 
@@ -247,6 +318,8 @@ export default function ButlerDetailPage() {
     }
   }
 
+  const showHealthTab = name === "health";
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold tracking-tight">{name}</h1>
@@ -261,6 +334,7 @@ export default function ButlerDetailPage() {
           <TabsTrigger value="trigger">Trigger</TabsTrigger>
           <TabsTrigger value="state">State</TabsTrigger>
           <TabsTrigger value="crm">CRM</TabsTrigger>
+          {showHealthTab && <TabsTrigger value="health">Health</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="overview">
@@ -326,6 +400,12 @@ export default function ButlerDetailPage() {
         <TabsContent value="crm">
           <ButlerCrmTab butlerName={name} />
         </TabsContent>
+
+        {showHealthTab && (
+          <TabsContent value="health">
+            <ButlerHealthTab butlerName={name} />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

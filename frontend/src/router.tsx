@@ -15,6 +15,12 @@ import AuditLogPage from './pages/AuditLogPage.tsx'
 import ContactsPage from './pages/ContactsPage.tsx'
 import ContactDetailPage from './pages/ContactDetailPage.tsx'
 import GroupsPage from './pages/GroupsPage.tsx'
+import MeasurementsPage from './pages/MeasurementsPage.tsx'
+import MedicationsPage from './pages/MedicationsPage.tsx'
+import ConditionsPage from './pages/ConditionsPage.tsx'
+import SymptomsPage from './pages/SymptomsPage.tsx'
+import MealsPage from './pages/MealsPage.tsx'
+import ResearchPage from './pages/ResearchPage.tsx'
 
 export const router = createBrowserRouter([
   {
@@ -33,6 +39,12 @@ export const router = createBrowserRouter([
       { path: '/contacts', element: <ContactsPage /> },
       { path: '/contacts/:contactId', element: <ContactDetailPage /> },
       { path: '/groups', element: <GroupsPage /> },
+      { path: '/health/measurements', element: <MeasurementsPage /> },
+      { path: '/health/medications', element: <MedicationsPage /> },
+      { path: '/health/conditions', element: <ConditionsPage /> },
+      { path: '/health/symptoms', element: <SymptomsPage /> },
+      { path: '/health/meals', element: <MealsPage /> },
+      { path: '/health/research', element: <ResearchPage /> },
       { path: '/costs', element: <CostsPage /> },
       { path: '/settings', element: <SettingsPage /> },
     ],
