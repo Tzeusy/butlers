@@ -135,9 +135,7 @@ class TestTriggerButlerEndpoint:
 
         # Verify the mock was called correctly
         mock_client = await mgr.get_client("general")
-        mock_client.call_tool.assert_called_once_with(
-            "trigger", {"prompt": "do something"}
-        )
+        mock_client.call_tool.assert_called_once_with("trigger", {"prompt": "do something"})
 
     async def test_returns_503_when_butler_unreachable(self):
         """Returns 503 when butler MCP server is unreachable."""

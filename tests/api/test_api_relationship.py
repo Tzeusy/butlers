@@ -178,9 +178,7 @@ class TestListUpcomingDates:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
-            resp = await client.get(
-                "/api/relationship/upcoming-dates", params={"days": 30}
-            )
+            resp = await client.get("/api/relationship/upcoming-dates", params={"days": 30})
 
         assert resp.status_code == 200
 

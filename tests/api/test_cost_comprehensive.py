@@ -18,10 +18,12 @@ pytestmark = pytest.mark.unit
 
 class TestPricingConfig:
     def test_model_ids_sorted(self):
-        config = PricingConfig({
-            "z-model": ModelPricing(0.001, 0.002),
-            "a-model": ModelPricing(0.003, 0.004),
-        })
+        config = PricingConfig(
+            {
+                "z-model": ModelPricing(0.001, 0.002),
+                "a-model": ModelPricing(0.003, 0.004),
+            }
+        )
         assert config.model_ids == ["a-model", "z-model"]
 
     def test_get_model_pricing_returns_none_for_unknown(self):
@@ -35,9 +37,11 @@ class TestPricingConfig:
         assert result is mp
 
     def test_estimate_cost_known_model(self):
-        config = PricingConfig({
-            "test-model": ModelPricing(0.000003, 0.000015),
-        })
+        config = PricingConfig(
+            {
+                "test-model": ModelPricing(0.000003, 0.000015),
+            }
+        )
         cost = config.estimate_cost("test-model", 1000, 500)
         expected = 0.000003 * 1000 + 0.000015 * 500
         assert cost == pytest.approx(expected)
@@ -47,15 +51,19 @@ class TestPricingConfig:
         assert config.estimate_cost("unknown", 100, 50) is None
 
     def test_estimate_cost_zero_tokens(self):
-        config = PricingConfig({
-            "test-model": ModelPricing(0.000003, 0.000015),
-        })
+        config = PricingConfig(
+            {
+                "test-model": ModelPricing(0.000003, 0.000015),
+            }
+        )
         assert config.estimate_cost("test-model", 0, 0) == 0.0
 
     def test_estimate_cost_large_tokens(self):
-        config = PricingConfig({
-            "test-model": ModelPricing(0.000003, 0.000015),
-        })
+        config = PricingConfig(
+            {
+                "test-model": ModelPricing(0.000003, 0.000015),
+            }
+        )
         cost = config.estimate_cost("test-model", 1_000_000, 500_000)
         expected = 0.000003 * 1_000_000 + 0.000015 * 500_000
         assert cost == pytest.approx(expected)
@@ -63,9 +71,11 @@ class TestPricingConfig:
 
 class TestEstimateSessionCost:
     def test_known_model_returns_positive(self):
-        config = PricingConfig({
-            "model-a": ModelPricing(0.000003, 0.000015),
-        })
+        config = PricingConfig(
+            {
+                "model-a": ModelPricing(0.000003, 0.000015),
+            }
+        )
         result = estimate_session_cost(config, "model-a", 1000, 500)
         assert result > 0
 
@@ -75,9 +85,11 @@ class TestEstimateSessionCost:
         assert result == 0.0
 
     def test_matches_direct_estimate(self):
-        config = PricingConfig({
-            "model-a": ModelPricing(0.000003, 0.000015),
-        })
+        config = PricingConfig(
+            {
+                "model-a": ModelPricing(0.000003, 0.000015),
+            }
+        )
         direct = config.estimate_cost("model-a", 1000, 500)
         helper = estimate_session_cost(config, "model-a", 1000, 500)
         assert direct == helper
@@ -113,10 +125,10 @@ class TestLoadPricing:
     def test_valid_custom_pricing(self, tmp_path):
         toml_file = tmp_path / "pricing.toml"
         toml_file.write_text(
-            '[models]\n'
+            "[models]\n"
             '[models."my-model"]\n'
-            'input_price_per_token = 0.001\n'
-            'output_price_per_token = 0.002\n'
+            "input_price_per_token = 0.001\n"
+            "output_price_per_token = 0.002\n"
         )
         config = load_pricing(toml_file)
         assert "my-model" in config.model_ids

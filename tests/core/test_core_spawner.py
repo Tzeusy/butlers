@@ -1347,9 +1347,7 @@ class TestTokenUsageCapture:
 
         with (
             patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
-            patch(
-                "butlers.core.spawner.session_complete", new_callable=AsyncMock
-            ) as mock_complete,
+            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock) as mock_complete,
         ):
             import uuid
 

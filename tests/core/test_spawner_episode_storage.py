@@ -87,9 +87,7 @@ class TestStoreSessionEpisode:
 
     async def test_returns_false_on_connection_error(self):
         """When Memory Butler is unreachable, return False."""
-        mock_client = _mock_httpx_client(
-            side_effect=httpx.ConnectError("Connection refused")
-        )
+        mock_client = _mock_httpx_client(side_effect=httpx.ConnectError("Connection refused"))
 
         with patch("butlers.core.spawner.httpx.AsyncClient", return_value=mock_client):
             result = await store_session_episode("my-butler", "session output")
@@ -98,9 +96,7 @@ class TestStoreSessionEpisode:
 
     async def test_returns_false_on_timeout(self):
         """When the request times out, return False."""
-        mock_client = _mock_httpx_client(
-            side_effect=httpx.TimeoutException("Request timed out")
-        )
+        mock_client = _mock_httpx_client(side_effect=httpx.TimeoutException("Request timed out"))
 
         with patch("butlers.core.spawner.httpx.AsyncClient", return_value=mock_client):
             result = await store_session_episode("my-butler", "session output")

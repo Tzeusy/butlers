@@ -127,10 +127,7 @@ class TestCORSForViteDevServer:
             )
 
         assert response.status_code == 200
-        assert (
-            response.headers.get("access-control-allow-origin")
-            == "http://localhost:5173"
-        )
+        assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
     async def test_cors_allows_json_content_type_header(self):
         """CORS must allow the Content-Type header the frontend sends."""
@@ -166,7 +163,4 @@ class TestCORSForViteDevServer:
             )
 
         assert response.status_code == 200
-        assert (
-            response.headers.get("access-control-allow-origin")
-            == "http://localhost:5173"
-        )
+        assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"

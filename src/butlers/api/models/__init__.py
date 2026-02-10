@@ -136,6 +136,7 @@ class SessionSummary(BaseModel):
     """Lightweight session representation for list views."""
 
     id: UUID
+    butler: str | None = None
     prompt: str
     trigger_source: str
     success: bool | None = None
@@ -277,6 +278,7 @@ from butlers.api.models.relationship import (  # noqa: E402
     Note,
     UpcomingDate,
 )
+from butlers.api.models.session import SessionDetail  # noqa: E402
 
 __all__ = [
     "ActivityFeedItem",
@@ -309,6 +311,7 @@ __all__ = [
     "PaginationMeta",
     "ScheduleCost",
     "ScheduleEntry",
+    "SessionDetail",
     "SessionSummary",
     "SkillInfo",
     "TickResponse",

@@ -188,9 +188,7 @@ class TestFetchMemoryContext:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch("butlers.core.spawner.httpx.AsyncClient", return_value=mock_client):
-            result = await fetch_memory_context(
-                "my-butler", "hello", memory_butler_port=9999
-            )
+            result = await fetch_memory_context("my-butler", "hello", memory_butler_port=9999)
 
         assert result == "context from port 9999"
         mock_client.post.assert_called_once_with(

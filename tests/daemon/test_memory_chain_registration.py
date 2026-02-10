@@ -61,8 +61,7 @@ class TestMemoryChainRegistration:
         chain_dir = _resolve_chain_dir("memory")
         assert chain_dir is not None
         migration_files = [
-            f for f in chain_dir.iterdir()
-            if f.suffix == ".py" and f.name != "__init__.py"
+            f for f in chain_dir.iterdir() if f.suffix == ".py" and f.name != "__init__.py"
         ]
         assert len(migration_files) == 5, (
             f"Expected 5 migration files, found {len(migration_files)}"
@@ -107,9 +106,7 @@ class TestFullRevisionChain:
     def _load_migration(filename: str):
         """Load a migration module by filename from the memory migrations dir."""
         filepath = MEMORY_MIGRATIONS_DIR / filename
-        spec = importlib.util.spec_from_file_location(
-            filename.removesuffix(".py"), filepath
-        )
+        spec = importlib.util.spec_from_file_location(filename.removesuffix(".py"), filepath)
         assert spec is not None and spec.loader is not None
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -129,8 +126,7 @@ class TestFullRevisionChain:
                 f"{filename}: expected revision={expected_rev}, got {mod.revision}"
             )
             assert mod.down_revision == expected_down_rev, (
-                f"{filename}: expected down_revision={expected_down_rev}, "
-                f"got {mod.down_revision}"
+                f"{filename}: expected down_revision={expected_down_rev}, got {mod.down_revision}"
             )
 
     def test_only_first_migration_has_branch_label(self) -> None:
@@ -142,28 +138,20 @@ class TestFullRevisionChain:
                     f"{filename} should have branch_labels=('memory',)"
                 )
             else:
-                assert mod.branch_labels is None, (
-                    f"{filename} should have branch_labels=None"
-                )
+                assert mod.branch_labels is None, f"{filename} should have branch_labels=None"
 
     def test_no_migration_has_depends_on(self) -> None:
         """All migrations should have depends_on=None (chaining via down_revision)."""
         for filename, _, _ in self.EXPECTED_CHAIN:
             mod = self._load_migration(filename)
-            assert mod.depends_on is None, (
-                f"{filename} should have depends_on=None"
-            )
+            assert mod.depends_on is None, f"{filename} should have depends_on=None"
 
     def test_all_migrations_have_upgrade_and_downgrade(self) -> None:
         """Every migration must define both upgrade() and downgrade() callables."""
         for filename, _, _ in self.EXPECTED_CHAIN:
             mod = self._load_migration(filename)
-            assert callable(getattr(mod, "upgrade", None)), (
-                f"{filename} missing upgrade()"
-            )
-            assert callable(getattr(mod, "downgrade", None)), (
-                f"{filename} missing downgrade()"
-            )
+            assert callable(getattr(mod, "upgrade", None)), f"{filename} missing upgrade()"
+            assert callable(getattr(mod, "downgrade", None)), f"{filename} missing downgrade()"
 
     def test_no_duplicate_revisions(self) -> None:
         """Each revision ID in the chain must be unique."""
@@ -171,9 +159,7 @@ class TestFullRevisionChain:
         for filename, _, _ in self.EXPECTED_CHAIN:
             mod = self._load_migration(filename)
             revisions.append(mod.revision)
-        assert len(revisions) == len(set(revisions)), (
-            f"Duplicate revisions found: {revisions}"
-        )
+        assert len(revisions) == len(set(revisions)), f"Duplicate revisions found: {revisions}"
 
     def test_chain_is_linear(self) -> None:
         """The chain should form a single linear sequence from 001 to 005."""

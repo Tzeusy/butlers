@@ -91,7 +91,6 @@ class ApprovalConfig:
         return self.default_expiry_hours
 
 
-
 @dataclass
 class MemoryConfig:
     """Configuration for Memory Butler integration from [butler.memory]."""
@@ -101,12 +100,15 @@ class MemoryConfig:
     context_token_budget: int = 3000
     retrieval_limit: int = 20
     retrieval_mode: str = "hybrid"
-    score_weights: dict[str, float] = field(default_factory=lambda: {
-        "relevance": 0.4,
-        "importance": 0.3,
-        "recency": 0.2,
-        "confidence": 0.1,
-    })
+    score_weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "relevance": 0.4,
+            "importance": 0.3,
+            "recency": 0.2,
+            "confidence": 0.1,
+        }
+    )
+
 
 @dataclass
 class ButlerConfig:

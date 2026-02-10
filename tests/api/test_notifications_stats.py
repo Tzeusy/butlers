@@ -84,7 +84,9 @@ class TestNotificationStatsBasic:
 
     async def test_returns_200_with_stats(self):
         app, _, _ = _build_stats_app(
-            total=100, sent=90, failed=10,
+            total=100,
+            sent=90,
+            failed=10,
             channel_rows=[
                 {"channel": "telegram", "cnt": 60},
                 {"channel": "email", "cnt": 40},
@@ -142,7 +144,9 @@ class TestNotificationStatsResponseShape:
 
     async def test_data_has_all_required_fields(self):
         app, _, _ = _build_stats_app(
-            total=10, sent=7, failed=3,
+            total=10,
+            sent=7,
+            failed=3,
             channel_rows=[{"channel": "telegram", "cnt": 10}],
             butler_rows=[{"source_butler": "atlas", "cnt": 10}],
         )
@@ -182,8 +186,9 @@ class TestNotificationStatsDBQueries:
         assert mock_pool.fetchval.call_count == 3
 
         calls = [c[0][0] for c in mock_pool.fetchval.call_args_list]
-        assert any("SELECT count(*) FROM notifications" in sql and "status" not in sql
-                    for sql in calls), "Missing total count query"
+        assert any(
+            "SELECT count(*) FROM notifications" in sql and "status" not in sql for sql in calls
+        ), "Missing total count query"
         assert any("status = 'sent'" in sql for sql in calls), "Missing sent count query"
         assert any("status = 'failed'" in sql for sql in calls), "Missing failed count query"
 
@@ -200,8 +205,9 @@ class TestNotificationStatsDBQueries:
 
         calls = [c[0][0] for c in mock_pool.fetch.call_args_list]
         assert any("GROUP BY channel" in sql for sql in calls), "Missing channel grouping query"
-        assert any("GROUP BY source_butler" in sql
-                    for sql in calls), "Missing butler grouping query"
+        assert any("GROUP BY source_butler" in sql for sql in calls), (
+            "Missing butler grouping query"
+        )
 
 
 class TestNotificationStatsNullHandling:
@@ -236,7 +242,9 @@ class TestNotificationStatsMultipleChannelsAndButlers:
 
     async def test_many_channels_and_butlers(self):
         app, _, _ = _build_stats_app(
-            total=200, sent=180, failed=20,
+            total=200,
+            sent=180,
+            failed=20,
             channel_rows=[
                 {"channel": "telegram", "cnt": 80},
                 {"channel": "email", "cnt": 70},

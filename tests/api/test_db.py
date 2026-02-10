@@ -95,9 +95,7 @@ async def test_butler_names_returns_registered(
 
 
 @patch("butlers.api.db.asyncpg.create_pool", new_callable=AsyncMock)
-async def test_fan_out_queries_all_butlers(
-    mock_create: AsyncMock, mgr: DatabaseManager
-) -> None:
+async def test_fan_out_queries_all_butlers(mock_create: AsyncMock, mgr: DatabaseManager) -> None:
     """fan_out runs query on all pools concurrently."""
     pool_a = _make_mock_pool()
     pool_a.fetch.return_value = [{"count": 10}]

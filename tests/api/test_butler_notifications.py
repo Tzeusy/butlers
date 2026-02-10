@@ -63,9 +63,16 @@ def _build_app_with_mock_db(
 
     mock_pool = AsyncMock()
     mock_pool.fetchval = AsyncMock(return_value=total)
-    mock_pool.fetch = AsyncMock(return_value=[MagicMock(**{
-        "__getitem__": lambda self, key, row=row: row[key],
-    }) for row in rows])
+    mock_pool.fetch = AsyncMock(
+        return_value=[
+            MagicMock(
+                **{
+                    "__getitem__": lambda self, key, row=row: row[key],
+                }
+            )
+            for row in rows
+        ]
+    )
 
     mock_db = MagicMock(spec=DatabaseManager)
     mock_db.pool.return_value = mock_pool

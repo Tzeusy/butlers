@@ -86,7 +86,6 @@ def _build_env(
     return env
 
 
-
 async def fetch_memory_context(
     butler_name: str,
     prompt: str,
@@ -151,7 +150,6 @@ async def fetch_memory_context(
             exc_info=True,
         )
         return None
-
 
 
 async def store_session_episode(

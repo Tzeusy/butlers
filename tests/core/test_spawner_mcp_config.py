@@ -50,12 +50,14 @@ class MockAdapter(RuntimeAdapter):
         cwd: Path | None = None,
         timeout: int | None = None,
     ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
-        self.calls.append({
-            "prompt": prompt,
-            "system_prompt": system_prompt,
-            "mcp_servers": mcp_servers,
-            "env": env,
-        })
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system_prompt": system_prompt,
+                "mcp_servers": mcp_servers,
+                "env": env,
+            }
+        )
         return ("ok", [], None)
 
     def build_config_file(

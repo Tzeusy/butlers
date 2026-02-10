@@ -200,9 +200,7 @@ async def get_butler_config(
         butler_toml = tomllib.loads(toml_path.read_bytes().decode())
     except (tomllib.TOMLDecodeError, OSError) as exc:
         logger.error("Failed to read butler.toml for %s: %s", name, exc)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to read config for butler: {name}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to read config for butler: {name}")
 
     config_response = ButlerConfigResponse(
         butler_toml=butler_toml,
@@ -335,16 +333,13 @@ async def _get_module_health_via_mcp(
                 )
                 continue
 
-            modules.append(
-                ModuleStatus(name=mod_name, enabled=True, status=mod_status)
-            )
+            modules.append(ModuleStatus(name=mod_name, enabled=True, status=mod_status))
 
         return modules
 
     except (ButlerUnreachableError, TimeoutError):
         return [
-            ModuleStatus(name=mod_name, enabled=True, status="unknown")
-            for mod_name in module_names
+            ModuleStatus(name=mod_name, enabled=True, status="unknown") for mod_name in module_names
         ]
     except Exception:
         logger.warning(
@@ -353,8 +348,7 @@ async def _get_module_health_via_mcp(
             exc_info=True,
         )
         return [
-            ModuleStatus(name=mod_name, enabled=True, status="unknown")
-            for mod_name in module_names
+            ModuleStatus(name=mod_name, enabled=True, status="unknown") for mod_name in module_names
         ]
 
 
@@ -386,12 +380,9 @@ async def get_butler_modules(
     if not module_names:
         return ApiResponse[list[ModuleStatus]](data=[])
 
-    module_statuses = await _get_module_health_via_mcp(
-        name, mcp_manager, module_names
-    )
+    module_statuses = await _get_module_health_via_mcp(name, mcp_manager, module_names)
 
     return ApiResponse[list[ModuleStatus]](data=module_statuses)
-
 
 
 # ---------------------------------------------------------------------------
