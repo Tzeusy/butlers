@@ -653,3 +653,105 @@ async def mark_helpful(
             row["maturity"] = new_maturity
 
             return row
+
+
+# ---------------------------------------------------------------------------
+# Rule feedback — mark_harmful
+# ---------------------------------------------------------------------------
+
+
+async def mark_harmful(
+    pool: Pool,
+    rule_id: uuid.UUID,
+    reason: str | None = None,
+) -> dict | None:
+    """Mark a rule as having caused problems.
+
+    Increments ``harmful_count`` and ``applied_count``, recalculates
+    ``effectiveness_score`` using a 4x penalty for harmful marks::
+
+        effectiveness = success / (success + 4 * harmful + 0.01)
+
+    The +0.01 prevents division by zero.
+
+    Evaluates demotion:
+    - established -> candidate if effectiveness < 0.6
+    - proven -> established if effectiveness < 0.8
+
+    If harmful_count >= 3 and effectiveness < 0.3, sets a flag in metadata
+    indicating anti-pattern inversion is needed (will be handled by the
+    anti-pattern inversion function).
+
+    Stores the reason (if provided) in metadata.harmful_reasons list.
+
+    Args:
+        pool: asyncpg connection pool.
+        rule_id: UUID of the rule.
+        reason: Optional reason why the rule was harmful.
+
+    Returns:
+        Updated rule as dict, or None if rule not found.
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Increment counts
+            row = await conn.fetchrow(
+                "UPDATE rules "
+                "SET applied_count = applied_count + 1, "
+                "    harmful_count = harmful_count + 1, "
+                "    last_applied_at = now() "
+                "WHERE id = $1 "
+                "RETURNING *",
+                rule_id,
+            )
+            if row is None:
+                return None
+
+            row = dict(row)
+
+            # Recalculate effectiveness with 4x harmful penalty
+            success = row["success_count"]
+            harmful = row["harmful_count"]
+            effectiveness = success / (success + 4 * harmful + 0.01)
+
+            # Evaluate demotion
+            current_maturity = row["maturity"]
+            new_maturity = current_maturity
+
+            if current_maturity == "established" and effectiveness < 0.6:
+                new_maturity = "candidate"
+            elif current_maturity == "proven" and effectiveness < 0.8:
+                new_maturity = "established"
+
+            # Update metadata with reason if provided
+            metadata = row.get("metadata", {})
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+
+            if reason:
+                reasons = metadata.get("harmful_reasons", [])
+                reasons.append(reason)
+                metadata["harmful_reasons"] = reasons
+
+            # Check for anti-pattern inversion trigger
+            if harmful >= 3 and effectiveness < 0.3:
+                metadata["needs_inversion"] = True
+
+            metadata_json = json.dumps(metadata)
+
+            # Persist changes
+            await conn.execute(
+                "UPDATE rules "
+                "SET effectiveness_score = $1, maturity = $2, metadata = $3 "
+                "WHERE id = $4",
+                effectiveness,
+                new_maturity,
+                metadata_json,
+                rule_id,
+            )
+
+            row["effectiveness_score"] = effectiveness
+            row["maturity"] = new_maturity
+            row["metadata"] = metadata
+
+            return row
