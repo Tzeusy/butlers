@@ -566,6 +566,13 @@ class ButlerDaemon:
                 Optional recipient identifier. If omitted, the Switchboard
                 delivers to the system owner's default for the channel.
             """
+            # Validate message is not empty/whitespace
+            if not message or not message.strip():
+                return {
+                    "status": "error",
+                    "error": "Message must not be empty or whitespace-only.",
+                }
+
             _SUPPORTED_CHANNELS = {"telegram", "email"}
             if channel not in _SUPPORTED_CHANNELS:
                 return {
@@ -592,8 +599,12 @@ class ButlerDaemon:
             if recipient is not None:
                 deliver_args["recipient"] = recipient
 
+            _NOTIFY_TIMEOUT_S = 30
             try:
-                result = await client.call_tool("deliver", deliver_args)
+                result = await asyncio.wait_for(
+                    client.call_tool("deliver", deliver_args),
+                    timeout=_NOTIFY_TIMEOUT_S,
+                )
                 # FastMCP call_tool returns a CallToolResult
                 if result.is_error:
                     # Extract error text from the result content
@@ -601,6 +612,30 @@ class ButlerDaemon:
                     return {"status": "error", "error": error_text}
                 # Extract the data from the successful result
                 return {"status": "ok", "result": result.data}
+            except TimeoutError:
+                logger.warning(
+                    "notify() timed out after %ds for butler %s",
+                    _NOTIFY_TIMEOUT_S,
+                    butler_name,
+                )
+                return {
+                    "status": "error",
+                    "error": (
+                        f"Switchboard call timed out after {_NOTIFY_TIMEOUT_S}s. "
+                        "The Switchboard may be overloaded or unresponsive."
+                    ),
+                }
+            except (ConnectionError, OSError) as exc:
+                logger.warning(
+                    "notify() could not reach Switchboard for butler %s: %s",
+                    butler_name,
+                    exc,
+                    exc_info=True,
+                )
+                return {
+                    "status": "error",
+                    "error": f"Switchboard unreachable: {exc}",
+                }
             except Exception as exc:
                 logger.warning(
                     "notify() failed for butler %s: %s",

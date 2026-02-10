@@ -2111,13 +2111,13 @@ class TestNotifyTool:
         assert "No module available" in result["error"]
 
     async def test_notify_switchboard_call_raises_exception(self, butler_dir: Path) -> None:
-        """notify should return error (not raise) when call_tool raises."""
+        """notify should return error (not raise) when call_tool raises a generic exception."""
         patches = _patch_infra()
         daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
         assert notify_fn is not None
 
         mock_client = AsyncMock()
-        mock_client.call_tool = AsyncMock(side_effect=ConnectionError("Connection refused"))
+        mock_client.call_tool = AsyncMock(side_effect=RuntimeError("Unexpected failure"))
         daemon.switchboard_client = mock_client
 
         # Should NOT raise — returns error result
@@ -2125,7 +2125,7 @@ class TestNotifyTool:
 
         assert result["status"] == "error"
         assert "Switchboard call failed" in result["error"]
-        assert "Connection refused" in result["error"]
+        assert "Unexpected failure" in result["error"]
 
     async def test_notify_switchboard_timeout_returns_error(self, butler_dir: Path) -> None:
         """notify should return error when Switchboard call times out."""
@@ -2140,7 +2140,7 @@ class TestNotifyTool:
         result = await notify_fn(channel="telegram", message="Hello")
 
         assert result["status"] == "error"
-        assert "Switchboard call failed" in result["error"]
+        assert "timed out" in result["error"].lower()
 
     async def test_notify_includes_source_butler_name(self, butler_dir: Path) -> None:
         """notify should include the butler name as source_butler in deliver args."""
@@ -2161,3 +2161,64 @@ class TestNotifyTool:
         call_args = mock_client.call_tool.call_args
         deliver_args = call_args[0][1]
         assert deliver_args["source_butler"] == "test-butler"
+
+    async def test_notify_empty_message(self, butler_dir: Path) -> None:
+        """notify with empty or whitespace-only message should return error."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        # Empty string
+        result = await notify_fn(channel="telegram", message="")
+        assert result["status"] == "error"
+        assert "empty" in result["error"].lower() or "whitespace" in result["error"].lower()
+
+        # Whitespace-only string
+        result = await notify_fn(channel="telegram", message="   \t\n  ")
+        assert result["status"] == "error"
+        assert "empty" in result["error"].lower() or "whitespace" in result["error"].lower()
+
+    async def test_notify_timeout(self, butler_dir: Path) -> None:
+        """notify should return a timeout-specific error when call_tool hangs."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        async def slow_call(*args, **kwargs):
+            await asyncio.sleep(999)
+
+        mock_client = AsyncMock()
+        mock_client.call_tool = slow_call
+        daemon.switchboard_client = mock_client
+
+        # The timeout is a local variable inside notify, so we mock
+        # asyncio.wait_for to raise TimeoutError directly.
+        with patch("butlers.daemon.asyncio.wait_for", side_effect=TimeoutError()):
+            result = await notify_fn(channel="telegram", message="Hello")
+
+        assert result["status"] == "error"
+        assert "timed out" in result["error"].lower()
+
+    async def test_notify_connection_error(self, butler_dir: Path) -> None:
+        """notify should return 'unreachable' error for ConnectionError/OSError."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        # Test with ConnectionError
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(side_effect=ConnectionError("Connection refused"))
+        daemon.switchboard_client = mock_client
+
+        result = await notify_fn(channel="telegram", message="Hello")
+        assert result["status"] == "error"
+        assert "unreachable" in result["error"].lower()
+        assert "Connection refused" in result["error"]
+
+        # Test with OSError (parent class of ConnectionError)
+        mock_client.call_tool = AsyncMock(side_effect=OSError("Network is down"))
+
+        result = await notify_fn(channel="telegram", message="Hello")
+        assert result["status"] == "error"
+        assert "unreachable" in result["error"].lower()
+        assert "Network is down" in result["error"]
