@@ -1,12 +1,9 @@
+import { RouterProvider } from 'react-router'
+import { router } from './router.tsx'
 import './App.css'
 
 function App() {
-  return (
-    <div className="app">
-      <h1>Butlers Dashboard</h1>
-      <p>Agent framework management interface</p>
-    </div>
-  )
+  return <RouterProvider router={router} />
 }
 
 export default App
