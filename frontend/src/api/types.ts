@@ -75,3 +75,16 @@ export interface SessionSummary {
 export interface HealthResponse {
   status: string;
 }
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+/** Aggregate notification statistics for the stats bar. */
+export interface NotificationStats {
+  total: number;
+  sent: number;
+  failed: number;
+  by_channel: Record<string, number>;
+  by_butler: Record<string, number>;
+}
