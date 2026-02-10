@@ -121,10 +121,21 @@ All 122 beads closed. 449 tests passing on main. Full implementation complete.
 - `butlers/{switchboard,general,relationship,health}/migrations/` — butler-specific migrations
 - `butlers/{switchboard,general,relationship,health,heartbeat}/` — butler config dirs
 
+### Test Layout
+- Shared/cross-cutting tests in `tests/`
+- Butler-specific tool tests colocated in `butlers/<name>/tests/`
+  - `butlers/general/tests/test_tools.py`
+  - `butlers/health/tests/test_tools.py`
+  - `butlers/relationship/tests/test_tools.py`, `test_contact_info.py`
+  - `butlers/switchboard/tests/test_tools.py`
+- `pyproject.toml` testpaths: `["tests", "butlers"]`
+- Uses `--import-mode=importlib` to avoid module-name collisions across butler test dirs
+
 ### Test Patterns
 - All DB tests use `testcontainers.postgres.PostgresContainer` with `asyncpg.create_pool()`
 - Tables created via direct SQL from migration files (not Alembic runner)
-- `tests/conftest.py` has `SpawnerResult` and `MockSpawner` dataclass/class
+- Root `conftest.py` has `SpawnerResult` and `MockSpawner` (visible to all test trees)
+- `tests/conftest.py` re-exports from root for backward compat (`from tests.conftest import ...`)
 - CLI tests use Click's `CliRunner`
 - Telemetry tests use `InMemorySpanExporter`
 
@@ -133,7 +144,7 @@ All 122 beads closed. 449 tests passing on main. Full implementation complete.
 
 ### Quality Gates
 ```bash
-uv run ruff check src/ tests/
-uv run ruff format --check src/ tests/
+uv run ruff check src/ tests/ butlers/ conftest.py
+uv run ruff format --check src/ tests/ butlers/ conftest.py
 uv run pytest tests/ -v --ignore=tests/test_db.py --ignore=tests/test_migrations.py
 ```
