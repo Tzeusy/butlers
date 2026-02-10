@@ -130,3 +130,13 @@ class GroupListResponse(BaseModel):
 
     groups: list[Group]
     total: int
+
+
+class ActivityFeedItem(BaseModel):
+    """A single entry in a contact's activity feed."""
+
+    id: UUID
+    contact_id: UUID
+    action: str
+    details: dict = Field(default_factory=dict)
+    created_at: datetime
