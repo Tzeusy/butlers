@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from butlers.modules.base import Module
 from butlers.modules.registry import ModuleRegistry
 
+pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # Config schemas
 # ---------------------------------------------------------------------------

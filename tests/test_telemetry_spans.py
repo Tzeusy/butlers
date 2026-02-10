@@ -14,6 +14,8 @@ from butlers.core.telemetry import (
     tool_span,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def _reset_otel_global_state():
     """Fully reset the OpenTelemetry global tracer provider state."""

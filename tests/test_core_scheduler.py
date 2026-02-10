@@ -12,7 +12,10 @@ import pytest
 
 # Skip all tests in this module if Docker is not available
 docker_available = shutil.which("docker") is not None
-pytestmark = pytest.mark.skipif(not docker_available, reason="Docker not available")
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(not docker_available, reason="Docker not available"),
+]
 
 
 def _unique_db_name() -> str:
@@ -661,6 +664,8 @@ async def test_unique_constraint_in_migration(pool):
             "test2",
             "runtime",
         )
+
+
 # schedule_update — enabled toggle handling [butlers-06j.9]
 # ---------------------------------------------------------------------------
 
@@ -720,6 +725,8 @@ async def test_update_cron_still_recomputes_next_run(pool):
     # next_run_at should be recomputed and different
     assert new_row["next_run_at"] != old_row["next_run_at"]
     assert new_row["next_run_at"] > datetime.now(UTC) - timedelta(seconds=5)
+
+
 # Atomicity test for schedule_update
 # ---------------------------------------------------------------------------
 
@@ -771,6 +778,8 @@ async def test_update_multiple_fields_with_cron_is_atomic(pool):
     assert updated["enabled"] is False
     # next_run_at should be NULL when task is disabled
     assert updated["next_run_at"] is None
+
+
 # Telemetry — butler.tick span
 # ---------------------------------------------------------------------------
 

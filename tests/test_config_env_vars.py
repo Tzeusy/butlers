@@ -8,6 +8,7 @@ import pytest
 
 from butlers.config import ConfigError, load_config, resolve_env_vars
 
+pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

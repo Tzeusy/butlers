@@ -15,18 +15,21 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 # Skip all tests in this module if Docker is not available
 docker_available = shutil.which("docker") is not None
-pytestmark = pytest.mark.skipif(not docker_available, reason="Docker not available")
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(not docker_available, reason="Docker not available"),
+]
 
 
 def _unique_db_name() -> str:
     return f"test_{uuid.uuid4().hex[:12]}"
 
 
-
 def _reset_otel_global_state():
     """Fully reset the OpenTelemetry global tracer provider state."""
     trace._TRACER_PROVIDER_SET_ONCE = trace.Once()
     trace._TRACER_PROVIDER = None
+
 
 @pytest.fixture(scope="module")
 def postgres_container():
@@ -588,6 +591,8 @@ def otel_provider():
     yield exporter
     provider.shutdown()
     _reset_otel_global_state()
+
+
 # Trace context propagation in route()
 # ------------------------------------------------------------------
 
@@ -833,6 +838,7 @@ async def test_call_butler_tool_raises_on_connection_error():
 
     with pytest.raises(ConnectionError, match="Failed to call tool"):
         await _call_butler_tool("http://localhost:1/sse", "ping", {})
+
 
 # ------------------------------------------------------------------
 # dispatch_decomposed

@@ -11,7 +11,10 @@ from sqlalchemy import create_engine, text
 
 # Skip all tests if Docker is not available
 docker_available = shutil.which("docker") is not None
-pytestmark = pytest.mark.skipif(not docker_available, reason="Docker not available")
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(not docker_available, reason="Docker not available"),
+]
 
 
 def _unique_db_name() -> str:

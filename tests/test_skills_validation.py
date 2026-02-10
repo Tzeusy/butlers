@@ -9,6 +9,8 @@ import pytest
 
 from butlers.core.skills import list_valid_skills
 
+pytestmark = pytest.mark.unit
+
 
 def test_list_valid_skills_empty_directory(tmp_path: Path) -> None:
     """When skills directory is empty, returns empty list."""

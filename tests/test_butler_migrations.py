@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from pydantic import BaseModel
 
 from butlers.daemon import ButlerDaemon
@@ -21,6 +22,8 @@ from butlers.migrations import (
 )
 from butlers.modules.base import Module
 from butlers.modules.registry import ModuleRegistry
+
+pytestmark = pytest.mark.unit
 
 # ---------------------------------------------------------------------------
 # has_butler_chain unit tests

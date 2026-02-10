@@ -11,7 +11,10 @@ import pytest
 
 # Skip all tests in this module if Docker is not available
 docker_available = shutil.which("docker") is not None
-pytestmark = pytest.mark.skipif(not docker_available, reason="Docker not available")
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(not docker_available, reason="Docker not available"),
+]
 
 
 def _unique_db_name() -> str:
@@ -1912,6 +1915,8 @@ async def test_contact_resolve_context_with_interactions(pool):
     assert c2["id"] in ids
     # c1 should be ranked first due to interaction mentioning yoga
     assert result["candidates"][0]["contact_id"] == c1["id"]
+
+
 # Tasks / To-dos
 # ------------------------------------------------------------------
 
@@ -2100,6 +2105,8 @@ async def test_task_delete_not_found(pool):
 
     with pytest.raises(ValueError, match="not found"):
         await task_delete(pool, uuid.uuid4())
+
+
 # Stay-in-touch cadence
 # ------------------------------------------------------------------
 

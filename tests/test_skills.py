@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from butlers.core.skills import (
     append_agents_md,
     get_skills_dir,
@@ -11,6 +13,8 @@ from butlers.core.skills import (
     read_system_prompt,
     write_agents_md,
 )
+
+pytestmark = pytest.mark.unit
 
 # ---------------------------------------------------------------------------
 # 9.1 — read_system_prompt

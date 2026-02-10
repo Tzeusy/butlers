@@ -33,6 +33,8 @@ from butlers.core.spawner import (
     _build_env,
 )
 
+pytestmark = pytest.mark.unit
+
 # ---------------------------------------------------------------------------
 # MockAdapter — runtime-agnostic adapter for orchestration tests
 # ---------------------------------------------------------------------------
@@ -865,7 +867,6 @@ class TestParametrizedOrchestration:
             assert result.error is None
             assert result.output == expected_result
         assert result.duration_ms >= 0
-
 
 
 @pytest.mark.parametrize(

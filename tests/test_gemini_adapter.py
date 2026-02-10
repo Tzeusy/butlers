@@ -16,6 +16,8 @@ from butlers.core.runtimes.gemini import (
     _parse_gemini_output,
 )
 
+pytestmark = pytest.mark.unit
+
 # Long patch target as constant to keep lines within 100 chars
 _EXEC = "butlers.core.runtimes.gemini.asyncio.create_subprocess_exec"
 

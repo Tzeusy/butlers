@@ -8,6 +8,7 @@ import pytest
 
 from butlers.config import ButlerConfig, ConfigError, RuntimeConfig, ScheduleConfig, load_config
 
+pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

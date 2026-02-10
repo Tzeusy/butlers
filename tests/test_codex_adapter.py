@@ -15,6 +15,8 @@ from butlers.core.runtimes.codex import (
     _parse_codex_output,
 )
 
+pytestmark = pytest.mark.unit
+
 # Long patch target as constant to keep lines within 100 chars
 _EXEC = "butlers.core.runtimes.codex.asyncio.create_subprocess_exec"
 
