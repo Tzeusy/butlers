@@ -5,12 +5,14 @@
 export {
   ApiError,
   apiFetch,
+  deleteButlerState,
   getButler,
   getButlerConfig,
   getButlerNotifications,
   getButlerSession,
   getButlerSessions,
   getButlerSkills,
+  getButlerState,
   getButlers,
   getCostSummary,
   getDailyCosts,
@@ -21,6 +23,7 @@ export {
   getSession,
   getSessions,
   getTopSessions,
+  setButlerState,
   triggerButler,
 } from "./client.ts";
 
@@ -44,6 +47,8 @@ export type {
   SessionDetail,
   SessionParams,
   SessionSummary,
+  StateEntry,
+  StateSetRequest,
   TopSession,
   TriggerResponse,
 } from "./types.ts";

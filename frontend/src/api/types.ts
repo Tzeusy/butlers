@@ -230,6 +230,22 @@ export interface TopSession {
 }
 
 // ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+/** A key-value state entry from a butler's state store. */
+export interface StateEntry {
+  key: string;
+  value: Record<string, unknown>;
+  updated_at: string; // ISO 8601
+}
+
+/** Request body for setting a state value. */
+export interface StateSetRequest {
+  value: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
 // Skills
 // ---------------------------------------------------------------------------
 

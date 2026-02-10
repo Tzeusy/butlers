@@ -27,8 +27,11 @@ const ButlerSkillsTab = lazy(
 const ButlerTriggerTab = lazy(
   () => import("@/components/butler-detail/ButlerTriggerTab.tsx"),
 );
+const ButlerStateTab = lazy(
+  () => import("@/components/butler-detail/ButlerStateTab.tsx"),
+);
 
-const TABS = ["overview", "sessions", "config", "skills", "trigger"] as const;
+const TABS = ["overview", "sessions", "config", "skills", "trigger", "state"] as const;
 type TabValue = (typeof TABS)[number];
 
 const PAGE_SIZE = 20;
@@ -148,6 +151,7 @@ export default function ButlerDetailPage() {
           <TabsTrigger value="config">Config</TabsTrigger>
           <TabsTrigger value="skills">Skills</TabsTrigger>
           <TabsTrigger value="trigger">Trigger</TabsTrigger>
+          <TabsTrigger value="state">State</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -183,6 +187,18 @@ export default function ButlerDetailPage() {
             }
           >
             <ButlerTriggerTab butlerName={name} />
+          </Suspense>
+        </TabsContent>
+
+        <TabsContent value="state">
+          <Suspense
+            fallback={
+              <div className="text-muted-foreground flex items-center justify-center py-12 text-sm">
+                Loading state...
+              </div>
+            }
+          >
+            <ButlerStateTab butlerName={name} />
           </Suspense>
         </TabsContent>
       </Tabs>
