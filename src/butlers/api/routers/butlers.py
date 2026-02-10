@@ -27,6 +27,7 @@ from butlers.api.models import (
     ButlerSummary,
     ModuleInfo,
     ScheduleEntry,
+    SkillInfo,
 )
 from butlers.config import ConfigError, load_config
 
@@ -134,9 +135,7 @@ async def get_butler_detail(
         for mod_name, mod_cfg in config.modules.items()
     ]
 
-    schedules = [
-        ScheduleEntry(name=s.name, cron=s.cron, prompt=s.prompt) for s in config.schedules
-    ]
+    schedules = [ScheduleEntry(name=s.name, cron=s.cron, prompt=s.prompt) for s in config.schedules]
 
     skills = _discover_skills(butler_dir)
     status = await _get_live_status(name, mcp_manager)
@@ -180,3 +179,46 @@ async def _get_live_status(name: str, mcp_manager: MCPClientManager) -> str:
     except Exception:
         logger.warning("Unexpected error pinging butler %s", name, exc_info=True)
         return "offline"
+
+
+# ---------------------------------------------------------------------------
+# Skills endpoint
+# ---------------------------------------------------------------------------
+
+
+def _read_skills(butler_dir: Path) -> list[SkillInfo]:
+    """Read skill names and SKILL.md content from the butler's skills/ directory."""
+    skills_dir = butler_dir / "skills"
+    if not skills_dir.is_dir():
+        return []
+
+    skills: list[SkillInfo] = []
+    for entry in sorted(skills_dir.iterdir()):
+        skill_md = entry / "SKILL.md"
+        if entry.is_dir() and skill_md.exists():
+            content = skill_md.read_text(encoding="utf-8")
+            skills.append(SkillInfo(name=entry.name, content=content))
+
+    return skills
+
+
+@router.get("/{name}/skills", response_model=ApiResponse[list[SkillInfo]])
+async def list_butler_skills(
+    name: str,
+    configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
+    roster_dir: Path = Depends(_get_roster_dir),
+) -> ApiResponse[list[SkillInfo]]:
+    """Return skills for a single butler with name and SKILL.md content."""
+    connection_info: ButlerConnectionInfo | None = None
+    for cfg in configs:
+        if cfg.name == name:
+            connection_info = cfg
+            break
+
+    if connection_info is None:
+        raise HTTPException(status_code=404, detail=f"Butler not found: {name}")
+
+    butler_dir = roster_dir / name
+    skills = _read_skills(butler_dir)
+
+    return ApiResponse[list[SkillInfo]](data=skills)
