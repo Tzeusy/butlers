@@ -123,3 +123,14 @@ def load_pricing(path: Path | None = None) -> PricingConfig:
             raise PricingError(f"Invalid price value for model '{model_id}': {exc}") from exc
 
     return PricingConfig(models)
+
+
+def estimate_session_cost(
+    config: PricingConfig,
+    model_id: str,
+    input_tokens: int,
+    output_tokens: int,
+) -> float:
+    """Estimate cost for a session, returning 0.0 for unknown models."""
+    cost = config.estimate_cost(model_id, input_tokens, output_tokens)
+    return cost if cost is not None else 0.0
