@@ -1,3 +1,4 @@
+import { EmptyState as EmptyStateUI } from "@/components/ui/empty-state";
 import { formatDistanceToNow } from "date-fns";
 import { useNavigate } from "react-router";
 
@@ -73,9 +74,10 @@ function SkeletonRows({ count = 5 }: { count?: number }) {
 
 function EmptyState() {
   return (
-    <div className="text-muted-foreground flex flex-col items-center justify-center py-12 text-sm">
-      <p>No contacts found.</p>
-    </div>
+    <EmptyStateUI
+      title="No contacts found"
+      description="Contacts will appear here as they are added through the Relationship butler."
+    />
   );
 }
 

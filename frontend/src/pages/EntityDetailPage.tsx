@@ -8,7 +8,7 @@
  */
 
 import { format } from "date-fns";
-import { Link, useParams } from "react-router";
+import { useParams } from "react-router";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -21,6 +21,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import JsonViewer from "@/components/general/JsonViewer.tsx";
 import { useEntity } from "@/hooks/use-general";
+import { Breadcrumbs } from "@/components/ui/breadcrumbs";
 
 // ---------------------------------------------------------------------------
 // EntityDetailPage
@@ -34,13 +35,13 @@ export default function EntityDetailPage() {
 
   return (
     <div className="space-y-6">
-      {/* Back link */}
-      <Link
-        to="/entities"
-        className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-sm transition-colors"
-      >
-        &larr; Back to Entities
-      </Link>
+      {/* Breadcrumbs */}
+      <Breadcrumbs
+        items={[
+          { label: "Entities", href: "/entities" },
+          { label: entityId?.slice(0, 8) ?? "Entity" },
+        ]}
+      />
 
       {/* Loading */}
       {isLoading && (

@@ -2,6 +2,7 @@ import { formatDistanceToNow, format } from "date-fns";
 
 import type { SessionSummary } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState as EmptyStateUI } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -145,9 +146,10 @@ function SkeletonRows({
 
 function EmptyState() {
   return (
-    <div className="text-muted-foreground flex flex-col items-center justify-center py-12 text-sm">
-      <p>No sessions found.</p>
-    </div>
+    <EmptyStateUI
+      title="No sessions found"
+      description="Sessions will appear here as butlers process triggers and scheduled tasks."
+    />
   );
 }
 

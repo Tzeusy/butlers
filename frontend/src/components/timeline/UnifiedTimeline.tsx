@@ -1,3 +1,4 @@
+import { EmptyState as EmptyStateUI } from "@/components/ui/empty-state";
 import { useState } from "react";
 import { format } from "date-fns";
 
@@ -241,12 +242,10 @@ function TimelineSkeleton() {
 
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <p className="text-muted-foreground text-sm">No timeline events found.</p>
-      <p className="text-muted-foreground text-xs mt-1">
-        Events will appear here as butlers process sessions and tasks.
-      </p>
-    </div>
+    <EmptyStateUI
+      title="No events found"
+      description="Events will appear here as butlers process sessions and tasks."
+    />
   );
 }
 

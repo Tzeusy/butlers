@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSessionDetail, useButlerSessionDetail } from "@/hooks/use-sessions";
+import { Breadcrumbs } from "@/components/ui/breadcrumbs";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -147,10 +148,8 @@ export default function SessionDetailPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
+      <Breadcrumbs items={[{ label: "Sessions", href: "/sessions" }, { label: id.slice(0, 8) }]} />
       <div className="flex items-center gap-4">
-        <Button variant="outline" size="sm" asChild>
-          <Link to="/sessions">Back to sessions</Link>
-        </Button>
         <h1 className="text-2xl font-bold tracking-tight">Session Detail</h1>
         {statusBadge(session.success)}
       </div>

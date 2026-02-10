@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTraceDetail } from "@/hooks/use-traces";
+import { Breadcrumbs } from "@/components/ui/breadcrumbs";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -141,10 +142,8 @@ export default function TraceDetailPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
+      <Breadcrumbs items={[{ label: "Traces", href: "/traces" }, { label: traceId.slice(0, 8) }]} />
       <div className="flex items-center gap-4">
-        <Button variant="outline" size="sm" asChild>
-          <Link to="/traces">Back to traces</Link>
-        </Button>
         <h1 className="text-2xl font-bold tracking-tight">Trace Detail</h1>
         {statusBadge(trace.status)}
       </div>

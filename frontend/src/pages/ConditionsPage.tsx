@@ -20,6 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useConditions } from "@/hooks/use-health";
+import { EmptyState as EmptyStateUI } from "@/components/ui/empty-state";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -55,9 +56,10 @@ function SkeletonRows({ count = 5 }: { count?: number }) {
 
 function EmptyState() {
   return (
-    <div className="text-muted-foreground flex flex-col items-center justify-center py-12 text-sm">
-      <p>No conditions found.</p>
-    </div>
+    <EmptyStateUI
+      title="No conditions found"
+      description="Health conditions will appear here as they are tracked by the Health butler."
+    />
   );
 }
 
