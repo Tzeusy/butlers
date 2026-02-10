@@ -117,7 +117,8 @@ All 122 beads closed. 449 tests passing on main. Full implementation complete.
 - `src/butlers/modules/` — base.py (ABC), registry.py, telegram.py, email.py
 - `src/butlers/tools/` — switchboard.py, general.py, relationship.py, health.py, heartbeat.py
 - `src/butlers/` — config.py, db.py, daemon.py, migrations.py, cli.py
-- `alembic/versions/{core,switchboard,general,relationship,health}/` — migrations
+- `alembic/versions/{core,mailbox}/` — shared migrations (core infra + modules)
+- `butlers/{switchboard,general,relationship,health}/migrations/` — butler-specific migrations
 - `butlers/{switchboard,general,relationship,health,heartbeat}/` — butler config dirs
 
 ### Test Patterns
