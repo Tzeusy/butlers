@@ -74,6 +74,9 @@ def create_app(
     register_error_handlers(app)
     app.include_router(notifications_router)
 
+    # --- Routers ---
+    app.include_router(notifications_router)
+
     @app.get("/api/health")
     async def health():
         return {"status": "ok"}

@@ -13,19 +13,18 @@ from pydantic import BaseModel
 
 
 class NotificationSummary(BaseModel):
-    """Lightweight notification representation for list views.
-
-    Mirrors the columns of the ``notifications`` DB table, excluding
-    internal tracing fields (metadata, session_id, trace_id).
-    """
+    """Notification record matching the Switchboard ``notifications`` table schema."""
 
     id: UUID
     source_butler: str
     channel: str
     recipient: str | None = None
     message: str
+    metadata: dict | None = None
     status: str
     error: str | None = None
+    session_id: UUID | None = None
+    trace_id: str | None = None
     created_at: datetime
 
 
