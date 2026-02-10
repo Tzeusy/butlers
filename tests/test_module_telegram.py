@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from butlers.modules.base import Module
 from butlers.modules.telegram import TelegramConfig, TelegramModule
 
+pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

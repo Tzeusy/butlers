@@ -5,6 +5,8 @@ from click.testing import CliRunner
 
 from butlers.cli import _discover_configs, cli
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def runner():

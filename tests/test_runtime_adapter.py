@@ -12,6 +12,7 @@ from butlers.core.runtimes.claude_code import ClaudeCodeAdapter
 from butlers.core.runtimes.codex import CodexAdapter
 from butlers.core.runtimes.gemini import GeminiAdapter
 
+pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # Test fixtures — concrete and partial subclasses
 # ---------------------------------------------------------------------------
@@ -236,8 +237,6 @@ def test_all_adapters_instantiate():
     assert ClaudeCodeAdapter()
     assert CodexAdapter()
     assert GeminiAdapter()
-
-
 
 
 # ---------------------------------------------------------------------------

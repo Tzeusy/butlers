@@ -16,6 +16,8 @@ import pytest
 from butlers.modules.pipeline import MessagePipeline
 from butlers.modules.telegram import TelegramModule, _extract_chat_id, _extract_text
 
+pytestmark = pytest.mark.unit
+
 # ---------------------------------------------------------------------------
 # Helper: create a pipeline with mock classify/route
 # ---------------------------------------------------------------------------

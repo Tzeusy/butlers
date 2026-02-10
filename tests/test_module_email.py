@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from butlers.modules.base import Module
 from butlers.modules.email import EmailConfig, EmailModule
 
+pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # Module ABC compliance
 # ---------------------------------------------------------------------------

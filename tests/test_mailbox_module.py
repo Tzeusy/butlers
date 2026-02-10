@@ -19,6 +19,7 @@ from butlers.modules.mailbox import KNOWN_CHANNELS, MailboxConfig, MailboxModule
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestModuleABC:
     """Verify MailboxModule satisfies the Module abstract base class."""
 
@@ -52,6 +53,7 @@ class TestModuleABC:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestMailboxConfig:
     """Verify config schema."""
 
@@ -69,6 +71,7 @@ class TestMailboxConfig:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestLifecycle:
     """Verify on_startup / on_shutdown lifecycle hooks."""
 
@@ -100,6 +103,7 @@ class TestLifecycle:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestRegisterTools:
     """Verify that register_tools creates the expected MCP tools."""
 
@@ -170,6 +174,7 @@ class TestRegisterTools:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestKnownChannels:
     """Verify the KNOWN_CHANNELS set."""
 
@@ -183,6 +188,7 @@ class TestKnownChannels:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestNoPoolGuard:
     """Verify _get_pool raises when module not initialised."""
 
@@ -197,6 +203,7 @@ class TestNoPoolGuard:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestRegistryIntegration:
     """Verify MailboxModule works with ModuleRegistry."""
 
@@ -299,6 +306,7 @@ def mailbox(pool) -> MailboxModule:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 @db_tests
 class TestMailboxPost:
     """Verify mailbox_post inserts messages correctly."""
@@ -386,6 +394,7 @@ class TestMailboxPost:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 @db_tests
 class TestMailboxRead:
     """Verify mailbox_read fetches and auto-marks messages."""
@@ -441,6 +450,7 @@ class TestMailboxRead:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 @db_tests
 class TestMailboxList:
     """Verify mailbox_list filtering and pagination."""
@@ -518,6 +528,7 @@ class TestMailboxList:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 @db_tests
 class TestMailboxUpdateStatus:
     """Verify mailbox_update_status changes status and timestamps."""
@@ -565,6 +576,7 @@ class TestMailboxUpdateStatus:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 @db_tests
 class TestMailboxStats:
     """Verify mailbox_stats returns correct counts."""

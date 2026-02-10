@@ -5,8 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from butlers.config import ButlerConfig
 from butlers.core.spawner import CCSpawner
+
+pytestmark = pytest.mark.unit
 
 
 def _make_config(

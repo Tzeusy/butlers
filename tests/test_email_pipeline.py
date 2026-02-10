@@ -12,8 +12,12 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from butlers.modules.email import EmailModule, _build_classification_text
 from butlers.modules.pipeline import MessagePipeline
+
+pytestmark = pytest.mark.unit
 
 # ---------------------------------------------------------------------------
 # Helper: create a pipeline with mock classify/route

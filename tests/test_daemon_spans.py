@@ -23,6 +23,7 @@ from butlers.daemon import ButlerDaemon, _SpanWrappingMCP
 from butlers.modules.base import Module
 from butlers.modules.registry import ModuleRegistry
 
+pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # OpenTelemetry test fixtures
 # ---------------------------------------------------------------------------
@@ -173,9 +174,7 @@ def _patch_infra():
             return_value=type("MockAdapter", (), {"binary_name": "claude"}),
         ),
         "shutil_which": patch("butlers.daemon.shutil.which", return_value="/usr/bin/claude"),
-        "start_mcp_server": patch.object(
-            ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock
-        ),
+        "start_mcp_server": patch.object(ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock),
         "mock_db": mock_db,
         "mock_pool": mock_pool,
         "mock_spawner": mock_spawner,

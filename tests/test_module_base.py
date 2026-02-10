@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from butlers.modules.base import Module
 
+pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # Test fixtures — concrete subclasses
 # ---------------------------------------------------------------------------

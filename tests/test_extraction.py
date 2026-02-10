@@ -11,7 +11,10 @@ import pytest
 
 # Skip all tests in this module if Docker is not available
 docker_available = shutil.which("docker") is not None
-pytestmark = pytest.mark.skipif(not docker_available, reason="Docker not available")
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(not docker_available, reason="Docker not available"),
+]
 
 
 def _unique_db_name() -> str:
@@ -815,9 +818,7 @@ class TestHandleMessageWithExtraction:
         )
 
         async def classify_dispatch(**kwargs):
-            return FakeSpawnerResult(
-                result='[{"butler": "general", "prompt": "Hello world"}]'
-            )
+            return FakeSpawnerResult(result='[{"butler": "general", "prompt": "Hello world"}]')
 
         async def extract_dispatch(**kwargs):
             raise RuntimeError("Extraction CC crashed")

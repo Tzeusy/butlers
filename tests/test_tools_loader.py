@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.unit
 # Repo root (4 levels up from src/butlers/tools/_loader.py)
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUTLERS_ROOT = REPO_ROOT / "butlers"

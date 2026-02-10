@@ -8,6 +8,7 @@ import pytest
 
 from butlers.credentials import CredentialError, validate_credentials
 
+pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

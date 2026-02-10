@@ -9,6 +9,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from butlers.core.telemetry import get_tracer, init_telemetry
 
+pytestmark = pytest.mark.unit
+
 
 def _reset_otel_global_state():
     """Fully reset the OpenTelemetry global tracer provider state.

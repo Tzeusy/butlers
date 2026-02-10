@@ -1,6 +1,10 @@
 """Smoke tests to verify the project skeleton is wired up correctly."""
 
+import pytest
+
 from tests.conftest import MockSpawner, SpawnerResult
+
+pytestmark = pytest.mark.unit
 
 
 def test_version():
