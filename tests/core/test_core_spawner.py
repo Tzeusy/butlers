@@ -1271,3 +1271,159 @@ class TestTokenUsageCapture:
         result = await spawner.trigger("partial", "tick")
         assert result.input_tokens == 300
         assert result.output_tokens is None
+
+    async def test_partial_usage_only_output_tokens(self, tmp_path: Path):
+        """When usage has only output_tokens, input_tokens is None."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        adapter = MockAdapter(
+            result_text="Partial output only",
+            usage={"output_tokens": 750},
+        )
+        spawner = Spawner(
+            config=config,
+            config_dir=config_dir,
+            runtime=adapter,
+        )
+
+        result = await spawner.trigger("partial output", "tick")
+        assert result.input_tokens is None
+        assert result.output_tokens == 750
+
+    async def test_usage_with_extra_keys_ignored(self, tmp_path: Path):
+        """Extra keys in usage dict are ignored; only token counts extracted."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        adapter = MockAdapter(
+            result_text="Extra keys",
+            usage={
+                "input_tokens": 400,
+                "output_tokens": 800,
+                "total_cost_usd": 0.05,
+                "cache_read_tokens": 200,
+            },
+        )
+        spawner = Spawner(
+            config=config,
+            config_dir=config_dir,
+            runtime=adapter,
+        )
+
+        result = await spawner.trigger("extra keys", "tick")
+        assert result.input_tokens == 400
+        assert result.output_tokens == 800
+
+    async def test_zero_token_counts(self, tmp_path: Path):
+        """Zero token counts are preserved (not treated as None)."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        adapter = MockAdapter(
+            result_text="Zero tokens",
+            usage={"input_tokens": 0, "output_tokens": 0},
+        )
+        spawner = Spawner(
+            config=config,
+            config_dir=config_dir,
+            runtime=adapter,
+        )
+
+        result = await spawner.trigger("zero tokens", "tick")
+        assert result.input_tokens == 0
+        assert result.output_tokens == 0
+
+    async def test_session_complete_no_tokens_on_error(self, tmp_path: Path):
+        """session_complete is not called with token kwargs on error path."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        mock_pool = AsyncMock()
+
+        with (
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
+            patch(
+                "butlers.core.spawner.session_complete", new_callable=AsyncMock
+            ) as mock_complete,
+        ):
+            import uuid
+
+            fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000012")
+            mock_create.return_value = fake_session_id
+
+            adapter = MockAdapter(error="boom")
+            spawner = Spawner(
+                config=config,
+                config_dir=config_dir,
+                pool=mock_pool,
+                runtime=adapter,
+            )
+
+            result = await spawner.trigger("fail with pool", "tick")
+            assert result.error is not None
+            assert result.input_tokens is None
+            assert result.output_tokens is None
+
+            # session_complete called on error path without token kwargs
+            mock_complete.assert_called_once()
+            _, kwargs = mock_complete.call_args
+            assert kwargs["success"] is False
+            assert "input_tokens" not in kwargs
+            assert "output_tokens" not in kwargs
+
+    async def test_empty_usage_dict(self, tmp_path: Path):
+        """Empty usage dict results in None token counts."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        adapter = MockAdapter(
+            result_text="Empty dict",
+            usage={},
+        )
+        spawner = Spawner(
+            config=config,
+            config_dir=config_dir,
+            runtime=adapter,
+        )
+
+        result = await spawner.trigger("empty dict", "tick")
+        assert result.input_tokens is None
+        assert result.output_tokens is None
+
+    async def test_sequence_first_error_then_tokens(self, tmp_path: Path):
+        """After an error (no tokens), a successful call returns tokens correctly."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        adapter = SequenceMockAdapter(
+            sequence=[
+                {"error": "first fails"},
+                {
+                    "result_text": "second works",
+                    "tool_calls": [],
+                    "usage": {"input_tokens": 42, "output_tokens": 84},
+                },
+            ]
+        )
+        spawner = Spawner(
+            config=config,
+            config_dir=config_dir,
+            runtime=adapter,
+        )
+
+        result1 = await spawner.trigger("first", "tick")
+        assert result1.error is not None
+        assert result1.input_tokens is None
+        assert result1.output_tokens is None
+
+        result2 = await spawner.trigger("second", "tick")
+        assert result2.error is None
+        assert result2.input_tokens == 42
+        assert result2.output_tokens == 84
