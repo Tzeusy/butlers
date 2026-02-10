@@ -1,0 +1,63 @@
+"""Switchboard tools — inter-butler routing and registry.
+
+Re-exports all public symbols so that ``from butlers.tools.switchboard import X``
+continues to work as before.
+"""
+
+from butlers.tools.switchboard.extraction.audit_log import (
+    extraction_log_list,
+    extraction_log_undo,
+    log_extraction,
+)
+from butlers.tools.switchboard.notification.deliver import (
+    SUPPORTED_CHANNELS,
+    _build_channel_args,
+    deliver,
+)
+from butlers.tools.switchboard.notification.log import (
+    log_notification,
+)
+from butlers.tools.switchboard.registry.registry import (
+    discover_butlers,
+    list_butlers,
+    register_butler,
+)
+from butlers.tools.switchboard.routing.classify import (
+    _parse_classification,
+    classify_message,
+)
+from butlers.tools.switchboard.routing.dispatch import (
+    ButlerResult,
+    _fallback_concatenate,
+    aggregate_responses,
+    dispatch_decomposed,
+)
+from butlers.tools.switchboard.routing.route import (
+    _call_butler_tool,
+    _log_routing,
+    post_mail,
+    route,
+)
+
+__all__ = [
+    "ButlerResult",
+    "SUPPORTED_CHANNELS",
+    "_build_channel_args",
+    "_call_butler_tool",
+    "_fallback_concatenate",
+    "_log_routing",
+    "_parse_classification",
+    "aggregate_responses",
+    "classify_message",
+    "deliver",
+    "discover_butlers",
+    "dispatch_decomposed",
+    "extraction_log_list",
+    "extraction_log_undo",
+    "list_butlers",
+    "log_extraction",
+    "log_notification",
+    "post_mail",
+    "register_butler",
+    "route",
+]

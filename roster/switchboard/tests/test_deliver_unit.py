@@ -538,7 +538,8 @@ class TestDeliverNotificationLogging:
             return {"ok": True}
 
         with patch(
-            "butlers.tools.switchboard.log_notification", new_callable=AsyncMock
+            "butlers.tools.switchboard.notification.deliver.log_notification",
+            new_callable=AsyncMock,
         ) as mock_log:
             mock_log.return_value = str(uuid.uuid4())
 
@@ -576,7 +577,8 @@ class TestDeliverNotificationLogging:
             raise ConnectionError("API down")
 
         with patch(
-            "butlers.tools.switchboard.log_notification", new_callable=AsyncMock
+            "butlers.tools.switchboard.notification.deliver.log_notification",
+            new_callable=AsyncMock,
         ) as mock_log:
             mock_log.return_value = str(uuid.uuid4())
 
@@ -642,7 +644,8 @@ class TestDeliverSourceButler:
             return {"ok": True}
 
         with patch(
-            "butlers.tools.switchboard.log_notification", new_callable=AsyncMock
+            "butlers.tools.switchboard.notification.deliver.log_notification",
+            new_callable=AsyncMock,
         ) as mock_log:
             mock_log.return_value = str(uuid.uuid4())
 
@@ -674,7 +677,8 @@ class TestDeliverSourceButler:
             return {"ok": True}
 
         with patch(
-            "butlers.tools.switchboard.log_notification", new_callable=AsyncMock
+            "butlers.tools.switchboard.notification.deliver.log_notification",
+            new_callable=AsyncMock,
         ) as mock_log:
             mock_log.return_value = str(uuid.uuid4())
 
@@ -717,7 +721,8 @@ class TestDeliverMetadata:
         test_metadata = {"priority": "high", "category": "alert"}
 
         with patch(
-            "butlers.tools.switchboard.log_notification", new_callable=AsyncMock
+            "butlers.tools.switchboard.notification.deliver.log_notification",
+            new_callable=AsyncMock,
         ) as mock_log:
             mock_log.return_value = str(uuid.uuid4())
 

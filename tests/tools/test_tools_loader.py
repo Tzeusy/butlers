@@ -65,9 +65,13 @@ class TestRegisterButlerTools:
         for name in discovered:
             module_name = f"butlers.tools.{name}"
             mod = sys.modules[module_name]
-            expected_path = ROSTER_ROOT / name / "tools.py"
-            assert Path(mod.__file__).resolve() == expected_path.resolve(), (
-                f"{module_name}.__file__ = {mod.__file__}, expected {expected_path}"
+            # Support both tools.py (single file) and tools/__init__.py (package)
+            expected_single = ROSTER_ROOT / name / "tools.py"
+            expected_package = ROSTER_ROOT / name / "tools" / "__init__.py"
+            mod_path = Path(mod.__file__).resolve()
+            assert mod_path in (expected_single.resolve(), expected_package.resolve()), (
+                f"{module_name}.__file__ = {mod.__file__}, "
+                f"expected {expected_single} or {expected_package}"
             )
 
 
