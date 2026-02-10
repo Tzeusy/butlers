@@ -20,6 +20,7 @@ from starlette.staticfiles import StaticFiles
 
 from butlers.api.middleware import register_error_handlers
 from butlers.api.routers.butlers import router as butlers_router
+from butlers.api.routers.issues import router as issues_router
 from butlers.api.routers.notifications import (
     butler_notifications_router,
 )
@@ -83,6 +84,7 @@ def create_app(
     app.include_router(butlers_router)
     app.include_router(notifications_router)
     app.include_router(butler_notifications_router)
+    app.include_router(issues_router)
 
     @app.get("/api/health")
     async def health():
