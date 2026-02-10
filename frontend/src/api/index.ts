@@ -6,6 +6,7 @@ export {
   ApiError,
   apiFetch,
   getButler,
+  getButlerConfig,
   getCostSummary,
   getDailyCosts,
   getButlerNotifications,
@@ -22,6 +23,7 @@ export {
 export type {
   ApiMeta,
   ApiResponse,
+  ButlerConfigResponse,
   ButlerSummary,
   CostSummary,
   DailyCost,

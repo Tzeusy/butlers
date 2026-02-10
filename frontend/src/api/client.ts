@@ -6,6 +6,7 @@
 
 import type {
   ApiResponse,
+  ButlerConfigResponse,
   ButlerSummary,
   CostSummary,
   DailyCost,
@@ -106,6 +107,13 @@ export function getButlers(): Promise<ApiResponse<ButlerSummary[]>> {
 /** Fetch a single butler by name. */
 export function getButler(name: string): Promise<ApiResponse<ButlerSummary>> {
   return apiFetch<ApiResponse<ButlerSummary>>(`/butlers/${encodeURIComponent(name)}`);
+}
+
+/** Fetch configuration files for a specific butler. */
+export function getButlerConfig(name: string): Promise<ApiResponse<ButlerConfigResponse>> {
+  return apiFetch<ApiResponse<ButlerConfigResponse>>(
+    `/butlers/${encodeURIComponent(name)}/config`,
+  );
 }
 
 /** Fetch a paginated list of sessions. */

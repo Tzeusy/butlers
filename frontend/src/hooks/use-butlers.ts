@@ -4,7 +4,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { getButler, getButlers } from "@/api/index.ts";
+import { getButler, getButlerConfig, getButlers } from "@/api/index.ts";
 
 /** Fetch all butlers with live status. */
 export function useButlers() {
@@ -20,6 +20,15 @@ export function useButler(name: string) {
   return useQuery({
     queryKey: ["butlers", name],
     queryFn: () => getButler(name),
+    enabled: !!name,
+  });
+}
+
+/** Fetch configuration files for a specific butler. */
+export function useButlerConfig(name: string) {
+  return useQuery({
+    queryKey: ["butlers", name, "config"],
+    queryFn: () => getButlerConfig(name),
     enabled: !!name,
   });
 }
