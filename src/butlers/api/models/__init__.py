@@ -279,6 +279,7 @@ from butlers.api.models.relationship import (  # noqa: E402
     UpcomingDate,
 )
 from butlers.api.models.session import SessionDetail  # noqa: E402
+from butlers.api.models.trace import SpanNode, TraceDetail, TraceSummary  # noqa: E402
 
 __all__ = [
     "ActivityFeedItem",
@@ -314,6 +315,9 @@ __all__ = [
     "SessionDetail",
     "SessionSummary",
     "SkillInfo",
+    "SpanNode",
+    "TraceDetail",
+    "TraceSummary",
     "TickResponse",
     "TopSession",
     "TriggerRequest",
