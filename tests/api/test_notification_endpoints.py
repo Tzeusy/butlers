@@ -329,10 +329,23 @@ class TestListNotificationsOrdering:
 
 
 class TestNotificationStatsEndpoint:
-    """Test GET /api/notifications/stats — currently a stub returning zeros."""
+    """Test GET /api/notifications/stats — DB-backed implementation."""
+
+    def _build_stats_app(self):
+        """Create app with mocked DB returning zeros."""
+        mock_pool = AsyncMock()
+        mock_pool.fetchval = AsyncMock(return_value=0)
+        mock_pool.fetch = AsyncMock(return_value=[])
+
+        mock_db = MagicMock(spec=DatabaseManager)
+        mock_db.pool.return_value = mock_pool
+
+        app = create_app()
+        app.dependency_overrides[_get_db_manager] = lambda: mock_db
+        return app
 
     async def test_stats_returns_200(self):
-        app = create_app()
+        app = self._build_stats_app()
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -342,7 +355,7 @@ class TestNotificationStatsEndpoint:
         assert resp.status_code == 200
 
     async def test_stats_returns_zero_counts(self):
-        app = create_app()
+        app = self._build_stats_app()
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -359,7 +372,7 @@ class TestNotificationStatsEndpoint:
 
     async def test_stats_response_envelope_shape(self):
         """Verify the ApiResponse[NotificationStats] envelope shape."""
-        app = create_app()
+        app = self._build_stats_app()
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -367,25 +380,30 @@ class TestNotificationStatsEndpoint:
             resp = await client.get("/api/notifications/stats")
 
         body = resp.json()
-        # ApiResponse wraps in {"data": ..., "meta": ...}
         assert "data" in body
         assert "meta" in body
 
-        # data should contain all NotificationStats fields
         data = body["data"]
         assert set(data.keys()) == {"total", "sent", "failed", "by_channel", "by_butler"}
 
-    async def test_stats_does_not_require_db(self):
-        """Stats stub should work without any database dependency."""
+    async def test_stats_queries_switchboard_pool(self):
+        """Stats endpoint should query the switchboard database."""
+        mock_pool = AsyncMock()
+        mock_pool.fetchval = AsyncMock(return_value=0)
+        mock_pool.fetch = AsyncMock(return_value=[])
+
+        mock_db = MagicMock(spec=DatabaseManager)
+        mock_db.pool.return_value = mock_pool
+
         app = create_app()
-        # No dependency override needed — stats doesn't use DB
+        app.dependency_overrides[_get_db_manager] = lambda: mock_db
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
-            resp = await client.get("/api/notifications/stats")
+            await client.get("/api/notifications/stats")
 
-        assert resp.status_code == 200
+        mock_db.pool.assert_called_with("switchboard")
 
 
 # ---------------------------------------------------------------------------
