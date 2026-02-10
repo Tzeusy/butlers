@@ -349,3 +349,43 @@ The infinite scroll MUST use the `next_cursor` value from the previous API respo
 - **THEN** the timeline MUST reset to the first page (no `before` cursor)
 - **AND** the scroll position MUST return to the top
 - **AND** the previously loaded events MUST be replaced with the new filtered results
+
+---
+
+### Requirement: Heartbeat tick collapsing
+
+The timeline page SHALL collapse consecutive heartbeat tick events into a single grouped entry for readability.
+
+**Definition:** Heartbeat tick events are timeline events with `type="schedule"` where `data.task_name` matches a heartbeat pattern (e.g., starts with `"heartbeat"` or `"tick"`). Consecutive heartbeat ticks are those that fall within the same 10-minute cycle (i.e., their timestamps are within 10 minutes of each other).
+
+**Collapsing behavior:** The UI SHALL group consecutive heartbeat ticks into a single entry displaying: "Heartbeat: N butlers ticked, M failures" where N is the total number of heartbeat tick events in the group and M is the count of events where `data.last_result` indicates a failure.
+
+**Implementation:** Collapsing is a frontend rendering concern. The `GET /api/timeline` endpoint returns individual events unchanged. The timeline UI component groups heartbeat events before rendering.
+
+The collapsed entry MUST be expandable to reveal the individual tick events with their full details (butler name, result, timestamp).
+
+#### Scenario: Heartbeat ticks within a cycle are collapsed
+
+- **WHEN** the timeline contains 5 heartbeat tick schedule events for butlers `general`, `health`, `relationship`, `switchboard`, `heartbeat` all with timestamps within a 10-minute window, and all succeeded
+- **THEN** the timeline MUST display a single collapsed entry: "Heartbeat: 5 butlers ticked, 0 failures"
+
+#### Scenario: Heartbeat ticks with failures
+
+- **WHEN** the timeline contains 4 heartbeat tick events within a 10-minute window, with 1 event having a failed `last_result`
+- **THEN** the collapsed entry MUST display: "Heartbeat: 4 butlers ticked, 1 failure"
+- **AND** the failure count MUST be styled with a warning/danger visual treatment
+
+#### Scenario: Expanding collapsed heartbeat entry
+
+- **WHEN** the user clicks on a collapsed heartbeat entry
+- **THEN** the entry MUST expand to show each individual heartbeat tick event with its butler name, timestamp, and result
+
+#### Scenario: Non-consecutive heartbeat ticks are not collapsed
+
+- **WHEN** heartbeat tick events are separated by more than 10 minutes (i.e., from different cycles)
+- **THEN** they MUST be displayed as separate collapsed groups (one per cycle)
+
+#### Scenario: Heartbeat ticks mixed with other events
+
+- **WHEN** the timeline contains a session event between two groups of heartbeat ticks
+- **THEN** the session event MUST break the grouping — the heartbeat ticks before and after the session event MUST be separate collapsed entries

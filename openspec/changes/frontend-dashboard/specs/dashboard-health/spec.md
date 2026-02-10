@@ -4,6 +4,8 @@ Health butler domain views in the dashboard. Provides read-only API endpoints fo
 
 All endpoints follow the dual data-access pattern (D1): direct DB reads for browsing, no write operations. The health butler's database contains the following tables: `measurements`, `medications`, `medication_doses`, `conditions`, `symptoms`, `meals`, and `research`.
 
+> **Note:** Write operations (e.g., logging new measurements) are intentionally deferred for v1. Health data entry is handled via chat interactions with the Health butler. Dashboard health views are read-only.
+
 ## ADDED Requirements
 
 ### Requirement: Measurements list API

@@ -220,6 +220,30 @@ class DatabaseManager:
 
 **Rollback:** Dashboard API and frontend are additive — removing them has no impact on butler daemons. The database migrations add nullable columns and a new table, both backward-compatible.
 
+### D13: Module Health Checks — Status from MCP `status()` Response
+
+**Decision:** Module health is determined from the MCP `status()` tool response. The existing `status()` tool already returns module information. Its response is extended to include per-module health indicators with values: `connected` (module is operational), `degraded` (module is partially functional), `error` (module has failed), or `unknown` (status could not be determined).
+
+**Rationale:** Avoids adding a new `health_check()` method to the Module ABC. Leverages the existing status mechanism that the dashboard already polls for the topology view. Each module's `on_startup()` and runtime state naturally feed into its health — the `status()` tool simply exposes this.
+
+**Alternatives considered:**
+- (a) Module ABC `health_check()` method — requires framework changes to every module implementation. Adds a new lifecycle concern.
+- (b) External probing by dashboard API — the dashboard shouldn't know module internals (connection strings, health check protocols). Violates the boundary between dashboard and butler.
+
+**Implementation:** The `status()` MCP tool response gains a `modules` field: `{"modules": {"telegram": {"status": "connected"}, "email": {"status": "error", "error": "SMTP connection refused"}}}`. Each module's status is derived from its internal state (e.g., whether its client connection is alive).
+
+### D14: Dual Cost Anomaly Thresholds
+
+**Decision:** Two thresholds for different scopes:
+- **Session-level (3x):** Individual sessions are flagged when their estimated cost exceeds 3x the butler's 7-day average session cost. Used in session tables and the cost page for highlighting expensive individual sessions.
+- **Butler-level (2x):** A butler is flagged as a system issue when its aggregate daily spend exceeds 2x its 7-day daily average. Used in the Issues panel on the Overview page to surface systemic cost concerns.
+
+**Rationale:** The project plan specified both thresholds for different contexts. Butler-level is coarser (daily aggregate) and more sensitive (2x) because it represents a systemic concern — consistent overspend. Session-level is finer-grained and tolerates more variance (3x) because individual sessions naturally have high cost variance (e.g., a one-time complex task vs. routine checks).
+
+**Alternatives considered:**
+- Single threshold for both: Would either be too noisy at session level (2x) or miss systemic issues at butler level (3x).
+- Configurable thresholds: Over-engineering for v1. Hardcoded values can be adjusted later.
+
 ## Open Questions
 
 | Question | Status |

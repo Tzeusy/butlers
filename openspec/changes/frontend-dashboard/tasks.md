@@ -143,13 +143,19 @@
 - [ ] 13.3 Create `src/components/issues/IssuesPanel.tsx` — prominent alert section: unreachable butlers, failing tasks, cost anomalies, failed notifications. Dismissable per-issue (localStorage)
 - [ ] 13.4 Implement aggregate stats bar — total butlers, healthy count, sessions today, estimated cost today
 - [ ] 13.5 Create cost summary widget — today's spend, 7-day sparkline (Recharts), top spender
-- [ ] 13.6 Create recent activity feed — last 10 cross-butler events (preview of timeline)
+- [ ] 13.6 Create recent activity feed — last 10 cross-butler events (preview of timeline). Implement heartbeat tick collapsing: consecutive heartbeat tick events (type `schedule`, `task_name` matches heartbeat pattern) within the same 10-minute cycle are collapsed into "Heartbeat: N butlers ticked, M failures". Collapsing is frontend-only; API returns individual events.
 - [ ] 13.7 Create `src/api/hooks/useIssues.ts` — TanStack Query hook for issues endpoint
+
+## 13b. Frontend — Overview Page: Issues & Aggregation
+
+- [ ] 13b.1 Create `src/butlers/api/routers/issues.py` — issues aggregation endpoint (`GET /api/issues`): unreachable butlers, failing scheduled tasks (N consecutive failures), module dependency failures (per D13), butler-level cost anomalies (daily spend >2x 7-day daily average per D14), failed notification deliveries
+- [ ] 13b.2 Create `src/butlers/api/models/issue.py` — Issue Pydantic model with fields: `severity` (critical/warning), `type` (unreachable/failing_task/module_error/cost_anomaly/notification_failure), `butler`, `description`, `link`
+- [ ] 13b.3 Implement butler-level cost anomaly detection in issues endpoint — compute today's aggregate spend per butler, compare to 7-day daily average, flag when ratio > 2x (per D14)
 
 ## 14. Frontend — Butler Detail Page
 
 - [ ] 14.1 Create `src/pages/ButlerDetail.tsx` — tabbed detail view with tab navigation via query params
-- [ ] 14.2 Create Overview tab — identity card, module badges with health status, active session indicator, cost card, error summary, recent notifications (last 5)
+- [ ] 14.2 Create Overview tab — identity card (name, MANIFESTO.md first line, port, uptime), module health badges using `status()` MCP response per D13 (green=connected, yellow=degraded, red=error, gray=unknown), active session indicator (elapsed time when `completed_at IS NULL`, otherwise "Idle"), error summary (failed sessions count in last 24h with link to filtered sessions tab), cost card, recent notifications (last 5)
 - [ ] 14.3 Create Config tab — structured butler.toml view with raw toggle, CLAUDE.md rendered markdown, AGENTS.md, module credential status
 - [ ] 14.4 Create Skills tab — skill cards (name, description), click → full SKILL.md, "trigger with skill" button
 - [ ] 14.5 Create Trigger tab — prompt textarea, submit button, result display with token usage and cost
@@ -246,7 +252,17 @@
 - [ ] 25.5 SSE endpoint for live butler status and active session updates (foundation for real-time)
 - [ ] 25.6 Auto-refresh for timeline and session lists (polling with TanStack Query refetchInterval)
 
-## 26. Memory System Views (Contingent)
+## 27. Audit Log
+
+- [ ] 27.1 Alembic migration for `dashboard_audit_log` table in Switchboard DB (id UUID PK, timestamp TIMESTAMPTZ, butler TEXT, operation TEXT, user_context JSONB, request_summary JSONB, result TEXT, error_message TEXT; indexes on butler+timestamp, operation+timestamp, timestamp)
+- [ ] 27.2 Create `src/butlers/api/routers/audit.py` — `GET /api/audit-log` endpoint with pagination, filtering by butler/operation/date range
+- [ ] 27.3 Create `src/butlers/api/models/audit.py` — AuditEntry Pydantic model (id, timestamp, butler, operation, user_context, request_summary, result, error_message)
+- [ ] 27.4 Add audit logging decorator to all write endpoints (trigger, tick, schedule CRUD, state CRUD) — extracts IP/User-Agent, logs operation result, non-blocking on failure
+- [ ] 27.5 Create `src/components/audit/AuditLogTable.tsx` — paginated audit log table with columns: timestamp, butler badge, operation badge, IP, request summary, result badge, error message
+- [ ] 27.6 Create `src/api/hooks/useAuditLog.ts` — TanStack Query hook for audit log endpoint with filters
+- [ ] 27.7 Tests for audit log endpoints (CRUD logging, filtering, pagination, error handling)
+
+## 28. Memory System Views (Contingent)
 
 > Blocked on memory system implementation. Implement after `memories` table and MCP tools exist.
 
