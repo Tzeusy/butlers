@@ -216,6 +216,7 @@ class TickResponse(BaseModel):
 class CostSummary(BaseModel):
     """Aggregate cost summary across all butlers."""
 
+    period: str = "today"
     total_cost_usd: float
     total_sessions: int
     total_input_tokens: int
