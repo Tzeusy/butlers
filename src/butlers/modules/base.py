@@ -3,9 +3,23 @@
 from __future__ import annotations
 
 import abc
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel
+
+
+@dataclass
+class ToolMeta:
+    """Metadata for a single MCP tool registered by a module.
+
+    Attributes:
+        arg_sensitivities: Mapping of argument name to whether it is
+            safety-critical (sensitive). Arguments not listed are resolved
+            via the heuristic fallback in the approvals sensitivity module.
+    """
+
+    arg_sensitivities: dict[str, bool] = field(default_factory=dict)
 
 
 class Module(abc.ABC):
@@ -53,3 +67,13 @@ class Module(abc.ABC):
     async def on_shutdown(self) -> None:
         """Called during butler shutdown."""
         ...
+
+    def tool_metadata(self) -> dict[str, ToolMeta]:
+        """Return sensitivity metadata for tools registered by this module.
+
+        Keys are tool names, values are ``ToolMeta`` instances describing
+        which arguments are safety-critical.  Modules that do not override
+        this method get an empty dict (no explicit declarations), and the
+        approvals subsystem will fall back to heuristic classification.
+        """
+        return {}
