@@ -7,6 +7,8 @@
 import type {
   ApiResponse,
   ButlerSummary,
+  CostSummary,
+  DailyCost,
   ErrorResponse,
   HealthResponse,
   Issue,
@@ -172,4 +174,19 @@ export function getButlerNotifications(
 /** Fetch active issues across all butlers. */
 export function getIssues(): Promise<ApiResponse<Issue[]>> {
   return apiFetch<ApiResponse<Issue[]>>("/issues");
+}
+
+// ---------------------------------------------------------------------------
+// Costs
+// ---------------------------------------------------------------------------
+
+/** Fetch aggregate cost summary, optionally scoped to a time period. */
+export function getCostSummary(period?: string): Promise<ApiResponse<CostSummary>> {
+  const params = period ? `?period=${period}` : "";
+  return apiFetch<ApiResponse<CostSummary>>(`/costs/summary${params}`);
+}
+
+/** Fetch daily cost breakdown. */
+export function getDailyCosts(): Promise<ApiResponse<DailyCost[]>> {
+  return apiFetch<ApiResponse<DailyCost[]>>("/costs/daily");
 }
