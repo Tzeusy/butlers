@@ -82,6 +82,22 @@ class PaginatedResponse[T](BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class ScheduleEntry(BaseModel):
+    """A single scheduled task from butler.toml."""
+
+    name: str
+    cron: str
+    prompt: str
+
+
+class ModuleInfo(BaseModel):
+    """Module status information."""
+
+    name: str
+    enabled: bool = True
+    config: dict | None = None
+
+
 class ButlerSummary(BaseModel):
     """Lightweight butler representation for list views.
 
@@ -97,6 +113,16 @@ class ButlerSummary(BaseModel):
     description: str | None = None
     modules: list[str] = Field(default_factory=list)
     schedule_count: int = 0
+
+
+class ButlerDetail(ButlerSummary):
+    """Full butler detail with config, modules, skills, and schedule."""
+
+    description: str | None = None
+    db_name: str | None = None
+    modules: list[ModuleInfo] = Field(default_factory=list)
+    schedules: list[ScheduleEntry] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
 
 
 class SessionSummary(BaseModel):
@@ -121,7 +147,7 @@ class HealthResponse(BaseModel):
 # Notification models (re-exported from sub-module)
 # ---------------------------------------------------------------------------
 
-from butlers.api.models.butler import ButlerDetail, ModuleStatus  # noqa: E402
+from butlers.api.models.butler import ModuleStatus  # noqa: E402
 from butlers.api.models.notification import NotificationStats, NotificationSummary  # noqa: E402
 
 __all__ = [
@@ -132,10 +158,12 @@ __all__ = [
     "ErrorDetail",
     "ErrorResponse",
     "HealthResponse",
+    "ModuleInfo",
     "ModuleStatus",
     "NotificationStats",
     "NotificationSummary",
     "PaginatedResponse",
     "PaginationMeta",
+    "ScheduleEntry",
     "SessionSummary",
 ]

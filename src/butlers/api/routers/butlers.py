@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -20,8 +21,14 @@ from butlers.api.deps import (
     get_butler_configs,
     get_mcp_manager,
 )
-from butlers.api.models import ApiResponse, ButlerSummary
-from butlers.api.models.butler import ButlerDetail
+from butlers.api.models import (
+    ApiResponse,
+    ButlerDetail,
+    ButlerSummary,
+    ModuleInfo,
+    ScheduleEntry,
+)
+from butlers.config import ConfigError, load_config
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +36,19 @@ router = APIRouter(prefix="/api/butlers", tags=["butlers"])
 
 # Timeout (in seconds) for each individual butler status probe.
 _STATUS_TIMEOUT_S = 5.0
+
+# Default roster location relative to the repository root.
+_DEFAULT_ROSTER_DIR = Path(__file__).resolve().parents[4] / "roster"
+
+
+def _get_roster_dir() -> Path:
+    """Return the roster directory path. Override in tests."""
+    return _DEFAULT_ROSTER_DIR
+
+
+# ---------------------------------------------------------------------------
+# List endpoint
+# ---------------------------------------------------------------------------
 
 
 async def _probe_butler(
@@ -71,23 +91,92 @@ async def list_butlers(
     mgr: MCPClientManager = Depends(get_mcp_manager),
     configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
 ) -> ApiResponse[list[ButlerSummary]]:
-    """Return all discovered butlers with live status.
-
-    Discovers butlers from the roster directory (pre-loaded at startup),
-    probes each butler's MCP server in parallel with a per-butler timeout,
-    and returns an aggregated list.  Unreachable butlers are included with
-    ``status: "down"`` rather than being omitted.
-    """
+    """Return all discovered butlers with live status."""
     tasks = [_probe_butler(mgr, info) for info in configs]
     summaries = await asyncio.gather(*tasks)
-
     return ApiResponse[list[ButlerSummary]](data=list(summaries))
 
 
+# ---------------------------------------------------------------------------
+# Detail endpoint
+# ---------------------------------------------------------------------------
+
+
 @router.get("/{name}", response_model=ApiResponse[ButlerDetail])
-async def get_butler(name: str) -> ApiResponse[ButlerDetail]:
+async def get_butler_detail(
+    name: str,
+    configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
+    mcp_manager: MCPClientManager = Depends(get_mcp_manager),
+    roster_dir: Path = Depends(_get_roster_dir),
+) -> ApiResponse[ButlerDetail]:
     """Return detailed information for a single butler.
 
-    Placeholder — always raises 404 until butler lookup is wired up.
+    Looks up the butler by name in the roster directory, parses its config,
+    discovers skills, and attempts to get live status via MCP.
     """
-    raise HTTPException(status_code=404, detail=f"Butler '{name}' not found")
+    connection_info: ButlerConnectionInfo | None = None
+    for cfg in configs:
+        if cfg.name == name:
+            connection_info = cfg
+            break
+
+    if connection_info is None:
+        raise HTTPException(status_code=404, detail=f"Butler not found: {name}")
+
+    butler_dir = roster_dir / name
+    try:
+        config = load_config(butler_dir)
+    except ConfigError:
+        raise HTTPException(status_code=404, detail=f"Butler not found: {name}")
+
+    modules = [
+        ModuleInfo(name=mod_name, enabled=True, config=mod_cfg or None)
+        for mod_name, mod_cfg in config.modules.items()
+    ]
+
+    schedules = [
+        ScheduleEntry(name=s.name, cron=s.cron, prompt=s.prompt) for s in config.schedules
+    ]
+
+    skills = _discover_skills(butler_dir)
+    status = await _get_live_status(name, mcp_manager)
+
+    detail = ButlerDetail(
+        name=config.name,
+        port=config.port,
+        status=status,
+        description=config.description,
+        db_name=config.db_name,
+        modules=modules,
+        schedules=schedules,
+        skills=skills,
+    )
+
+    return ApiResponse[ButlerDetail](data=detail)
+
+
+def _discover_skills(butler_dir: Path) -> list[str]:
+    """List skill names from the butler's skills/ directory."""
+    skills_dir = butler_dir / "skills"
+    if not skills_dir.is_dir():
+        return []
+
+    skills: list[str] = []
+    for entry in sorted(skills_dir.iterdir()):
+        if entry.is_dir() and (entry / "SKILL.md").exists():
+            skills.append(entry.name)
+
+    return skills
+
+
+async def _get_live_status(name: str, mcp_manager: MCPClientManager) -> str:
+    """Attempt to determine a butler's live status via MCP ping."""
+    try:
+        client = await mcp_manager.get_client(name)
+        await client.ping()
+        return "online"
+    except ButlerUnreachableError:
+        return "offline"
+    except Exception:
+        logger.warning("Unexpected error pinging butler %s", name, exc_info=True)
+        return "offline"
