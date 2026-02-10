@@ -7,9 +7,11 @@ All functions accept an asyncpg connection pool and return ranked results.
 from __future__ import annotations
 
 import importlib.util
+import math
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from asyncpg import Pool
@@ -282,3 +284,82 @@ async def hybrid_search(
     fused.sort(key=lambda r: (-r["rrf_score"], r["semantic_rank"]))
 
     return fused[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Composite scoring
+# ---------------------------------------------------------------------------
+
+
+class CompositeWeights(NamedTuple):
+    """Weight parameters for composite scoring.
+
+    Default weights: relevance=0.4, importance=0.3, recency=0.2, confidence=0.1.
+    """
+
+    relevance: float = 0.4
+    importance: float = 0.3
+    recency: float = 0.2
+    confidence: float = 0.1
+
+
+_DEFAULT_WEIGHTS = CompositeWeights()
+
+
+def compute_recency_score(
+    last_referenced_at: datetime | None,
+    *,
+    half_life_days: float = 7.0,
+) -> float:
+    """Compute a recency score using exponential decay.
+
+    Args:
+        last_referenced_at: When the memory was last referenced. If ``None``,
+            returns 0.0 (no recency signal).
+        half_life_days: Number of days for the score to halve (default 7).
+
+    Returns:
+        Float in [0.0, 1.0].  1.0 means "just now", decaying towards 0.
+    """
+    if last_referenced_at is None:
+        return 0.0
+
+    now = datetime.now(UTC)
+    elapsed = (now - last_referenced_at).total_seconds()
+    days_elapsed = max(elapsed / 86400.0, 0.0)
+
+    decay_lambda = math.log(2) / half_life_days
+    score = math.exp(-decay_lambda * days_elapsed)
+
+    return max(0.0, min(1.0, score))
+
+
+def compute_composite_score(
+    relevance: float,
+    importance: float,
+    recency: float,
+    effective_confidence: float,
+    weights: CompositeWeights | None = None,
+) -> float:
+    """Compute a weighted composite score for memory ranking.
+
+    Args:
+        relevance: Search relevance score (0-1).
+        importance: Importance rating (0-10, will be normalized to 0-1).
+        recency: Recency score (0-1), typically from :func:`compute_recency_score`.
+        effective_confidence: Effective confidence after decay (0-1).
+        weights: Optional custom weights. Defaults to
+            relevance=0.4, importance=0.3, recency=0.2, confidence=0.1.
+
+    Returns:
+        Weighted composite score as a float.
+    """
+    if weights is None:
+        weights = _DEFAULT_WEIGHTS
+
+    return (
+        weights.relevance * relevance
+        + weights.importance * (importance / 10.0)
+        + weights.recency * recency
+        + weights.confidence * effective_confidence
+    )
