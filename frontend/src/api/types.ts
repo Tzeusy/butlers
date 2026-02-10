@@ -71,12 +71,36 @@ export interface ButlerConfigResponse {
 /** Lightweight session representation for list views. */
 export interface SessionSummary {
   id: string;
+  butler?: string;
   prompt: string;
   trigger_source: string;
   success: boolean | null;
   started_at: string;
   completed_at: string | null;
   duration_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+}
+
+/** Full session detail returned by the single-session endpoint. */
+export interface SessionDetail {
+  id: string;
+  butler: string;
+  prompt: string;
+  trigger_source: string;
+  result: string | null;
+  tool_calls: unknown[];
+  duration_ms: number | null;
+  trace_id: string | null;
+  cost: Record<string, unknown> | null;
+  started_at: string;
+  completed_at: string | null;
+  success: boolean | null;
+  error: string | null;
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  parent_session_id: string | null;
 }
 
 /** Lightweight notification representation for list views. */
