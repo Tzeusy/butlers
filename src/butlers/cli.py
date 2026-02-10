@@ -188,6 +188,28 @@ name = "butler_{name}"
     click.echo(f"Created butler scaffold: {butler_dir}/")
 
 
+@cli.command()
+@click.option(
+    "--host",
+    default="0.0.0.0",
+    show_default=True,
+    help="Bind address for the dashboard server",
+)
+@click.option(
+    "--port",
+    type=int,
+    default=8200,
+    show_default=True,
+    help="Port for the dashboard server",
+)
+def dashboard(host: str, port: int) -> None:
+    """Start the Butlers dashboard web UI."""
+    import uvicorn
+
+    click.echo(f"Starting Butlers dashboard on {host}:{port}")
+    uvicorn.run("butlers.api.app:create_app", host=host, port=port, factory=True)
+
+
 def _discover_configs(butlers_dir: Path) -> dict[str, Path]:
     """Discover all butler.toml configs in a directory.
 
