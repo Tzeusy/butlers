@@ -366,6 +366,49 @@ def compute_composite_score(
 
 
 # ---------------------------------------------------------------------------
+# Effective confidence with time-based decay
+# ---------------------------------------------------------------------------
+
+
+def effective_confidence(
+    confidence: float,
+    decay_rate: float,
+    last_confirmed_at: datetime | None,
+) -> float:
+    """Compute effective confidence after time-based decay.
+
+    The effective confidence decays exponentially from the base confidence
+    level based on how long ago the memory was last confirmed::
+
+        effective = confidence * exp(-decay_rate * days_since_confirmed)
+
+    Special cases:
+
+    - *decay_rate == 0.0* (permanent): returns confidence unchanged.
+    - *last_confirmed_at is None*: returns 0.0.
+
+    Args:
+        confidence: Base confidence level (0.0 to 1.0).
+        decay_rate: Rate of exponential decay per day.
+        last_confirmed_at: When confidence was last confirmed/reset.
+
+    Returns:
+        Float in [0.0, confidence], the decayed confidence value.
+    """
+    if last_confirmed_at is None:
+        return 0.0
+
+    if decay_rate == 0.0:
+        return confidence
+
+    now = datetime.now(UTC)
+    elapsed_seconds = (now - last_confirmed_at).total_seconds()
+    days_elapsed = max(elapsed_seconds / 86400.0, 0.0)
+
+    return confidence * math.exp(-decay_rate * days_elapsed)
+
+
+# ---------------------------------------------------------------------------
 # High-level recall (primary retrieval entry point)
 # ---------------------------------------------------------------------------
 
