@@ -48,6 +48,10 @@ const ButlerEntitiesTab = lazy(
 );
 
 // Switchboard butler tabs (lazy)
+const ButlerMemoryTab = lazy(
+  () => import("@/components/butler-detail/ButlerMemoryTab.tsx"),
+);
+
 const ButlerRoutingLogTab = lazy(
   () => import("@/components/butler-detail/ButlerRoutingLogTab.tsx"),
 );
@@ -68,6 +72,7 @@ const BASE_TABS = [
   "state",
   "trigger",
   "crm",
+  "memory",
 ] as const;
 
 const GENERAL_TABS = ["collections", "entities"] as const;
@@ -398,6 +403,7 @@ export default function ButlerDetailPage() {
           <TabsTrigger value="trigger">Trigger</TabsTrigger>
           <TabsTrigger value="state">State</TabsTrigger>
           <TabsTrigger value="crm">CRM</TabsTrigger>
+          <TabsTrigger value="memory">Memory</TabsTrigger>
           {showHealthTab && <TabsTrigger value="health">Health</TabsTrigger>}
           {isGeneral && (
             <>
@@ -451,6 +457,12 @@ export default function ButlerDetailPage() {
 
         <TabsContent value="crm">
           <ButlerCrmTab butlerName={name} />
+        </TabsContent>
+
+        <TabsContent value="memory">
+          <Suspense fallback={<TabFallback label="memory" />}>
+            <ButlerMemoryTab butlerName={name} />
+          </Suspense>
         </TabsContent>
 
         {showHealthTab && (

@@ -737,3 +737,114 @@ export interface RoutingLogParams {
   offset?: number;
   limit?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Memory
+// ---------------------------------------------------------------------------
+
+/** An episode from the Eden memory tier. */
+export interface Episode {
+  id: string;
+  butler: string;
+  session_id: string | null;
+  content: string;
+  importance: number;
+  reference_count: number;
+  consolidated: boolean;
+  created_at: string;
+  last_referenced_at: string | null;
+  expires_at: string | null;
+  metadata: Record<string, unknown>;
+}
+
+/** A consolidated fact from the mid-term memory tier. */
+export interface Fact {
+  id: string;
+  subject: string;
+  predicate: string;
+  content: string;
+  importance: number;
+  confidence: number;
+  decay_rate: number;
+  permanence: string;
+  source_butler: string | null;
+  validity: string;
+  scope: string;
+  reference_count: number;
+  created_at: string;
+  last_referenced_at: string | null;
+  last_confirmed_at: string | null;
+  tags: string[];
+  metadata: Record<string, unknown>;
+}
+
+/** A behavioral rule from the long-term memory tier. */
+export interface MemoryRule {
+  id: string;
+  content: string;
+  scope: string;
+  maturity: string;
+  confidence: number;
+  effectiveness_score: number;
+  applied_count: number;
+  success_count: number;
+  harmful_count: number;
+  source_butler: string | null;
+  created_at: string;
+  last_applied_at: string | null;
+  tags: string[];
+  metadata: Record<string, unknown>;
+}
+
+/** Aggregated statistics across all memory tiers. */
+export interface MemoryStats {
+  total_episodes: number;
+  unconsolidated_episodes: number;
+  total_facts: number;
+  active_facts: number;
+  fading_facts: number;
+  total_rules: number;
+  candidate_rules: number;
+  established_rules: number;
+  proven_rules: number;
+  anti_pattern_rules: number;
+}
+
+/** A recent memory activity event. */
+export interface MemoryActivity {
+  id: string;
+  type: string;
+  summary: string;
+  butler: string | null;
+  created_at: string;
+}
+
+/** Query parameters for episode list endpoints. */
+export interface EpisodeParams {
+  butler?: string;
+  consolidated?: boolean;
+  since?: string;
+  until?: string;
+  offset?: number;
+  limit?: number;
+}
+
+/** Query parameters for fact list endpoints. */
+export interface FactParams {
+  q?: string;
+  scope?: string;
+  validity?: string;
+  permanence?: string;
+  subject?: string;
+  offset?: number;
+  limit?: number;
+}
+
+/** Query parameters for rule list endpoints. */
+export interface RuleParams {
+  q?: string;
+  scope?: string;
+  maturity?: string;
+  offset?: number;
+  limit?: number;
+}

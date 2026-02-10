@@ -12,6 +12,7 @@ const navItems = [
   { path: '/groups', label: 'Groups' },
   { path: '/health/measurements', label: 'Health' },
   { path: '/collections', label: 'Collections' },
+  { path: '/memory', label: 'Memory' },
   { path: '/entities', label: 'Entities' },
   { path: '/settings', label: 'Settings' },
 ]

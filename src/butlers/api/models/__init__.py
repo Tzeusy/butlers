@@ -279,6 +279,15 @@ from butlers.api.models.health import (  # noqa: E402
     Research,
     Symptom,
 )
+from butlers.api.models.memory import (  # noqa: E402
+    Episode,
+    Fact,
+    MemoryActivity,
+    MemoryStats,
+)
+from butlers.api.models.memory import (  # noqa: E402
+    Rule as MemoryRule,
+)
 from butlers.api.models.notification import NotificationStats, NotificationSummary  # noqa: E402
 from butlers.api.models.relationship import (  # noqa: E402
     ActivityFeedItem,
@@ -318,6 +327,11 @@ __all__ = [
     "DailyCost",
     "Dose",
     "Entity",
+    "Episode",
+    "Fact",
+    "MemoryActivity",
+    "MemoryStats",
+    "MemoryRule",
     "ErrorDetail",
     "ErrorResponse",
     "Gift",

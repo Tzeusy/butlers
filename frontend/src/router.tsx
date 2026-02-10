@@ -10,6 +10,7 @@ import TraceDetailPage from './pages/TraceDetailPage.tsx'
 import TimelinePage from './pages/TimelinePage.tsx'
 import NotificationsPage from './pages/NotificationsPage.tsx'
 import CostsPage from './pages/CostsPage.tsx'
+import MemoryPage from './pages/MemoryPage.tsx'
 import SettingsPage from './pages/SettingsPage.tsx'
 import AuditLogPage from './pages/AuditLogPage.tsx'
 import ContactsPage from './pages/ContactsPage.tsx'
@@ -52,6 +53,7 @@ export const router = createBrowserRouter([
       { path: '/entities', element: <EntitiesPage /> },
       { path: '/entities/:entityId', element: <EntityDetailPage /> },
       { path: '/costs', element: <CostsPage /> },
+      { path: '/memory', element: <MemoryPage /> },
       { path: '/settings', element: <SettingsPage /> },
     ],
   },
