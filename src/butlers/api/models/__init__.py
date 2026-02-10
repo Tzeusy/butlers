@@ -164,8 +164,6 @@ class HealthResponse(BaseModel):
     status: str
 
 
-
-
 # ---------------------------------------------------------------------------
 # Issue models
 # ---------------------------------------------------------------------------
@@ -207,7 +205,6 @@ class TickResponse(BaseModel):
     message: str | None = None
 
 
-
 # ---------------------------------------------------------------------------
 # Cost models
 # ---------------------------------------------------------------------------
@@ -247,6 +244,19 @@ class TopSession(BaseModel):
     started_at: str
 
 
+class ScheduleCost(BaseModel):
+    """Cost analysis for a single scheduled task."""
+
+    schedule_name: str
+    butler: str
+    cron: str
+    total_runs: int
+    total_cost_usd: float
+    avg_cost_per_run: float
+    runs_per_day: float
+    projected_monthly_usd: float
+
+
 # ---------------------------------------------------------------------------
 # Notification models (re-exported from sub-module)
 # ---------------------------------------------------------------------------
@@ -272,6 +282,7 @@ __all__ = [
     "NotificationSummary",
     "PaginatedResponse",
     "PaginationMeta",
+    "ScheduleCost",
     "ScheduleEntry",
     "SessionSummary",
     "SkillInfo",

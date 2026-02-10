@@ -22,7 +22,7 @@ from butlers.api.deps import (
     get_mcp_manager,
     get_pricing,
 )
-from butlers.api.models import ApiResponse, CostSummary, DailyCost, TopSession
+from butlers.api.models import ApiResponse, CostSummary, DailyCost, ScheduleCost, TopSession
 from butlers.api.pricing import PricingConfig, estimate_session_cost
 
 logger = logging.getLogger(__name__)
@@ -190,9 +190,7 @@ async def get_daily_costs(
         from_date = to_date - timedelta(days=6)
 
     tasks = [
-        _get_butler_daily_stats(
-            mgr, info, pricing, from_date.isoformat(), to_date.isoformat()
-        )
+        _get_butler_daily_stats(mgr, info, pricing, from_date.isoformat(), to_date.isoformat())
         for info in configs
     ]
     all_results = await asyncio.gather(*tasks)
@@ -228,8 +226,6 @@ async def get_daily_costs(
     ]
 
     return ApiResponse[list[DailyCost]](data=daily)
-
-
 
 
 async def _get_butler_top_sessions(
@@ -275,6 +271,7 @@ async def _get_butler_top_sessions(
         pass
     return []
 
+
 @router.get("/top-sessions", response_model=ApiResponse[list[TopSession]])
 async def get_top_sessions(
     limit: int = Query(default=10, ge=1, le=50),
@@ -297,3 +294,62 @@ async def get_top_sessions(
 
     all_sessions.sort(key=lambda s: s.cost_usd, reverse=True)
     return ApiResponse[list[TopSession]](data=all_sessions[:limit])
+
+
+async def _get_butler_schedule_costs(
+    mgr: MCPClientManager,
+    info: ButlerConnectionInfo,
+    pricing: PricingConfig,
+) -> list[ScheduleCost]:
+    """Query a butler for per-schedule cost data."""
+    try:
+        client = await asyncio.wait_for(mgr.get_client(info.name), timeout=_STATUS_TIMEOUT_S)
+        result = await asyncio.wait_for(
+            client.call_tool("schedule_costs", {}),
+            timeout=_STATUS_TIMEOUT_S,
+        )
+        if result.content:
+            text = result.content[0].text if hasattr(result.content[0], "text") else ""
+            if text:
+                data = json.loads(text)
+                costs = []
+                for entry in data.get("schedules", []):
+                    model_id = entry.get("model", "")
+                    input_tokens = entry.get("total_input_tokens", 0)
+                    output_tokens = entry.get("total_output_tokens", 0)
+                    total_cost = estimate_session_cost(
+                        pricing, model_id, input_tokens, output_tokens
+                    )
+                    total_runs = entry.get("total_runs", 0)
+                    avg_cost = total_cost / total_runs if total_runs > 0 else 0.0
+                    runs_per_day = entry.get("runs_per_day", 0.0)
+                    costs.append(
+                        ScheduleCost(
+                            schedule_name=entry.get("name", ""),
+                            butler=info.name,
+                            cron=entry.get("cron", ""),
+                            total_runs=total_runs,
+                            total_cost_usd=round(total_cost, 6),
+                            avg_cost_per_run=round(avg_cost, 6),
+                            runs_per_day=runs_per_day,
+                            projected_monthly_usd=round(avg_cost * runs_per_day * 30, 6),
+                        )
+                    )
+                return costs
+    except (ButlerUnreachableError, TimeoutError, Exception):
+        pass
+    return []
+
+
+@router.get("/by-schedule", response_model=ApiResponse[list[ScheduleCost]])
+async def get_costs_by_schedule(
+    mgr: MCPClientManager = Depends(get_mcp_manager),
+    configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
+    pricing: PricingConfig = Depends(get_pricing),
+) -> ApiResponse[list[ScheduleCost]]:
+    """Return per-schedule cost analysis across all butlers."""
+    tasks = [_get_butler_schedule_costs(mgr, info, pricing) for info in configs]
+    results = await asyncio.gather(*tasks)
+    all_costs = [c for butler_costs in results for c in butler_costs]
+    all_costs.sort(key=lambda c: c.projected_monthly_usd, reverse=True)
+    return ApiResponse[list[ScheduleCost]](data=all_costs)
