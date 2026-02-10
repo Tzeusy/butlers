@@ -380,14 +380,15 @@ class TestPermanenceDecay:
         # decay_rate is parameter $9 -> index 9 in args
         assert insert_call.args[9] == expected_decay
 
-    async def test_unknown_permanence_falls_back_to_standard(
+    async def test_unknown_permanence_raises_value_error(
         self, fact_pool, embedding_engine: MagicMock
     ) -> None:
-        """An unrecognized permanence string falls back to 0.008 (standard rate)."""
-        pool, conn = fact_pool
-        await store_fact(pool, "user", "data", "value", embedding_engine, permanence="nonexistent")
-        insert_call = conn.execute.call_args_list[0]
-        assert insert_call.args[9] == 0.008
+        """An unrecognized permanence string raises ValueError."""
+        pool, _conn = fact_pool
+        with pytest.raises(ValueError, match="Invalid permanence"):
+            await store_fact(
+                pool, "user", "data", "value", embedding_engine, permanence="nonexistent"
+            )
 
     async def test_permanence_decay_constant_has_five_entries(self) -> None:
         """The _PERMANENCE_DECAY mapping contains exactly 5 entries."""
