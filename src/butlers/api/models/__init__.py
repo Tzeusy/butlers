@@ -207,6 +207,45 @@ class TickResponse(BaseModel):
     message: str | None = None
 
 
+
+# ---------------------------------------------------------------------------
+# Cost models
+# ---------------------------------------------------------------------------
+
+
+class CostSummary(BaseModel):
+    """Aggregate cost summary across all butlers."""
+
+    total_cost_usd: float
+    total_sessions: int
+    total_input_tokens: int
+    total_output_tokens: int
+    by_butler: dict[str, float] = Field(default_factory=dict)
+    by_model: dict[str, float] = Field(default_factory=dict)
+
+
+class DailyCost(BaseModel):
+    """Cost data for a single day."""
+
+    date: str
+    cost_usd: float
+    sessions: int
+    input_tokens: int
+    output_tokens: int
+
+
+class TopSession(BaseModel):
+    """A session ranked by cost."""
+
+    session_id: str
+    butler: str
+    cost_usd: float
+    input_tokens: int
+    output_tokens: int
+    model: str
+    started_at: str
+
+
 # ---------------------------------------------------------------------------
 # Notification models (re-exported from sub-module)
 # ---------------------------------------------------------------------------
@@ -218,8 +257,10 @@ __all__ = [
     "ApiMeta",
     "ApiResponse",
     "ButlerConfigResponse",
+    "CostSummary",
     "ButlerDetail",
     "ButlerSummary",
+    "DailyCost",
     "ErrorDetail",
     "ErrorResponse",
     "HealthResponse",
@@ -234,6 +275,7 @@ __all__ = [
     "SessionSummary",
     "SkillInfo",
     "TickResponse",
+    "TopSession",
     "TriggerRequest",
     "TriggerResponse",
 ]
