@@ -6,14 +6,21 @@ The app factory creates a FastAPI instance with:
 - Lifespan handler for startup/shutdown of DB pools and MCP clients
 - Health endpoint at GET /api/health
 - Router registration for future endpoint modules
+- Optional static file serving for production (frontend/dist/)
 """
 
+import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.staticfiles import StaticFiles
 
 from butlers.api.middleware import register_error_handlers
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -30,6 +37,7 @@ async def lifespan(app: FastAPI):
 
 def create_app(
     cors_origins: list[str] | None = None,
+    static_dir: str | Path | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -38,6 +46,12 @@ def create_app(
     cors_origins:
         Allowed CORS origins. Defaults to ["http://localhost:5173"] for
         local Vite dev server.
+    static_dir:
+        Path to the built frontend directory (e.g. ``frontend/dist/``).
+        When set, mounts a ``StaticFiles`` handler at ``/`` with
+        ``html=True`` for SPA fallback.  Falls back to the
+        ``DASHBOARD_STATIC_DIR`` environment variable.  When neither is
+        set, no static mount is registered (development mode).
     """
     if cors_origins is None:
         cors_origins = ["http://localhost:5173"]
@@ -61,5 +75,22 @@ def create_app(
     @app.get("/api/health")
     async def health():
         return {"status": "ok"}
+
+    # --- Static file serving (production) ---
+    # Mount AFTER all API routes so /api/* always takes precedence.
+    resolved_static = static_dir or os.environ.get("DASHBOARD_STATIC_DIR")
+    if resolved_static is not None:
+        dist_path = Path(resolved_static)
+        if dist_path.is_dir():
+            app.mount(
+                "/",
+                StaticFiles(directory=str(dist_path), html=True),
+                name="frontend",
+            )
+            logger.info("Mounted frontend static files from %s", dist_path)
+        else:
+            logger.warning(
+                "static_dir %s does not exist; skipping static mount", dist_path
+            )
 
     return app
