@@ -88,6 +88,9 @@ class ButlerSummary(BaseModel):
     name: str
     status: str
     port: int
+    db: str
+    modules: list[str] = Field(default_factory=list)
+    schedule_count: int = 0
 
 
 class SessionSummary(BaseModel):
@@ -112,15 +115,18 @@ class HealthResponse(BaseModel):
 # Notification models (re-exported from sub-module)
 # ---------------------------------------------------------------------------
 
+from butlers.api.models.butler import ButlerDetail, ModuleStatus  # noqa: E402
 from butlers.api.models.notification import NotificationStats, NotificationSummary  # noqa: E402
 
 __all__ = [
     "ApiMeta",
     "ApiResponse",
+    "ButlerDetail",
     "ButlerSummary",
     "ErrorDetail",
     "ErrorResponse",
     "HealthResponse",
+    "ModuleStatus",
     "NotificationStats",
     "NotificationSummary",
     "PaginatedResponse",

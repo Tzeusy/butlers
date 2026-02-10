@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 
 from butlers.api.middleware import register_error_handlers
+from butlers.api.routers.butlers import router as butlers_router
 from butlers.api.routers.notifications import (
     butler_notifications_router,
 )
@@ -79,6 +80,7 @@ def create_app(
     register_error_handlers(app)
 
     # --- Routers ---
+    app.include_router(butlers_router)
     app.include_router(notifications_router)
     app.include_router(butler_notifications_router)
 
