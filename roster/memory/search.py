@@ -363,3 +363,95 @@ def compute_composite_score(
         + weights.recency * recency
         + weights.confidence * effective_confidence
     )
+
+
+# ---------------------------------------------------------------------------
+# High-level recall (primary retrieval entry point)
+# ---------------------------------------------------------------------------
+
+
+async def recall(
+    pool: Pool,
+    topic: str,
+    embedding_engine,  # EmbeddingEngine instance
+    *,
+    scope: str | None = None,
+    limit: int = 10,
+    min_confidence: float = 0.2,
+    weights: CompositeWeights | None = None,
+) -> list[dict]:
+    """High-level composite-scored retrieval of relevant facts and rules.
+
+    This is the primary retrieval entry point. It:
+    1. Embeds the topic text
+    2. Runs hybrid search on both facts and rules tables
+    3. Computes composite scores (relevance, importance, recency, confidence)
+    4. Filters by minimum effective confidence
+    5. Bumps reference counts on returned results
+    6. Returns results sorted by composite score descending
+
+    Args:
+        pool: asyncpg connection pool.
+        topic: Natural language query/topic.
+        embedding_engine: EmbeddingEngine instance for embedding the topic.
+        scope: Optional scope filter.
+        limit: Max results to return (default 10).
+        min_confidence: Minimum effective confidence threshold (default 0.2).
+        weights: Optional custom composite weights.
+
+    Returns:
+        List of dicts with ``composite_score`` and ``memory_type`` added.
+        Sorted by composite_score descending.
+    """
+    query_embedding = embedding_engine.embed(topic)
+
+    # Search both facts and rules
+    facts_results = await hybrid_search(
+        pool, topic, query_embedding, "facts", limit=limit, scope=scope,
+    )
+    rules_results = await hybrid_search(
+        pool, topic, query_embedding, "rules", limit=limit, scope=scope,
+    )
+
+    # Tag each result with its memory type
+    for r in facts_results:
+        r["memory_type"] = "fact"
+    for r in rules_results:
+        r["memory_type"] = "rule"
+
+    all_results = facts_results + rules_results
+
+    # Compute composite scores and filter
+    max_rrf = 2.0 / (_RRF_K + 1)
+    scored: list[dict] = []
+    for r in all_results:
+        # Normalise rrf_score to [0, 1]
+        relevance_raw = r.get("rrf_score", 0.0)
+        relevance = min(relevance_raw / max_rrf, 1.0) if max_rrf > 0 else 0.0
+
+        importance = r.get("importance", 5.0)
+        recency = compute_recency_score(r.get("last_referenced_at"))
+        confidence = r.get("confidence", 1.0)
+
+        # Filter by effective confidence threshold
+        if confidence < min_confidence:
+            continue
+
+        composite = compute_composite_score(relevance, importance, recency, confidence, weights)
+        r["composite_score"] = composite
+        scored.append(r)
+
+    # Sort by composite score descending
+    scored.sort(key=lambda x: -x["composite_score"])
+    scored = scored[:limit]
+
+    # Bump reference counts for returned results
+    for r in scored:
+        table = "facts" if r["memory_type"] == "fact" else "rules"
+        await pool.execute(
+            f"UPDATE {table} SET reference_count = reference_count + 1, "
+            f"last_referenced_at = now() WHERE id = $1",
+            r["id"],
+        )
+
+    return scored
