@@ -1,7 +1,7 @@
 """Shared test fixtures for the butlers test suite.
 
 The canonical definitions live in the root ``conftest.py`` so they are visible
-to both ``tests/`` and ``butlers/*/tests/``.  This file re-exports them so that
+to both ``tests/`` and ``roster/*/tests/``.  This file re-exports them so that
 existing imports like ``from tests.conftest import SpawnerResult`` keep working.
 """
 

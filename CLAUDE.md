@@ -47,10 +47,10 @@ Every butler has **core components** (always present) and **modules** (opt-in pe
 
 Each butler owns a dedicated PostgreSQL database. Inter-butler communication only via MCP tools through the Switchboard. This is a hard architectural constraint.
 
-### Butler Config Directory (git-based)
+### Butler Config Directory (git-based, `roster/`)
 
 ```
-butler-name/
+roster/butler-name/
 ├── MANIFESTO.md    # Public-facing identity, purpose, and value proposition
 ├── CLAUDE.md       # Butler personality/instructions (system prompt)
 ├── AGENTS.md       # Runtime agent notes

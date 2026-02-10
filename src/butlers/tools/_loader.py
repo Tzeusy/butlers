@@ -1,6 +1,6 @@
 """Dynamic loader for butler-specific tools from config directories.
 
-Each butler keeps its tools in ``butlers/<name>/tools.py`` (the config directory).
+Each butler keeps its tools in ``roster/<name>/tools.py`` (the config directory).
 This module provides ``register_butler_tools`` which uses ``importlib`` to load
 those files and inject them into ``sys.modules`` as ``butlers.tools.<name>`` so
 that existing import paths continue to work throughout the codebase.
@@ -27,7 +27,7 @@ def register_butler_tools(
     butler_name:
         The butler identifier (e.g. ``"switchboard"``).
     config_dir:
-        Path to the butler's config directory (e.g. ``butlers/switchboard/``).
+        Path to the butler's config directory (e.g. ``roster/switchboard/``).
         Must contain a ``tools.py`` file.
 
     Raises
@@ -66,7 +66,7 @@ def _discover_butler_names(butlers_root: Path) -> list[str]:
     Parameters
     ----------
     butlers_root:
-        Path to the ``butlers/`` directory containing butler config dirs.
+        Path to the ``roster/`` directory containing butler config dirs.
 
     Returns
     -------
@@ -82,28 +82,28 @@ def _discover_butler_names(butlers_root: Path) -> list[str]:
     )
 
 
-def register_all_butler_tools(butlers_root: Path | None = None) -> None:
+def register_all_butler_tools(roster_root: Path | None = None) -> None:
     """Register tools for all discovered butlers.
 
-    Scans ``butlers/*/tools.py`` to dynamically discover butler tools.
+    Scans ``roster/*/tools.py`` to dynamically discover butler tools.
     No hardcoded butler names — adding a new butler with a ``tools.py``
     file is automatically picked up.
 
     Parameters
     ----------
-    butlers_root:
-        Path to the ``butlers/`` directory containing butler config dirs.
+    roster_root:
+        Path to the ``roster/`` directory containing butler config dirs.
         If *None*, auto-detects by walking up from this file's location
         to find the repository root.
     """
-    if butlers_root is None:
+    if roster_root is None:
         # Auto-detect: this file is at src/butlers/tools/_loader.py
         # repo root is 4 levels up: _loader.py -> tools/ -> butlers/ -> src/ -> repo root
         repo_root = Path(__file__).resolve().parent.parent.parent.parent
-        butlers_root = repo_root / "butlers"
+        roster_root = repo_root / "roster"
 
-    for name in _discover_butler_names(butlers_root):
-        config_dir = butlers_root / name
+    for name in _discover_butler_names(roster_root):
+        config_dir = roster_root / name
         try:
             register_butler_tools(name, config_dir)
         except Exception:

@@ -118,17 +118,17 @@ All 122 beads closed. 449 tests passing on main. Full implementation complete.
 - `src/butlers/tools/` — switchboard.py, general.py, relationship.py, health.py, heartbeat.py
 - `src/butlers/` — config.py, db.py, daemon.py, migrations.py, cli.py
 - `alembic/versions/{core,mailbox}/` — shared migrations (core infra + modules)
-- `butlers/{switchboard,general,relationship,health}/migrations/` — butler-specific migrations
-- `butlers/{switchboard,general,relationship,health,heartbeat}/` — butler config dirs
+- `roster/{switchboard,general,relationship,health}/migrations/` — butler-specific migrations
+- `roster/{switchboard,general,relationship,health,heartbeat}/` — butler config dirs
 
 ### Test Layout
 - Shared/cross-cutting tests in `tests/`
-- Butler-specific tool tests colocated in `butlers/<name>/tests/`
-  - `butlers/general/tests/test_tools.py`
-  - `butlers/health/tests/test_tools.py`
-  - `butlers/relationship/tests/test_tools.py`, `test_contact_info.py`
-  - `butlers/switchboard/tests/test_tools.py`
-- `pyproject.toml` testpaths: `["tests", "butlers"]`
+- Butler-specific tool tests colocated in `roster/<name>/tests/`
+  - `roster/general/tests/test_tools.py`
+  - `roster/health/tests/test_tools.py`
+  - `roster/relationship/tests/test_tools.py`, `test_contact_info.py`
+  - `roster/switchboard/tests/test_tools.py`
+- `pyproject.toml` testpaths: `["tests", "roster"]`
 - Uses `--import-mode=importlib` to avoid module-name collisions across butler test dirs
 
 ### Test Patterns
@@ -147,7 +147,7 @@ The memory system is a **shared Memory Butler** (port 8150, DB `butler_memory`) 
 
 ### Quality Gates
 ```bash
-uv run ruff check src/ tests/ butlers/ conftest.py
-uv run ruff format --check src/ tests/ butlers/ conftest.py
+uv run ruff check src/ tests/ roster/ conftest.py
+uv run ruff format --check src/ tests/ roster/ conftest.py
 uv run pytest tests/ -v --ignore=tests/test_db.py --ignore=tests/test_migrations.py
 ```

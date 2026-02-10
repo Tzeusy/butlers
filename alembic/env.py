@@ -20,7 +20,7 @@ from alembic import context
 VERSIONS_DIR = Path(__file__).parent / "versions"
 
 # The directory containing butler config dirs (each may have a migrations/ folder)
-BUTLERS_DIR = Path(__file__).parent.parent / "butlers"
+ROSTER_DIR = Path(__file__).parent.parent / "roster"
 
 # Shared chains that live in alembic/versions/
 _SHARED_CHAINS = ["core", "mailbox", "approvals"]
@@ -29,13 +29,13 @@ _SHARED_CHAINS = ["core", "mailbox", "approvals"]
 def _discover_butler_chains() -> list[str]:
     """Discover butler-specific migration chains from butler config dirs.
 
-    Scans ``butlers/*/migrations/`` for directories that contain at least one
+    Scans ``roster/*/migrations/`` for directories that contain at least one
     ``.py`` migration file (excluding ``__init__.py``).
     """
-    if not BUTLERS_DIR.is_dir():
+    if not ROSTER_DIR.is_dir():
         return []
     chains = []
-    for entry in sorted(BUTLERS_DIR.iterdir()):
+    for entry in sorted(ROSTER_DIR.iterdir()):
         if not entry.is_dir():
             continue
         mig_dir = entry / "migrations"
@@ -64,7 +64,7 @@ def get_version_locations() -> list[str]:
     """Build the version_locations list for all chains.
 
     Includes shared chains from alembic/versions/ and butler-specific chains
-    from butlers/<name>/migrations/.
+    from roster/<name>/migrations/.
     """
     locations = []
 
@@ -74,9 +74,9 @@ def get_version_locations() -> list[str]:
         if chain_dir.is_dir():
             locations.append(str(chain_dir))
 
-    # Butler-specific chains in butlers/<name>/migrations/
+    # Butler-specific chains in roster/<name>/migrations/
     for butler_name in _discover_butler_chains():
-        mig_dir = BUTLERS_DIR / butler_name / "migrations"
+        mig_dir = ROSTER_DIR / butler_name / "migrations"
         locations.append(str(mig_dir))
 
     return locations

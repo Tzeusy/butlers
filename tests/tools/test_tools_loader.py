@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 
 pytestmark = pytest.mark.unit
-# Repo root (4 levels up from src/butlers/tools/_loader.py)
-REPO_ROOT = Path(__file__).resolve().parent.parent
-BUTLERS_ROOT = REPO_ROOT / "butlers"
+# Repo root (3 levels up from tests/tools/test_tools_loader.py)
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+ROSTER_ROOT = REPO_ROOT / "roster"
 
 
 class TestRegisterButlerTools:
@@ -50,7 +50,7 @@ class TestRegisterButlerTools:
         """All discovered butler tool modules should be in sys.modules."""
         from butlers.tools._loader import _discover_butler_names
 
-        discovered = _discover_butler_names(BUTLERS_ROOT)
+        discovered = _discover_butler_names(ROSTER_ROOT)
         assert len(discovered) > 0, "Should discover at least one butler"
         for name in discovered:
             module_name = f"butlers.tools.{name}"
@@ -60,12 +60,12 @@ class TestRegisterButlerTools:
         """Tool modules should have __file__ pointing to butler config dirs."""
         from butlers.tools._loader import _discover_butler_names
 
-        discovered = _discover_butler_names(BUTLERS_ROOT)
+        discovered = _discover_butler_names(ROSTER_ROOT)
         assert len(discovered) > 0, "Should discover at least one butler"
         for name in discovered:
             module_name = f"butlers.tools.{name}"
             mod = sys.modules[module_name]
-            expected_path = BUTLERS_ROOT / name / "tools.py"
+            expected_path = ROSTER_ROOT / name / "tools.py"
             assert Path(mod.__file__).resolve() == expected_path.resolve(), (
                 f"{module_name}.__file__ = {mod.__file__}, expected {expected_path}"
             )
@@ -87,13 +87,13 @@ class TestRegisterAllButlerTools:
         from butlers.tools._loader import register_all_butler_tools
 
         # This is called by __init__.py already; just verify it works
-        register_all_butler_tools(butlers_root=None)
+        register_all_butler_tools(roster_root=None)
 
-    def test_explicit_butlers_root(self):
+    def test_explicit_roster_root(self):
         """register_all_butler_tools should work with explicit path."""
         from butlers.tools._loader import register_all_butler_tools
 
-        register_all_butler_tools(butlers_root=BUTLERS_ROOT)
+        register_all_butler_tools(roster_root=ROSTER_ROOT)
 
     def test_missing_tools_file_skipped(self, tmp_path):
         """Butlers without tools.py should be silently skipped."""

@@ -2,7 +2,7 @@
 
 Fixtures defined in ``tests/conftest.py`` are automatically visible to tests
 under ``tests/`` (pytest's normal conftest scoping).  This root conftest
-re-exports them so they are equally visible from ``butlers/*/tests/``.
+re-exports them so they are equally visible from ``roster/*/tests/``.
 """
 
 from __future__ import annotations

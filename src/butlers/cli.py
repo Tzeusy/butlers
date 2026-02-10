@@ -17,7 +17,7 @@ from butlers.config import ConfigError, load_config
 logger = logging.getLogger(__name__)
 
 # Default directory containing butler configurations
-DEFAULT_BUTLERS_DIR = Path("butlers")
+DEFAULT_BUTLERS_DIR = Path("roster")
 
 
 def _parse_comma_separated(ctx, param, value):

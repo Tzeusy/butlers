@@ -40,14 +40,14 @@ class TestHasButlerChain:
         (chain_dir / "__init__.py").touch()
         (chain_dir / "001_create_tables.py").write_text("# migration")
 
-        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
+        with patch("butlers.migrations.ROSTER_DIR", tmp_path):
             assert has_butler_chain("my-butler") is True
 
     def test_no_chain_directory(self, tmp_path: Path) -> None:
         """Returns False when no directory exists for the butler name."""
         tmp_path.mkdir(exist_ok=True)
 
-        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
+        with patch("butlers.migrations.ROSTER_DIR", tmp_path):
             assert has_butler_chain("nonexistent-butler") is False
 
     def test_empty_chain_directory(self, tmp_path: Path) -> None:
@@ -56,7 +56,7 @@ class TestHasButlerChain:
         chain_dir.mkdir(parents=True)
         (chain_dir / "__init__.py").touch()
 
-        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
+        with patch("butlers.migrations.ROSTER_DIR", tmp_path):
             assert has_butler_chain("empty-butler") is False
 
     def test_chain_directory_with_non_py_files(self, tmp_path: Path) -> None:
@@ -66,11 +66,11 @@ class TestHasButlerChain:
         (chain_dir / "__init__.py").touch()
         (chain_dir / "README.md").write_text("docs")
 
-        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
+        with patch("butlers.migrations.ROSTER_DIR", tmp_path):
             assert has_butler_chain("txt-butler") is False
 
     def test_real_relationship_chain(self) -> None:
-        """The 'relationship' chain should be detected from butlers/relationship/migrations/."""
+        """The 'relationship' chain should be detected from roster/relationship/migrations/."""
         assert has_butler_chain("relationship") is True
 
     def test_real_nonexistent_chain(self) -> None:
@@ -94,7 +94,7 @@ class TestDiscoverButlerChains:
             (mig_dir / "__init__.py").touch()
             (mig_dir / "001_tables.py").write_text("# migration")
 
-        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
+        with patch("butlers.migrations.ROSTER_DIR", tmp_path):
             chains = _discover_butler_chains()
 
         assert chains == ["alpha", "zeta"]
@@ -106,7 +106,7 @@ class TestDiscoverButlerChains:
         mig_dir.mkdir(parents=True)
         (mig_dir / "001_tables.py").write_text("# migration")
 
-        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
+        with patch("butlers.migrations.ROSTER_DIR", tmp_path):
             chains = _discover_butler_chains()
 
         assert chains == ["has-migrations"]
@@ -117,22 +117,22 @@ class TestDiscoverButlerChains:
         mig_dir.mkdir(parents=True)
         (mig_dir / "__init__.py").touch()
 
-        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
+        with patch("butlers.migrations.ROSTER_DIR", tmp_path):
             chains = _discover_butler_chains()
 
         assert chains == []
 
-    def test_returns_empty_when_butlers_dir_missing(self, tmp_path: Path) -> None:
-        """Returns empty list when BUTLERS_DIR does not exist."""
+    def test_returns_empty_when_roster_dir_missing(self, tmp_path: Path) -> None:
+        """Returns empty list when ROSTER_DIR does not exist."""
         missing = tmp_path / "nonexistent"
 
-        with patch("butlers.migrations.BUTLERS_DIR", missing):
+        with patch("butlers.migrations.ROSTER_DIR", missing):
             chains = _discover_butler_chains()
 
         assert chains == []
 
     def test_real_discovery_finds_known_butlers(self) -> None:
-        """The real butlers/ directory should contain the known butler chains."""
+        """The real roster/ directory should contain the known butler chains."""
         chains = _discover_butler_chains()
         for expected in ["general", "health", "relationship", "switchboard"]:
             assert expected in chains, f"Expected {expected} in discovered chains"
@@ -152,11 +152,11 @@ class TestResolveChainDir:
         assert result == core_dir
 
     def test_butler_chain_resolves_to_butlers_dir(self, tmp_path: Path) -> None:
-        """Butler-specific chains resolve to butlers/<name>/migrations/."""
+        """Butler-specific chains resolve to roster/<name>/migrations/."""
         mig_dir = tmp_path / "relationship" / "migrations"
         mig_dir.mkdir(parents=True)
 
-        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
+        with patch("butlers.migrations.ROSTER_DIR", tmp_path):
             result = _resolve_chain_dir("relationship")
 
         assert result == mig_dir
@@ -165,7 +165,7 @@ class TestResolveChainDir:
         """Non-existent chains return None."""
         with (
             patch("butlers.migrations.ALEMBIC_DIR", tmp_path),
-            patch("butlers.migrations.BUTLERS_DIR", tmp_path),
+            patch("butlers.migrations.ROSTER_DIR", tmp_path),
         ):
             result = _resolve_chain_dir("does-not-exist")
 
@@ -191,7 +191,7 @@ class TestGetAllChains:
 
         with (
             patch("butlers.migrations.ALEMBIC_DIR", alembic_dir),
-            patch("butlers.migrations.BUTLERS_DIR", butlers_dir),
+            patch("butlers.migrations.ROSTER_DIR", butlers_dir),
         ):
             chains = get_all_chains()
 

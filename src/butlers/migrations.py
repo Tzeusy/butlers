@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 ALEMBIC_DIR = Path(__file__).resolve().parent.parent.parent / "alembic"
 
 # Root of the butler config directories (sibling to src/)
-BUTLERS_DIR = Path(__file__).resolve().parent.parent.parent / "butlers"
+ROSTER_DIR = Path(__file__).resolve().parent.parent.parent / "roster"
 
 # Shared chains that live in alembic/versions/ (core infra + shared modules)
 _SHARED_CHAINS = ["core", "mailbox", "approvals"]
@@ -29,16 +29,16 @@ _SHARED_CHAINS = ["core", "mailbox", "approvals"]
 def _discover_butler_chains() -> list[str]:
     """Discover butler-specific migration chains from butler config dirs.
 
-    Scans ``butlers/*/migrations/`` for directories that contain at least one
+    Scans ``roster/*/migrations/`` for directories that contain at least one
     ``.py`` migration file (excluding ``__init__.py``).
 
     Returns:
         Sorted list of butler names that have a migrations/ folder with files.
     """
-    if not BUTLERS_DIR.is_dir():
+    if not ROSTER_DIR.is_dir():
         return []
     chains = []
-    for entry in sorted(BUTLERS_DIR.iterdir()):
+    for entry in sorted(ROSTER_DIR.iterdir()):
         if not entry.is_dir():
             continue
         mig_dir = entry / "migrations"
@@ -56,7 +56,7 @@ def _resolve_chain_dir(chain: str) -> Path | None:
     """Resolve the filesystem path for a given chain name.
 
     Shared chains (core, mailbox) live in ``alembic/versions/<chain>/``.
-    Butler-specific chains live in ``butlers/<chain>/migrations/``.
+    Butler-specific chains live in ``roster/<chain>/migrations/``.
 
     Returns:
         The chain directory Path if it exists, otherwise None.
@@ -64,7 +64,7 @@ def _resolve_chain_dir(chain: str) -> Path | None:
     if chain in _SHARED_CHAINS:
         chain_dir = ALEMBIC_DIR / "versions" / chain
     else:
-        chain_dir = BUTLERS_DIR / chain / "migrations"
+        chain_dir = ROSTER_DIR / chain / "migrations"
     return chain_dir if chain_dir.is_dir() else None
 
 
@@ -109,7 +109,7 @@ def has_butler_chain(butler_name: str) -> bool:
     """Check whether a butler-name-specific Alembic version chain exists.
 
     A chain is considered to exist when the directory
-    ``butlers/<butler_name>/migrations/`` is present and contains at least one
+    ``roster/<butler_name>/migrations/`` is present and contains at least one
     ``.py`` migration file (excluding ``__init__.py``).
 
     Args:
@@ -118,7 +118,7 @@ def has_butler_chain(butler_name: str) -> bool:
     Returns:
         ``True`` if a non-empty migration chain directory exists for the butler.
     """
-    chain_dir = BUTLERS_DIR / butler_name / "migrations"
+    chain_dir = ROSTER_DIR / butler_name / "migrations"
     if not chain_dir.is_dir():
         return False
     migration_files = [
