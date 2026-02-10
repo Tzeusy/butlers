@@ -305,7 +305,6 @@ async def store_rule(
     return rule_id
 
 
-# ---------------------------------------------------------------------------
 # Memory links CRUD
 # ---------------------------------------------------------------------------
 
@@ -451,3 +450,59 @@ async def get_memory(
         return None
 
     return dict(row)
+
+
+# ---------------------------------------------------------------------------
+# Soft-delete (forget)
+# ---------------------------------------------------------------------------
+
+
+async def forget_memory(
+    pool: Pool,
+    memory_type: str,
+    memory_id: uuid.UUID,
+) -> bool:
+    """Soft-delete a memory by marking it as forgotten.
+
+    The approach varies by memory type:
+
+    - **facts**: sets ``validity`` to ``'retracted'``.
+    - **episodes**: sets ``expires_at`` to ``now()`` (immediate expiry).
+    - **rules**: merges ``{"forgotten": true}`` into the ``metadata`` JSONB column.
+
+    The memory remains in the database but is excluded from retrieval.
+
+    Args:
+        pool: asyncpg connection pool for the memory database.
+        memory_type: One of ``'episode'``, ``'fact'``, or ``'rule'``.
+        memory_id: UUID of the memory row to forget.
+
+    Returns:
+        ``True`` if the memory was found and updated, ``False`` if not found.
+
+    Raises:
+        ValueError: If *memory_type* is not one of the valid types.
+    """
+    if memory_type not in _VALID_MEMORY_TYPES:
+        raise ValueError(
+            f"Invalid memory_type {memory_type!r}; expected one of {sorted(_VALID_MEMORY_TYPES)}"
+        )
+
+    if memory_type == "fact":
+        result = await pool.execute(
+            "UPDATE facts SET validity = 'retracted' WHERE id = $1",
+            memory_id,
+        )
+    elif memory_type == "episode":
+        result = await pool.execute(
+            "UPDATE episodes SET expires_at = now() WHERE id = $1",
+            memory_id,
+        )
+    else:  # rule
+        result = await pool.execute(
+            "UPDATE rules SET metadata = metadata || '{\"forgotten\": true}'::jsonb WHERE id = $1",
+            memory_id,
+        )
+
+    # asyncpg execute returns a status string like "UPDATE 1" or "UPDATE 0"
+    return result.endswith("1")
