@@ -7,6 +7,7 @@ import SessionsPage from './pages/SessionsPage.tsx'
 import SessionDetailPage from './pages/SessionDetailPage.tsx'
 import TracesPage from './pages/TracesPage.tsx'
 import TraceDetailPage from './pages/TraceDetailPage.tsx'
+import TimelinePage from './pages/TimelinePage.tsx'
 import NotificationsPage from './pages/NotificationsPage.tsx'
 import CostsPage from './pages/CostsPage.tsx'
 import SettingsPage from './pages/SettingsPage.tsx'
@@ -22,6 +23,7 @@ export const router = createBrowserRouter([
       { path: '/sessions/:id', element: <SessionDetailPage /> },
       { path: '/traces', element: <TracesPage /> },
       { path: '/traces/:traceId', element: <TraceDetailPage /> },
+      { path: '/timeline', element: <TimelinePage /> },
       { path: '/notifications', element: <NotificationsPage /> },
       { path: '/costs', element: <CostsPage /> },
       { path: '/settings', element: <SettingsPage /> },

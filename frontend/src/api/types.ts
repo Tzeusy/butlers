@@ -237,6 +237,36 @@ export interface ActivityEvent {
   task_name?: string;
 }
 
+/** A unified timeline event from GET /api/timeline. */
+export interface TimelineEvent {
+  id: string;
+  type: string; // "session", "error", "notification", etc.
+  butler: string;
+  timestamp: string; // ISO 8601
+  summary: string;
+  data: Record<string, unknown>;
+}
+
+/** Cursor-based pagination metadata for the timeline endpoint. */
+export interface TimelineMeta {
+  cursor: string | null;
+  has_more: boolean;
+}
+
+/** Response shape from GET /api/timeline. */
+export interface TimelineResponse {
+  data: TimelineEvent[];
+  meta: TimelineMeta;
+}
+
+/** Query parameters for the timeline endpoint. */
+export interface TimelineParams {
+  limit?: number;
+  butler?: string[];
+  event_type?: string[];
+  before?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Costs
 // ---------------------------------------------------------------------------

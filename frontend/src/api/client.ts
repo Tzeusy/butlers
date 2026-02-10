@@ -26,6 +26,8 @@ import type {
   SessionSummary,
   StateEntry,
   StateSetRequest,
+  TimelineParams,
+  TimelineResponse,
   TopSession,
   TraceDetail,
   TraceParams,
@@ -402,4 +404,19 @@ export function getTrace(traceId: string): Promise<ApiResponse<TraceDetail>> {
   return apiFetch<ApiResponse<TraceDetail>>(
     `/traces/${encodeURIComponent(traceId)}`,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Timeline
+// ---------------------------------------------------------------------------
+
+/** Fetch the unified timeline with cursor-based pagination. */
+export function getTimeline(params?: TimelineParams): Promise<TimelineResponse> {
+  const sp = new URLSearchParams();
+  if (params?.limit) sp.set("limit", String(params.limit));
+  if (params?.before) sp.set("before", params.before);
+  params?.butler?.forEach((b) => sp.append("butler", b));
+  params?.event_type?.forEach((t) => sp.append("event_type", t));
+  const qs = sp.toString();
+  return apiFetch<TimelineResponse>(qs ? `/timeline?${qs}` : "/timeline");
 }

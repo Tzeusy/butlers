@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { format } from "date-fns";
 import { CopyIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 
@@ -335,7 +336,15 @@ export function SessionDetailDrawer({
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
                     Trace ID
                   </h3>
-                  <CopyableText text={session.trace_id} />
+                  <div className="flex items-center gap-2">
+                    <Link
+                      to={`/traces/${encodeURIComponent(session.trace_id)}`}
+                      className="text-xs font-mono text-primary underline underline-offset-2 hover:text-primary/80 transition-colors truncate max-w-[200px]"
+                    >
+                      {session.trace_id}
+                    </Link>
+                    <CopyableText text={session.trace_id} />
+                  </div>
                 </section>
               )}
             </div>
