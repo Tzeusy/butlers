@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 from pathlib import Path
 
 import pytest
@@ -14,14 +15,18 @@ MIGRATION_DIR = ROSTER_DIR / "memory" / "migrations"
 MIGRATION_FILE = MIGRATION_DIR / "001_create_episodes.py"
 
 
-def _load_migration():
-    """Load the migration module dynamically."""
-    spec = importlib.util.spec_from_file_location("migration_001", MIGRATION_FILE)
+def _load_migration(filename: str = "001_create_episodes.py", module_name: str = "migration_001"):
+    """Load a migration module dynamically."""
+    filepath = MIGRATION_DIR / filename
+    spec = importlib.util.spec_from_file_location(module_name, filepath)
     assert spec is not None
     assert spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+# ── 001_create_episodes ──────────────────────────────────────────────
 
 
 def test_migration_file_exists():
@@ -62,3 +67,102 @@ def test_downgrade_function_exists():
     mod = _load_migration()
     assert hasattr(mod, "downgrade")
     assert callable(mod.downgrade)
+
+
+# ── 003_create_rules ─────────────────────────────────────────────────
+
+
+class TestRulesMigration:
+    """Tests for the 003_create_rules migration."""
+
+    @staticmethod
+    def _load():
+        return _load_migration("003_create_rules.py", "migration_003")
+
+    def test_migration_file_exists(self):
+        """The 003_create_rules migration file exists on disk."""
+        path = MIGRATION_DIR / "003_create_rules.py"
+        assert path.exists(), f"Migration file not found at {path}"
+
+    def test_revision_identifiers(self):
+        """The migration has correct revision identifiers."""
+        mod = self._load()
+        assert mod.revision == "003"
+        assert mod.down_revision == "002"
+        assert mod.branch_labels is None
+        assert mod.depends_on is None
+
+    def test_upgrade_function_exists(self):
+        """The migration has an upgrade() function."""
+        mod = self._load()
+        assert hasattr(mod, "upgrade")
+        assert callable(mod.upgrade)
+
+    def test_downgrade_function_exists(self):
+        """The migration has a downgrade() function."""
+        mod = self._load()
+        assert hasattr(mod, "downgrade")
+        assert callable(mod.downgrade)
+
+    def test_upgrade_creates_rules_table(self):
+        """The upgrade SQL contains CREATE TABLE rules."""
+        mod = self._load()
+        source = inspect.getsource(mod.upgrade)
+        assert "CREATE TABLE" in source
+        assert "rules" in source
+
+    def test_upgrade_has_required_columns(self):
+        """The upgrade SQL declares all required columns."""
+        mod = self._load()
+        source = inspect.getsource(mod.upgrade)
+        required_columns = [
+            "id UUID",
+            "content TEXT",
+            "embedding vector(384)",
+            "search_vector tsvector",
+            "scope TEXT",
+            "maturity TEXT",
+            "confidence FLOAT",
+            "decay_rate FLOAT",
+            "permanence TEXT",
+            "effectiveness_score FLOAT",
+            "applied_count INTEGER",
+            "success_count INTEGER",
+            "harmful_count INTEGER",
+            "source_episode_id UUID",
+            "source_butler TEXT",
+            "created_at TIMESTAMPTZ",
+            "last_applied_at TIMESTAMPTZ",
+            "last_evaluated_at TIMESTAMPTZ",
+            "tags JSONB",
+            "metadata JSONB",
+        ]
+        for col in required_columns:
+            assert col in source, f"Missing column: {col}"
+
+    def test_upgrade_has_scope_maturity_index(self):
+        """The upgrade SQL creates a composite index on scope + maturity."""
+        mod = self._load()
+        source = inspect.getsource(mod.upgrade)
+        assert "idx_rules_scope_maturity" in source
+        assert "(scope, maturity)" in source
+
+    def test_upgrade_has_gin_search_index(self):
+        """The upgrade SQL creates a GIN index on search_vector."""
+        mod = self._load()
+        source = inspect.getsource(mod.upgrade)
+        assert "idx_rules_search" in source
+        assert "USING gin(search_vector)" in source
+
+    def test_upgrade_has_episode_fk(self):
+        """The upgrade SQL references episodes table for source_episode_id."""
+        mod = self._load()
+        source = inspect.getsource(mod.upgrade)
+        assert "REFERENCES episodes(id)" in source
+
+    def test_downgrade_drops_rules(self):
+        """The downgrade SQL drops the rules table."""
+        mod = self._load()
+        source = inspect.getsource(mod.downgrade)
+        assert "DROP TABLE" in source
+        assert "rules" in source
