@@ -23,7 +23,7 @@ ALEMBIC_DIR = Path(__file__).resolve().parent.parent.parent / "alembic"
 BUTLERS_DIR = Path(__file__).resolve().parent.parent.parent / "butlers"
 
 # Shared chains that live in alembic/versions/ (core infra + shared modules)
-_SHARED_CHAINS = ["core", "mailbox"]
+_SHARED_CHAINS = ["core", "mailbox", "approvals"]
 
 
 def _discover_butler_chains() -> list[str]:
