@@ -1021,14 +1021,14 @@ class TestSuggestRuleConstraints:
 
 
 class TestRegisterToolsCount:
-    """Verify register_tools creates all 12 tools."""
+    """Verify register_tools creates all 13 tools."""
 
-    async def test_registers_twelve_tools(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_registers_thirteen_tools(self, module: ApprovalsModule, mock_db: MockDB):
         mcp = MagicMock()
         mcp.tool.return_value = lambda fn: fn
 
         await module.register_tools(mcp=mcp, config=None, db=mock_db)
-        assert mcp.tool.call_count == 12
+        assert mcp.tool.call_count == 13
 
     async def test_all_tool_names(self, module: ApprovalsModule, mock_db: MockDB):
         mcp = MagicMock()
@@ -1046,14 +1046,15 @@ class TestRegisterToolsCount:
         await module.register_tools(mcp=mcp, config=None, db=mock_db)
 
         expected = {
-            # Original 6 queue tools
+            # Original 6 queue tools + audit tool
             "list_pending_actions",
             "show_pending_action",
             "approve_action",
             "reject_action",
             "pending_action_count",
             "expire_stale_actions",
-            # New 6 rules CRUD tools
+            "list_executed_actions",
+            # 6 rules CRUD tools
             "create_approval_rule",
             "create_rule_from_action",
             "list_approval_rules",

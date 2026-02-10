@@ -1,6 +1,6 @@
 """Approvals module — MCP tools for managing the pending action approval queue.
 
-Provides twelve tools:
+Provides thirteen tools:
 - list_pending_actions: list actions with optional status filter
 - show_pending_action: show full details for a single action
 - approve_action: approve and execute a pending action
@@ -13,6 +13,7 @@ Provides twelve tools:
 - show_approval_rule: show full rule details with use_count
 - revoke_approval_rule: deactivate a standing approval rule
 - suggest_rule_constraints: preview suggested constraints for a pending action
+- list_executed_actions: query executed actions for audit review
 """
 
 from __future__ import annotations
@@ -26,6 +27,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from butlers.modules.approvals.executor import execute_approved_action
+from butlers.modules.approvals.executor import (
+    list_executed_actions as _list_executed_actions_query,
+)
 from butlers.modules.approvals.models import ActionStatus, ApprovalRule, PendingAction
 from butlers.modules.approvals.sensitivity import suggest_constraints
 from butlers.modules.base import Module
@@ -106,7 +111,7 @@ class ApprovalsModule(Module):
         self._tool_executor = executor
 
     async def register_tools(self, mcp: Any, config: Any, db: Any) -> None:
-        """Register all 12 approval MCP tools (6 queue + 6 rules CRUD)."""
+        """Register all 13 approval MCP tools (7 queue + 6 rules CRUD)."""
         self._config = ApprovalsConfig(**(config or {}))
         self._db = db
         module = self  # capture for closures
@@ -144,6 +149,18 @@ class ApprovalsModule(Module):
         async def expire_stale_actions() -> dict:
             """Mark expired actions that are past their expires_at."""
             return await module._expire_stale_actions()
+
+        @mcp.tool()
+        async def list_executed_actions(
+            tool_name: str | None = None,
+            rule_id: str | None = None,
+            since: str | None = None,
+            limit: int | None = None,
+        ) -> list[dict]:
+            """List executed actions for audit review with optional filters."""
+            return await module._list_executed_actions_tool(
+                tool_name=tool_name, rule_id=rule_id, since=since, limit=limit
+            )
 
         # --- Standing approval rules CRUD tools (6) ---
 
@@ -282,28 +299,32 @@ class ApprovalsModule(Module):
             parsed_id,
         )
 
-        # Execute the original tool if an executor is available
-        execution_result: dict[str, Any] | None = None
+        # Execute the original tool via the executor
         if self._tool_executor is not None:
-            try:
-                execution_result = await self._tool_executor(action.tool_name, action.tool_args)
-            except Exception as exc:
-                logger.error("Tool execution failed for action %s: %s", action_id, exc)
-                execution_result = {"error": str(exc)}
+            # Wrap the ToolExecutor callback as a tool_fn for the executor
+            _exec = self._tool_executor
+            _tname = action.tool_name
 
-        # Transition to executed
-        try:
-            validate_transition(ActionStatus.APPROVED, ActionStatus.EXECUTED)
-        except InvalidTransitionError:
-            # This should never happen since approved -> executed is valid
-            pass
+            async def _tool_fn(**kwargs: Any) -> dict[str, Any]:
+                return await _exec(_tname, kwargs)
 
-        await self._db.execute(
-            "UPDATE pending_actions SET status = $1, execution_result = $2 WHERE id = $3",
-            ActionStatus.EXECUTED.value,
-            json.dumps(execution_result) if execution_result is not None else None,
-            parsed_id,
-        )
+            await execute_approved_action(
+                pool=self._db,
+                action_id=parsed_id,
+                tool_name=action.tool_name,
+                tool_args=action.tool_args,
+                tool_fn=_tool_fn,
+            )
+        else:
+            # No executor — still mark as executed (with no execution result)
+            await self._db.execute(
+                "UPDATE pending_actions SET status = $1, execution_result = $2, "
+                "decided_at = $3 WHERE id = $4",
+                ActionStatus.EXECUTED.value,
+                None,
+                now,
+                parsed_id,
+            )
 
         # Optionally create an approval rule from this action
         rule_dict: dict[str, Any] | None = None
@@ -599,6 +620,38 @@ class ApprovalsModule(Module):
             "SELECT * FROM approval_rules WHERE id = $1", parsed_id
         )
         return ApprovalRule.from_row(updated_row).to_dict()
+
+    async def _list_executed_actions_tool(
+        self,
+        tool_name: str | None = None,
+        rule_id: str | None = None,
+        since: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """List executed actions for audit review with optional filters."""
+        parsed_rule_id: uuid.UUID | None = None
+        if rule_id is not None:
+            try:
+                parsed_rule_id = uuid.UUID(rule_id)
+            except ValueError:
+                return [{"error": f"Invalid rule_id: {rule_id}"}]
+
+        parsed_since: datetime | None = None
+        if since is not None:
+            try:
+                parsed_since = datetime.fromisoformat(since)
+            except ValueError:
+                return [{"error": f"Invalid since format: {since}"}]
+
+        effective_limit = limit if limit is not None else self._config.default_limit
+
+        return await _list_executed_actions_query(
+            pool=self._db,
+            tool_name=tool_name,
+            rule_id=parsed_rule_id,
+            since=parsed_since,
+            limit=effective_limit,
+        )
 
     async def _suggest_rule_constraints(self, action_id: str) -> dict:
         """Preview suggested constraints for creating a rule from a pending action.

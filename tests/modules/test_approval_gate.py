@@ -87,21 +87,26 @@ class MockPool:
                 "status": args[5] if len(args) > 5 else "pending",
                 "requested_at": args[6] if len(args) > 6 else datetime.now(UTC),
                 "expires_at": args[7] if len(args) > 7 else None,
-                "approval_rule_id": None,
+                "approval_rule_id": args[8] if len(args) > 8 else None,
+                "decided_by": args[9] if len(args) > 9 else None,
+                "decided_at": None,
+                "execution_result": None,
             }
         elif "UPDATE pending_actions" in query and "status" in query:
-            # Auto-approve update
+            # Update from executor or gate
             action_id = args[-1]
             if action_id in self.pending_actions:
                 self.pending_actions[action_id]["status"] = args[0]
-                if len(args) > 2:
+                if "execution_result" in query:
+                    self.pending_actions[action_id]["execution_result"] = args[1]
+                elif "approval_rule_id" in query and len(args) > 2:
                     self.pending_actions[action_id]["approval_rule_id"] = args[1]
         elif "UPDATE approval_rules" in query and "use_count" in query:
-            # Increment use_count
-            rule_id = args[-1]
+            # Increment use_count (executor uses use_count + 1)
+            rule_id = args[0]
             for rule in self.approval_rules:
                 if rule["id"] == rule_id:
-                    rule["use_count"] = args[0]
+                    rule["use_count"] = rule.get("use_count", 0) + 1
 
     async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
         """Simulate asyncpg fetch()."""

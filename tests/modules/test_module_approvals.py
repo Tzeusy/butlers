@@ -136,9 +136,24 @@ class MockDB:
                     row["status"] = args[0]
                     row["decided_by"] = args[1]
                     row["decided_at"] = args[2]
+                elif (
+                    "status = $1" in query
+                    and "execution_result = $2" in query
+                    and "decided_at = $3" in query
+                ):
+                    row["status"] = args[0]
+                    row["execution_result"] = args[1]
+                    row["decided_at"] = args[2]
                 elif "status = $1" in query and "execution_result = $2" in query:
                     row["status"] = args[0]
                     row["execution_result"] = args[1]
+
+        elif "UPDATE approval_rules" in query and "use_count" in query:
+            # Executor uses: use_count = use_count + 1 WHERE id = $1
+            rule_id = args[0]
+            if rule_id in self.approval_rules:
+                current = self.approval_rules[rule_id].get("use_count", 0)
+                self.approval_rules[rule_id]["use_count"] = current + 1
 
         elif "INSERT INTO approval_rules" in query:
             rule_id = args[0]
@@ -245,13 +260,13 @@ class TestLifecycle:
 class TestRegisterTools:
     """Verify that register_tools creates the expected MCP tools."""
 
-    async def test_registers_twelve_tools(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_registers_thirteen_tools(self, module: ApprovalsModule, mock_db: MockDB):
         mcp = MagicMock()
         mcp.tool.return_value = lambda fn: fn
 
         await module.register_tools(mcp=mcp, config=None, db=mock_db)
 
-        assert mcp.tool.call_count == 12
+        assert mcp.tool.call_count == 13
 
     async def test_tool_names(self, module: ApprovalsModule, mock_db: MockDB):
         mcp = MagicMock()
@@ -275,6 +290,7 @@ class TestRegisterTools:
             "reject_action",
             "pending_action_count",
             "expire_stale_actions",
+            "list_executed_actions",
             "create_approval_rule",
             "create_rule_from_action",
             "list_approval_rules",
@@ -518,11 +534,12 @@ class TestApproveAction:
         result = await module._approve_action(str(action_id))
 
         assert result["status"] == "executed"
-        # The execution_result should be stored in the DB row
+        # The execution_result should be stored in the DB row (ExecutionResult format)
         stored = mock_db.pending_actions[action_id]
         assert stored["execution_result"] is not None
         parsed_result = json.loads(stored["execution_result"])
-        assert parsed_result["ok"] is True
+        assert parsed_result["success"] is True
+        assert parsed_result["result"]["ok"] is True
 
     async def test_approve_without_executor(self, module: ApprovalsModule, mock_db: MockDB):
         """When no executor is set, action is still marked as executed."""
@@ -615,7 +632,7 @@ class TestApproveAction:
         assert result["status"] == "executed"
         stored = mock_db.pending_actions[action_id]
         parsed_result = json.loads(stored["execution_result"])
-        assert "error" in parsed_result
+        assert parsed_result["success"] is False
         assert "Tool crashed" in parsed_result["error"]
 
 
