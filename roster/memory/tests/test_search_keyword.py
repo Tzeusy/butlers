@@ -211,33 +211,35 @@ class TestKeywordSearchScope:
     """Tests for scope filtering behaviour."""
 
     async def test_scope_applied_for_facts(self, mock_pool: AsyncMock) -> None:
-        """Scope filter is included in WHERE clause for facts."""
+        """Scope filter includes global+scope for facts."""
         await keyword_search(mock_pool, "test", "facts", scope="butler-a")
         sql = mock_pool.fetch.call_args[0][0]
-        assert "scope = $2" in sql
+        assert "scope IN ('global', $2)" in sql
         # scope value passed as second param
         call_args = mock_pool.fetch.call_args[0]
         assert call_args[2] == "butler-a"
 
     async def test_scope_applied_for_rules(self, mock_pool: AsyncMock) -> None:
-        """Scope filter is included in WHERE clause for rules."""
+        """Scope filter includes global+scope for rules."""
         await keyword_search(mock_pool, "test", "rules", scope="butler-b")
         sql = mock_pool.fetch.call_args[0][0]
-        assert "scope = $2" in sql
+        assert "scope IN ('global', $2)" in sql
         call_args = mock_pool.fetch.call_args[0]
         assert call_args[2] == "butler-b"
 
-    async def test_scope_not_applied_for_episodes(self, mock_pool: AsyncMock) -> None:
-        """Scope filter is NOT applied for episodes (they use butler, not scope)."""
+    async def test_scope_episodes_uses_butler_column(self, mock_pool: AsyncMock) -> None:
+        """Episodes use butler column for scope filtering."""
         await keyword_search(mock_pool, "test", "episodes", scope="butler-a")
         sql = mock_pool.fetch.call_args[0][0]
+        assert "butler = $2" in sql
         assert "scope" not in sql
 
     async def test_no_scope_no_filter(self, mock_pool: AsyncMock) -> None:
         """When scope is None, no scope filter is added."""
         await keyword_search(mock_pool, "test", "facts", scope=None)
         sql = mock_pool.fetch.call_args[0][0]
-        assert "scope = " not in sql
+        assert "scope IN" not in sql
+        assert "butler =" not in sql
 
     async def test_scope_shifts_limit_param_index(self, mock_pool: AsyncMock) -> None:
         """When scope is used, limit parameter index shifts to $3."""

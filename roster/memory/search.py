@@ -37,8 +37,10 @@ preprocess_search_query = _search_vector_mod.preprocess_search_query
 tsquery_sql = _search_vector_mod.tsquery_sql
 
 _VALID_TABLES = frozenset({"episodes", "facts", "rules"})
-# Tables that support scope filtering.
+# Tables that support scope filtering (facts/rules use `scope` column).
 _SCOPED_TABLES = frozenset({"facts", "rules"})
+# Tables that support butler-based filtering (episodes use `butler` column).
+_BUTLER_TABLES = frozenset({"episodes"})
 
 # PostgreSQL text-search configuration
 _TS_CONFIG = "english"
@@ -88,9 +90,13 @@ async def semantic_search(
     params: list = [embedding_str]
     param_idx = 2  # $1 is the embedding
 
-    # Scope filtering for facts/rules only.
+    # Scope filtering: facts/rules use IN ('global', scope), episodes use butler = scope.
     if scope is not None and table in _SCOPED_TABLES:
-        conditions.append(f"scope = ${param_idx}")
+        conditions.append(f"scope IN ('global', ${param_idx})")
+        params.append(scope)
+        param_idx += 1
+    elif scope is not None and table in _BUTLER_TABLES:
+        conditions.append(f"butler = ${param_idx}")
         params.append(scope)
         param_idx += 1
 
@@ -161,8 +167,13 @@ async def keyword_search(
     params: list = [cleaned_query]
     param_idx = 2
 
+    # Scope filtering: facts/rules use IN ('global', scope), episodes use butler = scope.
     if scope is not None and table in _SCOPED_TABLES:
-        conditions.append(f"scope = ${param_idx}")
+        conditions.append(f"scope IN ('global', ${param_idx})")
+        params.append(scope)
+        param_idx += 1
+    elif scope is not None and table in _BUTLER_TABLES:
+        conditions.append(f"butler = ${param_idx}")
         params.append(scope)
         param_idx += 1
 

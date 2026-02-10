@@ -161,7 +161,7 @@ class TestSemanticSearchScope:
     """Scope filtering behaviour."""
 
     async def test_scope_applied_for_facts(self, mock_pool: AsyncMock) -> None:
-        """When scope is given for facts, the SQL includes a scope condition."""
+        """When scope is given for facts, the SQL includes global+scope condition."""
         mock_pool.fetch.return_value = []
 
         await semantic_search(
@@ -169,13 +169,13 @@ class TestSemanticSearchScope:
         )
 
         sql = mock_pool.fetch.call_args[0][0]
-        assert "scope = $2" in sql
+        assert "scope IN ('global', $2)" in sql
         # scope value passed as parameter
         args = mock_pool.fetch.call_args[0]
         assert "butler-a" in args
 
     async def test_scope_applied_for_rules(self, mock_pool: AsyncMock) -> None:
-        """When scope is given for rules, the SQL includes a scope condition."""
+        """When scope is given for rules, the SQL includes global+scope condition."""
         mock_pool.fetch.return_value = []
 
         await semantic_search(
@@ -183,12 +183,12 @@ class TestSemanticSearchScope:
         )
 
         sql = mock_pool.fetch.call_args[0][0]
-        assert "scope = $2" in sql
+        assert "scope IN ('global', $2)" in sql
         args = mock_pool.fetch.call_args[0]
         assert "butler-b" in args
 
-    async def test_scope_ignored_for_episodes(self, mock_pool: AsyncMock) -> None:
-        """Episodes do not have a scope column; scope param is ignored."""
+    async def test_scope_episodes_uses_butler_column(self, mock_pool: AsyncMock) -> None:
+        """Episodes use butler column for scope filtering, not scope column."""
         mock_pool.fetch.return_value = []
 
         await semantic_search(
@@ -196,6 +196,7 @@ class TestSemanticSearchScope:
         )
 
         sql = mock_pool.fetch.call_args[0][0]
+        assert "butler = $2" in sql
         assert "scope" not in sql
 
     async def test_no_scope_no_scope_filter(self, mock_pool: AsyncMock) -> None:
