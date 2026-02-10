@@ -46,18 +46,22 @@ class TestRegisterButlerTools:
         assert callable(contact_create)
 
     def test_modules_registered_in_sys_modules(self):
-        """All butler tool modules should be in sys.modules."""
-        from butlers.tools._loader import BUTLER_NAMES
+        """All discovered butler tool modules should be in sys.modules."""
+        from butlers.tools._loader import _discover_butler_names
 
-        for name in BUTLER_NAMES:
+        discovered = _discover_butler_names(BUTLERS_ROOT)
+        assert len(discovered) > 0, "Should discover at least one butler"
+        for name in discovered:
             module_name = f"butlers.tools.{name}"
             assert module_name in sys.modules, f"{module_name} not in sys.modules"
 
     def test_tools_loaded_from_config_dirs(self):
         """Tool modules should have __file__ pointing to butler config dirs."""
-        from butlers.tools._loader import BUTLER_NAMES
+        from butlers.tools._loader import _discover_butler_names
 
-        for name in BUTLER_NAMES:
+        discovered = _discover_butler_names(BUTLERS_ROOT)
+        assert len(discovered) > 0, "Should discover at least one butler"
+        for name in discovered:
             module_name = f"butlers.tools.{name}"
             mod = sys.modules[module_name]
             expected_path = BUTLERS_ROOT / name / "tools.py"

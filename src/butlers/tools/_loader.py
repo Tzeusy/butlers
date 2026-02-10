@@ -15,9 +15,6 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Butler names whose tools live in the config directories.
-BUTLER_NAMES = ("general", "health", "heartbeat", "relationship", "switchboard")
-
 
 def register_butler_tools(
     butler_name: str,
@@ -60,8 +57,37 @@ def register_butler_tools(
     logger.debug("Registered butler tools: %s from %s", module_name, tools_path)
 
 
+def _discover_butler_names(butlers_root: Path) -> list[str]:
+    """Discover butler names that have a ``tools.py`` in their config directory.
+
+    Scans ``butlers_root/*/tools.py`` and returns a sorted list of directory
+    names (butler identifiers) that contain a ``tools.py`` file.
+
+    Parameters
+    ----------
+    butlers_root:
+        Path to the ``butlers/`` directory containing butler config dirs.
+
+    Returns
+    -------
+    list[str]
+        Sorted list of butler names with a ``tools.py`` file.
+    """
+    if not butlers_root.is_dir():
+        return []
+    return sorted(
+        entry.name
+        for entry in butlers_root.iterdir()
+        if entry.is_dir() and (entry / "tools.py").exists()
+    )
+
+
 def register_all_butler_tools(butlers_root: Path | None = None) -> None:
-    """Register tools for all known butlers.
+    """Register tools for all discovered butlers.
+
+    Scans ``butlers/*/tools.py`` to dynamically discover butler tools.
+    No hardcoded butler names — adding a new butler with a ``tools.py``
+    file is automatically picked up.
 
     Parameters
     ----------
@@ -76,11 +102,9 @@ def register_all_butler_tools(butlers_root: Path | None = None) -> None:
         repo_root = Path(__file__).resolve().parent.parent.parent.parent
         butlers_root = repo_root / "butlers"
 
-    for name in BUTLER_NAMES:
+    for name in _discover_butler_names(butlers_root):
         config_dir = butlers_root / name
-        tools_path = config_dir / "tools.py"
-        if tools_path.exists():
-            try:
-                register_butler_tools(name, config_dir)
-            except Exception:
-                logger.warning("Failed to register tools for butler: %s", name, exc_info=True)
+        try:
+            register_butler_tools(name, config_dir)
+        except Exception:
+            logger.warning("Failed to register tools for butler: %s", name, exc_info=True)
