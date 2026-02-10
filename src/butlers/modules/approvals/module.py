@@ -1,12 +1,18 @@
 """Approvals module — MCP tools for managing the pending action approval queue.
 
-Provides six tools:
+Provides twelve tools:
 - list_pending_actions: list actions with optional status filter
 - show_pending_action: show full details for a single action
 - approve_action: approve and execute a pending action
 - reject_action: reject with optional reason
 - pending_action_count: count of pending actions
 - expire_stale_actions: mark expired actions past their expires_at
+- create_approval_rule: create a new standing approval rule
+- create_rule_from_action: create a rule from a pending action with smart defaults
+- list_approval_rules: list standing approval rules
+- show_approval_rule: show full rule details with use_count
+- revoke_approval_rule: deactivate a standing approval rule
+- suggest_rule_constraints: preview suggested constraints for a pending action
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from butlers.modules.approvals.models import ActionStatus, ApprovalRule, PendingAction
+from butlers.modules.approvals.sensitivity import suggest_constraints
 from butlers.modules.base import Module
 
 logger = logging.getLogger(__name__)
@@ -99,10 +106,12 @@ class ApprovalsModule(Module):
         self._tool_executor = executor
 
     async def register_tools(self, mcp: Any, config: Any, db: Any) -> None:
-        """Register all 6 approval queue MCP tools."""
+        """Register all 12 approval MCP tools (6 queue + 6 rules CRUD)."""
         self._config = ApprovalsConfig(**(config or {}))
         self._db = db
         module = self  # capture for closures
+
+        # --- Approval queue tools (6) ---
 
         @mcp.tool()
         async def list_pending_actions(
@@ -135,6 +144,62 @@ class ApprovalsModule(Module):
         async def expire_stale_actions() -> dict:
             """Mark expired actions that are past their expires_at."""
             return await module._expire_stale_actions()
+
+        # --- Standing approval rules CRUD tools (6) ---
+
+        @mcp.tool()
+        async def create_approval_rule(
+            tool_name: str,
+            arg_constraints: dict,
+            description: str,
+            expires_at: str | None = None,
+            max_uses: int | None = None,
+        ) -> dict:
+            """Create a new standing approval rule for auto-approving tool invocations."""
+            return await module._create_approval_rule(
+                tool_name=tool_name,
+                arg_constraints=arg_constraints,
+                description=description,
+                expires_at=expires_at,
+                max_uses=max_uses,
+            )
+
+        @mcp.tool()
+        async def create_rule_from_action(
+            action_id: str,
+            constraint_overrides: dict | None = None,
+        ) -> dict:
+            """Create a standing rule from a pending action with smart constraint defaults."""
+            return await module._create_rule_from_action(
+                action_id=action_id,
+                constraint_overrides=constraint_overrides,
+            )
+
+        @mcp.tool()
+        async def list_approval_rules(
+            tool_name: str | None = None,
+            active_only: bool = True,
+        ) -> list[dict]:
+            """List standing approval rules with optional filters."""
+            return await module._list_approval_rules(
+                tool_name=tool_name,
+                active_only=active_only,
+            )
+
+        @mcp.tool()
+        async def show_approval_rule(rule_id: str) -> dict:
+            """Show full details for a single standing approval rule."""
+            return await module._show_approval_rule(rule_id)
+
+        @mcp.tool()
+        async def revoke_approval_rule(rule_id: str) -> dict:
+            """Revoke (deactivate) a standing approval rule."""
+            return await module._revoke_approval_rule(rule_id)
+
+        @mcp.tool()
+        async def suggest_rule_constraints(action_id: str) -> dict:
+            """Preview suggested constraints for creating a rule from a pending action."""
+            return await module._suggest_rule_constraints(action_id)
 
     async def on_startup(self, config: Any, db: Any) -> None:
         """Initialize config and store db reference."""
@@ -362,4 +427,200 @@ class ApprovalsModule(Module):
         return {
             "expired_count": len(expired_ids),
             "expired_ids": expired_ids,
+        }
+
+    # ------------------------------------------------------------------
+    # Standing approval rules CRUD implementations
+    # ------------------------------------------------------------------
+
+    async def _create_approval_rule(
+        self,
+        tool_name: str,
+        arg_constraints: dict,
+        description: str,
+        expires_at: str | None = None,
+        max_uses: int | None = None,
+    ) -> dict:
+        """Create a new standing approval rule."""
+        rule_id = uuid.uuid4()
+        now = datetime.now(UTC)
+
+        # Parse expires_at if provided
+        parsed_expires: datetime | None = None
+        if expires_at is not None:
+            try:
+                parsed_expires = datetime.fromisoformat(expires_at)
+            except ValueError:
+                return {"error": f"Invalid expires_at format: {expires_at}"}
+
+        rule = ApprovalRule(
+            id=rule_id,
+            tool_name=tool_name,
+            arg_constraints=arg_constraints,
+            description=description,
+            created_at=now,
+            expires_at=parsed_expires,
+            max_uses=max_uses,
+        )
+
+        await self._db.execute(
+            "INSERT INTO approval_rules "
+            "(id, tool_name, arg_constraints, description, created_at, "
+            "expires_at, max_uses, active) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            rule.id,
+            rule.tool_name,
+            json.dumps(rule.arg_constraints),
+            rule.description,
+            rule.created_at,
+            rule.expires_at,
+            rule.max_uses,
+            rule.active,
+        )
+
+        return rule.to_dict()
+
+    async def _create_rule_from_action(
+        self,
+        action_id: str,
+        constraint_overrides: dict | None = None,
+    ) -> dict:
+        """Create a standing rule from a pending action with smart constraint defaults.
+
+        Uses suggest_constraints to generate default arg constraints based on
+        sensitivity classification, then applies any user-provided overrides.
+        """
+        try:
+            parsed_id = uuid.UUID(action_id)
+        except ValueError:
+            return {"error": f"Invalid action_id: {action_id}"}
+
+        row = await self._db.fetchrow("SELECT * FROM pending_actions WHERE id = $1", parsed_id)
+        if row is None:
+            return {"error": f"Action not found: {action_id}"}
+
+        action = PendingAction.from_row(row)
+
+        # Generate suggested constraints
+        suggested = suggest_constraints(action.tool_name, action.tool_args)
+
+        # Apply overrides if provided
+        if constraint_overrides:
+            for key, override in constraint_overrides.items():
+                suggested[key] = override
+
+        rule_id = uuid.uuid4()
+        now = datetime.now(UTC)
+
+        rule = ApprovalRule(
+            id=rule_id,
+            tool_name=action.tool_name,
+            arg_constraints=suggested,
+            description=f"Rule created from action {action_id}",
+            created_from=parsed_id,
+            created_at=now,
+        )
+
+        await self._db.execute(
+            "INSERT INTO approval_rules "
+            "(id, tool_name, arg_constraints, description, created_from, created_at, active) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            rule.id,
+            rule.tool_name,
+            json.dumps(rule.arg_constraints),
+            rule.description,
+            rule.created_from,
+            rule.created_at,
+            rule.active,
+        )
+
+        return rule.to_dict()
+
+    async def _list_approval_rules(
+        self,
+        tool_name: str | None = None,
+        active_only: bool = True,
+    ) -> list[dict]:
+        """List standing approval rules with optional filters."""
+        if tool_name is not None and active_only:
+            query = (
+                "SELECT * FROM approval_rules WHERE tool_name = $1 AND active = true "
+                "ORDER BY created_at DESC"
+            )
+            rows = await self._db.fetch(query, tool_name)
+        elif tool_name is not None:
+            query = "SELECT * FROM approval_rules WHERE tool_name = $1 ORDER BY created_at DESC"
+            rows = await self._db.fetch(query, tool_name)
+        elif active_only:
+            query = "SELECT * FROM approval_rules WHERE active = true ORDER BY created_at DESC"
+            rows = await self._db.fetch(query)
+        else:
+            query = "SELECT * FROM approval_rules ORDER BY created_at DESC"
+            rows = await self._db.fetch(query)
+
+        return [ApprovalRule.from_row(row).to_dict() for row in rows]
+
+    async def _show_approval_rule(self, rule_id: str) -> dict:
+        """Show full details for a single standing approval rule."""
+        try:
+            parsed_id = uuid.UUID(rule_id)
+        except ValueError:
+            return {"error": f"Invalid rule_id: {rule_id}"}
+
+        row = await self._db.fetchrow("SELECT * FROM approval_rules WHERE id = $1", parsed_id)
+        if row is None:
+            return {"error": f"Rule not found: {rule_id}"}
+
+        return ApprovalRule.from_row(row).to_dict()
+
+    async def _revoke_approval_rule(self, rule_id: str) -> dict:
+        """Revoke (deactivate) a standing approval rule."""
+        try:
+            parsed_id = uuid.UUID(rule_id)
+        except ValueError:
+            return {"error": f"Invalid rule_id: {rule_id}"}
+
+        row = await self._db.fetchrow("SELECT * FROM approval_rules WHERE id = $1", parsed_id)
+        if row is None:
+            return {"error": f"Rule not found: {rule_id}"}
+
+        rule = ApprovalRule.from_row(row)
+        if not rule.active:
+            return {"error": f"Rule {rule_id} is already revoked"}
+
+        await self._db.execute(
+            "UPDATE approval_rules SET active = $1 WHERE id = $2",
+            False,
+            parsed_id,
+        )
+
+        # Re-read to return updated state
+        updated_row = await self._db.fetchrow(
+            "SELECT * FROM approval_rules WHERE id = $1", parsed_id
+        )
+        return ApprovalRule.from_row(updated_row).to_dict()
+
+    async def _suggest_rule_constraints(self, action_id: str) -> dict:
+        """Preview suggested constraints for creating a rule from a pending action.
+
+        Returns the suggested constraints without actually creating the rule.
+        """
+        try:
+            parsed_id = uuid.UUID(action_id)
+        except ValueError:
+            return {"error": f"Invalid action_id: {action_id}"}
+
+        row = await self._db.fetchrow("SELECT * FROM pending_actions WHERE id = $1", parsed_id)
+        if row is None:
+            return {"error": f"Action not found: {action_id}"}
+
+        action = PendingAction.from_row(row)
+
+        suggested = suggest_constraints(action.tool_name, action.tool_args)
+
+        return {
+            "action_id": str(action.id),
+            "tool_name": action.tool_name,
+            "tool_args": action.tool_args,
+            "suggested_constraints": suggested,
         }

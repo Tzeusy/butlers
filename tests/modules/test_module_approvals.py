@@ -245,13 +245,13 @@ class TestLifecycle:
 class TestRegisterTools:
     """Verify that register_tools creates the expected MCP tools."""
 
-    async def test_registers_six_tools(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_registers_twelve_tools(self, module: ApprovalsModule, mock_db: MockDB):
         mcp = MagicMock()
         mcp.tool.return_value = lambda fn: fn
 
         await module.register_tools(mcp=mcp, config=None, db=mock_db)
 
-        assert mcp.tool.call_count == 6
+        assert mcp.tool.call_count == 12
 
     async def test_tool_names(self, module: ApprovalsModule, mock_db: MockDB):
         mcp = MagicMock()
@@ -275,6 +275,12 @@ class TestRegisterTools:
             "reject_action",
             "pending_action_count",
             "expire_stale_actions",
+            "create_approval_rule",
+            "create_rule_from_action",
+            "list_approval_rules",
+            "show_approval_rule",
+            "revoke_approval_rule",
+            "suggest_rule_constraints",
         }
         assert set(registered_tools.keys()) == expected
 

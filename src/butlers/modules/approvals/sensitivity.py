@@ -1,16 +1,23 @@
-"""Sensitivity classification for tool arguments.
+"""Sensitivity classification for tool arguments and constraint suggestion.
 
-Provides heuristic detection of safety-critical arguments and a resolution
-function that combines explicit module declarations, heuristic matching, and
-a safe default.
+Provides heuristic detection of safety-critical arguments, a resolution
+function that combines explicit module declarations, heuristic matching,
+and a safe default, and a constraint suggestion engine for building standing
+approval rules.
 
 Resolution order (highest priority first):
     1. Explicit declaration via ``Module.tool_metadata()``
     2. Heuristic based on argument name
     3. Default: not sensitive
+
+Constraint suggestion:
+    - Sensitive args -> exact constraint (pinned to current value)
+    - Non-sensitive args -> any constraint
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from butlers.modules.base import Module, ToolMeta
 
@@ -100,3 +107,43 @@ def classify_tool_args(
     Returns a dict mapping each argument name to its sensitivity flag.
     """
     return {arg: resolve_arg_sensitivity(tool_name, arg, module) for arg in arg_names}
+
+
+def suggest_constraints(
+    tool_name: str,
+    tool_args: dict[str, Any],
+    module: Module | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Suggest arg constraints for a standing approval rule.
+
+    For each argument in *tool_args*:
+    - If the argument is sensitive (per module metadata or heuristic), suggest
+      an ``exact`` constraint pinned to the current value.
+    - If the argument is not sensitive, suggest an ``any`` constraint.
+
+    Parameters
+    ----------
+    tool_name:
+        The name of the MCP tool.
+    tool_args:
+        The actual arguments from the tool invocation.
+    module:
+        The ``Module`` instance that registered *tool_name*. When ``None``,
+        only heuristic and default classification apply.
+
+    Returns
+    -------
+    dict[str, dict[str, Any]]
+        Mapping of argument name to constraint dict with ``type`` and
+        optionally ``value`` keys.
+    """
+    constraints: dict[str, dict[str, Any]] = {}
+
+    for arg_name, arg_value in tool_args.items():
+        is_sensitive = resolve_arg_sensitivity(tool_name, arg_name, module)
+        if is_sensitive:
+            constraints[arg_name] = {"type": "exact", "value": arg_value}
+        else:
+            constraints[arg_name] = {"type": "any"}
+
+    return constraints
