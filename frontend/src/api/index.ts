@@ -7,6 +7,7 @@ export {
   apiFetch,
   createButlerSchedule,
   deleteButlerSchedule,
+  getAuditLog,
   deleteButlerState,
   getButler,
   getButlerConfig,
@@ -39,6 +40,8 @@ export {
 export type {
   ApiMeta,
   ApiResponse,
+  AuditEntry,
+  AuditLogParams,
   ButlerConfigResponse,
   ButlerSkill,
   ButlerSummary,

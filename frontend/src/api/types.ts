@@ -378,6 +378,32 @@ export interface SearchParams {
 }
 
 // ---------------------------------------------------------------------------
+// Audit Log
+// ---------------------------------------------------------------------------
+
+/** A single audit log entry. */
+export interface AuditEntry {
+  id: string;
+  butler: string;
+  operation: string;
+  request_summary: Record<string, unknown>;
+  result: string; // "success" | "error"
+  error: string | null;
+  user_context: Record<string, unknown>;
+  created_at: string; // ISO 8601
+}
+
+/** Query parameters for the audit log endpoint. */
+export interface AuditLogParams {
+  offset?: number;
+  limit?: number;
+  butler?: string;
+  operation?: string;
+  since?: string;
+  until?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Skills
 // ---------------------------------------------------------------------------
 
