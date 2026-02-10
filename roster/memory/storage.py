@@ -282,3 +282,61 @@ async def store_rule(
     )
 
     return rule_id
+
+
+# ---------------------------------------------------------------------------
+# Memory retrieval with reference bumping
+# ---------------------------------------------------------------------------
+
+_VALID_MEMORY_TYPES = frozenset({"episode", "fact", "rule"})
+
+# Map memory types to their table names
+_TYPE_TABLE: dict[str, str] = {
+    "episode": "episodes",
+    "fact": "facts",
+    "rule": "rules",
+}
+
+
+async def get_memory(
+    pool: Pool,
+    memory_type: str,
+    memory_id: uuid.UUID,
+) -> dict | None:
+    """Retrieve a single memory by type and UUID, bumping its reference count.
+
+    Atomically increments ``reference_count`` by 1 and sets
+    ``last_referenced_at`` to now. Returns the full record as a dict,
+    or ``None`` if not found.
+
+    Args:
+        pool: asyncpg connection pool.
+        memory_type: One of 'episode', 'fact', 'rule'.
+        memory_id: The UUID of the memory item.
+
+    Returns:
+        A dict of the full record, or None if not found.
+
+    Raises:
+        ValueError: If memory_type is invalid.
+    """
+    if memory_type not in _VALID_MEMORY_TYPES:
+        raise ValueError(
+            f"Invalid memory_type: {memory_type!r}. Must be one of {sorted(_VALID_MEMORY_TYPES)}"
+        )
+
+    table = _TYPE_TABLE[memory_type]
+
+    # Bump reference_count and last_referenced_at, returning the updated row
+    row = await pool.fetchrow(
+        f"UPDATE {table} "
+        f"SET reference_count = reference_count + 1, last_referenced_at = now() "
+        f"WHERE id = $1 "
+        f"RETURNING *",
+        memory_id,
+    )
+
+    if row is None:
+        return None
+
+    return dict(row)
