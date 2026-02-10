@@ -43,6 +43,8 @@ class SpawnerResult:
     error: str | None = None
     duration_ms: int = 0
     model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 def _build_env(
@@ -297,7 +299,7 @@ class Spawner:
             }
 
             # Invoke via runtime adapter
-            result_text, tool_calls = await self._runtime.invoke(
+            result_text, tool_calls, usage = await self._runtime.invoke(
                 prompt=final_prompt,
                 system_prompt=system_prompt,
                 mcp_servers=mcp_servers,
@@ -309,12 +311,21 @@ class Spawner:
 
             duration_ms = int((time.monotonic() - t0) * 1000)
 
+            # Extract token counts from usage dict (if provided by adapter)
+            input_tokens: int | None = None
+            output_tokens: int | None = None
+            if usage:
+                input_tokens = usage.get("input_tokens")
+                output_tokens = usage.get("output_tokens")
+
             spawner_result = SpawnerResult(
                 output=result_text,
                 success=True,
                 tool_calls=tool_calls,
                 duration_ms=duration_ms,
                 model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
 
             # Log session completion
@@ -326,6 +337,8 @@ class Spawner:
                     tool_calls=tool_calls,
                     duration_ms=duration_ms,
                     success=True,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
                 )
 
             return spawner_result

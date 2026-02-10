@@ -376,6 +376,7 @@ def _parse_classification(
 
     return entries if entries else fallback
 
+
 async def dispatch_decomposed(
     pool: asyncpg.Pool,
     targets: list[dict[str, str]],
@@ -544,8 +545,6 @@ async def aggregate_responses(
 
     # Fallback: simple concatenation
     return _fallback_concatenate(results)
-
-
 
 
 # ------------------------------------------------------------------

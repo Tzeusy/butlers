@@ -49,6 +49,7 @@ class MockAdapter(RuntimeAdapter):
     - error: if set, invoke() raises RuntimeError with this message
     - delay: if > 0, invoke() sleeps for this many seconds before returning
     - capture: if True, records all invoke() calls in .calls list
+    - usage: if set, returned as the usage dict (token counts etc.)
     """
 
     def __init__(
@@ -59,12 +60,14 @@ class MockAdapter(RuntimeAdapter):
         error: str | None = None,
         delay: float = 0,
         capture: bool = False,
+        usage: dict[str, Any] | None = None,
     ) -> None:
         self._result_text = result_text
         self._tool_calls = tool_calls or []
         self._error = error
         self._delay = delay
         self._capture = capture
+        self._usage = usage
         self.calls: list[dict[str, Any]] = []
         self._call_count = 0
 
@@ -82,7 +85,7 @@ class MockAdapter(RuntimeAdapter):
         model: str | None = None,
         cwd: Path | None = None,
         timeout: int | None = None,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
         self._call_count += 1
         if self._capture:
             self.calls.append(
@@ -99,7 +102,7 @@ class MockAdapter(RuntimeAdapter):
             await asyncio.sleep(self._delay)
         if self._error:
             raise RuntimeError(self._error)
-        return self._result_text, list(self._tool_calls)
+        return self._result_text, list(self._tool_calls), self._usage
 
     def build_config_file(
         self,
@@ -139,7 +142,7 @@ class SequenceMockAdapter(MockAdapter):
         model: str | None = None,
         cwd: Path | None = None,
         timeout: int | None = None,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
         idx = self._call_index
         self._call_index += 1
         entry = self._sequence[idx] if idx < len(self._sequence) else self._sequence[-1]
@@ -147,7 +150,7 @@ class SequenceMockAdapter(MockAdapter):
             await asyncio.sleep(entry["delay"])
         if entry.get("error"):
             raise RuntimeError(entry["error"])
-        return entry.get("result_text", ""), entry.get("tool_calls", [])
+        return entry.get("result_text", ""), entry.get("tool_calls", []), entry.get("usage")
 
 
 class TrackingMockAdapter(MockAdapter):
@@ -167,11 +170,11 @@ class TrackingMockAdapter(MockAdapter):
         model: str | None = None,
         cwd: Path | None = None,
         timeout: int | None = None,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
         self.execution_log.append(("start", prompt))
         await asyncio.sleep(0.03)
         self.execution_log.append(("end", prompt))
-        return f"result-{prompt}", []
+        return f"result-{prompt}", [], None
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +213,8 @@ class TestSpawnerResult:
         assert r.error is None
         assert r.duration_ms == 0
         assert r.model is None
+        assert r.input_tokens is None
+        assert r.output_tokens is None
 
     def test_success_result(self):
         r = SpawnerResult(output="output_text", tool_calls=[{"name": "t"}], duration_ms=42)
@@ -225,6 +230,16 @@ class TestSpawnerResult:
     def test_result_with_model(self):
         r = SpawnerResult(output="output_text", model="claude-opus-4-20250514", duration_ms=42)
         assert r.model == "claude-opus-4-20250514"
+
+    def test_result_with_token_counts(self):
+        r = SpawnerResult(
+            output="output_text",
+            duration_ms=42,
+            input_tokens=1500,
+            output_tokens=2500,
+        )
+        assert r.input_tokens == 1500
+        assert r.output_tokens == 2500
 
 
 class TestSpawnerInvocation:
@@ -1011,3 +1026,248 @@ class TestLegacySdkQueryCompat:
         assert result.output == "Model test done!"
         assert result.model == "claude-sonnet-4-20250514"
         assert captured["options"].model == "claude-sonnet-4-20250514"
+
+
+# ---------------------------------------------------------------------------
+# Token usage capture from adapter
+# ---------------------------------------------------------------------------
+
+
+class TestTokenUsageCapture:
+    """Tests for extracting input_tokens and output_tokens from adapter response."""
+
+    async def test_token_counts_in_spawner_result(self, tmp_path: Path):
+        """SpawnerResult includes token counts when adapter returns usage."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        adapter = MockAdapter(
+            result_text="Hello!",
+            usage={"input_tokens": 100, "output_tokens": 200},
+        )
+        spawner = Spawner(
+            config=config,
+            config_dir=config_dir,
+            runtime=adapter,
+        )
+
+        result = await spawner.trigger("test tokens", "tick")
+        assert result.input_tokens == 100
+        assert result.output_tokens == 200
+
+    async def test_token_counts_none_when_no_usage(self, tmp_path: Path):
+        """SpawnerResult has None tokens when adapter returns no usage."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        adapter = MockAdapter(result_text="Hello!", usage=None)
+        spawner = Spawner(
+            config=config,
+            config_dir=config_dir,
+            runtime=adapter,
+        )
+
+        result = await spawner.trigger("no tokens", "tick")
+        assert result.input_tokens is None
+        assert result.output_tokens is None
+
+    async def test_token_counts_none_on_error(self, tmp_path: Path):
+        """SpawnerResult has None tokens when adapter raises an error."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        adapter = MockAdapter(error="adapter failed")
+        spawner = Spawner(
+            config=config,
+            config_dir=config_dir,
+            runtime=adapter,
+        )
+
+        result = await spawner.trigger("fail", "tick")
+        assert result.error is not None
+        assert result.input_tokens is None
+        assert result.output_tokens is None
+
+    async def test_token_counts_passed_to_session_complete(self, tmp_path: Path):
+        """Token counts are passed to session_complete on success."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        mock_pool = AsyncMock()
+
+        with (
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
+            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock) as mock_complete,
+        ):
+            import uuid
+
+            fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000010")
+            mock_create.return_value = fake_session_id
+
+            adapter = MockAdapter(
+                result_text="With tokens!",
+                usage={"input_tokens": 500, "output_tokens": 1000},
+            )
+            spawner = Spawner(
+                config=config,
+                config_dir=config_dir,
+                pool=mock_pool,
+                runtime=adapter,
+            )
+
+            await spawner.trigger("test", "tick")
+
+            mock_complete.assert_called_once()
+            _, kwargs = mock_complete.call_args
+            assert kwargs["input_tokens"] == 500
+            assert kwargs["output_tokens"] == 1000
+
+    async def test_session_complete_gets_none_tokens_without_usage(self, tmp_path: Path):
+        """session_complete gets None tokens when adapter returns no usage."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        mock_pool = AsyncMock()
+
+        with (
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
+            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock) as mock_complete,
+        ):
+            import uuid
+
+            fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000011")
+            mock_create.return_value = fake_session_id
+
+            adapter = MockAdapter(result_text="No usage")
+            spawner = Spawner(
+                config=config,
+                config_dir=config_dir,
+                pool=mock_pool,
+                runtime=adapter,
+            )
+
+            await spawner.trigger("test", "tick")
+
+            mock_complete.assert_called_once()
+            _, kwargs = mock_complete.call_args
+            assert kwargs["input_tokens"] is None
+            assert kwargs["output_tokens"] is None
+
+    async def test_token_counts_from_claude_code_sdk(self, tmp_path: Path):
+        """End-to-end: token counts extracted from Claude Code SDK ResultMessage."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        from claude_code_sdk import ResultMessage
+
+        async def sdk_with_usage(*, prompt: str, options: Any):
+            yield ResultMessage(
+                subtype="result",
+                duration_ms=50,
+                duration_api_ms=40,
+                is_error=False,
+                num_turns=2,
+                session_id="token-test",
+                total_cost_usd=0.05,
+                usage={"input_tokens": 1234, "output_tokens": 5678},
+                result="Done with tokens!",
+            )
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=sdk_with_usage,
+        )
+
+        result = await spawner.trigger("test sdk tokens", "tick")
+        assert result.output == "Done with tokens!"
+        assert result.input_tokens == 1234
+        assert result.output_tokens == 5678
+
+    async def test_token_counts_none_with_empty_sdk_usage(self, tmp_path: Path):
+        """Token counts are None when SDK usage dict is empty."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        from claude_code_sdk import ResultMessage
+
+        async def sdk_empty_usage(*, prompt: str, options: Any):
+            yield ResultMessage(
+                subtype="result",
+                duration_ms=10,
+                duration_api_ms=8,
+                is_error=False,
+                num_turns=1,
+                session_id="empty-usage",
+                total_cost_usd=0.0,
+                usage={},
+                result="Empty usage",
+            )
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=sdk_empty_usage,
+        )
+
+        result = await spawner.trigger("test empty usage", "tick")
+        assert result.input_tokens is None
+        assert result.output_tokens is None
+
+    async def test_token_counts_none_with_none_sdk_usage(self, tmp_path: Path):
+        """Token counts are None when SDK usage is None."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        from claude_code_sdk import ResultMessage
+
+        async def sdk_none_usage(*, prompt: str, options: Any):
+            yield ResultMessage(
+                subtype="result",
+                duration_ms=10,
+                duration_api_ms=8,
+                is_error=False,
+                num_turns=1,
+                session_id="none-usage",
+                total_cost_usd=0.0,
+                usage=None,
+                result="None usage",
+            )
+
+        spawner = CCSpawner(
+            config=config,
+            config_dir=config_dir,
+            sdk_query=sdk_none_usage,
+        )
+
+        result = await spawner.trigger("test none usage", "tick")
+        assert result.input_tokens is None
+        assert result.output_tokens is None
+
+    async def test_partial_usage_only_input_tokens(self, tmp_path: Path):
+        """When usage has only input_tokens, output_tokens is None."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        adapter = MockAdapter(
+            result_text="Partial",
+            usage={"input_tokens": 300},
+        )
+        spawner = Spawner(
+            config=config,
+            config_dir=config_dir,
+            runtime=adapter,
+        )
+
+        result = await spawner.trigger("partial", "tick")
+        assert result.input_tokens == 300
+        assert result.output_tokens is None

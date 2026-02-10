@@ -211,7 +211,7 @@ class CodexAdapter(RuntimeAdapter):
         model: str | None = None,
         cwd: Path | None = None,
         timeout: int | None = None,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
         """Invoke the Codex CLI with the given prompt and configuration.
 
         Builds the command line, passes the system prompt via
@@ -235,8 +235,9 @@ class CodexAdapter(RuntimeAdapter):
 
         Returns
         -------
-        tuple[str | None, list[dict[str, Any]]]
-            A tuple of (result_text, tool_calls).
+        tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]
+            A tuple of (result_text, tool_calls, usage). Usage is always
+            None for the Codex adapter (no token reporting).
 
         Raises
         ------
@@ -284,7 +285,8 @@ class CodexAdapter(RuntimeAdapter):
             if stderr:
                 logger.debug("Codex stderr: %s", stderr[:500])
 
-            return _parse_codex_output(stdout, stderr, proc.returncode or 0)
+            result_text, tool_calls = _parse_codex_output(stdout, stderr, proc.returncode or 0)
+            return result_text, tool_calls, None
 
         except TimeoutError:
             logger.error("Codex CLI timed out after %ds", effective_timeout)
