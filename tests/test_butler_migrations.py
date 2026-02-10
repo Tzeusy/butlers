@@ -13,7 +13,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from pydantic import BaseModel
 
 from butlers.daemon import ButlerDaemon
-from butlers.migrations import has_butler_chain
+from butlers.migrations import (
+    _discover_butler_chains,
+    _resolve_chain_dir,
+    get_all_chains,
+    has_butler_chain,
+)
 from butlers.modules.base import Module
 from butlers.modules.registry import ModuleRegistry
 
@@ -68,6 +73,131 @@ class TestHasButlerChain:
     def test_real_nonexistent_chain(self) -> None:
         """A made-up butler name should not have a chain."""
         assert has_butler_chain("does-not-exist-butler-xyz") is False
+
+
+# ---------------------------------------------------------------------------
+# Discovery and resolution unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverButlerChains:
+    """Unit tests for _discover_butler_chains."""
+
+    def test_discovers_butlers_with_migrations(self, tmp_path: Path) -> None:
+        """Returns sorted list of butler names that have migrations."""
+        for name in ["zeta", "alpha"]:
+            mig_dir = tmp_path / name / "migrations"
+            mig_dir.mkdir(parents=True)
+            (mig_dir / "__init__.py").touch()
+            (mig_dir / "001_tables.py").write_text("# migration")
+
+        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
+            chains = _discover_butler_chains()
+
+        assert chains == ["alpha", "zeta"]
+
+    def test_skips_butlers_without_migrations_dir(self, tmp_path: Path) -> None:
+        """Butler dirs without a migrations/ subfolder are skipped."""
+        (tmp_path / "no-migrations").mkdir()
+        mig_dir = tmp_path / "has-migrations" / "migrations"
+        mig_dir.mkdir(parents=True)
+        (mig_dir / "001_tables.py").write_text("# migration")
+
+        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
+            chains = _discover_butler_chains()
+
+        assert chains == ["has-migrations"]
+
+    def test_skips_empty_migrations_dir(self, tmp_path: Path) -> None:
+        """Butler dirs with an empty migrations/ folder are skipped."""
+        mig_dir = tmp_path / "empty" / "migrations"
+        mig_dir.mkdir(parents=True)
+        (mig_dir / "__init__.py").touch()
+
+        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
+            chains = _discover_butler_chains()
+
+        assert chains == []
+
+    def test_returns_empty_when_butlers_dir_missing(self, tmp_path: Path) -> None:
+        """Returns empty list when BUTLERS_DIR does not exist."""
+        missing = tmp_path / "nonexistent"
+
+        with patch("butlers.migrations.BUTLERS_DIR", missing):
+            chains = _discover_butler_chains()
+
+        assert chains == []
+
+    def test_real_discovery_finds_known_butlers(self) -> None:
+        """The real butlers/ directory should contain the known butler chains."""
+        chains = _discover_butler_chains()
+        for expected in ["general", "health", "relationship", "switchboard"]:
+            assert expected in chains, f"Expected {expected} in discovered chains"
+
+
+class TestResolveChainDir:
+    """Unit tests for _resolve_chain_dir."""
+
+    def test_shared_chain_resolves_to_alembic_versions(self, tmp_path: Path) -> None:
+        """Core/mailbox chains resolve to alembic/versions/<chain>/."""
+        core_dir = tmp_path / "versions" / "core"
+        core_dir.mkdir(parents=True)
+
+        with patch("butlers.migrations.ALEMBIC_DIR", tmp_path):
+            result = _resolve_chain_dir("core")
+
+        assert result == core_dir
+
+    def test_butler_chain_resolves_to_butlers_dir(self, tmp_path: Path) -> None:
+        """Butler-specific chains resolve to butlers/<name>/migrations/."""
+        mig_dir = tmp_path / "relationship" / "migrations"
+        mig_dir.mkdir(parents=True)
+
+        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
+            result = _resolve_chain_dir("relationship")
+
+        assert result == mig_dir
+
+    def test_nonexistent_chain_returns_none(self, tmp_path: Path) -> None:
+        """Non-existent chains return None."""
+        with (
+            patch("butlers.migrations.ALEMBIC_DIR", tmp_path),
+            patch("butlers.migrations.BUTLERS_DIR", tmp_path),
+        ):
+            result = _resolve_chain_dir("does-not-exist")
+
+        assert result is None
+
+
+class TestGetAllChains:
+    """Unit tests for get_all_chains."""
+
+    def test_includes_shared_and_butler_chains(self, tmp_path: Path) -> None:
+        """Returns shared chains first, then discovered butler chains."""
+        alembic_dir = tmp_path / "alembic"
+        butlers_dir = tmp_path / "butlers"
+
+        # Create shared chain dirs
+        (alembic_dir / "versions" / "core").mkdir(parents=True)
+        (alembic_dir / "versions" / "mailbox").mkdir(parents=True)
+
+        # Create a butler chain
+        mig_dir = butlers_dir / "my-butler" / "migrations"
+        mig_dir.mkdir(parents=True)
+        (mig_dir / "001.py").write_text("# migration")
+
+        with (
+            patch("butlers.migrations.ALEMBIC_DIR", alembic_dir),
+            patch("butlers.migrations.BUTLERS_DIR", butlers_dir),
+        ):
+            chains = get_all_chains()
+
+        assert chains == ["core", "mailbox", "my-butler"]
+
+    def test_real_chains_include_core(self) -> None:
+        """The real chain list should always include core."""
+        chains = get_all_chains()
+        assert "core" in chains
 
 
 # ---------------------------------------------------------------------------
