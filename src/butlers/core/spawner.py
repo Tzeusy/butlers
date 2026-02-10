@@ -421,9 +421,14 @@ class Spawner:
             system_prompt = read_system_prompt(self._config_dir, self._config.name)
 
             # Inject memory context (graceful fallback on failure)
-            memory_ctx = await fetch_memory_context(self._config.name, final_prompt)
-            if memory_ctx:
-                system_prompt = f"{system_prompt}\n\n{memory_ctx}"
+            if self._config.memory.enabled:
+                memory_ctx = await fetch_memory_context(
+                    self._config.name,
+                    final_prompt,
+                    memory_butler_port=self._config.memory.port,
+                )
+                if memory_ctx:
+                    system_prompt = f"{system_prompt}\n\n{memory_ctx}"
 
             # Build credential env
             env = _build_env(self._config, self._module_credentials_env)
@@ -434,6 +439,12 @@ class Spawner:
                     "url": f"http://localhost:{self._config.port}/sse",
                 },
             }
+
+            # Include Memory MCP server for all butlers (except memory butler itself)
+            if self._config.memory.enabled and self._config.name != "memory":
+                mcp_servers["memory"] = {
+                    "url": f"http://localhost:{self._config.memory.port}/sse",
+                }
 
             # Invoke via runtime adapter
             result_text, tool_calls, usage = await self._runtime.invoke(
