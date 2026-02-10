@@ -17,6 +17,7 @@
 #   - relationship: 8102
 #   - health: 8103
 #   - heartbeat: 8199
+#   - dashboard-api: 8200
 #
 # Observability: Grafana/Tempo tracing via LGTM stack (Alloy OTLP endpoint)
 
@@ -139,6 +140,25 @@ services:
       - POSTGRES_USER=butlers
       - POSTGRES_PASSWORD=butlers
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel.parrot-hen.ts.net:4318
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Dashboard API - web UI backend for monitoring and managing butlers
+  dashboard-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8200:8200"
+    volumes:
+      - ./roster:/app/roster:ro
+    command: ["dashboard", "--host", "0.0.0.0", "--port", "8200"]
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=butlers
+      - POSTGRES_PASSWORD=butlers
     depends_on:
       postgres:
         condition: service_healthy
