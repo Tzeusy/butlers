@@ -282,3 +282,118 @@ async def store_rule(
     )
 
     return rule_id
+
+
+# ---------------------------------------------------------------------------
+# Memory links constants
+# ---------------------------------------------------------------------------
+
+_VALID_RELATIONS = frozenset(
+    {
+        "derived_from",
+        "supports",
+        "contradicts",
+        "supersedes",
+        "related_to",
+    }
+)
+_VALID_MEMORY_TYPES = frozenset({"episode", "fact", "rule"})
+
+
+# ---------------------------------------------------------------------------
+# Memory links CRUD
+# ---------------------------------------------------------------------------
+
+
+async def create_link(
+    pool: Pool,
+    source_type: str,
+    source_id: uuid.UUID,
+    target_type: str,
+    target_id: uuid.UUID,
+    relation: str,
+) -> None:
+    """Create a link between two memory items.
+
+    Args:
+        pool: asyncpg connection pool.
+        source_type: Type of the source memory ('episode', 'fact', 'rule').
+        source_id: UUID of the source memory.
+        target_type: Type of the target memory.
+        target_id: UUID of the target memory.
+        relation: Relationship type (derived_from, supports, contradicts, supersedes, related_to).
+
+    Raises:
+        ValueError: If relation or memory types are invalid.
+    """
+    if relation not in _VALID_RELATIONS:
+        raise ValueError(
+            f"Invalid relation: {relation!r}. Must be one of {sorted(_VALID_RELATIONS)}"
+        )
+    if source_type not in _VALID_MEMORY_TYPES:
+        raise ValueError(
+            f"Invalid source_type: {source_type!r}. Must be one of {sorted(_VALID_MEMORY_TYPES)}"
+        )
+    if target_type not in _VALID_MEMORY_TYPES:
+        raise ValueError(
+            f"Invalid target_type: {target_type!r}. Must be one of {sorted(_VALID_MEMORY_TYPES)}"
+        )
+
+    await pool.execute(
+        "INSERT INTO memory_links (source_type, source_id, target_type, target_id, relation) "
+        "VALUES ($1, $2, $3, $4, $5) "
+        "ON CONFLICT (source_type, source_id, target_type, target_id) DO NOTHING",
+        source_type,
+        source_id,
+        target_type,
+        target_id,
+        relation,
+    )
+
+
+async def get_links(
+    pool: Pool,
+    memory_type: str,
+    memory_id: uuid.UUID,
+    *,
+    direction: str = "both",
+) -> list[dict]:
+    """Get all links for a memory item.
+
+    Args:
+        pool: asyncpg connection pool.
+        memory_type: Type of the memory ('episode', 'fact', 'rule').
+        memory_id: UUID of the memory item.
+        direction: 'outgoing' (source), 'incoming' (target), or 'both'.
+
+    Returns:
+        List of dicts with keys: source_type, source_id, target_type, target_id,
+        relation, created_at.
+
+    Raises:
+        ValueError: If memory_type is invalid.
+    """
+    if memory_type not in _VALID_MEMORY_TYPES:
+        raise ValueError(f"Invalid memory_type: {memory_type!r}")
+
+    results: list[dict] = []
+
+    if direction in ("outgoing", "both"):
+        rows = await pool.fetch(
+            "SELECT source_type, source_id, target_type, target_id, relation, created_at "
+            "FROM memory_links WHERE source_type = $1 AND source_id = $2",
+            memory_type,
+            memory_id,
+        )
+        results.extend(dict(r) for r in rows)
+
+    if direction in ("incoming", "both"):
+        rows = await pool.fetch(
+            "SELECT source_type, source_id, target_type, target_id, relation, created_at "
+            "FROM memory_links WHERE target_type = $1 AND target_id = $2",
+            memory_type,
+            memory_id,
+        )
+        results.extend(dict(r) for r in rows)
+
+    return results
