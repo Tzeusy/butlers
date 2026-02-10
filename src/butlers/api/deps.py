@@ -16,6 +16,7 @@ from pathlib import Path
 
 from fastmcp import Client as MCPClient
 
+from butlers.api.pricing import PricingConfig, load_pricing
 from butlers.config import ConfigError, load_config
 
 logger = logging.getLogger(__name__)
@@ -278,3 +279,28 @@ def get_butler_configs() -> list[ButlerConnectionInfo]:
     if _butler_configs is None:
         raise RuntimeError("Butler configs not initialized — call init_dependencies() first")
     return _butler_configs
+
+
+# ---------------------------------------------------------------------------
+# Pricing configuration singleton
+# ---------------------------------------------------------------------------
+
+
+_pricing_config: PricingConfig | None = None
+
+
+def init_pricing(path: Path | None = None) -> PricingConfig:
+    """Initialize the pricing configuration singleton.
+
+    Called once during app startup.
+    """
+    global _pricing_config  # noqa: PLW0603
+    _pricing_config = load_pricing(path)
+    return _pricing_config
+
+
+def get_pricing() -> PricingConfig:
+    """FastAPI dependency: provides the PricingConfig singleton."""
+    if _pricing_config is None:
+        raise RuntimeError("PricingConfig not initialized — call init_pricing() first")
+    return _pricing_config
