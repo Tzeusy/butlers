@@ -18,6 +18,9 @@ import type {
   NotificationStats,
   NotificationSummary,
   PaginatedResponse,
+  Schedule,
+  ScheduleCreate,
+  ScheduleUpdate,
   SessionDetail,
   SessionParams,
   SessionSummary,
@@ -239,6 +242,72 @@ export function getDailyCosts(): Promise<ApiResponse<DailyCost[]>> {
 export function getTopSessions(limit?: number): Promise<ApiResponse<TopSession[]>> {
   const params = limit ? `?limit=${limit}` : "";
   return apiFetch<ApiResponse<TopSession[]>>(`/costs/top-sessions${params}`);
+}
+
+// ---------------------------------------------------------------------------
+// Schedules
+// ---------------------------------------------------------------------------
+
+/** Fetch all schedules for a specific butler. */
+export function getButlerSchedules(name: string): Promise<ApiResponse<Schedule[]>> {
+  return apiFetch<ApiResponse<Schedule[]>>(
+    `/butlers/${encodeURIComponent(name)}/schedules`,
+  );
+}
+
+/** Create a new schedule for a specific butler. */
+export function createButlerSchedule(
+  name: string,
+  body: ScheduleCreate,
+): Promise<ApiResponse<Record<string, unknown>>> {
+  return apiFetch<ApiResponse<Record<string, unknown>>>(
+    `/butlers/${encodeURIComponent(name)}/schedules`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/** Update an existing schedule for a specific butler. */
+export function updateButlerSchedule(
+  name: string,
+  scheduleId: string,
+  body: ScheduleUpdate,
+): Promise<ApiResponse<Record<string, unknown>>> {
+  return apiFetch<ApiResponse<Record<string, unknown>>>(
+    `/butlers/${encodeURIComponent(name)}/schedules/${encodeURIComponent(scheduleId)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+/** Delete a schedule for a specific butler. */
+export function deleteButlerSchedule(
+  name: string,
+  scheduleId: string,
+): Promise<ApiResponse<Record<string, unknown>>> {
+  return apiFetch<ApiResponse<Record<string, unknown>>>(
+    `/butlers/${encodeURIComponent(name)}/schedules/${encodeURIComponent(scheduleId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
+/** Toggle the enabled/disabled state of a schedule. */
+export function toggleButlerSchedule(
+  name: string,
+  scheduleId: string,
+): Promise<ApiResponse<Record<string, unknown>>> {
+  return apiFetch<ApiResponse<Record<string, unknown>>>(
+    `/butlers/${encodeURIComponent(name)}/schedules/${encodeURIComponent(scheduleId)}/toggle`,
+    {
+      method: "PATCH",
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------

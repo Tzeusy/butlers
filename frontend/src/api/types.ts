@@ -230,6 +230,39 @@ export interface TopSession {
 }
 
 // ---------------------------------------------------------------------------
+// Schedules
+// ---------------------------------------------------------------------------
+
+/** A scheduled task belonging to a butler. */
+export interface Schedule {
+  id: string;
+  name: string;
+  cron: string;
+  prompt: string;
+  source: string;
+  enabled: boolean;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Payload for creating a new schedule. */
+export interface ScheduleCreate {
+  name: string;
+  cron: string;
+  prompt: string;
+}
+
+/** Payload for updating an existing schedule (all fields optional). */
+export interface ScheduleUpdate {
+  name?: string;
+  cron?: string;
+  prompt?: string;
+  enabled?: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Skills
 // ---------------------------------------------------------------------------
 

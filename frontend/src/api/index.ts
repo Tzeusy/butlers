@@ -5,9 +5,12 @@
 export {
   ApiError,
   apiFetch,
+  createButlerSchedule,
+  deleteButlerSchedule,
   getButler,
   getButlerConfig,
   getButlerNotifications,
+  getButlerSchedules,
   getButlerSession,
   getButlerSessions,
   getButlerSkills,
@@ -21,7 +24,9 @@ export {
   getSession,
   getSessions,
   getTopSessions,
+  toggleButlerSchedule,
   triggerButler,
+  updateButlerSchedule,
 } from "./client.ts";
 
 export type {
@@ -41,6 +46,9 @@ export type {
   NotificationSummary,
   PaginatedResponse,
   PaginationMeta,
+  Schedule,
+  ScheduleCreate,
+  ScheduleUpdate,
   SessionDetail,
   SessionParams,
   SessionSummary,

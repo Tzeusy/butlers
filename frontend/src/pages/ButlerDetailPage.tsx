@@ -21,6 +21,9 @@ import { useButlerSessions } from "@/hooks/use-sessions";
 // Constants
 // ---------------------------------------------------------------------------
 
+const ButlerSchedulesTab = lazy(
+  () => import("@/components/butler-detail/ButlerSchedulesTab.tsx"),
+);
 const ButlerSkillsTab = lazy(
   () => import("@/components/butler-detail/ButlerSkillsTab.tsx"),
 );
@@ -28,7 +31,7 @@ const ButlerTriggerTab = lazy(
   () => import("@/components/butler-detail/ButlerTriggerTab.tsx"),
 );
 
-const TABS = ["overview", "sessions", "config", "skills", "trigger"] as const;
+const TABS = ["overview", "sessions", "config", "skills", "schedules", "trigger"] as const;
 type TabValue = (typeof TABS)[number];
 
 const PAGE_SIZE = 20;
@@ -147,6 +150,7 @@ export default function ButlerDetailPage() {
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
           <TabsTrigger value="config">Config</TabsTrigger>
           <TabsTrigger value="skills">Skills</TabsTrigger>
+          <TabsTrigger value="schedules">Schedules</TabsTrigger>
           <TabsTrigger value="trigger">Trigger</TabsTrigger>
         </TabsList>
 
@@ -171,6 +175,18 @@ export default function ButlerDetailPage() {
             }
           >
             <ButlerSkillsTab butlerName={name} />
+          </Suspense>
+        </TabsContent>
+
+        <TabsContent value="schedules">
+          <Suspense
+            fallback={
+              <div className="text-muted-foreground flex items-center justify-center py-12 text-sm">
+                Loading schedules...
+              </div>
+            }
+          >
+            <ButlerSchedulesTab butlerName={name} />
           </Suspense>
         </TabsContent>
 
