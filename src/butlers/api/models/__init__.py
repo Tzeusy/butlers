@@ -167,6 +167,21 @@ class HealthResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Issue models
+# ---------------------------------------------------------------------------
+
+
+class Issue(BaseModel):
+    """Active issue detected across butler infrastructure."""
+
+    severity: str  # "critical" or "warning"
+    type: str  # "unreachable", "module_error", "notification_failure", etc.
+    butler: str
+    description: str
+    link: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Trigger models
 # ---------------------------------------------------------------------------
 
@@ -208,6 +223,7 @@ __all__ = [
     "ErrorDetail",
     "ErrorResponse",
     "HealthResponse",
+    "Issue",
     "ModuleInfo",
     "ModuleStatus",
     "NotificationStats",

@@ -1,0 +1,334 @@
+"""Tests for GET /api/issues — active issues aggregation.
+
+Verifies issue detection for unreachable butlers, sorting by severity,
+and graceful handling of edge cases (empty roster, mixed reachability).
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
+
+from butlers.api.app import create_app
+from butlers.api.deps import (
+    ButlerConnectionInfo,
+    ButlerUnreachableError,
+    MCPClientManager,
+    get_butler_configs,
+    get_mcp_manager,
+)
+from butlers.api.models import Issue
+from butlers.api.routers.issues import _check_butler_reachability
+
+pytestmark = pytest.mark.unit
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_client(*, connected: bool = True) -> MagicMock:
+    """Create a mock MCP client with async ping."""
+    client = MagicMock()
+    client.is_connected = MagicMock(return_value=connected)
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.ping = AsyncMock(return_value=True)
+    return client
+
+
+def _make_configs() -> list[ButlerConnectionInfo]:
+    """Return a small set of butler configs for testing."""
+    return [
+        ButlerConnectionInfo(name="switchboard", port=8100, description="Routes messages"),
+        ButlerConnectionInfo(name="general", port=8101, description="Catch-all assistant"),
+    ]
+
+
+def _override_deps(app, mgr, configs):
+    """Apply dependency overrides for mcp_manager and butler_configs."""
+    app.dependency_overrides[get_mcp_manager] = lambda: mgr
+    app.dependency_overrides[get_butler_configs] = lambda: configs
+
+
+# ---------------------------------------------------------------------------
+# _check_butler_reachability unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestCheckButlerReachability:
+    async def test_reachable_returns_none(self):
+        """Reachable butler produces no issue."""
+        info = ButlerConnectionInfo(name="test", port=8000)
+        mock_client = _make_mock_client()
+
+        mgr = MagicMock(spec=MCPClientManager)
+        mgr.get_client = AsyncMock(return_value=mock_client)
+
+        result = await _check_butler_reachability(mgr, info)
+
+        assert result is None
+        mgr.get_client.assert_called_once_with("test")
+        mock_client.ping.assert_called_once()
+
+    async def test_unreachable_returns_critical_issue(self):
+        """Unreachable butler generates a critical issue."""
+        info = ButlerConnectionInfo(name="ghost", port=9999)
+
+        mgr = MagicMock(spec=MCPClientManager)
+        mgr.get_client = AsyncMock(
+            side_effect=ButlerUnreachableError("ghost", cause=ConnectionRefusedError())
+        )
+
+        result = await _check_butler_reachability(mgr, info)
+
+        assert result is not None
+        assert result.severity == "critical"
+        assert result.type == "unreachable"
+        assert result.butler == "ghost"
+        assert "ghost" in result.description
+        assert result.link == "/butlers/ghost"
+
+    async def test_timeout_returns_critical_issue(self):
+        """Timed-out butler generates a critical issue."""
+        info = ButlerConnectionInfo(name="slow", port=8200)
+
+        mgr = MagicMock(spec=MCPClientManager)
+
+        async def _slow_connect(name: str):
+            import asyncio
+
+            await asyncio.sleep(60)
+
+        mgr.get_client = _slow_connect
+
+        with patch("butlers.api.routers.issues._STATUS_TIMEOUT_S", 0.01):
+            result = await _check_butler_reachability(mgr, info)
+
+        assert result is not None
+        assert result.severity == "critical"
+        assert result.type == "unreachable"
+        assert result.butler == "slow"
+
+    async def test_unexpected_error_returns_critical_issue(self):
+        """Unexpected exceptions still yield a critical issue."""
+        info = ButlerConnectionInfo(name="broken", port=8300)
+
+        mgr = MagicMock(spec=MCPClientManager)
+        mgr.get_client = AsyncMock(side_effect=RuntimeError("boom"))
+
+        result = await _check_butler_reachability(mgr, info)
+
+        assert result is not None
+        assert result.severity == "critical"
+        assert result.type == "unreachable"
+        assert result.butler == "broken"
+        assert "unexpectedly" in result.description
+
+    async def test_ping_failure_returns_critical_issue(self):
+        """Butler connects but ping fails -> critical issue."""
+        info = ButlerConnectionInfo(name="flaky", port=8400)
+        mock_client = _make_mock_client()
+        mock_client.ping = AsyncMock(side_effect=ConnectionError("ping failed"))
+
+        mgr = MagicMock(spec=MCPClientManager)
+        mgr.get_client = AsyncMock(return_value=mock_client)
+
+        result = await _check_butler_reachability(mgr, info)
+
+        assert result is not None
+        assert result.severity == "critical"
+        assert result.butler == "flaky"
+
+
+# ---------------------------------------------------------------------------
+# Full endpoint integration tests (ASGI transport, mocked deps)
+# ---------------------------------------------------------------------------
+
+
+class TestListIssuesEndpoint:
+    """Test the GET /api/issues endpoint via httpx ASGI transport."""
+
+    async def test_no_issues_when_all_reachable(self):
+        """Happy path: all butlers reachable yields empty issues list."""
+        configs = _make_configs()
+        mock_client = _make_mock_client()
+
+        mgr = MagicMock(spec=MCPClientManager)
+        mgr.get_client = AsyncMock(return_value=mock_client)
+
+        app = create_app()
+        _override_deps(app, mgr, configs)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/issues")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "data" in body
+        assert body["data"] == []
+
+    async def test_unreachable_butler_generates_critical_issue(self):
+        """Unreachable butler appears as a critical issue."""
+        configs = _make_configs()
+
+        mgr = MagicMock(spec=MCPClientManager)
+        mgr.get_client = AsyncMock(
+            side_effect=ButlerUnreachableError("x", cause=ConnectionRefusedError())
+        )
+
+        app = create_app()
+        _override_deps(app, mgr, configs)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/issues")
+
+        assert response.status_code == 200
+        body = response.json()
+        issues = body["data"]
+        assert len(issues) == 2
+
+        for issue in issues:
+            assert issue["severity"] == "critical"
+            assert issue["type"] == "unreachable"
+
+    async def test_timeout_generates_critical_issue(self):
+        """Timed-out butler generates a critical issue in the endpoint."""
+        configs = [ButlerConnectionInfo(name="slow", port=8200)]
+
+        mgr = MagicMock(spec=MCPClientManager)
+
+        async def _slow_connect(name: str):
+            import asyncio
+
+            await asyncio.sleep(60)
+
+        mgr.get_client = _slow_connect
+
+        app = create_app()
+        _override_deps(app, mgr, configs)
+
+        with patch("butlers.api.routers.issues._STATUS_TIMEOUT_S", 0.01):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                response = await client.get("/api/issues")
+
+        assert response.status_code == 200
+        body = response.json()
+        issues = body["data"]
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "critical"
+        assert issues[0]["type"] == "unreachable"
+        assert issues[0]["butler"] == "slow"
+
+    async def test_mixed_reachability(self):
+        """Mix of reachable and unreachable butlers."""
+        configs = _make_configs()
+        mock_client = _make_mock_client()
+
+        mgr = MagicMock(spec=MCPClientManager)
+
+        async def _get_client_side_effect(name: str):
+            if name == "switchboard":
+                return mock_client
+            raise ButlerUnreachableError(name, cause=ConnectionRefusedError())
+
+        mgr.get_client = _get_client_side_effect
+
+        app = create_app()
+        _override_deps(app, mgr, configs)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/issues")
+
+        assert response.status_code == 200
+        body = response.json()
+        issues = body["data"]
+        assert len(issues) == 1
+        assert issues[0]["butler"] == "general"
+        assert issues[0]["severity"] == "critical"
+
+    async def test_sorting_critical_before_warning(self):
+        """Issues are sorted: critical first, then by butler name."""
+        # We test sorting by injecting issues with different severities.
+        # Since only reachability checks exist (all critical), we verify
+        # alphabetical sub-sort within the same severity.
+        configs = [
+            ButlerConnectionInfo(name="zeta", port=8100),
+            ButlerConnectionInfo(name="alpha", port=8101),
+            ButlerConnectionInfo(name="mid", port=8102),
+        ]
+
+        mgr = MagicMock(spec=MCPClientManager)
+        mgr.get_client = AsyncMock(
+            side_effect=ButlerUnreachableError("x", cause=ConnectionRefusedError())
+        )
+
+        app = create_app()
+        _override_deps(app, mgr, configs)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/issues")
+
+        assert response.status_code == 200
+        body = response.json()
+        issues = body["data"]
+        assert len(issues) == 3
+
+        butler_names = [i["butler"] for i in issues]
+        assert butler_names == ["alpha", "mid", "zeta"]
+
+    async def test_empty_roster_returns_empty_list(self):
+        """No butlers discovered yields an empty issues list."""
+        mgr = MagicMock(spec=MCPClientManager)
+
+        app = create_app()
+        _override_deps(app, mgr, [])
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/issues")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["data"] == []
+
+    async def test_response_shape_matches_model(self):
+        """Verify response data can be parsed as Issue model."""
+        configs = [ButlerConnectionInfo(name="mybutler", port=8500)]
+
+        mgr = MagicMock(spec=MCPClientManager)
+        mgr.get_client = AsyncMock(
+            side_effect=ButlerUnreachableError("mybutler", cause=ConnectionRefusedError())
+        )
+
+        app = create_app()
+        _override_deps(app, mgr, configs)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/issues")
+
+        assert response.status_code == 200
+        body = response.json()
+
+        for item in body["data"]:
+            issue = Issue.model_validate(item)
+            assert issue.severity == "critical"
+            assert issue.type == "unreachable"
+            assert issue.butler == "mybutler"
+            assert issue.link == "/butlers/mybutler"
