@@ -32,6 +32,8 @@ from butlers.api.models import (
     ModuleStatus,
     ScheduleEntry,
     SkillInfo,
+    TriggerRequest,
+    TriggerResponse,
 )
 from butlers.config import ConfigError, load_config
 
@@ -387,3 +389,76 @@ async def get_butler_modules(
     )
 
     return ApiResponse[list[ModuleStatus]](data=module_statuses)
+
+
+
+# ---------------------------------------------------------------------------
+# Trigger endpoint
+# ---------------------------------------------------------------------------
+
+# Timeout (in seconds) for the trigger call to the butler's MCP server.
+_TRIGGER_TIMEOUT_S = 120.0
+
+
+@router.post("/{name}/trigger", response_model=ApiResponse[TriggerResponse])
+async def trigger_butler(
+    name: str,
+    request: TriggerRequest,
+    configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
+    mcp_manager: MCPClientManager = Depends(get_mcp_manager),
+) -> ApiResponse[TriggerResponse]:
+    """Trigger a CC session on the named butler with the provided prompt.
+
+    Sends the prompt to the butler's MCP ``trigger`` tool and returns
+    the session result.  Returns 503 if the butler is unreachable or
+    the request times out.
+    """
+    if not any(cfg.name == name for cfg in configs):
+        raise HTTPException(status_code=404, detail=f"Butler not found: {name}")
+
+    try:
+        client = await asyncio.wait_for(
+            mcp_manager.get_client(name),
+            timeout=_TRIGGER_TIMEOUT_S,
+        )
+        result = await asyncio.wait_for(
+            client.call_tool("trigger", {"prompt": request.prompt}),
+            timeout=_TRIGGER_TIMEOUT_S,
+        )
+    except ButlerUnreachableError:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Butler '{name}' is unreachable",
+        )
+    except TimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Trigger request to butler '{name}' timed out",
+        )
+
+    # Parse the MCP tool result
+    session_id: str | None = None
+    success = True
+    output: str | None = None
+
+    if result.content:
+        text = result.content[0].text if hasattr(result.content[0], "text") else ""
+        if text:
+            try:
+                data = json.loads(text)
+                session_id = data.get("session_id")
+                success = data.get("success", True)
+                output = data.get("output")
+            except (json.JSONDecodeError, AttributeError):
+                output = text
+
+    if hasattr(result, "is_error") and result.is_error:
+        success = False
+
+    trigger_response = TriggerResponse(
+        session_id=session_id,
+        success=success,
+        output=output,
+    )
+
+    return ApiResponse[TriggerResponse](data=trigger_response)

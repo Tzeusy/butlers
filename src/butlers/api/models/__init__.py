@@ -164,6 +164,27 @@ class HealthResponse(BaseModel):
     status: str
 
 
+
+
+# ---------------------------------------------------------------------------
+# Trigger models
+# ---------------------------------------------------------------------------
+
+
+class TriggerRequest(BaseModel):
+    """Request body for triggering a CC session on a butler."""
+
+    prompt: str
+
+
+class TriggerResponse(BaseModel):
+    """Response from triggering a CC session."""
+
+    session_id: str | None = None
+    success: bool
+    output: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Notification models (re-exported from sub-module)
 # ---------------------------------------------------------------------------
@@ -189,4 +210,6 @@ __all__ = [
     "ScheduleEntry",
     "SessionSummary",
     "SkillInfo",
+    "TriggerRequest",
+    "TriggerResponse",
 ]
