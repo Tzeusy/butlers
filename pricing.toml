@@ -1,0 +1,19 @@
+# Per-model token pricing (USD per token)
+# Used by dashboard cost estimation
+#
+# Prices sourced from Anthropic's public pricing page.
+# Update this file when new models are released or prices change.
+
+[models]
+
+[models."claude-sonnet-4-5-20250929"]
+input_price_per_token = 0.000003    # $3 / 1M tokens
+output_price_per_token = 0.000015   # $15 / 1M tokens
+
+[models."claude-haiku-4-5-20251001"]
+input_price_per_token = 0.0000008   # $0.80 / 1M tokens
+output_price_per_token = 0.000004   # $4 / 1M tokens
+
+[models."claude-opus-4-6"]
+input_price_per_token = 0.000015    # $15 / 1M tokens
+output_price_per_token = 0.000075   # $75 / 1M tokens
