@@ -27,43 +27,42 @@ class TestHasButlerChain:
 
     def test_existing_chain_with_migrations(self, tmp_path: Path) -> None:
         """Returns True when directory exists and contains .py migration files."""
-        chain_dir = tmp_path / "versions" / "my-butler"
+        chain_dir = tmp_path / "my-butler" / "migrations"
         chain_dir.mkdir(parents=True)
         (chain_dir / "__init__.py").touch()
         (chain_dir / "001_create_tables.py").write_text("# migration")
 
-        with patch("butlers.migrations.ALEMBIC_DIR", tmp_path):
+        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
             assert has_butler_chain("my-butler") is True
 
     def test_no_chain_directory(self, tmp_path: Path) -> None:
         """Returns False when no directory exists for the butler name."""
-        (tmp_path / "versions").mkdir(parents=True)
+        tmp_path.mkdir(exist_ok=True)
 
-        with patch("butlers.migrations.ALEMBIC_DIR", tmp_path):
+        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
             assert has_butler_chain("nonexistent-butler") is False
 
     def test_empty_chain_directory(self, tmp_path: Path) -> None:
         """Returns False when directory exists but contains only __init__.py."""
-        chain_dir = tmp_path / "versions" / "empty-butler"
+        chain_dir = tmp_path / "empty-butler" / "migrations"
         chain_dir.mkdir(parents=True)
         (chain_dir / "__init__.py").touch()
 
-        with patch("butlers.migrations.ALEMBIC_DIR", tmp_path):
+        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
             assert has_butler_chain("empty-butler") is False
 
     def test_chain_directory_with_non_py_files(self, tmp_path: Path) -> None:
         """Returns False when directory only contains non-.py files."""
-        chain_dir = tmp_path / "versions" / "txt-butler"
+        chain_dir = tmp_path / "txt-butler" / "migrations"
         chain_dir.mkdir(parents=True)
         (chain_dir / "__init__.py").touch()
         (chain_dir / "README.md").write_text("docs")
 
-        with patch("butlers.migrations.ALEMBIC_DIR", tmp_path):
+        with patch("butlers.migrations.BUTLERS_DIR", tmp_path):
             assert has_butler_chain("txt-butler") is False
 
     def test_real_relationship_chain(self) -> None:
-        """The 'relationship' chain should be detected from the real alembic dir."""
-        # This butler has a known migration chain in alembic/versions/relationship/
+        """The 'relationship' chain should be detected from butlers/relationship/migrations/."""
         assert has_butler_chain("relationship") is True
 
     def test_real_nonexistent_chain(self) -> None:

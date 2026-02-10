@@ -16,11 +16,37 @@ from sqlalchemy import create_engine, pool
 
 from alembic import context
 
-# The directory containing version chain subdirectories
+# The directory containing shared version chain subdirectories (core, mailbox)
 VERSIONS_DIR = Path(__file__).parent / "versions"
 
-# All recognized version chains
-VERSION_CHAINS = ["core", "switchboard", "relationship", "health", "general"]
+# The directory containing butler config dirs (each may have a migrations/ folder)
+BUTLERS_DIR = Path(__file__).parent.parent / "butlers"
+
+# Shared chains that live in alembic/versions/
+_SHARED_CHAINS = ["core", "mailbox"]
+
+
+def _discover_butler_chains() -> list[str]:
+    """Discover butler-specific migration chains from butler config dirs.
+
+    Scans ``butlers/*/migrations/`` for directories that contain at least one
+    ``.py`` migration file (excluding ``__init__.py``).
+    """
+    if not BUTLERS_DIR.is_dir():
+        return []
+    chains = []
+    for entry in sorted(BUTLERS_DIR.iterdir()):
+        if not entry.is_dir():
+            continue
+        mig_dir = entry / "migrations"
+        if not mig_dir.is_dir():
+            continue
+        migration_files = [
+            f for f in mig_dir.iterdir() if f.suffix == ".py" and f.name != "__init__.py"
+        ]
+        if migration_files:
+            chains.append(entry.name)
+    return chains
 
 
 def get_url() -> str:
@@ -37,13 +63,22 @@ def get_url() -> str:
 def get_version_locations() -> list[str]:
     """Build the version_locations list for all chains.
 
-    Returns a list of paths to chain directories under versions/.
+    Includes shared chains from alembic/versions/ and butler-specific chains
+    from butlers/<name>/migrations/.
     """
     locations = []
-    for chain in VERSION_CHAINS:
+
+    # Shared chains (core, mailbox) in alembic/versions/
+    for chain in _SHARED_CHAINS:
         chain_dir = VERSIONS_DIR / chain
         if chain_dir.is_dir():
             locations.append(str(chain_dir))
+
+    # Butler-specific chains in butlers/<name>/migrations/
+    for butler_name in _discover_butler_chains():
+        mig_dir = BUTLERS_DIR / butler_name / "migrations"
+        locations.append(str(mig_dir))
+
     return locations
 
 
