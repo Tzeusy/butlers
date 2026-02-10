@@ -31,6 +31,7 @@ from butlers.api.routers.notifications import (
 )
 from butlers.api.routers.relationship import router as relationship_router
 from butlers.api.routers.schedules import router as schedules_router
+from butlers.api.routers.search import router as search_router
 from butlers.api.routers.sessions import (
     butler_sessions_router,
 )
@@ -38,6 +39,7 @@ from butlers.api.routers.sessions import (
     router as sessions_router,
 )
 from butlers.api.routers.state import router as state_router
+from butlers.api.routers.timeline import router as timeline_router
 from butlers.api.routers.traces import router as traces_router
 
 logger = logging.getLogger(__name__)
@@ -108,6 +110,8 @@ def create_app(
     app.include_router(schedules_router)
     app.include_router(state_router)
     app.include_router(traces_router)
+    app.include_router(timeline_router)
+    app.include_router(search_router)
 
     @app.get("/api/health")
     async def health():

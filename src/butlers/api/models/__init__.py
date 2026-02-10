@@ -279,8 +279,10 @@ from butlers.api.models.relationship import (  # noqa: E402
     UpcomingDate,
 )
 from butlers.api.models.schedule import Schedule, ScheduleCreate, ScheduleUpdate  # noqa: E402
+from butlers.api.models.search import SearchResponse, SearchResult  # noqa: E402
 from butlers.api.models.session import SessionDetail  # noqa: E402
 from butlers.api.models.state import StateEntry, StateSetRequest  # noqa: E402
+from butlers.api.models.timeline import TimelineEvent, TimelineResponse  # noqa: E402
 from butlers.api.models.trace import SpanNode, TraceDetail, TraceSummary  # noqa: E402
 
 __all__ = [
@@ -314,6 +316,8 @@ __all__ = [
     "PaginationMeta",
     "Schedule",
     "ScheduleCost",
+    "SearchResponse",
+    "SearchResult",
     "ScheduleCreate",
     "ScheduleEntry",
     "ScheduleUpdate",
@@ -326,6 +330,8 @@ __all__ = [
     "TraceDetail",
     "TraceSummary",
     "TickResponse",
+    "TimelineEvent",
+    "TimelineResponse",
     "TopSession",
     "TriggerRequest",
     "TriggerResponse",
