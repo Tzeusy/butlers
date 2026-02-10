@@ -307,7 +307,6 @@ class Spawner:
                 cwd=str(self._config_dir),
             )
 
-
             duration_ms = int((time.monotonic() - t0) * 1000)
 
             spawner_result = SpawnerResult(
