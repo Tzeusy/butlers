@@ -545,6 +545,74 @@ class ButlerDaemon:
                 session["id"] = str(session["id"])
             return session
 
+        # Notification tool
+        @mcp.tool()
+        @tool_span("notify", butler_name=butler_name)
+        async def notify(channel: str, message: str, recipient: str | None = None) -> dict:
+            """Send an outbound notification via the Switchboard.
+
+            Forwards to the Switchboard's deliver() tool over the MCP client
+            connection. Blocks until delivered or fails. Returns an error result
+            (not an exception) if the Switchboard is unreachable or the channel
+            is invalid.
+
+            Parameters
+            ----------
+            channel:
+                Notification channel — must be 'telegram' or 'email'.
+            message:
+                The message text to deliver.
+            recipient:
+                Optional recipient identifier. If omitted, the Switchboard
+                delivers to the system owner's default for the channel.
+            """
+            _SUPPORTED_CHANNELS = {"telegram", "email"}
+            if channel not in _SUPPORTED_CHANNELS:
+                return {
+                    "status": "error",
+                    "error": (
+                        f"Unsupported channel '{channel}'. "
+                        f"Supported channels: {', '.join(sorted(_SUPPORTED_CHANNELS))}"
+                    ),
+                }
+
+            client = daemon.switchboard_client
+            if client is None:
+                return {
+                    "status": "error",
+                    "error": ("Switchboard is not connected. Cannot deliver notification."),
+                }
+
+            # Build args for Switchboard's deliver() tool
+            deliver_args: dict[str, Any] = {
+                "channel": channel,
+                "message": message,
+                "source_butler": butler_name,
+            }
+            if recipient is not None:
+                deliver_args["recipient"] = recipient
+
+            try:
+                result = await client.call_tool("deliver", deliver_args)
+                # FastMCP call_tool returns a CallToolResult
+                if result.is_error:
+                    # Extract error text from the result content
+                    error_text = str(result.content[0].text) if result.content else "Unknown error"
+                    return {"status": "error", "error": error_text}
+                # Extract the data from the successful result
+                return {"status": "ok", "result": result.data}
+            except Exception as exc:
+                logger.warning(
+                    "notify() failed for butler %s: %s",
+                    butler_name,
+                    exc,
+                    exc_info=True,
+                )
+                return {
+                    "status": "error",
+                    "error": f"Switchboard call failed: {exc}",
+                }
+
     def _validate_module_configs(self) -> dict[str, Any]:
         """Validate each module's raw config dict against its config_schema.
 

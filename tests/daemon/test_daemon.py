@@ -365,10 +365,11 @@ class TestCoreToolRegistration:
         "schedule_delete",
         "sessions_list",
         "sessions_get",
+        "notify",
     }
 
     async def test_all_core_tools_registered(self, butler_dir: Path) -> None:
-        """All 13 core tools should be registered on FastMCP via @mcp.tool()."""
+        """All 14 core tools should be registered on FastMCP via @mcp.tool()."""
         patches = _patch_infra()
         registered_tools: list[str] = []
 
@@ -1911,3 +1912,252 @@ url = "http://custom-switchboard:9000/sse"
 
         # Should not raise
         await daemon.shutdown()
+
+
+class TestNotifyTool:
+    """Verify the notify() core MCP tool."""
+
+    async def _start_daemon_with_notify(self, butler_dir: Path, patches: dict):
+        """Start daemon and extract the notify function reference."""
+        notify_fn = None
+        mock_mcp = MagicMock()
+
+        def tool_decorator():
+            def decorator(fn):
+                nonlocal notify_fn
+                if fn.__name__ == "notify":
+                    notify_fn = fn
+                return fn
+
+            return decorator
+
+        mock_mcp.tool = tool_decorator
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patch("butlers.daemon.FastMCP", return_value=mock_mcp),
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
+            patches["connect_switchboard"],
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        return daemon, notify_fn
+
+    async def test_notify_registered_as_core_tool(self, butler_dir: Path) -> None:
+        """notify should be registered as a core MCP tool."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None, "notify tool was not registered"
+
+    async def test_notify_unsupported_channel_returns_error(self, butler_dir: Path) -> None:
+        """notify with an unsupported channel should return error result."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        result = await notify_fn(channel="sms", message="Hello")
+        assert result["status"] == "error"
+        assert "sms" in result["error"]
+        assert "Unsupported channel" in result["error"]
+
+    async def test_notify_telegram_channel_accepted(self, butler_dir: Path) -> None:
+        """notify with channel='telegram' should not return channel error."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        # switchboard_client is None because _connect_switchboard is mocked
+        result = await notify_fn(channel="telegram", message="Hello")
+        # Should fail due to no switchboard, NOT due to invalid channel
+        assert result["status"] == "error"
+        assert "Switchboard is not connected" in result["error"]
+
+    async def test_notify_email_channel_accepted(self, butler_dir: Path) -> None:
+        """notify with channel='email' should not return channel error."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        result = await notify_fn(channel="email", message="Hello")
+        assert result["status"] == "error"
+        assert "Switchboard is not connected" in result["error"]
+
+    async def test_notify_switchboard_not_connected_returns_error(self, butler_dir: Path) -> None:
+        """notify should return error when switchboard_client is None."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        # switchboard_client is None (mocked _connect_switchboard)
+        assert daemon.switchboard_client is None
+
+        result = await notify_fn(channel="telegram", message="Hello")
+        assert result["status"] == "error"
+        assert "Switchboard is not connected" in result["error"]
+
+    async def test_notify_successful_delivery(self, butler_dir: Path) -> None:
+        """notify should return success when Switchboard delivers successfully."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        # Mock the switchboard client
+        mock_call_result = MagicMock()
+        mock_call_result.is_error = False
+        mock_call_result.data = {"notification_id": "abc-123", "status": "sent"}
+
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(return_value=mock_call_result)
+        daemon.switchboard_client = mock_client
+
+        result = await notify_fn(channel="telegram", message="Hello world")
+
+        assert result["status"] == "ok"
+        assert result["result"] == {"notification_id": "abc-123", "status": "sent"}
+
+        # Verify call_tool was called with correct args
+        mock_client.call_tool.assert_awaited_once_with(
+            "deliver",
+            {
+                "channel": "telegram",
+                "message": "Hello world",
+                "source_butler": "test-butler",
+            },
+        )
+
+    async def test_notify_with_recipient(self, butler_dir: Path) -> None:
+        """notify with explicit recipient should forward it to Switchboard."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        mock_call_result = MagicMock()
+        mock_call_result.is_error = False
+        mock_call_result.data = {"notification_id": "def-456", "status": "sent"}
+
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(return_value=mock_call_result)
+        daemon.switchboard_client = mock_client
+
+        result = await notify_fn(
+            channel="email", message="Weekly report", recipient="user@example.com"
+        )
+
+        assert result["status"] == "ok"
+
+        # Verify recipient was included in the call
+        mock_client.call_tool.assert_awaited_once_with(
+            "deliver",
+            {
+                "channel": "email",
+                "message": "Weekly report",
+                "recipient": "user@example.com",
+                "source_butler": "test-butler",
+            },
+        )
+
+    async def test_notify_without_recipient(self, butler_dir: Path) -> None:
+        """notify without recipient should omit it from the Switchboard call."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        mock_call_result = MagicMock()
+        mock_call_result.is_error = False
+        mock_call_result.data = {"notification_id": "ghi-789", "status": "sent"}
+
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(return_value=mock_call_result)
+        daemon.switchboard_client = mock_client
+
+        result = await notify_fn(channel="telegram", message="Alert")
+
+        assert result["status"] == "ok"
+
+        # Verify recipient is NOT in the call args
+        call_args = mock_client.call_tool.call_args
+        deliver_args = call_args[0][1]
+        assert "recipient" not in deliver_args
+
+    async def test_notify_switchboard_returns_error(self, butler_dir: Path) -> None:
+        """notify should return error when Switchboard's deliver() returns error."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        # Mock an error result from call_tool
+        mock_content = MagicMock()
+        mock_content.text = "No module available for channel 'telegram'"
+
+        mock_call_result = MagicMock()
+        mock_call_result.is_error = True
+        mock_call_result.content = [mock_content]
+
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(return_value=mock_call_result)
+        daemon.switchboard_client = mock_client
+
+        result = await notify_fn(channel="telegram", message="Hello")
+
+        assert result["status"] == "error"
+        assert "No module available" in result["error"]
+
+    async def test_notify_switchboard_call_raises_exception(self, butler_dir: Path) -> None:
+        """notify should return error (not raise) when call_tool raises."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(side_effect=ConnectionError("Connection refused"))
+        daemon.switchboard_client = mock_client
+
+        # Should NOT raise — returns error result
+        result = await notify_fn(channel="telegram", message="Hello")
+
+        assert result["status"] == "error"
+        assert "Switchboard call failed" in result["error"]
+        assert "Connection refused" in result["error"]
+
+    async def test_notify_switchboard_timeout_returns_error(self, butler_dir: Path) -> None:
+        """notify should return error when Switchboard call times out."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(side_effect=TimeoutError("Request timed out"))
+        daemon.switchboard_client = mock_client
+
+        result = await notify_fn(channel="telegram", message="Hello")
+
+        assert result["status"] == "error"
+        assert "Switchboard call failed" in result["error"]
+
+    async def test_notify_includes_source_butler_name(self, butler_dir: Path) -> None:
+        """notify should include the butler name as source_butler in deliver args."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        mock_call_result = MagicMock()
+        mock_call_result.is_error = False
+        mock_call_result.data = {"status": "sent"}
+
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(return_value=mock_call_result)
+        daemon.switchboard_client = mock_client
+
+        await notify_fn(channel="telegram", message="Test")
+
+        call_args = mock_client.call_tool.call_args
+        deliver_args = call_args[0][1]
+        assert deliver_args["source_butler"] == "test-butler"
