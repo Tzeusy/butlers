@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import asyncpg
+import httpx
 from opentelemetry import trace
 
 from butlers.config import ButlerConfig
@@ -83,6 +84,73 @@ def _build_env(
     env.update(get_traceparent_env())
 
     return env
+
+
+
+async def fetch_memory_context(
+    butler_name: str,
+    prompt: str,
+    *,
+    timeout: float = 5.0,
+    memory_butler_port: int = 8150,
+) -> str | None:
+    """Fetch memory context from the Memory Butler's MCP server.
+
+    Makes an HTTP POST to the Memory Butler's ``/call-tool`` endpoint,
+    requesting the ``memory_context`` tool with the given prompt and
+    butler name.
+
+    Parameters
+    ----------
+    butler_name:
+        Name of the butler requesting memory context.
+    prompt:
+        The trigger prompt to send for context retrieval.
+    timeout:
+        HTTP request timeout in seconds. Defaults to 5.0.
+    memory_butler_port:
+        Port the Memory Butler listens on. Defaults to 8150.
+
+    Returns
+    -------
+    str | None
+        The memory context string on success, or None on any failure.
+    """
+    url = f"http://localhost:{memory_butler_port}/call-tool"
+    payload = {
+        "name": "memory_context",
+        "arguments": {
+            "trigger_prompt": prompt,
+            "butler": butler_name,
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, json=payload)
+            if response.status_code != 200:
+                logger.warning(
+                    "Memory Butler returned status %d for butler %s",
+                    response.status_code,
+                    butler_name,
+                )
+                return None
+            data = response.json()
+            context = data.get("content")
+            if not isinstance(context, str) or not context:
+                logger.warning(
+                    "Memory Butler returned unexpected response for butler %s: %r",
+                    butler_name,
+                    data,
+                )
+                return None
+            return context
+    except Exception:
+        logger.warning(
+            "Failed to fetch memory context for butler %s",
+            butler_name,
+            exc_info=True,
+        )
+        return None
 
 
 class Spawner:
@@ -288,6 +356,11 @@ class Spawner:
 
             # Read system prompt
             system_prompt = read_system_prompt(self._config_dir, self._config.name)
+
+            # Inject memory context (graceful fallback on failure)
+            memory_ctx = await fetch_memory_context(self._config.name, final_prompt)
+            if memory_ctx:
+                system_prompt = f"{system_prompt}\n\n{memory_ctx}"
 
             # Build credential env
             env = _build_env(self._config, self._module_credentials_env)
