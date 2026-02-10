@@ -71,6 +71,21 @@ export interface SessionSummary {
   duration_ms: number | null;
 }
 
+/** Lightweight notification representation for list views. */
+export interface NotificationSummary {
+  id: string;
+  source_butler: string;
+  channel: string;
+  recipient: string | null;
+  message: string;
+  metadata: Record<string, unknown> | null;
+  status: string;
+  error: string | null;
+  session_id: string | null;
+  trace_id: string | null;
+  created_at: string;
+}
+
 /** Health-check response. */
 export interface HealthResponse {
   status: string;
