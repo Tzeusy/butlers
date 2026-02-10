@@ -20,6 +20,7 @@ from starlette.staticfiles import StaticFiles
 
 from butlers.api.deps import init_pricing
 from butlers.api.middleware import register_error_handlers
+from butlers.api.routers.audit import router as audit_router
 from butlers.api.routers.butlers import router as butlers_router
 from butlers.api.routers.costs import router as costs_router
 from butlers.api.routers.issues import router as issues_router
@@ -112,6 +113,7 @@ def create_app(
     app.include_router(traces_router)
     app.include_router(timeline_router)
     app.include_router(search_router)
+    app.include_router(audit_router)
 
     @app.get("/api/health")
     async def health():

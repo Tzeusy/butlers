@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from butlers.api.app import create_app
+from butlers.api.db import DatabaseManager
 from butlers.api.deps import (
     ButlerConnectionInfo,
     ButlerUnreachableError,
@@ -21,6 +22,7 @@ from butlers.api.deps import (
     get_mcp_manager,
 )
 from butlers.api.models import TickResponse
+from butlers.api.routers.butlers import _get_db_manager
 
 pytestmark = pytest.mark.unit
 
@@ -66,9 +68,16 @@ def _create_test_app(
     mcp_manager: MCPClientManager,
 ):
     """Create a FastAPI test app with dependency overrides."""
+    # Mock DatabaseManager for audit logging
+    mock_audit_pool = AsyncMock()
+    mock_audit_pool.execute = AsyncMock()
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.pool.return_value = mock_audit_pool
+
     app = create_app()
     app.dependency_overrides[get_butler_configs] = lambda: configs
     app.dependency_overrides[get_mcp_manager] = lambda: mcp_manager
+    app.dependency_overrides[_get_db_manager] = lambda: mock_db
     return app
 
 

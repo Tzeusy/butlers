@@ -262,6 +262,7 @@ class ScheduleCost(BaseModel):
 # Notification models (re-exported from sub-module)
 # ---------------------------------------------------------------------------
 
+from butlers.api.models.audit import AuditEntry  # noqa: E402
 from butlers.api.models.butler import ModuleStatus  # noqa: E402
 from butlers.api.models.notification import NotificationStats, NotificationSummary  # noqa: E402
 from butlers.api.models.relationship import (  # noqa: E402
@@ -286,6 +287,7 @@ from butlers.api.models.timeline import TimelineEvent, TimelineResponse  # noqa:
 from butlers.api.models.trace import SpanNode, TraceDetail, TraceSummary  # noqa: E402
 
 __all__ = [
+    "AuditEntry",
     "ActivityFeedItem",
     "ApiMeta",
     "ApiResponse",

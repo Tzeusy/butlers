@@ -22,6 +22,7 @@ from butlers.api.deps import (
 )
 from butlers.api.models import ApiResponse
 from butlers.api.models.state import StateEntry, StateSetRequest
+from butlers.api.routers.audit import log_audit_entry
 
 logger = logging.getLogger(__name__)
 
@@ -123,21 +124,27 @@ async def set_state(
     key: str,
     request: StateSetRequest,
     mgr: MCPClientManager = Depends(get_mcp_manager),
+    db: DatabaseManager = Depends(_get_db_manager),
 ) -> ApiResponse[dict]:
     """Set a state value via the butler's MCP ``state_set`` tool.
 
     Proxies the write through MCP so the butler's own state management
     logic is invoked. Returns 503 if the butler is unreachable.
     """
+    summary = {"key": key}
     try:
         client = await mgr.get_client(name)
         await client.call_tool("state_set", {"key": key, "value": request.value})
     except ButlerUnreachableError:
+        await log_audit_entry(
+            db, name, "state.set", summary, result="error", error="Butler unreachable"
+        )
         raise HTTPException(
             status_code=503,
             detail=f"Butler '{name}' is unreachable",
         )
 
+    await log_audit_entry(db, name, "state.set", summary)
     return ApiResponse[dict](data={"key": key, "status": "ok"})
 
 
@@ -149,19 +156,25 @@ async def delete_state(
     name: str,
     key: str,
     mgr: MCPClientManager = Depends(get_mcp_manager),
+    db: DatabaseManager = Depends(_get_db_manager),
 ) -> ApiResponse[dict]:
     """Delete a state entry via the butler's MCP ``state_delete`` tool.
 
     Proxies the delete through MCP so the butler's own state management
     logic is invoked. Returns 503 if the butler is unreachable.
     """
+    summary = {"key": key}
     try:
         client = await mgr.get_client(name)
         await client.call_tool("state_delete", {"key": key})
     except ButlerUnreachableError:
+        await log_audit_entry(
+            db, name, "state.delete", summary, result="error", error="Butler unreachable"
+        )
         raise HTTPException(
             status_code=503,
             detail=f"Butler '{name}' is unreachable",
         )
 
+    await log_audit_entry(db, name, "state.delete", summary)
     return ApiResponse[dict](data={"key": key, "status": "deleted"})

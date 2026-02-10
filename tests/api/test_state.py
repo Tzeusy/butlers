@@ -84,8 +84,15 @@ def _app_with_mock_mcp(
             mock_client.call_tool = AsyncMock(return_value=MagicMock())
         mock_mgr.get_client = AsyncMock(return_value=mock_client)
 
+    # Mock DatabaseManager for audit logging in write endpoints
+    mock_audit_pool = AsyncMock()
+    mock_audit_pool.execute = AsyncMock()
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.pool.return_value = mock_audit_pool
+
     app = create_app()
     app.dependency_overrides[get_mcp_manager] = lambda: mock_mgr
+    app.dependency_overrides[_get_db_manager] = lambda: mock_db
 
     return app
 
@@ -226,8 +233,14 @@ class TestSetState:
         mock_client.call_tool = AsyncMock(return_value=MagicMock())
         mock_mgr.get_client = AsyncMock(return_value=mock_client)
 
+        mock_audit_pool = AsyncMock()
+        mock_audit_pool.execute = AsyncMock()
+        mock_db = MagicMock(spec=DatabaseManager)
+        mock_db.pool.return_value = mock_audit_pool
+
         app = create_app()
         app.dependency_overrides[get_mcp_manager] = lambda: mock_mgr
+        app.dependency_overrides[_get_db_manager] = lambda: mock_db
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -278,8 +291,14 @@ class TestDeleteState:
         mock_client.call_tool = AsyncMock(return_value=MagicMock())
         mock_mgr.get_client = AsyncMock(return_value=mock_client)
 
+        mock_audit_pool = AsyncMock()
+        mock_audit_pool.execute = AsyncMock()
+        mock_db = MagicMock(spec=DatabaseManager)
+        mock_db.pool.return_value = mock_audit_pool
+
         app = create_app()
         app.dependency_overrides[get_mcp_manager] = lambda: mock_mgr
+        app.dependency_overrides[_get_db_manager] = lambda: mock_db
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"

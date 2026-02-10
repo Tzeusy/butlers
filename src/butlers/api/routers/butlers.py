@@ -17,6 +17,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
+from butlers.api.db import DatabaseManager
 from butlers.api.deps import (
     ButlerConnectionInfo,
     ButlerUnreachableError,
@@ -37,6 +38,7 @@ from butlers.api.models import (
     TriggerRequest,
     TriggerResponse,
 )
+from butlers.api.routers.audit import log_audit_entry
 from butlers.config import ConfigError, load_config
 
 logger = logging.getLogger(__name__)
@@ -53,6 +55,11 @@ _DEFAULT_ROSTER_DIR = Path(__file__).resolve().parents[4] / "roster"
 def _get_roster_dir() -> Path:
     """Return the roster directory path. Override in tests."""
     return _DEFAULT_ROSTER_DIR
+
+
+def _get_db_manager() -> DatabaseManager:
+    """Dependency stub -- overridden at app startup or in tests."""
+    raise RuntimeError("DatabaseManager not initialized")
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +406,7 @@ async def trigger_butler(
     request: TriggerRequest,
     configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
     mcp_manager: MCPClientManager = Depends(get_mcp_manager),
+    db: DatabaseManager = Depends(_get_db_manager),
 ) -> ApiResponse[TriggerResponse]:
     """Trigger a CC session on the named butler with the provided prompt.
 
@@ -409,6 +417,7 @@ async def trigger_butler(
     if not any(cfg.name == name for cfg in configs):
         raise HTTPException(status_code=404, detail=f"Butler not found: {name}")
 
+    summary = {"prompt": request.prompt[:200]}
     try:
         client = await asyncio.wait_for(
             mcp_manager.get_client(name),
@@ -419,11 +428,17 @@ async def trigger_butler(
             timeout=_TRIGGER_TIMEOUT_S,
         )
     except ButlerUnreachableError:
+        await log_audit_entry(
+            db, name, "trigger", summary, result="error", error="Butler unreachable"
+        )
         raise HTTPException(
             status_code=503,
             detail=f"Butler '{name}' is unreachable",
         )
     except TimeoutError:
+        await log_audit_entry(
+            db, name, "trigger", summary, result="error", error="Request timed out"
+        )
         raise HTTPException(
             status_code=503,
             detail=f"Trigger request to butler '{name}' timed out",
@@ -454,6 +469,13 @@ async def trigger_butler(
         output=output,
     )
 
+    if success:
+        await log_audit_entry(db, name, "trigger", summary)
+    else:
+        await log_audit_entry(
+            db, name, "trigger", summary, result="error", error=output or "Trigger failed"
+        )
+
     return ApiResponse[TriggerResponse](data=trigger_response)
 
 
@@ -467,6 +489,7 @@ async def force_butler_tick(
     name: str,
     configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
     mcp_manager: MCPClientManager = Depends(get_mcp_manager),
+    db: DatabaseManager = Depends(_get_db_manager),
 ) -> ApiResponse[TickResponse] | JSONResponse:
     """Force a scheduler tick on the specified butler.
 
@@ -477,6 +500,7 @@ async def force_butler_tick(
     if not any(cfg.name == name for cfg in configs):
         raise HTTPException(status_code=404, detail=f"Butler not found: {name}")
 
+    summary: dict = {}
     try:
         client = await asyncio.wait_for(
             mcp_manager.get_client(name),
@@ -494,10 +518,12 @@ async def force_butler_tick(
                 message = text
 
         tick_resp = TickResponse(success=True, message=message)
+        await log_audit_entry(db, name, "tick", summary)
         return ApiResponse[TickResponse](data=tick_resp)
 
     except ButlerUnreachableError:
         logger.warning("Butler %s is unreachable for tick", name)
+        await log_audit_entry(db, name, "tick", summary, result="error", error="Butler unreachable")
         return JSONResponse(
             status_code=503,
             content={
@@ -510,6 +536,7 @@ async def force_butler_tick(
         )
     except TimeoutError:
         logger.warning("Tick request to butler %s timed out", name)
+        await log_audit_entry(db, name, "tick", summary, result="error", error="Request timed out")
         return JSONResponse(
             status_code=503,
             content={

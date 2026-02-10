@@ -23,6 +23,7 @@ from butlers.api.db import DatabaseManager
 from butlers.api.deps import ButlerUnreachableError, MCPClientManager, get_mcp_manager
 from butlers.api.models import ApiResponse
 from butlers.api.models.schedule import Schedule, ScheduleCreate, ScheduleUpdate
+from butlers.api.routers.audit import log_audit_entry
 
 logger = logging.getLogger(__name__)
 
@@ -136,15 +137,24 @@ async def create_schedule(
     name: str,
     body: ScheduleCreate,
     mgr: MCPClientManager = Depends(get_mcp_manager),
+    db: DatabaseManager = Depends(_get_db_manager),
 ) -> ApiResponse[dict]:
     """Create a new scheduled task via MCP tool call to the butler."""
-    result = await _call_mcp_tool(
-        mgr,
-        name,
-        "schedule_create",
-        {"name": body.name, "cron": body.cron, "prompt": body.prompt},
-    )
-    return ApiResponse[dict](data=result)
+    summary = {"name": body.name, "cron": body.cron}
+    try:
+        result = await _call_mcp_tool(
+            mgr,
+            name,
+            "schedule_create",
+            {"name": body.name, "cron": body.cron, "prompt": body.prompt},
+        )
+        await log_audit_entry(db, name, "schedule.create", summary)
+        return ApiResponse[dict](data=result)
+    except HTTPException:
+        await log_audit_entry(
+            db, name, "schedule.create", summary, result="error", error="MCP call failed"
+        )
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -161,14 +171,23 @@ async def update_schedule(
     schedule_id: UUID,
     body: ScheduleUpdate,
     mgr: MCPClientManager = Depends(get_mcp_manager),
+    db: DatabaseManager = Depends(_get_db_manager),
 ) -> ApiResponse[dict]:
     """Update a scheduled task via MCP tool call to the butler."""
     arguments: dict = {"id": str(schedule_id)}
     updates = body.model_dump(exclude_none=True)
     arguments.update(updates)
 
-    result = await _call_mcp_tool(mgr, name, "schedule_update", arguments)
-    return ApiResponse[dict](data=result)
+    summary = {"schedule_id": str(schedule_id), **updates}
+    try:
+        result = await _call_mcp_tool(mgr, name, "schedule_update", arguments)
+        await log_audit_entry(db, name, "schedule.update", summary)
+        return ApiResponse[dict](data=result)
+    except HTTPException:
+        await log_audit_entry(
+            db, name, "schedule.update", summary, result="error", error="MCP call failed"
+        )
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -184,10 +203,19 @@ async def delete_schedule(
     name: str,
     schedule_id: UUID,
     mgr: MCPClientManager = Depends(get_mcp_manager),
+    db: DatabaseManager = Depends(_get_db_manager),
 ) -> ApiResponse[dict]:
     """Delete a scheduled task via MCP tool call to the butler."""
-    result = await _call_mcp_tool(mgr, name, "schedule_delete", {"id": str(schedule_id)})
-    return ApiResponse[dict](data=result)
+    summary = {"schedule_id": str(schedule_id)}
+    try:
+        result = await _call_mcp_tool(mgr, name, "schedule_delete", {"id": str(schedule_id)})
+        await log_audit_entry(db, name, "schedule.delete", summary)
+        return ApiResponse[dict](data=result)
+    except HTTPException:
+        await log_audit_entry(
+            db, name, "schedule.delete", summary, result="error", error="MCP call failed"
+        )
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +231,16 @@ async def toggle_schedule(
     name: str,
     schedule_id: UUID,
     mgr: MCPClientManager = Depends(get_mcp_manager),
+    db: DatabaseManager = Depends(_get_db_manager),
 ) -> ApiResponse[dict]:
     """Toggle a scheduled task's enabled/disabled state via MCP."""
-    result = await _call_mcp_tool(mgr, name, "schedule_toggle", {"id": str(schedule_id)})
-    return ApiResponse[dict](data=result)
+    summary = {"schedule_id": str(schedule_id)}
+    try:
+        result = await _call_mcp_tool(mgr, name, "schedule_toggle", {"id": str(schedule_id)})
+        await log_audit_entry(db, name, "schedule.toggle", summary)
+        return ApiResponse[dict](data=result)
+    except HTTPException:
+        await log_audit_entry(
+            db, name, "schedule.toggle", summary, result="error", error="MCP call failed"
+        )
+        raise
