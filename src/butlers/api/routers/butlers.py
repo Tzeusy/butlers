@@ -9,6 +9,7 @@ rather than causing the entire request to fail.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import tomllib
 from pathlib import Path
@@ -28,6 +29,7 @@ from butlers.api.models import (
     ButlerDetail,
     ButlerSummary,
     ModuleInfo,
+    ModuleStatus,
     ScheduleEntry,
     SkillInfo,
 )
@@ -276,3 +278,112 @@ async def list_butler_skills(
     skills = _read_skills(butler_dir)
 
     return ApiResponse[list[SkillInfo]](data=skills)
+
+
+# ---------------------------------------------------------------------------
+# Module health endpoint
+# ---------------------------------------------------------------------------
+
+
+async def _get_module_health_via_mcp(
+    name: str,
+    mcp_manager: MCPClientManager,
+    module_names: list[str],
+) -> list[ModuleStatus]:
+    """Call the butler's MCP ``status()`` tool and extract per-module health."""
+    try:
+        client = await asyncio.wait_for(
+            mcp_manager.get_client(name),
+            timeout=_STATUS_TIMEOUT_S,
+        )
+        result = await asyncio.wait_for(
+            client.call_tool("status", {}),
+            timeout=_STATUS_TIMEOUT_S,
+        )
+
+        status_data: dict = {}
+        if result.content:
+            text = result.content[0].text if hasattr(result.content[0], "text") else ""
+            if text:
+                status_data = json.loads(text)
+
+        live_modules: set[str] = set(status_data.get("modules", []))
+        butler_health = status_data.get("health", "unknown")
+
+        modules: list[ModuleStatus] = []
+        for mod_name in module_names:
+            if mod_name in live_modules:
+                if butler_health == "ok":
+                    mod_status = "connected"
+                elif butler_health == "degraded":
+                    mod_status = "degraded"
+                else:
+                    mod_status = "unknown"
+            else:
+                mod_status = "error"
+                modules.append(
+                    ModuleStatus(
+                        name=mod_name,
+                        enabled=True,
+                        status=mod_status,
+                        error="Module configured but not loaded by butler",
+                    )
+                )
+                continue
+
+            modules.append(
+                ModuleStatus(name=mod_name, enabled=True, status=mod_status)
+            )
+
+        return modules
+
+    except (ButlerUnreachableError, TimeoutError):
+        return [
+            ModuleStatus(name=mod_name, enabled=True, status="unknown")
+            for mod_name in module_names
+        ]
+    except Exception:
+        logger.warning(
+            "Unexpected error fetching module health for butler %s",
+            name,
+            exc_info=True,
+        )
+        return [
+            ModuleStatus(name=mod_name, enabled=True, status="unknown")
+            for mod_name in module_names
+        ]
+
+
+@router.get("/{name}/modules", response_model=ApiResponse[list[ModuleStatus]])
+async def get_butler_modules(
+    name: str,
+    configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
+    mcp_manager: MCPClientManager = Depends(get_mcp_manager),
+    roster_dir: Path = Depends(_get_roster_dir),
+) -> ApiResponse[list[ModuleStatus]]:
+    """Return module list with health status for a single butler."""
+    connection_info: ButlerConnectionInfo | None = None
+    for cfg in configs:
+        if cfg.name == name:
+            connection_info = cfg
+            break
+
+    if connection_info is None:
+        raise HTTPException(status_code=404, detail=f"Butler not found: {name}")
+
+    butler_dir = roster_dir / name
+    try:
+        config = load_config(butler_dir)
+    except ConfigError:
+        raise HTTPException(status_code=404, detail=f"Butler not found: {name}")
+
+    module_names = list(config.modules.keys())
+
+    if not module_names:
+        return ApiResponse[list[ModuleStatus]](data=[])
+
+    module_statuses = await _get_module_health_via_mcp(
+        name, mcp_manager, module_names
+    )
+
+    return ApiResponse[list[ModuleStatus]](data=module_statuses)
