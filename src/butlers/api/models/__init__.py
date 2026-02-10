@@ -263,21 +263,44 @@ class ScheduleCost(BaseModel):
 
 from butlers.api.models.butler import ModuleStatus  # noqa: E402
 from butlers.api.models.notification import NotificationStats, NotificationSummary  # noqa: E402
+from butlers.api.models.relationship import (  # noqa: E402
+    ContactDetail,
+    ContactListResponse,
+    ContactSummary,
+    Gift,
+    Group,
+    GroupListResponse,
+    Interaction,
+    Label,
+    Loan,
+    Note,
+    UpcomingDate,
+)
 
 __all__ = [
     "ApiMeta",
     "ApiResponse",
     "ButlerConfigResponse",
+    "ContactDetail",
+    "ContactListResponse",
+    "ContactSummary",
     "CostSummary",
     "ButlerDetail",
     "ButlerSummary",
     "DailyCost",
     "ErrorDetail",
     "ErrorResponse",
+    "Gift",
+    "Group",
+    "GroupListResponse",
     "HealthResponse",
+    "Interaction",
     "Issue",
+    "Label",
+    "Loan",
     "ModuleInfo",
     "ModuleStatus",
+    "Note",
     "NotificationStats",
     "NotificationSummary",
     "PaginatedResponse",
@@ -290,4 +313,5 @@ __all__ = [
     "TopSession",
     "TriggerRequest",
     "TriggerResponse",
+    "UpcomingDate",
 ]
