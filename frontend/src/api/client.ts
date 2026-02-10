@@ -7,6 +7,7 @@
 import type {
   ApiResponse,
   ButlerConfigResponse,
+  ButlerSkill,
   ButlerSummary,
   CostSummary,
   DailyCost,
@@ -19,6 +20,7 @@ import type {
   PaginatedResponse,
   SessionSummary,
   TopSession,
+  TriggerResponse,
 } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -204,4 +206,33 @@ export function getDailyCosts(): Promise<ApiResponse<DailyCost[]>> {
 export function getTopSessions(limit?: number): Promise<ApiResponse<TopSession[]>> {
   const params = limit ? `?limit=${limit}` : "";
   return apiFetch<ApiResponse<TopSession[]>>(`/costs/top-sessions${params}`);
+}
+
+// ---------------------------------------------------------------------------
+// Skills
+// ---------------------------------------------------------------------------
+
+/** Fetch skills available to a specific butler. */
+export function getButlerSkills(name: string): Promise<ApiResponse<ButlerSkill[]>> {
+  return apiFetch<ApiResponse<ButlerSkill[]>>(
+    `/butlers/${encodeURIComponent(name)}/skills`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Trigger
+// ---------------------------------------------------------------------------
+
+/** Trigger a CC session for a specific butler. */
+export function triggerButler(
+  name: string,
+  prompt: string,
+): Promise<TriggerResponse> {
+  return apiFetch<TriggerResponse>(
+    `/butlers/${encodeURIComponent(name)}/trigger`,
+    {
+      method: "POST",
+      body: JSON.stringify({ prompt }),
+    },
+  );
 }

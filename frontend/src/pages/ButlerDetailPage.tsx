@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
 import { NotificationFeed } from "@/components/notifications/notification-feed";
@@ -14,7 +15,14 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useButlerNotifications } from "@/hooks/use-notifications";
 
-const TABS = ["overview", "sessions", "config", "skills"] as const;
+const ButlerSkillsTab = lazy(
+  () => import("@/components/butler-detail/ButlerSkillsTab.tsx"),
+);
+const ButlerTriggerTab = lazy(
+  () => import("@/components/butler-detail/ButlerTriggerTab.tsx"),
+);
+
+const TABS = ["overview", "sessions", "config", "skills", "trigger"] as const;
 type TabValue = (typeof TABS)[number];
 
 function isValidTab(value: string | null): value is TabValue {
@@ -54,6 +62,7 @@ export default function ButlerDetailPage() {
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
           <TabsTrigger value="config">Config</TabsTrigger>
           <TabsTrigger value="skills">Skills</TabsTrigger>
+          <TabsTrigger value="trigger">Trigger</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -116,17 +125,27 @@ export default function ButlerDetailPage() {
         </TabsContent>
 
         <TabsContent value="skills">
-          <Card>
-            <CardHeader>
-              <CardTitle>Skills</CardTitle>
-              <CardDescription>Skills available to this butler</CardDescription>
-            </CardHeader>
-            <CardContent>
+          <Suspense
+            fallback={
               <div className="text-muted-foreground flex items-center justify-center py-12 text-sm">
-                Coming soon
+                Loading skills...
               </div>
-            </CardContent>
-          </Card>
+            }
+          >
+            <ButlerSkillsTab butlerName={name} />
+          </Suspense>
+        </TabsContent>
+
+        <TabsContent value="trigger">
+          <Suspense
+            fallback={
+              <div className="text-muted-foreground flex items-center justify-center py-12 text-sm">
+                Loading trigger...
+              </div>
+            }
+          >
+            <ButlerTriggerTab butlerName={name} />
+          </Suspense>
         </TabsContent>
       </Tabs>
     </div>

@@ -4,7 +4,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { getButler, getButlerConfig, getButlers } from "@/api/index.ts";
+import { getButler, getButlerConfig, getButlerSkills, getButlers } from "@/api/index.ts";
 
 /** Fetch all butlers with live status. */
 export function useButlers() {
@@ -29,6 +29,15 @@ export function useButlerConfig(name: string) {
   return useQuery({
     queryKey: ["butlers", name, "config"],
     queryFn: () => getButlerConfig(name),
+    enabled: !!name,
+  });
+}
+
+/** Fetch skills available to a specific butler. */
+export function useButlerSkills(name: string) {
+  return useQuery({
+    queryKey: ["butlers", name, "skills"],
+    queryFn: () => getButlerSkills(name),
     enabled: !!name,
   });
 }

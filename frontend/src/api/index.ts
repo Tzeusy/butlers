@@ -7,6 +7,7 @@ export {
   apiFetch,
   getButler,
   getButlerConfig,
+  getButlerSkills,
   getCostSummary,
   getDailyCosts,
   getButlerNotifications,
@@ -18,12 +19,14 @@ export {
   getSession,
   getTopSessions,
   getSessions,
+  triggerButler,
 } from "./client.ts";
 
 export type {
   ApiMeta,
   ApiResponse,
   ButlerConfigResponse,
+  ButlerSkill,
   ButlerSummary,
   CostSummary,
   DailyCost,
@@ -38,4 +41,5 @@ export type {
   PaginationMeta,
   SessionSummary,
   TopSession,
+  TriggerResponse,
 } from "./types.ts";

@@ -183,3 +183,24 @@ export interface TopSession {
   model: string;
   started_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Skills
+// ---------------------------------------------------------------------------
+
+/** A skill available to a butler. */
+export interface ButlerSkill {
+  name: string;
+  content: string;
+}
+
+// ---------------------------------------------------------------------------
+// Trigger
+// ---------------------------------------------------------------------------
+
+/** Response from triggering a butler CC session. */
+export interface TriggerResponse {
+  session_id: string;
+  success: boolean;
+  output: string;
+}
