@@ -190,3 +190,119 @@ class TestPreprocessSearchQuery:
         query = '"exact phrase" -exclude OR alternative'
         result = preprocess_search_query(query)
         assert result == query
+
+    def test_tabs_and_newlines_collapsed(self) -> None:
+        """Tabs and newlines in queries are collapsed to single spaces."""
+        assert preprocess_search_query("hello\tworld\nfoo") == "hello world foo"
+
+    def test_multiple_nul_bytes(self) -> None:
+        """Multiple NUL bytes are all removed."""
+        assert preprocess_search_query("a\x00b\x00c") == "abc"
+
+    def test_whitespace_only_returns_empty(self) -> None:
+        """Whitespace-only query returns empty string after strip."""
+        assert preprocess_search_query("   \t\n  ") == ""
+
+    def test_unicode_query_preserved(self) -> None:
+        """Unicode characters in queries are preserved."""
+        query = "\u00fc\u00f1\u00ee\u00e7\u00f6\u00f0\u00e9 search"
+        assert preprocess_search_query(query) == query
+
+    def test_does_not_truncate_long_query(self) -> None:
+        """Search queries are not truncated (unlike preprocess_text)."""
+        long_query = "word " * 10000
+        result = preprocess_search_query(long_query)
+        # Should be collapsed but not truncated
+        assert result == "word " * 9999 + "word"
+
+
+# ---------------------------------------------------------------------------
+# Additional preprocess_text edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestPreprocessTextEdgeCases:
+    """Additional edge cases for preprocess_text()."""
+
+    def test_multiple_nul_bytes(self) -> None:
+        """Multiple NUL bytes scattered throughout are all removed."""
+        result = preprocess_text("a\x00b\x00c\x00d")
+        assert result == "abcd"
+
+    def test_nul_bytes_with_whitespace(self) -> None:
+        """NUL bytes adjacent to whitespace are handled correctly."""
+        result = preprocess_text("hello \x00 world")
+        assert result == "hello world"
+
+    def test_only_nul_bytes(self) -> None:
+        """A string of only NUL bytes should return empty string."""
+        result = preprocess_text("\x00\x00\x00")
+        assert result == ""
+
+    def test_mixed_whitespace_types(self) -> None:
+        """Various whitespace characters are all collapsed."""
+        result = preprocess_text("a\r\nb\r\nc\td\ve\ff")
+        assert result == "a b c d e f"
+
+    def test_exactly_at_byte_limit(self) -> None:
+        """Text exactly at MAX_TEXT_BYTES is not truncated."""
+        text = "a" * MAX_TEXT_BYTES
+        result = preprocess_text(text)
+        assert len(result.encode("utf-8")) == MAX_TEXT_BYTES
+
+    def test_single_char(self) -> None:
+        """Single character passes through."""
+        assert preprocess_text("x") == "x"
+
+    def test_two_byte_utf8_truncation(self) -> None:
+        """Truncation handles 2-byte UTF-8 characters correctly."""
+        # Latin small letter u with diaeresis is 2 bytes in UTF-8
+        char = "\u00fc"
+        count = MAX_TEXT_BYTES // 2 + 10
+        long_text = char * count
+        result = preprocess_text(long_text)
+        encoded = result.encode("utf-8")
+        assert len(encoded) <= MAX_TEXT_BYTES
+        # Result should be valid UTF-8
+        encoded.decode("utf-8")
+
+    def test_three_byte_utf8_truncation(self) -> None:
+        """Truncation handles 3-byte UTF-8 characters correctly."""
+        # CJK character is 3 bytes in UTF-8
+        char = "\u4e16"  # Chinese character for 'world'
+        count = MAX_TEXT_BYTES // 3 + 10
+        long_text = char * count
+        result = preprocess_text(long_text)
+        encoded = result.encode("utf-8")
+        assert len(encoded) <= MAX_TEXT_BYTES
+        encoded.decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# SQL helpers additional tests
+# ---------------------------------------------------------------------------
+
+
+class TestSqlHelpersEdgeCases:
+    """Additional tests for SQL generation helpers."""
+
+    def test_tsvector_sql_named_param(self) -> None:
+        """tsvector_sql handles named parameter-like strings."""
+        result = tsvector_sql("$10")
+        assert result == f"to_tsvector('{TS_CONFIG}', $10)"
+
+    def test_tsquery_sql_named_param(self) -> None:
+        result = tsquery_sql("$10")
+        assert result == f"plainto_tsquery('{TS_CONFIG}', $10)"
+
+    def test_websearch_tsquery_sql_named_param(self) -> None:
+        result = websearch_tsquery_sql("$10")
+        assert result == f"websearch_to_tsquery('{TS_CONFIG}', $10)"
+
+    def test_max_text_bytes_is_1mb(self) -> None:
+        """MAX_TEXT_BYTES should be 1 MB (1,048,576 bytes)."""
+        assert MAX_TEXT_BYTES == 1_048_576
+
+    def test_ts_config_constant(self) -> None:
+        """TS_CONFIG should be 'english'."""
+        assert TS_CONFIG == "english"

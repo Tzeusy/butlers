@@ -104,6 +104,102 @@ class TestDimension:
 
 
 # ---------------------------------------------------------------------------
+# Additional unit edge-case tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestNormalise:
+    """Test the _normalise static method edge cases."""
+
+    def test_normalise_none(self):
+        assert EmbeddingEngine._normalise(None) == " "
+
+    def test_normalise_empty_string(self):
+        assert EmbeddingEngine._normalise("") == " "
+
+    def test_normalise_whitespace_only(self):
+        assert EmbeddingEngine._normalise("   \t\n  ") == " "
+
+    def test_normalise_normal_text_passthrough(self):
+        assert EmbeddingEngine._normalise("hello world") == "hello world"
+
+    def test_normalise_integer_input(self):
+        """Non-string, non-None inputs should be normalised to a space."""
+        assert EmbeddingEngine._normalise(42) == " "
+
+    def test_normalise_list_input(self):
+        """Non-string, non-None inputs should be normalised to a space."""
+        assert EmbeddingEngine._normalise([1, 2, 3]) == " "
+
+    def test_normalise_preserves_non_empty_text(self):
+        text = "a short sentence"
+        assert EmbeddingEngine._normalise(text) == text
+
+
+@pytest.mark.unit
+class TestEmbedConsistency:
+    """Test that batch embedding results are consistent with single embed."""
+
+    def test_batch_of_one_matches_single_embed(self, engine):
+        """embed_batch(['text']) should produce same result as [embed('text')]."""
+        single = engine.embed("hello")
+        batch = engine.embed_batch(["hello"])
+        assert len(batch) == 1
+        assert len(single) == len(batch[0])
+        # Both should be lists of floats with the same length
+        assert all(isinstance(v, float) for v in batch[0])
+
+    def test_batch_preserves_order(self, engine):
+        """Results from embed_batch should maintain input order."""
+        texts = ["alpha", "beta", "gamma"]
+        result = engine.embed_batch(texts)
+        assert len(result) == 3
+        # Each result should be a 384-dim vector
+        for vec in result:
+            assert len(vec) == 384
+
+    def test_embed_long_text(self, engine):
+        """Very long text should still produce a 384-dim vector."""
+        long_text = "word " * 10000
+        result = engine.embed(long_text)
+        assert len(result) == 384
+        assert all(isinstance(v, float) for v in result)
+
+    def test_embed_unicode_text(self, engine):
+        """Unicode text should be handled without error."""
+        result = engine.embed("cafe\u0301 \u00fc\u00f1\u00ee\u00e7\u00f6\u00f0\u00e9")
+        assert len(result) == 384
+
+    def test_embed_batch_large(self, engine):
+        """A larger batch should work correctly."""
+        texts = [f"text number {i}" for i in range(50)]
+        result = engine.embed_batch(texts)
+        assert len(result) == 50
+        assert all(len(v) == 384 for v in result)
+
+
+@pytest.mark.unit
+class TestModelInit:
+    """Test EmbeddingEngine initialization."""
+
+    def test_default_model_name(self):
+        """Default model name should be all-MiniLM-L6-v2."""
+        assert _mod._MODEL_NAME == "all-MiniLM-L6-v2"
+
+    def test_default_embedding_dim(self):
+        """Default embedding dimension should be 384."""
+        assert _mod._EMBEDDING_DIM == 384
+
+    def test_custom_model_name_passed_to_transformer(self):
+        """EmbeddingEngine should pass custom model name to SentenceTransformer."""
+        with patch.object(_mod, "SentenceTransformer") as mock_cls:
+            mock_cls.return_value = MagicMock()
+            EmbeddingEngine(model_name="custom-model")
+            mock_cls.assert_called_once_with("custom-model")
+
+
+# ---------------------------------------------------------------------------
 # Integration tests -- load the real model (slow, needs download)
 # ---------------------------------------------------------------------------
 
