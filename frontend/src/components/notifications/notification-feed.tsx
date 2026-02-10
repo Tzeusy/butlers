@@ -1,0 +1,175 @@
+import { formatDistanceToNow } from "date-fns";
+
+import type { NotificationSummary } from "@/api/types";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
+
+export interface NotificationFeedProps {
+  notifications: NotificationSummary[];
+  isLoading?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Map notification status to badge variant + label. */
+function statusBadge(status: string) {
+  switch (status) {
+    case "sent":
+      return (
+        <Badge className="bg-emerald-600 text-white hover:bg-emerald-600/90">
+          Sent
+        </Badge>
+      );
+    case "failed":
+      return <Badge variant="destructive">Failed</Badge>;
+    case "pending":
+      return (
+        <Badge variant="outline" className="border-amber-500 text-amber-600">
+          Pending
+        </Badge>
+      );
+    default:
+      return <Badge variant="secondary">{status}</Badge>;
+  }
+}
+
+/** Map channel name to a styled badge. */
+function channelBadge(channel: string) {
+  return (
+    <Badge variant="secondary" className="capitalize">
+      {channel}
+    </Badge>
+  );
+}
+
+/** Truncate a message to a maximum character length. */
+function truncate(text: string, max = 60): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max) + "\u2026";
+}
+
+/** Format an ISO timestamp as a relative human-readable string. */
+function relativeTime(iso: string): string {
+  return formatDistanceToNow(new Date(iso), { addSuffix: true });
+}
+
+// ---------------------------------------------------------------------------
+// Loading skeleton
+// ---------------------------------------------------------------------------
+
+function LoadingSkeleton() {
+  const rows = Array.from({ length: 5 }, (_, i) => i);
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Status</TableHead>
+          <TableHead>Butler</TableHead>
+          <TableHead>Channel</TableHead>
+          <TableHead>Message</TableHead>
+          <TableHead className="text-right">Time</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((i) => (
+          <TableRow key={i}>
+            <TableCell>
+              <Skeleton className="h-5 w-14" />
+            </TableCell>
+            <TableCell>
+              <Skeleton className="h-4 w-24" />
+            </TableCell>
+            <TableCell>
+              <Skeleton className="h-5 w-16" />
+            </TableCell>
+            <TableCell>
+              <Skeleton className="h-4 w-48" />
+            </TableCell>
+            <TableCell className="text-right">
+              <Skeleton className="ml-auto h-4 w-20" />
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Empty state
+// ---------------------------------------------------------------------------
+
+function EmptyState() {
+  return (
+    <div className="text-muted-foreground flex flex-col items-center justify-center py-12 text-sm">
+      <p>No notifications yet.</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NotificationFeed
+// ---------------------------------------------------------------------------
+
+export function NotificationFeed({
+  notifications,
+  isLoading = false,
+}: NotificationFeedProps) {
+  if (isLoading) {
+    return <LoadingSkeleton />;
+  }
+
+  if (notifications.length === 0) {
+    return <EmptyState />;
+  }
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Status</TableHead>
+          <TableHead>Butler</TableHead>
+          <TableHead>Channel</TableHead>
+          <TableHead>Message</TableHead>
+          <TableHead className="text-right">Time</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {notifications.map((n) => (
+          <TableRow
+            key={n.id}
+            className={cn(n.status === "failed" && "bg-destructive/5")}
+          >
+            <TableCell>{statusBadge(n.status)}</TableCell>
+            <TableCell className="font-medium">{n.source_butler}</TableCell>
+            <TableCell>{channelBadge(n.channel)}</TableCell>
+            <TableCell
+              className="text-muted-foreground max-w-xs truncate"
+              title={n.message}
+            >
+              {truncate(n.message)}
+            </TableCell>
+            <TableCell className="text-muted-foreground text-right text-xs">
+              {relativeTime(n.created_at)}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
