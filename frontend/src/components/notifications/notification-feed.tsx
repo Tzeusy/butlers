@@ -1,8 +1,8 @@
 import { formatDistanceToNow } from "date-fns";
 
 import type { NotificationSummary } from "@/api/types";
+import { NotificationTableSkeleton } from "@/components/skeletons";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -69,48 +69,6 @@ function relativeTime(iso: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Loading skeleton
-// ---------------------------------------------------------------------------
-
-function LoadingSkeleton() {
-  const rows = Array.from({ length: 5 }, (_, i) => i);
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Status</TableHead>
-          <TableHead>Butler</TableHead>
-          <TableHead>Channel</TableHead>
-          <TableHead>Message</TableHead>
-          <TableHead className="text-right">Time</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {rows.map((i) => (
-          <TableRow key={i}>
-            <TableCell>
-              <Skeleton className="h-5 w-14" />
-            </TableCell>
-            <TableCell>
-              <Skeleton className="h-4 w-24" />
-            </TableCell>
-            <TableCell>
-              <Skeleton className="h-5 w-16" />
-            </TableCell>
-            <TableCell>
-              <Skeleton className="h-4 w-48" />
-            </TableCell>
-            <TableCell className="text-right">
-              <Skeleton className="ml-auto h-4 w-20" />
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Empty state
 // ---------------------------------------------------------------------------
 
@@ -131,7 +89,7 @@ export function NotificationFeed({
   isLoading = false,
 }: NotificationFeedProps) {
   if (isLoading) {
-    return <LoadingSkeleton />;
+    return <NotificationTableSkeleton />;
   }
 
   if (notifications.length === 0) {

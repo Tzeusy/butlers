@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Skeleton } from "@/components/ui/skeleton"
+import { StatsSkeleton } from "@/components/skeletons"
 import type { NotificationStats } from "@/api/types"
 import { Bell, CheckCircle, XCircle, Percent } from "lucide-react"
 
@@ -9,29 +9,9 @@ interface NotificationStatsBarProps {
   isLoading?: boolean
 }
 
-function StatCardSkeleton() {
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <Skeleton className="h-4 w-24" />
-      </CardHeader>
-      <CardContent>
-        <Skeleton className="h-8 w-16" />
-      </CardContent>
-    </Card>
-  )
-}
-
 export function NotificationStatsBar({ stats, isLoading }: NotificationStatsBarProps) {
   if (isLoading) {
-    return (
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <StatCardSkeleton />
-        <StatCardSkeleton />
-        <StatCardSkeleton />
-        <StatCardSkeleton />
-      </div>
-    )
+    return <StatsSkeleton count={4} />
   }
 
   const total = stats?.total ?? 0

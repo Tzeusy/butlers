@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 
 import { NotificationFeed } from "@/components/notifications/notification-feed";
+import { NotificationTableSkeleton } from "@/components/skeletons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,14 +46,16 @@ export default function DashboardPage() {
           </CardAction>
         </CardHeader>
         <CardContent>
-          {!failedLoading && failedNotifications.length === 0 ? (
+          {failedLoading ? (
+            <NotificationTableSkeleton rows={5} />
+          ) : failedNotifications.length === 0 ? (
             <div className="text-muted-foreground flex flex-col items-center justify-center py-8 text-sm">
               <p>No failed notifications. All systems healthy.</p>
             </div>
           ) : (
             <NotificationFeed
               notifications={failedNotifications}
-              isLoading={failedLoading}
+              isLoading={false}
             />
           )}
         </CardContent>

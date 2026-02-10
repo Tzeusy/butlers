@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { NotificationParams } from "@/api/types";
 import { NotificationFeed } from "@/components/notifications/notification-feed";
 import { NotificationStatsBar } from "@/components/notifications/notification-stats-bar";
+import { NotificationTableSkeleton } from "@/components/skeletons";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -241,10 +242,14 @@ export default function NotificationsPage() {
       {/* Notification feed */}
       <Card>
         <CardContent>
-          <NotificationFeed
-            notifications={notifications}
-            isLoading={notificationsLoading}
-          />
+          {notificationsLoading ? (
+            <NotificationTableSkeleton rows={10} />
+          ) : (
+            <NotificationFeed
+              notifications={notifications}
+              isLoading={false}
+            />
+          )}
         </CardContent>
       </Card>
 
