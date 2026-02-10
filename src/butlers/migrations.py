@@ -25,8 +25,8 @@ ROSTER_DIR = Path(__file__).resolve().parent.parent.parent / "roster"
 # Root of the modules directory (src/butlers/modules/)
 MODULES_DIR = Path(__file__).resolve().parent / "modules"
 
-# Shared chains that live in alembic/versions/ (core infra only)
-_SHARED_CHAINS = ["core"]
+# Shared chains: always included regardless of butler identity
+_SHARED_CHAINS = ["core", "memory"]
 
 
 def _discover_module_chains() -> list[str]:
@@ -113,10 +113,14 @@ def get_all_chains() -> list[str]:
     """Return all recognized version chains (shared + module + butler-specific).
 
     Shared chains are listed first, followed by module chains, then dynamically
-    discovered butler-specific chains.
+    discovered butler-specific chains.  Shared chain names are excluded from the
+    module/butler discovery results to avoid duplicates.
     """
-    shared = [c for c in _SHARED_CHAINS if (ALEMBIC_DIR / "versions" / c).is_dir()]
-    return shared + _discover_module_chains() + _discover_butler_chains()
+    shared = [c for c in _SHARED_CHAINS if _resolve_chain_dir(c) is not None]
+    shared_set = set(shared)
+    modules = [c for c in _discover_module_chains() if c not in shared_set]
+    butlers = [c for c in _discover_butler_chains() if c not in shared_set]
+    return shared + modules + butlers
 
 
 def _build_alembic_config(db_url: str, chains: list[str] | None = None) -> Config:
