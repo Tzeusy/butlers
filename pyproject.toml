@@ -40,5 +40,10 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
+[tool.ruff.lint.isort]
+# Butler-specific tools are dynamically loaded from butlers/<name>/tools.py
+# at runtime, but ruff can't detect them as first-party without this hint.
+known-first-party = ["butlers"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
