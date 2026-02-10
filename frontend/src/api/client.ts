@@ -21,6 +21,7 @@ import type {
   Schedule,
   ScheduleCreate,
   ScheduleUpdate,
+  SearchResults,
   SessionDetail,
   SessionParams,
   SessionSummary,
@@ -379,6 +380,17 @@ export function triggerButler(
       body: JSON.stringify({ prompt }),
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/** Search across all butlers for sessions, state, and other entities. */
+export function searchAll(query: string, limit?: number): Promise<ApiResponse<SearchResults>> {
+  const sp = new URLSearchParams({ q: query });
+  if (limit) sp.set("limit", String(limit));
+  return apiFetch<ApiResponse<SearchResults>>(`/search?${sp.toString()}`);
 }
 
 // ---------------------------------------------------------------------------
