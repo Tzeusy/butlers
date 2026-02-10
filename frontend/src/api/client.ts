@@ -27,6 +27,9 @@ import type {
   StateEntry,
   StateSetRequest,
   TopSession,
+  TraceDetail,
+  TraceParams,
+  TraceSummary,
   TriggerResponse,
 } from "./types.ts";
 
@@ -375,5 +378,28 @@ export function triggerButler(
       method: "POST",
       body: JSON.stringify({ prompt }),
     },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Traces
+// ---------------------------------------------------------------------------
+
+/** Fetch a paginated list of traces across all butlers. */
+export function getTraces(
+  params?: TraceParams,
+): Promise<PaginatedResponse<TraceSummary>> {
+  const sp = new URLSearchParams();
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  const qs = sp.toString();
+  const path = qs ? `/traces?${qs}` : "/traces";
+  return apiFetch<PaginatedResponse<TraceSummary>>(path);
+}
+
+/** Fetch a single trace by ID. */
+export function getTrace(traceId: string): Promise<ApiResponse<TraceDetail>> {
+  return apiFetch<ApiResponse<TraceDetail>>(
+    `/traces/${encodeURIComponent(traceId)}`,
   );
 }

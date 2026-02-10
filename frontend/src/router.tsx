@@ -5,6 +5,8 @@ import ButlersPage from './pages/ButlersPage.tsx'
 import ButlerDetailPage from './pages/ButlerDetailPage.tsx'
 import SessionsPage from './pages/SessionsPage.tsx'
 import SessionDetailPage from './pages/SessionDetailPage.tsx'
+import TracesPage from './pages/TracesPage.tsx'
+import TraceDetailPage from './pages/TraceDetailPage.tsx'
 import NotificationsPage from './pages/NotificationsPage.tsx'
 import CostsPage from './pages/CostsPage.tsx'
 import SettingsPage from './pages/SettingsPage.tsx'
@@ -18,6 +20,8 @@ export const router = createBrowserRouter([
       { path: '/butlers/:name', element: <ButlerDetailPage /> },
       { path: '/sessions', element: <SessionsPage /> },
       { path: '/sessions/:id', element: <SessionDetailPage /> },
+      { path: '/traces', element: <TracesPage /> },
+      { path: '/traces/:traceId', element: <TraceDetailPage /> },
       { path: '/notifications', element: <NotificationsPage /> },
       { path: '/costs', element: <CostsPage /> },
       { path: '/settings', element: <SettingsPage /> },
