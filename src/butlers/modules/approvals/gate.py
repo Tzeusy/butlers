@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from butlers.config import ApprovalConfig
+from butlers.modules.approvals.executor import execute_approved_action
 from butlers.modules.approvals.models import ActionStatus
 
 logger = logging.getLogger(__name__)
@@ -215,45 +216,35 @@ def _make_gate_wrapper(
         matching_rule = match_standing_rule(tool_name, tool_args, rules)
 
         if matching_rule is not None:
-            # Auto-approve path: persist the action, execute, and log
+            # Auto-approve path: persist the action, execute via executor, log
             rule_id = matching_rule["id"]
 
-            # Persist the action as executed (with approval_rule_id)
+            # Persist the action with approval_rule_id and decided_by
             await pool.execute(
                 "INSERT INTO pending_actions "
                 "(id, tool_name, tool_args, agent_summary, session_id, status, "
-                "requested_at, expires_at) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                "requested_at, expires_at, approval_rule_id, decided_by) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
                 action_id,
                 tool_name,
                 json.dumps(tool_args),
                 agent_summary,
                 None,  # session_id
-                ActionStatus.PENDING.value,
+                ActionStatus.APPROVED.value,
                 now,
                 expires_at,
-            )
-
-            # Execute the original tool
-            result = await original_fn(**kwargs)
-
-            # Update to executed with approval_rule_id
-            await pool.execute(
-                "UPDATE pending_actions SET status = $1, approval_rule_id = $2, "
-                "decided_by = $3, decided_at = $4 WHERE id = $5",
-                ActionStatus.EXECUTED.value,
                 rule_id,
                 f"rule:{rule_id}",
-                datetime.now(UTC),
-                action_id,
             )
 
-            # Increment rule use_count
-            new_count = matching_rule.get("use_count", 0) + 1
-            await pool.execute(
-                "UPDATE approval_rules SET use_count = $1 WHERE id = $2",
-                new_count,
-                rule_id,
+            # Execute via the shared executor (handles DB update + use_count)
+            exec_result = await execute_approved_action(
+                pool=pool,
+                action_id=action_id,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_fn=original_fn,
+                approval_rule_id=rule_id,
             )
 
             logger.info(
@@ -263,7 +254,9 @@ def _make_gate_wrapper(
                 rule_id,
             )
 
-            return result
+            if exec_result.success:
+                return exec_result.result or {}
+            return {"error": exec_result.error}
 
         # No matching rule — park the action
         await pool.execute(
