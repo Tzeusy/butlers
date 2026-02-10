@@ -2,7 +2,18 @@
  * Public API surface — re-exports from client and types.
  */
 
-export { ApiError, apiFetch, getButler, getButlers, getHealth, getSession, getSessions } from "./client.ts";
+export {
+  ApiError,
+  apiFetch,
+  getButler,
+  getButlerNotifications,
+  getButlers,
+  getHealth,
+  getNotifications,
+  getNotificationStats,
+  getSession,
+  getSessions,
+} from "./client.ts";
 
 export type {
   ApiMeta,
@@ -11,6 +22,9 @@ export type {
   ErrorDetail,
   ErrorResponse,
   HealthResponse,
+  NotificationParams,
+  NotificationStats,
+  NotificationSummary,
   PaginatedResponse,
   PaginationMeta,
   SessionSummary,

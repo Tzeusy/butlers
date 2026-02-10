@@ -9,6 +9,9 @@ import type {
   ButlerSummary,
   ErrorResponse,
   HealthResponse,
+  NotificationParams,
+  NotificationStats,
+  NotificationSummary,
   PaginatedResponse,
   SessionSummary,
 } from "./types.ts";
@@ -117,4 +120,46 @@ export function getSessions(
 /** Fetch a single session by ID. */
 export function getSession(id: string): Promise<ApiResponse<SessionSummary>> {
   return apiFetch<ApiResponse<SessionSummary>>(`/sessions/${encodeURIComponent(id)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+/** Build a URLSearchParams from notification query parameters. */
+function notificationSearchParams(params?: NotificationParams): URLSearchParams {
+  const sp = new URLSearchParams();
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  if (params?.butler != null) sp.set("butler", params.butler);
+  if (params?.channel != null) sp.set("channel", params.channel);
+  if (params?.status != null) sp.set("status", params.status);
+  if (params?.since != null) sp.set("since", params.since);
+  if (params?.until != null) sp.set("until", params.until);
+  return sp;
+}
+
+/** Fetch a paginated list of notifications across all butlers. */
+export function getNotifications(
+  params?: NotificationParams,
+): Promise<PaginatedResponse<NotificationSummary>> {
+  const qs = notificationSearchParams(params).toString();
+  const path = qs ? `/notifications?${qs}` : "/notifications";
+  return apiFetch<PaginatedResponse<NotificationSummary>>(path);
+}
+
+/** Fetch aggregate notification statistics. */
+export function getNotificationStats(): Promise<ApiResponse<NotificationStats>> {
+  return apiFetch<ApiResponse<NotificationStats>>("/notifications/stats");
+}
+
+/** Fetch notifications for a specific butler. */
+export function getButlerNotifications(
+  name: string,
+  params?: NotificationParams,
+): Promise<PaginatedResponse<NotificationSummary>> {
+  const qs = notificationSearchParams(params).toString();
+  const base = `/butlers/${encodeURIComponent(name)}/notifications`;
+  const path = qs ? `${base}?${qs}` : base;
+  return apiFetch<PaginatedResponse<NotificationSummary>>(path);
 }

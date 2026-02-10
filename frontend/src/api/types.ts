@@ -75,3 +75,42 @@ export interface SessionSummary {
 export interface HealthResponse {
   status: string;
 }
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+/** Lightweight notification representation for list views. */
+export interface NotificationSummary {
+  id: string;
+  source_butler: string;
+  channel: string;
+  recipient: string;
+  message: string;
+  metadata: Record<string, unknown> | null;
+  status: string;
+  error: string | null;
+  session_id: string | null;
+  trace_id: string | null;
+  created_at: string;
+}
+
+/** Aggregate notification statistics. */
+export interface NotificationStats {
+  total: number;
+  sent: number;
+  failed: number;
+  by_channel: Record<string, number>;
+  by_butler: Record<string, number>;
+}
+
+/** Query parameters for notification list endpoints. */
+export interface NotificationParams {
+  offset?: number;
+  limit?: number;
+  butler?: string;
+  channel?: string;
+  status?: string;
+  since?: string;
+  until?: string;
+}
