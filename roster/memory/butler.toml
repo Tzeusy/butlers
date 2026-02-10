@@ -1,0 +1,58 @@
+[butler]
+name = "memory"
+port = 8150
+description = "Shared institutional memory — stores, searches, consolidates, and maintains knowledge across all butlers"
+
+[butler.db]
+name = "butler_memory"
+
+[[butler.schedule]]
+name = "consolidate"
+cron = "*/30 * * * *"
+prompt = """
+Run memory consolidation. Fetch all unconsolidated episodes, group by source butler,
+and extract new facts, updated facts, new rules, and confirmations. Mark processed
+episodes as consolidated.
+"""
+
+[[butler.schedule]]
+name = "decay-sweep"
+cron = "0 3 * * *"
+prompt = """
+Run confidence decay sweep. For all active facts and rules, compute effective confidence.
+Flag memories with effective_confidence < 0.2 as fading. Expire memories with
+effective_confidence < 0.05. Invert rules marked harmful 3+ times with low effectiveness
+into anti-patterns. Log sweep results.
+"""
+
+[[butler.schedule]]
+name = "episode-cleanup"
+cron = "0 4 * * 0"
+prompt = """
+Run episode cleanup. Delete expired episodes (expires_at < now). If episode count exceeds
+the max_entries limit, delete the oldest consolidated episodes first. Never delete
+unconsolidated episodes that have not expired.
+"""
+
+[butler.memory]
+embedding_model = "all-MiniLM-L6-v2"
+embedding_dimensions = 384
+
+[butler.memory.episodes]
+default_ttl_days = 7
+max_entries = 10000
+
+[butler.memory.facts]
+retrieval_confidence_threshold = 0.2
+expiry_confidence_threshold = 0.05
+
+[butler.memory.rules]
+promote_to_established = { min_successes = 5, min_effectiveness = 0.6 }
+promote_to_proven = { min_successes = 15, min_effectiveness = 0.8, min_age_days = 30 }
+harmful_to_antipattern = { min_harmful = 3, max_effectiveness = 0.3 }
+
+[butler.memory.retrieval]
+default_limit = 20
+default_mode = "hybrid"
+context_token_budget = 3000
+score_weights = { relevance = 0.4, importance = 0.3, recency = 0.2, confidence = 0.1 }
