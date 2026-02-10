@@ -1,0 +1,38 @@
+import { useEffect, useState } from 'react'
+
+type Theme = 'light' | 'dark' | 'system'
+
+function getSystemTheme(): 'light' | 'dark' {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+export function useDarkMode() {
+  const [theme, setTheme] = useState<Theme>(() => {
+    const stored = localStorage.getItem('theme')
+    if (stored === 'light' || stored === 'dark' || stored === 'system') return stored
+    return 'system'
+  })
+
+  const resolvedTheme = theme === 'system' ? getSystemTheme() : theme
+
+  useEffect(() => {
+    const root = document.documentElement
+    if (resolvedTheme === 'dark') {
+      root.classList.add('dark')
+    } else {
+      root.classList.remove('dark')
+    }
+    localStorage.setItem('theme', theme)
+  }, [theme, resolvedTheme])
+
+  // Listen for system preference changes when in system mode
+  useEffect(() => {
+    if (theme !== 'system') return
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = () => setTheme('system') // re-trigger effect
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [theme])
+
+  return { theme, setTheme, resolvedTheme }
+}
