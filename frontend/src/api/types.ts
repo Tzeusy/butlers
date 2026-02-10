@@ -351,6 +351,33 @@ export interface StateSetRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/** A single search result from the global search endpoint. */
+export interface SearchResult {
+  id: string;
+  butler: string;
+  type: string;
+  title: string;
+  snippet: string;
+  url: string;
+}
+
+/** Grouped search results keyed by category. */
+export interface SearchResults {
+  sessions: SearchResult[];
+  state: SearchResult[];
+  [key: string]: SearchResult[];
+}
+
+/** Query parameters for the search endpoint. */
+export interface SearchParams {
+  q: string;
+  limit?: number;
+}
+
+// ---------------------------------------------------------------------------
 // Skills
 // ---------------------------------------------------------------------------
 
