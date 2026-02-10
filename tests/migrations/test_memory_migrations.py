@@ -166,3 +166,79 @@ class TestRulesMigration:
         source = inspect.getsource(mod.downgrade)
         assert "DROP TABLE" in source
         assert "rules" in source
+
+
+# ── 004_create_memory_links ──────────────────────────────────────────────
+
+MEMORY_LINKS_FILE = MIGRATION_DIR / "004_create_memory_links.py"
+
+
+def _load_memory_links():
+    return _load_migration("004_create_memory_links.py", "migration_004")
+
+
+def test_004_file_exists():
+    """The 004_create_memory_links migration file exists on disk."""
+    assert MEMORY_LINKS_FILE.exists(), f"Migration file not found at {MEMORY_LINKS_FILE}"
+
+
+def test_004_revision_identifiers():
+    """Migration 004 has correct revision chain."""
+    mod = _load_memory_links()
+    assert mod.revision == "004"
+    assert mod.down_revision == "003"
+    assert mod.depends_on is None
+
+
+def test_004_upgrade_function_exists():
+    """Migration 004 has an upgrade() function."""
+    mod = _load_memory_links()
+    assert hasattr(mod, "upgrade")
+    assert callable(mod.upgrade)
+
+
+def test_004_downgrade_function_exists():
+    """Migration 004 has a downgrade() function."""
+    mod = _load_memory_links()
+    assert hasattr(mod, "downgrade")
+    assert callable(mod.downgrade)
+
+
+def test_004_upgrade_creates_memory_links_table():
+    """The upgrade SQL contains the memory_links table definition."""
+    mod = _load_memory_links()
+    source = inspect.getsource(mod.upgrade)
+    assert "memory_links" in source
+    assert "source_type" in source
+    assert "source_id" in source
+    assert "target_type" in source
+    assert "target_id" in source
+    assert "relation" in source
+    assert "created_at" in source
+    assert "PRIMARY KEY" in source
+
+
+def test_004_upgrade_has_check_constraint():
+    """The upgrade SQL contains a CHECK constraint for valid relation values."""
+    mod = _load_memory_links()
+    source = inspect.getsource(mod.upgrade)
+    assert "CHECK" in source
+    for relation in ("derived_from", "supports", "contradicts", "supersedes", "related_to"):
+        assert relation in source, f"Missing relation value: {relation}"
+
+
+def test_004_upgrade_has_target_index():
+    """The upgrade SQL creates an index on (target_type, target_id)."""
+    mod = _load_memory_links()
+    source = inspect.getsource(mod.upgrade)
+    assert "idx_memory_links_target" in source
+    assert "target_type" in source
+    assert "target_id" in source
+
+
+def test_004_downgrade_drops_table():
+    """The downgrade SQL drops the memory_links table."""
+    mod = _load_memory_links()
+    source = inspect.getsource(mod.downgrade)
+    assert "DROP TABLE" in source
+    assert "memory_links" in source
