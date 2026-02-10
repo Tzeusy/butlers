@@ -19,7 +19,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 
 from butlers.api.middleware import register_error_handlers
-from butlers.api.routers.notifications import router as notifications_router
+from butlers.api.routers.notifications import (
+    butler_notifications_router,
+)
+from butlers.api.routers.notifications import (
+    router as notifications_router,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +77,10 @@ def create_app(
     )
 
     register_error_handlers(app)
-    app.include_router(notifications_router)
 
     # --- Routers ---
     app.include_router(notifications_router)
+    app.include_router(butler_notifications_router)
 
     @app.get("/api/health")
     async def health():

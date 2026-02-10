@@ -1,7 +1,12 @@
-"""Notification history endpoint — paginated, filterable notification log.
+"""Notification history endpoints — paginated, filterable notification log.
 
 Queries the Switchboard butler's ``notifications`` table and returns results
 in the standard ``PaginatedResponse`` envelope.
+
+Provides two routers:
+
+- ``router`` — cross-butler endpoint at ``/api/notifications``
+- ``butler_notifications_router`` — butler-scoped at ``/api/butlers/{name}/notifications``
 """
 
 from __future__ import annotations
@@ -9,6 +14,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+import asyncpg
 from fastapi import APIRouter, Depends, Query
 
 from butlers.api.db import DatabaseManager
@@ -18,6 +24,9 @@ from butlers.api.models.notification import NotificationStats, NotificationSumma
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
+butler_notifications_router = APIRouter(
+    prefix="/api/butlers", tags=["butlers", "notifications"]
+)
 
 
 def _get_db_manager() -> DatabaseManager:
@@ -25,24 +34,26 @@ def _get_db_manager() -> DatabaseManager:
     raise RuntimeError("DatabaseManager not initialized")
 
 
-@router.get("/", response_model=PaginatedResponse[NotificationSummary])
-async def list_notifications(
-    offset: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(50, ge=1, le=200, description="Max records to return"),
-    butler: str | None = Query(None, description="Filter by source butler name"),
-    channel: str | None = Query(None, description="Filter by delivery channel"),
-    status: str | None = Query(None, description="Filter by status (sent/failed/pending)"),
-    since: datetime | None = Query(None, description="Only notifications created after this time"),
-    until: datetime | None = Query(None, description="Only notifications created before this time"),
-    db: DatabaseManager = Depends(_get_db_manager),
+# ---------------------------------------------------------------------------
+# Shared query logic
+# ---------------------------------------------------------------------------
+
+
+async def _query_notifications(
+    pool: asyncpg.Pool,
+    *,
+    offset: int,
+    limit: int,
+    butler: str | None = None,
+    channel: str | None = None,
+    status: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
 ) -> PaginatedResponse[NotificationSummary]:
-    """Return paginated notification history from the Switchboard database.
+    """Build and execute the paginated notification query.
 
-    Supports filtering by butler, channel, status, and date range.
-    Results are ordered by ``created_at DESC`` (newest first).
+    Shared by both the cross-butler and butler-scoped endpoints.
     """
-    pool = db.pool("switchboard")
-
     # Build dynamic WHERE clause
     conditions: list[str] = []
     args: list[object] = []
@@ -112,6 +123,77 @@ async def list_notifications(
     return PaginatedResponse[NotificationSummary](
         data=notifications,
         meta=PaginationMeta(total=total, offset=offset, limit=limit),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cross-butler endpoint: GET /api/notifications/
+# ---------------------------------------------------------------------------
+
+
+@router.get("/", response_model=PaginatedResponse[NotificationSummary])
+async def list_notifications(
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(50, ge=1, le=200, description="Max records to return"),
+    butler: str | None = Query(None, description="Filter by source butler name"),
+    channel: str | None = Query(None, description="Filter by delivery channel"),
+    status: str | None = Query(None, description="Filter by status (sent/failed/pending)"),
+    since: datetime | None = Query(None, description="Only notifications created after this time"),
+    until: datetime | None = Query(None, description="Only notifications created before this time"),
+    db: DatabaseManager = Depends(_get_db_manager),
+) -> PaginatedResponse[NotificationSummary]:
+    """Return paginated notification history from the Switchboard database.
+
+    Supports filtering by butler, channel, status, and date range.
+    Results are ordered by ``created_at DESC`` (newest first).
+    """
+    pool = db.pool("switchboard")
+    return await _query_notifications(
+        pool,
+        offset=offset,
+        limit=limit,
+        butler=butler,
+        channel=channel,
+        status=status,
+        since=since,
+        until=until,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Butler-scoped endpoint: GET /api/butlers/{name}/notifications
+# ---------------------------------------------------------------------------
+
+
+@butler_notifications_router.get(
+    "/{name}/notifications",
+    response_model=PaginatedResponse[NotificationSummary],
+)
+async def list_butler_notifications(
+    name: str,
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(50, ge=1, le=200, description="Max records to return"),
+    channel: str | None = Query(None, description="Filter by delivery channel"),
+    status: str | None = Query(None, description="Filter by status (sent/failed/pending)"),
+    since: datetime | None = Query(None, description="Only notifications created after this time"),
+    until: datetime | None = Query(None, description="Only notifications created before this time"),
+    db: DatabaseManager = Depends(_get_db_manager),
+) -> PaginatedResponse[NotificationSummary]:
+    """Return paginated notifications for a specific butler.
+
+    Identical to ``GET /api/notifications`` but with ``source_butler``
+    pre-filtered to the butler identified by *name* in the URL path.
+    """
+    pool = db.pool("switchboard")
+    return await _query_notifications(
+        pool,
+        offset=offset,
+        limit=limit,
+        butler=name,
+        channel=channel,
+        status=status,
+        since=since,
+        until=until,
     )
 
 
