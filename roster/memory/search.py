@@ -455,3 +455,104 @@ async def recall(
         )
 
     return scored
+
+
+# ---------------------------------------------------------------------------
+# General-purpose search
+# ---------------------------------------------------------------------------
+
+_VALID_SEARCH_MODES = frozenset({"semantic", "keyword", "hybrid"})
+_VALID_SEARCH_TYPES = frozenset({"episode", "fact", "rule"})
+_TYPE_TO_TABLE: dict[str, str] = {"episode": "episodes", "fact": "facts", "rule": "rules"}
+
+
+async def search(
+    pool: Pool,
+    query: str,
+    embedding_engine,
+    *,
+    types: list[str] | None = None,
+    scope: str | None = None,
+    mode: str = "hybrid",
+    limit: int = 10,
+    min_confidence: float = 0.0,
+) -> list[dict]:
+    """General-purpose search across memory types.
+
+    Supports three search modes:
+    - 'hybrid' (default): Combined semantic + keyword via RRF
+    - 'semantic': Vector similarity only
+    - 'keyword': Full-text search only
+
+    Args:
+        pool: asyncpg connection pool.
+        query: Search query text.
+        embedding_engine: EmbeddingEngine for embedding (used in semantic/hybrid).
+        types: Memory types to search ('episode', 'fact', 'rule'). Defaults to all.
+        scope: Optional scope filter.
+        mode: Search mode ('semantic', 'keyword', 'hybrid').
+        limit: Max results per type (default 10).
+        min_confidence: Minimum confidence filter (default 0.0).
+
+    Returns:
+        List of dicts with 'memory_type' added, sorted by relevance.
+
+    Raises:
+        ValueError: If mode or types are invalid.
+    """
+    if mode not in _VALID_SEARCH_MODES:
+        raise ValueError(
+            f"Invalid mode: {mode!r}. Must be one of {sorted(_VALID_SEARCH_MODES)}"
+        )
+
+    if types is None:
+        types = list(_VALID_SEARCH_TYPES)
+    else:
+        for t in types:
+            if t not in _VALID_SEARCH_TYPES:
+                raise ValueError(
+                    f"Invalid type: {t!r}. Must be one of {sorted(_VALID_SEARCH_TYPES)}"
+                )
+
+    all_results: list[dict] = []
+
+    # Embed once for semantic/hybrid modes
+    query_embedding = None
+    if mode in ("semantic", "hybrid"):
+        query_embedding = embedding_engine.embed(query)
+
+    for mem_type in types:
+        table = _TYPE_TO_TABLE[mem_type]
+
+        if mode == "semantic":
+            results = await semantic_search(
+                pool, query_embedding, table, limit=limit, scope=scope
+            )
+        elif mode == "keyword":
+            results = await keyword_search(
+                pool, query, table, limit=limit, scope=scope
+            )
+        else:  # hybrid
+            results = await hybrid_search(
+                pool, query, query_embedding, table, limit=limit, scope=scope
+            )
+
+        # Tag with memory type
+        for r in results:
+            r["memory_type"] = mem_type
+
+        # Filter by confidence if applicable
+        if min_confidence > 0:
+            results = [r for r in results if r.get("confidence", 1.0) >= min_confidence]
+
+        all_results.extend(results)
+
+    # Sort by the relevant score field
+    if mode == "semantic":
+        all_results.sort(key=lambda r: -r.get("similarity", 0))
+    elif mode == "keyword":
+        all_results.sort(key=lambda r: -r.get("rank", 0))
+    else:
+        all_results.sort(key=lambda r: -r.get("rrf_score", 0))
+
+    return all_results[:limit]
