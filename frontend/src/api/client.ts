@@ -17,6 +17,7 @@ import type {
   NotificationSummary,
   PaginatedResponse,
   SessionSummary,
+  TopSession,
 } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -189,4 +190,10 @@ export function getCostSummary(period?: string): Promise<ApiResponse<CostSummary
 /** Fetch daily cost breakdown. */
 export function getDailyCosts(): Promise<ApiResponse<DailyCost[]>> {
   return apiFetch<ApiResponse<DailyCost[]>>("/costs/daily");
+}
+
+/** Fetch most expensive sessions. */
+export function getTopSessions(limit?: number): Promise<ApiResponse<TopSession[]>> {
+  const params = limit ? `?limit=${limit}` : "";
+  return apiFetch<ApiResponse<TopSession[]>>(`/costs/top-sessions${params}`);
 }

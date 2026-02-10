@@ -15,6 +15,7 @@ export {
   getNotifications,
   getNotificationStats,
   getSession,
+  getTopSessions,
   getSessions,
 } from "./client.ts";
 
@@ -34,4 +35,5 @@ export type {
   PaginatedResponse,
   PaginationMeta,
   SessionSummary,
+  TopSession,
 } from "./types.ts";
