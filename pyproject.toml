@@ -51,3 +51,7 @@ testpaths = ["tests", "butlers"]
 # importlib mode avoids module-name collisions when multiple butler test
 # directories contain identically-named files (e.g. test_tools.py).
 addopts = "--import-mode=importlib"
+markers = [
+    "unit: Pure unit tests — no Docker, no external services",
+    "integration: Integration tests — require Docker (testcontainers)",
+]
