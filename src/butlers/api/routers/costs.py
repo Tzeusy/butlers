@@ -124,10 +124,70 @@ async def get_daily_costs() -> ApiResponse[list[DailyCost]]:
     return ApiResponse[list[DailyCost]](data=[])
 
 
-@router.get("/top-sessions", response_model=ApiResponse[list[TopSession]])
-async def get_top_sessions() -> ApiResponse[list[TopSession]]:
-    """Return most expensive sessions.
 
-    Note: Returns empty list until database integration is complete.
+
+async def _get_butler_top_sessions(
+    mgr: MCPClientManager,
+    info: ButlerConnectionInfo,
+    pricing: PricingConfig,
+    limit: int,
+) -> list[TopSession]:
+    """Query a single butler for its most expensive sessions.
+
+    Returns a list of TopSession records with costs calculated from pricing config.
+    Falls back to empty list when the butler is unreachable or returns bad data.
     """
-    return ApiResponse[list[TopSession]](data=[])
+    try:
+        client = await asyncio.wait_for(mgr.get_client(info.name), timeout=_STATUS_TIMEOUT_S)
+        result = await asyncio.wait_for(
+            client.call_tool("top_sessions", {"limit": limit}),
+            timeout=_STATUS_TIMEOUT_S,
+        )
+        if result.content:
+            text = result.content[0].text if hasattr(result.content[0], "text") else ""
+            if text:
+                data = json.loads(text)
+                sessions: list[TopSession] = []
+                for s in data.get("sessions", []):
+                    model_id = s.get("model", "")
+                    input_tokens = s.get("input_tokens", 0)
+                    output_tokens = s.get("output_tokens", 0)
+                    cost = estimate_session_cost(pricing, model_id, input_tokens, output_tokens)
+                    sessions.append(
+                        TopSession(
+                            session_id=s.get("session_id", ""),
+                            butler=info.name,
+                            cost_usd=round(cost, 6),
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            model=model_id,
+                            started_at=s.get("started_at", ""),
+                        )
+                    )
+                return sessions
+    except (ButlerUnreachableError, TimeoutError, Exception):
+        pass
+    return []
+
+@router.get("/top-sessions", response_model=ApiResponse[list[TopSession]])
+async def get_top_sessions(
+    limit: int = Query(default=10, ge=1, le=50),
+    mgr: MCPClientManager = Depends(get_mcp_manager),
+    configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
+    pricing: PricingConfig = Depends(get_pricing),
+) -> ApiResponse[list[TopSession]]:
+    """Return most expensive sessions across all butlers.
+
+    Fans out to each butler's ``top_sessions`` MCP tool, merges the results,
+    calculates costs using the pricing config, and returns the top *limit*
+    sessions sorted by cost descending.
+    """
+    tasks = [_get_butler_top_sessions(mgr, info, pricing, limit) for info in configs]
+    results = await asyncio.gather(*tasks)
+
+    all_sessions: list[TopSession] = []
+    for sessions in results:
+        all_sessions.extend(sessions)
+
+    all_sessions.sort(key=lambda s: s.cost_usd, reverse=True)
+    return ApiResponse[list[TopSession]](data=all_sessions[:limit])
