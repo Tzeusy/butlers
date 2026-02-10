@@ -2,6 +2,7 @@ import { Link } from "react-router";
 
 import { NotificationFeed } from "@/components/notifications/notification-feed";
 import { NotificationTableSkeleton } from "@/components/skeletons";
+import TopologyGraph from "@/components/topology/TopologyGraph";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -92,18 +93,11 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Butler Topology Placeholder */}
+      {/* Butler Topology */}
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Butler Topology</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-muted-foreground flex h-64 items-center justify-center">
-              Topology graph coming soon
-            </div>
-          </CardContent>
-        </Card>
+        <div className="lg:col-span-2">
+          <TopologyGraph butlers={butlers} isLoading={butlersLoading} />
+        </div>
       </div>
 
       {/* Failed Notifications / Issues Panel */}
