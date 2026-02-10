@@ -8,12 +8,27 @@ const navItems = [
   { path: '/settings', label: 'Settings' },
 ]
 
-export default function Sidebar() {
+interface SidebarProps {
+  collapsed?: boolean
+  onToggleCollapse?: () => void
+  onNavClick?: () => void
+}
+
+export default function Sidebar({ collapsed = false, onToggleCollapse, onNavClick }: SidebarProps) {
   return (
     <div className="flex h-full flex-col">
       {/* Brand */}
       <div className="flex h-14 items-center border-b border-border px-4">
-        <span className="text-lg font-semibold">Butlers</span>
+        <span
+          className={`text-lg font-semibold transition-opacity duration-200 ${
+            collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'
+          }`}
+        >
+          Butlers
+        </span>
+        {collapsed && (
+          <span className="text-lg font-semibold">B</span>
+        )}
       </div>
 
       {/* Navigation */}
@@ -23,24 +38,67 @@ export default function Sidebar() {
             key={item.path}
             to={item.path}
             end={item.end}
+            onClick={onNavClick}
             className={({ isActive }) =>
-              `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              `flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                collapsed ? 'justify-center' : 'gap-3'
+              } ${
                 isActive
                   ? 'bg-accent text-accent-foreground'
                   : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'
               }`
             }
+            title={collapsed ? item.label : undefined}
           >
-            {item.label}
+            {/* First letter as icon placeholder */}
+            <span
+              className={`flex size-6 shrink-0 items-center justify-center rounded text-xs font-semibold ${
+                collapsed ? '' : 'bg-muted'
+              }`}
+            >
+              {item.label[0]}
+            </span>
+            {!collapsed && <span>{item.label}</span>}
           </NavLink>
         ))}
       </nav>
 
       {/* Footer */}
       <div className="border-t border-border p-4">
-        <p className="text-xs text-muted-foreground">Today's spend</p>
-        <p className="text-sm font-medium">--</p>
+        {!collapsed && (
+          <>
+            <p className="text-xs text-muted-foreground">Today&apos;s spend</p>
+            <p className="text-sm font-medium">--</p>
+          </>
+        )}
       </div>
+
+      {/* Collapse toggle (desktop only, rendered via parent visibility) */}
+      {onToggleCollapse && (
+        <div className="border-t border-border p-2">
+          <button
+            onClick={onToggleCollapse}
+            className="flex w-full items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent/50 hover:text-accent-foreground"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={`transition-transform duration-200 ${collapsed ? 'rotate-180' : ''}`}
+            >
+              <path d="m11 17-5-5 5-5" />
+              <path d="m18 17-5-5 5-5" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
   )
 }
