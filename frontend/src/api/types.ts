@@ -141,3 +141,26 @@ export interface ActivityEvent {
   timestamp: string; // ISO 8601
   task_name?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Costs
+// ---------------------------------------------------------------------------
+
+/** Aggregate cost summary across all butlers. */
+export interface CostSummary {
+  total_cost_usd: number;
+  total_sessions: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  by_butler: Record<string, number>;
+  by_model: Record<string, number>;
+}
+
+/** Cost data for a single day. */
+export interface DailyCost {
+  date: string;
+  cost_usd: number;
+  sessions: number;
+  input_tokens: number;
+  output_tokens: number;
+}
