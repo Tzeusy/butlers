@@ -264,6 +264,7 @@ class ScheduleCost(BaseModel):
 from butlers.api.models.butler import ModuleStatus  # noqa: E402
 from butlers.api.models.notification import NotificationStats, NotificationSummary  # noqa: E402
 from butlers.api.models.relationship import (  # noqa: E402
+    ActivityFeedItem,
     ContactDetail,
     ContactListResponse,
     ContactSummary,
@@ -278,6 +279,7 @@ from butlers.api.models.relationship import (  # noqa: E402
 )
 
 __all__ = [
+    "ActivityFeedItem",
     "ApiMeta",
     "ApiResponse",
     "ButlerConfigResponse",
