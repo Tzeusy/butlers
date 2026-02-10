@@ -1,73 +1,210 @@
-# React + TypeScript + Vite
+# Butlers Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A modern web dashboard for monitoring and managing Butlers AI agent framework. Built as a single-page application (SPA) that provides real-time visibility into butler operations, sessions, health metrics, relationships, and system telemetry.
 
-Currently, two official plugins are available:
+## Tech Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **React 18** - UI framework
+- **TypeScript** - Type-safe development
+- **Vite** - Build tool and dev server
+- **React Router 7** - Client-side routing
+- **TanStack Query** - Server state management and caching
+- **shadcn/ui** - Component library (New York style)
+- **Tailwind CSS 4** - Utility-first styling
+- **Lucide React** - Icon library
+- **Recharts** - Data visualization
+- **XYFlow React** - Interactive topology graphs
+- **date-fns** - Date formatting
+- **Sonner** - Toast notifications
 
-## React Compiler
+## Prerequisites
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- Node.js 18+ with npm
+- Running Butlers backend (FastAPI server on `http://localhost:8200`)
 
-## Expanding the ESLint configuration
+## Getting Started
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Installation
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Development
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Start the dev server with hot module replacement:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run dev
 ```
+
+The dashboard will be available at `http://localhost:5173` with API requests proxied to the backend at `http://localhost:8200`.
+
+### Build
+
+Compile TypeScript and build production assets:
+
+```bash
+npm run build
+```
+
+Output will be in the `dist/` directory.
+
+### Preview
+
+Preview the production build locally:
+
+```bash
+npm run preview
+```
+
+### Linting
+
+Run ESLint checks:
+
+```bash
+npm run lint
+```
+
+## Project Structure
+
+```
+frontend/
+├── src/
+│   ├── api/              # API client and type definitions
+│   │   ├── client.ts     # Generated API client methods
+│   │   ├── types.ts      # TypeScript types from backend
+│   │   └── index.ts      # Public API exports
+│   ├── components/       # React components organized by domain
+│   │   ├── activity/     # Activity feed components
+│   │   ├── audit/        # Audit log UI
+│   │   ├── butler-detail/# Butler detail views
+│   │   ├── costs/        # Cost tracking components
+│   │   ├── general/      # General butler components
+│   │   ├── issues/       # Issue tracker components
+│   │   ├── layout/       # Layout components (nav, sidebar, theme)
+│   │   ├── memory/       # Memory system visualization
+│   │   ├── notifications/# Notification center
+│   │   ├── relationship/ # Relationship butler components
+│   │   ├── schedules/    # Scheduler components
+│   │   ├── sessions/     # Session log viewers
+│   │   ├── skeletons/    # Loading state skeletons
+│   │   ├── state/        # State store viewer
+│   │   ├── timeline/     # Timeline visualizations
+│   │   └── topology/     # System topology graph
+│   ├── hooks/            # Custom React hooks
+│   │   ├── use-butlers.ts
+│   │   ├── use-contacts.ts
+│   │   ├── use-costs.ts
+│   │   ├── use-general.ts
+│   │   ├── use-health.ts
+│   │   ├── use-issues.ts
+│   │   ├── use-keyboard-shortcuts.ts
+│   │   ├── use-memory.ts
+│   │   ├── use-notifications.ts
+│   │   ├── use-schedules.ts
+│   │   ├── use-search.ts
+│   │   ├── use-sessions.ts
+│   │   ├── use-state.ts
+│   │   ├── use-timeline.ts
+│   │   ├── use-traces.ts
+│   │   ├── use-audit-log.ts
+│   │   ├── use-auto-refresh.ts
+│   │   └── useDarkMode.ts
+│   ├── layouts/          # Layout wrappers
+│   │   └── RootLayout.tsx
+│   ├── lib/              # Utilities
+│   │   ├── query-client.ts
+│   │   └── utils.ts
+│   ├── pages/            # Route pages
+│   │   ├── AuditLogPage.tsx
+│   │   ├── ButlerDetailPage.tsx
+│   │   ├── ButlersPage.tsx
+│   │   ├── CollectionsPage.tsx
+│   │   ├── ConditionsPage.tsx
+│   │   ├── ContactDetailPage.tsx
+│   │   ├── ContactsPage.tsx
+│   │   ├── CostsPage.tsx
+│   │   ├── DashboardPage.tsx
+│   │   ├── EntitiesPage.tsx
+│   │   ├── EntityDetailPage.tsx
+│   │   ├── GroupsPage.tsx
+│   │   ├── MealsPage.tsx
+│   │   ├── MeasurementsPage.tsx
+│   │   ├── MedicationsPage.tsx
+│   │   ├── MemoryPage.tsx
+│   │   ├── NotificationsPage.tsx
+│   │   ├── ResearchPage.tsx
+│   │   ├── SessionDetailPage.tsx
+│   │   ├── SessionsPage.tsx
+│   │   ├── SettingsPage.tsx
+│   │   ├── SymptomsPage.tsx
+│   │   ├── TimelinePage.tsx
+│   │   ├── TraceDetailPage.tsx
+│   │   └── TracesPage.tsx
+│   ├── App.tsx           # Root app component
+│   ├── main.tsx          # Entry point
+│   ├── router.tsx        # Route definitions
+│   ├── App.css
+│   └── index.css         # Global styles and Tailwind directives
+├── components.json       # shadcn/ui configuration
+├── vite.config.ts        # Vite configuration
+├── tsconfig.json         # TypeScript base config
+├── tsconfig.app.json     # App TypeScript config
+├── tsconfig.node.json    # Node TypeScript config
+└── package.json          # Dependencies and scripts
+```
+
+## Backend Connection
+
+The dashboard connects to the Butlers FastAPI backend via:
+
+- **Development proxy**: Vite proxies `/api` requests to `http://localhost:8200` (configured in `vite.config.ts`)
+- **API client**: Auto-generated TypeScript client in `src/api/client.ts` provides type-safe methods for all backend endpoints
+- **TanStack Query**: Manages server state, caching, and automatic refetching
+
+## Key Features
+
+- **Butler Management**: Monitor all butlers, their status, schedules, and modules
+- **Session Logs**: View Claude Code session transcripts and outcomes
+- **Telemetry**: Distributed tracing with OpenTelemetry spans
+- **State Store**: Browse butler JSONB state key-value pairs
+- **Notifications**: Unified notification center across all butlers
+- **Relationships**: Contact management, groups, and interaction history
+- **Health Tracking**: Measurements, medications, conditions, symptoms, meals, research
+- **Memory System**: Visualize episodes, facts, and rules in the memory butler
+- **Audit Log**: Complete audit trail of all system operations
+- **Cost Tracking**: Token usage and API costs per butler and session
+- **Timeline**: Chronological activity feed across the system
+- **Topology Graph**: Interactive visualization of butler dependencies
+
+## Path Aliases
+
+The project uses TypeScript path aliases (configured in `tsconfig.app.json` and `vite.config.ts`):
+
+- `@/` → `src/`
+- `@/components` → `src/components`
+- `@/lib` → `src/lib`
+- `@/hooks` → `src/hooks`
+
+Example:
+```typescript
+import { Button } from "@/components/ui/button"
+import { useButlers } from "@/hooks/use-butlers"
+```
+
+## Component Library
+
+The dashboard uses [shadcn/ui](https://ui.shadcn.com/) components in the **New York** style with:
+- Neutral base color
+- CSS variables for theming
+- Dark mode support via `next-themes`
+- Lucide icons
+
+## Development Notes
+
+- Hot module replacement (HMR) is enabled for instant feedback
+- ESLint is configured with React Hooks and React Refresh plugins
+- TypeScript strict mode is enabled for type safety
+- All API calls are wrapped in TanStack Query hooks for caching and error handling
+- The layout includes a command palette (Cmd/Ctrl+K) for quick navigation
