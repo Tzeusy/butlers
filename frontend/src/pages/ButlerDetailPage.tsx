@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router";
 
 import { NotificationFeed } from "@/components/notifications/notification-feed";
+import { NotificationTableSkeleton } from "@/components/skeletons";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -42,10 +43,14 @@ export default function ButlerDetailPage() {
           </CardAction>
         </CardHeader>
         <CardContent>
-          <NotificationFeed
-            notifications={notifications}
-            isLoading={notificationsLoading}
-          />
+          {notificationsLoading ? (
+            <NotificationTableSkeleton rows={5} />
+          ) : (
+            <NotificationFeed
+              notifications={notifications}
+              isLoading={false}
+            />
+          )}
         </CardContent>
       </Card>
     </div>
