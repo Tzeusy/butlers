@@ -11,6 +11,7 @@ import TimelinePage from './pages/TimelinePage.tsx'
 import NotificationsPage from './pages/NotificationsPage.tsx'
 import CostsPage from './pages/CostsPage.tsx'
 import SettingsPage from './pages/SettingsPage.tsx'
+import AuditLogPage from './pages/AuditLogPage.tsx'
 
 export const router = createBrowserRouter([
   {
@@ -25,6 +26,7 @@ export const router = createBrowserRouter([
       { path: '/traces/:traceId', element: <TraceDetailPage /> },
       { path: '/timeline', element: <TimelinePage /> },
       { path: '/notifications', element: <NotificationsPage /> },
+      { path: '/audit-log', element: <AuditLogPage /> },
       { path: '/costs', element: <CostsPage /> },
       { path: '/settings', element: <SettingsPage /> },
     ],

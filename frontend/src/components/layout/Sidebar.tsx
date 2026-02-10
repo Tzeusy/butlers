@@ -7,6 +7,7 @@ const navItems = [
   { path: '/traces', label: 'Traces' },
   { path: '/timeline', label: 'Timeline' },
   { path: '/notifications', label: 'Notifications' },
+  { path: '/audit-log', label: 'Audit Log' },
   { path: '/settings', label: 'Settings' },
 ]
 

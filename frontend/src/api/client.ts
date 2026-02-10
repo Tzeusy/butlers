@@ -6,6 +6,8 @@
 
 import type {
   ApiResponse,
+  AuditEntry,
+  AuditLogParams,
   ButlerConfigResponse,
   ButlerSkill,
   ButlerSummary,
@@ -382,6 +384,25 @@ export function triggerButler(
       body: JSON.stringify({ prompt }),
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Audit Log
+// ---------------------------------------------------------------------------
+
+/** Fetch a paginated list of audit log entries. */
+export function getAuditLog(
+  params?: AuditLogParams,
+): Promise<PaginatedResponse<AuditEntry>> {
+  const sp = new URLSearchParams();
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  if (params?.butler) sp.set("butler", params.butler);
+  if (params?.operation) sp.set("operation", params.operation);
+  if (params?.since) sp.set("since", params.since);
+  if (params?.until) sp.set("until", params.until);
+  const qs = sp.toString();
+  return apiFetch<PaginatedResponse<AuditEntry>>(qs ? `/audit-log?${qs}` : "/audit-log");
 }
 
 // ---------------------------------------------------------------------------
