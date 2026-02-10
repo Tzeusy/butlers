@@ -17,6 +17,7 @@ import type {
   NotificationStats,
   NotificationSummary,
   PaginatedResponse,
+  SessionDetail,
   SessionSummary,
   TopSession,
 } from "./types.ts";
@@ -132,6 +133,31 @@ export function getSessions(
 /** Fetch a single session by ID. */
 export function getSession(id: string): Promise<ApiResponse<SessionSummary>> {
   return apiFetch<ApiResponse<SessionSummary>>(`/sessions/${encodeURIComponent(id)}`);
+}
+
+/** Fetch a paginated list of sessions for a specific butler. */
+export function getButlerSessions(
+  name: string,
+  params?: { offset?: number; limit?: number },
+): Promise<PaginatedResponse<SessionSummary>> {
+  const searchParams = new URLSearchParams();
+  if (params?.offset != null) searchParams.set("offset", String(params.offset));
+  if (params?.limit != null) searchParams.set("limit", String(params.limit));
+
+  const qs = searchParams.toString();
+  const base = `/butlers/${encodeURIComponent(name)}/sessions`;
+  const path = qs ? `${base}?${qs}` : base;
+  return apiFetch<PaginatedResponse<SessionSummary>>(path);
+}
+
+/** Fetch a single session detail for a specific butler. */
+export function getButlerSession(
+  name: string,
+  id: string,
+): Promise<ApiResponse<SessionDetail>> {
+  return apiFetch<ApiResponse<SessionDetail>>(
+    `/butlers/${encodeURIComponent(name)}/sessions/${encodeURIComponent(id)}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
