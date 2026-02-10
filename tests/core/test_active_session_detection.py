@@ -48,7 +48,7 @@ class MockAdapter(RuntimeAdapter):
     async def invoke(self, prompt, system_prompt, mcp_servers, env, **kwargs):
         if self._error:
             raise RuntimeError(self._error)
-        return self._result_text, []
+        return self._result_text, [], None
 
     def build_config_file(self, mcp_servers, tmp_dir):
         return tmp_dir / "mock.json"
@@ -204,7 +204,10 @@ async def pool(postgres_container):
             success BOOLEAN,
             error TEXT,
             started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            completed_at TIMESTAMPTZ
+            completed_at TIMESTAMPTZ,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            parent_session_id UUID REFERENCES sessions(id)
         )
     """)
     yield p
