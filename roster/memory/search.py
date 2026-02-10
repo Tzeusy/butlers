@@ -7,6 +7,7 @@ All functions accept an asyncpg connection pool and return ranked results.
 from __future__ import annotations
 
 import importlib.util
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -39,6 +40,9 @@ _SCOPED_TABLES = frozenset({"facts", "rules"})
 
 # PostgreSQL text-search configuration
 _TS_CONFIG = "english"
+
+# RRF fusion constant (standard value from the original RRF paper).
+_RRF_K = 60
 
 
 # ---------------------------------------------------------------------------
@@ -179,3 +183,102 @@ async def keyword_search(
 
     rows = await pool.fetch(sql, *params)
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Hybrid search (Reciprocal Rank Fusion)
+# ---------------------------------------------------------------------------
+
+
+async def hybrid_search(
+    pool: Pool,
+    query_text: str,
+    query_embedding: list[float],
+    table: str,
+    *,
+    limit: int = 10,
+    scope: str | None = None,
+) -> list[dict]:
+    """Hybrid search combining semantic and keyword search via RRF.
+
+    Runs both search methods, then fuses results using Reciprocal Rank
+    Fusion.  Each result gets::
+
+        rrf_score = 1/(k + semantic_rank) + 1/(k + keyword_rank)
+
+    where ``k=60``.  Results appearing in only one list use
+    ``rank = limit + 1`` for the missing dimension.
+
+    Args:
+        pool: asyncpg connection pool.
+        query_text: User search text for keyword matching.
+        query_embedding: 384-d vector for semantic matching.
+        table: Table name (``'episodes'``, ``'facts'``, ``'rules'``).
+        limit: Max results per search method and for final output.
+        scope: Optional scope filter.
+
+    Returns:
+        List of dicts with ``rrf_score``, ``semantic_rank``, and
+        ``keyword_rank`` added.  Ordered by ``rrf_score`` descending.
+
+    Raises:
+        ValueError: If *table* is not one of the valid table names.
+    """
+    if table not in _VALID_TABLES:
+        raise ValueError(f"Invalid table: {table!r}. Must be one of {sorted(_VALID_TABLES)}")
+
+    # Run both searches
+    semantic_results = await semantic_search(
+        pool,
+        query_embedding,
+        table,
+        limit=limit,
+        scope=scope,
+    )
+    keyword_results = await keyword_search(
+        pool,
+        query_text,
+        table,
+        limit=limit,
+        scope=scope,
+    )
+
+    # Build rank maps keyed by id
+    default_rank = limit + 1
+
+    semantic_ranks: dict[uuid.UUID, int] = {}
+    semantic_data: dict[uuid.UUID, dict] = {}
+    for rank, row in enumerate(semantic_results, start=1):
+        rid = row["id"]
+        semantic_ranks[rid] = rank
+        semantic_data[rid] = row
+
+    keyword_ranks: dict[uuid.UUID, int] = {}
+    keyword_data: dict[uuid.UUID, dict] = {}
+    for rank, row in enumerate(keyword_results, start=1):
+        rid = row["id"]
+        keyword_ranks[rid] = rank
+        keyword_data[rid] = row
+
+    # Union all IDs
+    all_ids = set(semantic_ranks.keys()) | set(keyword_ranks.keys())
+
+    # Compute RRF scores
+    fused: list[dict] = []
+    for rid in all_ids:
+        s_rank = semantic_ranks.get(rid, default_rank)
+        k_rank = keyword_ranks.get(rid, default_rank)
+        rrf_score = 1.0 / (_RRF_K + s_rank) + 1.0 / (_RRF_K + k_rank)
+
+        # Use data from whichever search found it (prefer semantic)
+        row = semantic_data.get(rid) or keyword_data[rid]
+        result = dict(row)
+        result["rrf_score"] = rrf_score
+        result["semantic_rank"] = s_rank
+        result["keyword_rank"] = k_rank
+        fused.append(result)
+
+    # Sort by RRF score descending, then by semantic rank ascending as tiebreaker
+    fused.sort(key=lambda r: (-r["rrf_score"], r["semantic_rank"]))
+
+    return fused[:limit]
