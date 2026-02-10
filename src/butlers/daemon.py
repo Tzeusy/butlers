@@ -132,6 +132,7 @@ class _SpanWrappingMCP:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._mcp, name)
 
+
 class RuntimeBinaryNotFoundError(RuntimeError):
     """Raised when the runtime adapter's binary is not found on PATH."""
 
