@@ -106,3 +106,24 @@ class HealthResponse(BaseModel):
     """Health-check response."""
 
     status: str
+
+
+# ---------------------------------------------------------------------------
+# Notification models (re-exported from sub-module)
+# ---------------------------------------------------------------------------
+
+from butlers.api.models.notification import NotificationStats, NotificationSummary  # noqa: E402
+
+__all__ = [
+    "ApiMeta",
+    "ApiResponse",
+    "ButlerSummary",
+    "ErrorDetail",
+    "ErrorResponse",
+    "HealthResponse",
+    "NotificationStats",
+    "NotificationSummary",
+    "PaginatedResponse",
+    "PaginationMeta",
+    "SessionSummary",
+]
