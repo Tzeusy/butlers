@@ -24,6 +24,8 @@ import type {
   SessionDetail,
   SessionParams,
   SessionSummary,
+  StateEntry,
+  StateSetRequest,
   TopSession,
   TriggerResponse,
 } from "./types.ts";
@@ -318,6 +320,43 @@ export function toggleButlerSchedule(
 export function getButlerSkills(name: string): Promise<ApiResponse<ButlerSkill[]>> {
   return apiFetch<ApiResponse<ButlerSkill[]>>(
     `/butlers/${encodeURIComponent(name)}/skills`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+/** Fetch all state entries for a butler. */
+export function getButlerState(name: string): Promise<ApiResponse<StateEntry[]>> {
+  return apiFetch<ApiResponse<StateEntry[]>>(
+    `/butlers/${encodeURIComponent(name)}/state`,
+  );
+}
+
+/** Set a state value for a butler (creates or updates). */
+export function setButlerState(
+  name: string,
+  key: string,
+  value: StateSetRequest["value"],
+): Promise<ApiResponse<Record<string, string>>> {
+  return apiFetch<ApiResponse<Record<string, string>>>(
+    `/butlers/${encodeURIComponent(name)}/state/${encodeURIComponent(key)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ value }),
+    },
+  );
+}
+
+/** Delete a state entry for a butler. */
+export function deleteButlerState(
+  name: string,
+  key: string,
+): Promise<ApiResponse<Record<string, string>>> {
+  return apiFetch<ApiResponse<Record<string, string>>>(
+    `/butlers/${encodeURIComponent(name)}/state/${encodeURIComponent(key)}`,
+    { method: "DELETE" },
   );
 }
 
