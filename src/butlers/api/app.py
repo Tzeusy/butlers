@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from butlers.api.middleware import register_error_handlers
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -53,6 +55,8 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    register_error_handlers(app)
 
     @app.get("/api/health")
     async def health():

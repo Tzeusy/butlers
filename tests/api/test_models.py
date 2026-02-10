@@ -67,6 +67,7 @@ class TestErrorResponse:
             "error": {
                 "code": "NOT_FOUND",
                 "message": "Butler not found",
+                "butler": None,
                 "details": None,
             }
         }

@@ -37,6 +37,7 @@ class ErrorDetail(BaseModel):
 
     code: str
     message: str
+    butler: str | None = None
     details: dict | None = None
 
 
