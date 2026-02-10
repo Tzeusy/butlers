@@ -115,6 +115,13 @@ class ButlerSummary(BaseModel):
     schedule_count: int = 0
 
 
+class SkillInfo(BaseModel):
+    """Skill name and SKILL.md content for a butler."""
+
+    name: str
+    content: str
+
+
 class ButlerDetail(ButlerSummary):
     """Full butler detail with config, modules, skills, and schedule."""
 
@@ -181,4 +188,5 @@ __all__ = [
     "PaginationMeta",
     "ScheduleEntry",
     "SessionSummary",
+    "SkillInfo",
 ]
