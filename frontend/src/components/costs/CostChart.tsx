@@ -115,8 +115,8 @@ export default function CostChart({
                 width={60}
               />
               <Tooltip
-                formatter={(value: number) => [formatCost(value), "Cost"]}
-                labelFormatter={formatDate}
+                formatter={(value: number | undefined) => [formatCost(value ?? 0), "Cost"]}
+                labelFormatter={(label: unknown) => formatDate(String(label))}
               />
               <Area
                 type="monotone"

@@ -78,7 +78,6 @@ export default function AuditLogTable({ entries, isLoading }: AuditLogTableProps
 
         {!isLoading &&
           entries.map((entry) => {
-            const isExpanded = expandedId === entry.id;
             return (
               <TableRow
                 key={entry.id}

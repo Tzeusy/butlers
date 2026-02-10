@@ -1,8 +1,8 @@
 import { useState } from "react";
 
 import type { SessionParams, SessionSummary } from "@/api/types";
-import SessionDetailDrawer from "@/components/sessions/SessionDetailDrawer";
-import SessionTable from "@/components/sessions/SessionTable";
+import { SessionDetailDrawer } from "@/components/sessions/SessionDetailDrawer";
+import { SessionTable } from "@/components/sessions/SessionTable";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -279,7 +279,7 @@ export default function SessionsPage() {
 
       {/* Session detail drawer */}
       <SessionDetailDrawer
-        butler={filters.butler !== "all" ? filters.butler : undefined}
+        butler={filters.butler !== "all" ? filters.butler : ""}
         sessionId={selectedSessionId}
         onClose={() => setSelectedSessionId(null)}
       />

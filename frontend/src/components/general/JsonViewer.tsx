@@ -28,8 +28,6 @@ export interface JsonViewerProps {
 // Helpers
 // ---------------------------------------------------------------------------
 
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
-
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

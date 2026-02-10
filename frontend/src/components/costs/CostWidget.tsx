@@ -55,7 +55,7 @@ export default function CostWidget({
             <div
               key={i}
               className="flex-1 rounded-sm bg-muted"
-              style={{ height: `${20 + Math.random() * 80}%` }}
+              style={{ height: `${20 + ((i * 37 + 13) % 80)}%` }}
             />
           ))}
         </div>

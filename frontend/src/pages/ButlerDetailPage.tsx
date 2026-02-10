@@ -38,8 +38,6 @@ const ButlerStateTab = lazy(
   () => import("@/components/butler-detail/ButlerStateTab.tsx"),
 );
 
-const TABS = ["overview", "sessions", "config", "skills", "schedules", "state", "trigger", "crm", "health"] as const;
-type TabValue = (typeof TABS)[number];
 // General butler tabs (lazy)
 const ButlerCollectionsTab = lazy(
   () => import("@/components/butler-detail/ButlerCollectionsTab.tsx"),
@@ -471,6 +469,8 @@ export default function ButlerDetailPage() {
           <TabsContent value="health">
             <ButlerHealthTab butlerName={name} />
           </TabsContent>
+        )}
+
         {isGeneral && (
           <>
             <TabsContent value="collections">

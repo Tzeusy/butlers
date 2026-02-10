@@ -10,7 +10,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSessionDetail, useButlerSessionDetail } from "@/hooks/use-sessions";
+import { useSessionDetail } from "@/hooks/use-sessions";
+import { useQuery } from "@tanstack/react-query";
+import { getSession } from "@/api/index.ts";
 import { Breadcrumbs } from "@/components/ui/breadcrumbs";
 
 // ---------------------------------------------------------------------------
@@ -95,8 +97,12 @@ export default function SessionDetailPage() {
   const butler = searchParams.get("butler") ?? "";
 
   // Use butler-scoped endpoint when a butler name is in the query param
-  const butlerQuery = useButlerSessionDetail(butler, id);
-  const globalQuery = useSessionDetail(butler ? "" : id);
+  const butlerQuery = useSessionDetail(butler, id);
+  const globalQuery = useQuery({
+    queryKey: ["session-detail-global", id],
+    queryFn: () => getSession(id),
+    enabled: !butler && !!id,
+  });
   const { data: response, isLoading, isError } = butler ? butlerQuery : globalQuery;
   const session = response?.data;
 
@@ -200,7 +206,7 @@ export default function SessionDetailPage() {
             {session.tool_calls != null && (
               <>
                 <dt className="text-muted-foreground font-medium">Tool Calls</dt>
-                <dd>{session.tool_calls}</dd>
+                <dd>{Array.isArray(session.tool_calls) ? session.tool_calls.length : String(session.tool_calls)}</dd>
               </>
             )}
 

@@ -103,16 +103,6 @@ export interface SessionDetail {
   parent_session_id: string | null;
 }
 
-/** Full session detail including result and tool usage. */
-export interface SessionDetail extends SessionSummary {
-  result: string | null;
-  tool_calls: number | null;
-  input_tokens: number | null;
-  output_tokens: number | null;
-  model: string | null;
-  error: string | null;
-}
-
 /** Query parameters for session list endpoints. */
 export interface SessionParams {
   offset?: number;
@@ -637,6 +627,10 @@ export interface HealthResearch {
   tags: string[];
   source_url: string | null;
   condition_id: string | null;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
 // General / Switchboard
 // ---------------------------------------------------------------------------
 
@@ -697,6 +691,11 @@ export interface MealParams {
 /** Query parameters for research endpoints. */
 export interface ResearchParams {
   q?: string;
+  tag?: string;
+  offset?: number;
+  limit?: number;
+}
+
 /** Query parameters for entity search. */
 export interface EntityParams {
   q?: string;

@@ -181,7 +181,7 @@ export default function ButlerOverviewTab({ butlerName }: ButlerOverviewTabProps
             {butler?.name ?? butlerName}
             {butler && statusBadge(butler.status)}
           </CardTitle>
-          {butler && "description" in butler && (butler as Record<string, unknown>).description && (
+          {butler && "description" in butler && !!(butler as Record<string, unknown>).description && (
             <CardDescription>
               {String((butler as Record<string, unknown>).description)}
             </CardDescription>

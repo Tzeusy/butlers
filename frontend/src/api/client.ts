@@ -627,13 +627,6 @@ export function getMedicationDoses(medicationId: string, params?: { since?: stri
 
 /** Fetch a paginated list of health conditions. */
 export function getConditions(params?: { offset?: number; limit?: number }): Promise<PaginatedResponse<HealthCondition>> {
-// General / Switchboard
-// ---------------------------------------------------------------------------
-
-/** Fetch a paginated list of collections. */
-export function getCollections(
-  params?: { offset?: number; limit?: number },
-): Promise<PaginatedResponse<GeneralCollection>> {
   const sp = new URLSearchParams();
   if (params?.offset != null) sp.set("offset", String(params.offset));
   if (params?.limit != null) sp.set("limit", String(params.limit));
@@ -669,6 +662,25 @@ export function getMeals(params?: MealParams): Promise<PaginatedResponse<Meal>> 
 export function getResearch(params?: ResearchParams): Promise<PaginatedResponse<HealthResearch>> {
   const sp = new URLSearchParams();
   if (params?.q) sp.set("q", params.q);
+  if (params?.tag) sp.set("tag", params.tag);
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  const qs = sp.toString();
+  return apiFetch<PaginatedResponse<HealthResearch>>(qs ? `/health/research?${qs}` : "/health/research");
+}
+
+// ---------------------------------------------------------------------------
+// General / Switchboard
+// ---------------------------------------------------------------------------
+
+/** Fetch a paginated list of collections. */
+export function getCollections(
+  params?: { offset?: number; limit?: number },
+): Promise<PaginatedResponse<GeneralCollection>> {
+  const sp = new URLSearchParams();
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  const qs = sp.toString();
   return apiFetch<PaginatedResponse<GeneralCollection>>(
     qs ? `/general/collections?${qs}` : "/general/collections",
   );
@@ -698,7 +710,6 @@ export function getEntities(
   if (params?.offset != null) sp.set("offset", String(params.offset));
   if (params?.limit != null) sp.set("limit", String(params.limit));
   const qs = sp.toString();
-  return apiFetch<PaginatedResponse<HealthResearch>>(qs ? `/health/research?${qs}` : "/health/research");
   return apiFetch<PaginatedResponse<GeneralEntity>>(
     qs ? `/general/entities?${qs}` : "/general/entities",
   );
@@ -733,104 +744,6 @@ export function getRoutingLog(
 /** Fetch the switchboard butler registry. */
 export function getRegistry(): Promise<ApiResponse<RegistryEntry[]>> {
   return apiFetch<ApiResponse<RegistryEntry[]>>("/switchboard/registry");
-}
-
-
-// ---------------------------------------------------------------------------
-// Memory
-// ---------------------------------------------------------------------------
-
-/** Build URLSearchParams from episode query parameters. */
-function episodeSearchParams(params?: EpisodeParams): URLSearchParams {
-  const sp = new URLSearchParams();
-  if (params?.butler) sp.set("butler", params.butler);
-  if (params?.consolidated != null) sp.set("consolidated", String(params.consolidated));
-  if (params?.since) sp.set("since", params.since);
-  if (params?.until) sp.set("until", params.until);
-  if (params?.offset != null) sp.set("offset", String(params.offset));
-  if (params?.limit != null) sp.set("limit", String(params.limit));
-  return sp;
-}
-
-/** Build URLSearchParams from fact query parameters. */
-function factSearchParams(params?: FactParams): URLSearchParams {
-  const sp = new URLSearchParams();
-  if (params?.q) sp.set("q", params.q);
-  if (params?.scope) sp.set("scope", params.scope);
-  if (params?.validity) sp.set("validity", params.validity);
-  if (params?.permanence) sp.set("permanence", params.permanence);
-  if (params?.subject) sp.set("subject", params.subject);
-  if (params?.offset != null) sp.set("offset", String(params.offset));
-  if (params?.limit != null) sp.set("limit", String(params.limit));
-  return sp;
-}
-
-/** Build URLSearchParams from rule query parameters. */
-function ruleSearchParams(params?: RuleParams): URLSearchParams {
-  const sp = new URLSearchParams();
-  if (params?.q) sp.set("q", params.q);
-  if (params?.scope) sp.set("scope", params.scope);
-  if (params?.maturity) sp.set("maturity", params.maturity);
-  if (params?.offset != null) sp.set("offset", String(params.offset));
-  if (params?.limit != null) sp.set("limit", String(params.limit));
-  return sp;
-}
-
-/** Fetch aggregated memory statistics. */
-export function getMemoryStats(): Promise<ApiResponse<MemoryStats>> {
-  return apiFetch<ApiResponse<MemoryStats>>("/memory/stats");
-}
-
-/** Fetch a paginated list of episodes. */
-export function getEpisodes(
-  params?: EpisodeParams,
-): Promise<PaginatedResponse<Episode>> {
-  const qs = episodeSearchParams(params).toString();
-  return apiFetch<PaginatedResponse<Episode>>(
-    qs ? \ : "/memory/episodes",
-  );
-}
-
-/** Fetch a paginated list of facts. */
-export function getFacts(
-  params?: FactParams,
-): Promise<PaginatedResponse<Fact>> {
-  const qs = factSearchParams(params).toString();
-  return apiFetch<PaginatedResponse<Fact>>(
-    qs ? \ : "/memory/facts",
-  );
-}
-
-/** Fetch a single fact by ID. */
-export function getFact(factId: string): Promise<ApiResponse<Fact>> {
-  return apiFetch<ApiResponse<Fact>>(
-    \,
-  );
-}
-
-/** Fetch a paginated list of rules. */
-export function getRules(
-  params?: RuleParams,
-): Promise<PaginatedResponse<MemoryRule>> {
-  const qs = ruleSearchParams(params).toString();
-  return apiFetch<PaginatedResponse<MemoryRule>>(
-    qs ? \ : "/memory/rules",
-  );
-}
-
-/** Fetch a single rule by ID. */
-export function getRule(ruleId: string): Promise<ApiResponse<MemoryRule>> {
-  return apiFetch<ApiResponse<MemoryRule>>(
-    \,
-  );
-}
-
-/** Fetch recent memory activity. */
-export function getMemoryActivity(
-  limit?: number,
-): Promise<ApiResponse<MemoryActivity[]>> {
-  const params = limit != null ? \ : "";
-  return apiFetch<ApiResponse<MemoryActivity[]>>(\);
 }
 
 

@@ -216,7 +216,7 @@ export default function ResearchPage() {
                           )}
                         </TableCell>
                         <TableCell className="text-muted-foreground text-sm">
-                          {format(new Date(note.updated_at), "MMM d, yyyy")}
+                          {format(new Date(note.created_at), "MMM d, yyyy")}
                         </TableCell>
                       </TableRow>
                       {expandedId === note.id && (
