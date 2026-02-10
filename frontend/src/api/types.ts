@@ -164,3 +164,14 @@ export interface DailyCost {
   input_tokens: number;
   output_tokens: number;
 }
+
+/** A session ranked by cost. */
+export interface TopSession {
+  session_id: string;
+  butler: string;
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  model: string;
+  started_at: string;
+}

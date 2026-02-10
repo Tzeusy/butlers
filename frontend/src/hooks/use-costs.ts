@@ -4,7 +4,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { getCostSummary, getDailyCosts } from "@/api/index.ts";
+import { getCostSummary, getDailyCosts, getTopSessions } from "@/api/index.ts";
 
 /** Fetch aggregate cost summary with auto-refresh. */
 export function useCostSummary(period?: string) {
@@ -20,6 +20,15 @@ export function useDailyCosts() {
   return useQuery({
     queryKey: ["daily-costs"],
     queryFn: () => getDailyCosts(),
+    refetchInterval: 60_000,
+  });
+}
+
+/** Fetch most expensive sessions with auto-refresh. */
+export function useTopSessions(limit?: number) {
+  return useQuery({
+    queryKey: ["top-sessions", limit],
+    queryFn: () => getTopSessions(limit),
     refetchInterval: 60_000,
   });
 }
