@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCollections } from "@/hooks/use-general";
+import { EmptyState as EmptyStateUI } from "@/components/ui/empty-state";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -51,9 +52,10 @@ function SkeletonGrid({ count = 6 }: { count?: number }) {
 
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center rounded-md border border-dashed py-16">
-      <p className="text-sm text-muted-foreground">No collections found.</p>
-    </div>
+    <EmptyStateUI
+      title="No collections found"
+      description="Collections will appear here as the General butler organizes entities into groups."
+    />
   );
 }
 

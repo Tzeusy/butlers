@@ -1,3 +1,4 @@
+import { EmptyState as EmptyStateUI } from "@/components/ui/empty-state";
 /**
  * EntityBrowser — searchable, filterable table for General butler entities.
  *
@@ -88,9 +89,10 @@ function SkeletonRows({ count = 5 }: { count?: number }) {
 
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center py-12 text-sm text-muted-foreground">
-      <p>No entities found.</p>
-    </div>
+    <EmptyStateUI
+      title="No entities found"
+      description="Entities will appear here as the General butler stores structured data."
+    />
   );
 }
 

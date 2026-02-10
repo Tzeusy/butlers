@@ -1,3 +1,4 @@
+import { EmptyState as EmptyStateUI } from "@/components/ui/empty-state";
 import { formatDistanceToNow } from "date-fns";
 
 import type { NotificationSummary } from "@/api/types";
@@ -74,9 +75,10 @@ function relativeTime(iso: string): string {
 
 function EmptyState() {
   return (
-    <div className="text-muted-foreground flex flex-col items-center justify-center py-12 text-sm">
-      <p>No notifications yet.</p>
-    </div>
+    <EmptyStateUI
+      title="No notifications found"
+      description="Notifications will appear here as butlers send messages via Telegram, email, and other channels."
+    />
   );
 }
 

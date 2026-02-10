@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useGroups } from "@/hooks/use-contacts";
+import { EmptyState as EmptyStateUI } from "@/components/ui/empty-state";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -49,9 +50,10 @@ function SkeletonRows({ count = 5 }: { count?: number }) {
 
 function EmptyState() {
   return (
-    <div className="text-muted-foreground flex flex-col items-center justify-center py-12 text-sm">
-      <p>No groups found.</p>
-    </div>
+    <EmptyStateUI
+      title="No groups found"
+      description="Groups will appear here as you organize contacts into categories."
+    />
   );
 }
 

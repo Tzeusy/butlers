@@ -16,12 +16,16 @@ export interface SessionParams {
   limit?: number;
 }
 
+interface SessionQueryOptions {
+  refetchInterval?: number | false;
+}
+
 /** Fetch a paginated list of sessions across all butlers. */
-export function useSessions(params?: SessionParams) {
+export function useSessions(params?: SessionParams, options?: SessionQueryOptions) {
   return useQuery({
     queryKey: ["sessions", params],
     queryFn: () => getSessions(params),
-    refetchInterval: 30_000,
+    refetchInterval: options?.refetchInterval ?? 30_000,
   });
 }
 

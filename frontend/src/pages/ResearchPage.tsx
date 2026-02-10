@@ -22,6 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useResearch } from "@/hooks/use-health";
+import { EmptyState as EmptyStateUI } from "@/components/ui/empty-state";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -50,9 +51,10 @@ function SkeletonRows({ count = 5 }: { count?: number }) {
 
 function EmptyState() {
   return (
-    <div className="text-muted-foreground flex flex-col items-center justify-center py-12 text-sm">
-      <p>No research notes found.</p>
-    </div>
+    <EmptyStateUI
+      title="No research found"
+      description="Research notes will appear here as the Health butler tracks articles and references."
+    />
   );
 }
 

@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/select";
 import { useButlers } from "@/hooks/use-butlers";
 import { useSessions } from "@/hooks/use-sessions";
+import { useAutoRefresh } from "@/hooks/use-auto-refresh";
+import { AutoRefreshToggle } from "@/components/ui/auto-refresh-toggle";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -56,6 +58,7 @@ export default function SessionsPage() {
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [page, setPage] = useState(0);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const autoRefreshControl = useAutoRefresh(10_000);
 
   // Fetch butler names for the dropdown
   const { data: butlersResponse } = useButlers();
@@ -72,7 +75,7 @@ export default function SessionsPage() {
     ...(filters.until ? { until: filters.until } : {}),
   };
 
-  const { data: sessionsResponse, isLoading } = useSessions(params);
+  const { data: sessionsResponse, isLoading } = useSessions(params, { refetchInterval: autoRefreshControl.refetchInterval });
   const sessions = sessionsResponse?.data ?? [];
   const meta = sessionsResponse?.meta;
   const total = meta?.total ?? 0;
@@ -106,11 +109,19 @@ export default function SessionsPage() {
   return (
     <div className="space-y-6">
       {/* Page heading */}
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Sessions</h1>
-        <p className="text-muted-foreground mt-1">
-          Browse session history across all butlers.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Sessions</h1>
+          <p className="text-muted-foreground mt-1">
+            Browse session history across all butlers.
+          </p>
+        </div>
+        <AutoRefreshToggle
+          enabled={autoRefreshControl.enabled}
+          interval={autoRefreshControl.interval}
+          onToggle={autoRefreshControl.setEnabled}
+          onIntervalChange={autoRefreshControl.setInterval}
+        />
       </div>
 
       {/* Filter bar */}

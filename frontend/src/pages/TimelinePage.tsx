@@ -3,11 +3,12 @@ import { useState, useCallback } from "react";
 import type { TimelineEvent } from "@/api/types.ts";
 import UnifiedTimeline from "@/components/timeline/UnifiedTimeline.tsx";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useButlers } from "@/hooks/use-butlers.ts";
 import { useTimeline } from "@/hooks/use-timeline.ts";
 import { cn } from "@/lib/utils";
+import { useAutoRefresh } from "@/hooks/use-auto-refresh";
+import { AutoRefreshToggle } from "@/components/ui/auto-refresh-toggle";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -28,7 +29,7 @@ const EVENT_TYPES = [
 export default function TimelinePage() {
   const [selectedButlers, setSelectedButlers] = useState<string[]>([]);
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const autoRefreshControl = useAutoRefresh(10_000);
   const [allEvents, setAllEvents] = useState<TimelineEvent[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [hasMore, setHasMore] = useState(false);
@@ -43,7 +44,7 @@ export default function TimelinePage() {
     butler: selectedButlers.length > 0 ? selectedButlers : undefined,
     event_type: selectedTypes.length > 0 ? selectedTypes : undefined,
     before: cursor,
-  });
+  }, { refetchInterval: autoRefreshControl.refetchInterval });
 
   // Merge new data with accumulated events
   const currentEvents =
@@ -79,11 +80,6 @@ export default function TimelinePage() {
     setCursor(response.meta.cursor);
   }, [response, currentEvents, currentHasMore]);
 
-  // Toggle auto-refresh
-  function handleAutoRefreshToggle() {
-    setAutoRefresh((prev) => !prev);
-  }
-
   // Display events
   const displayEvents = cursor === undefined ? (response?.data ?? []) : currentEvents;
 
@@ -97,13 +93,12 @@ export default function TimelinePage() {
             Unified event stream across all butlers.
           </p>
         </div>
-        <Button
-          variant={autoRefresh ? "default" : "outline"}
-          size="sm"
-          onClick={handleAutoRefreshToggle}
-        >
-          {autoRefresh ? "Auto-refresh: On" : "Auto-refresh: Off"}
-        </Button>
+        <AutoRefreshToggle
+          enabled={autoRefreshControl.enabled}
+          interval={autoRefreshControl.interval}
+          onToggle={autoRefreshControl.setEnabled}
+          onIntervalChange={autoRefreshControl.setInterval}
+        />
       </div>
 
       {/* Filters */}

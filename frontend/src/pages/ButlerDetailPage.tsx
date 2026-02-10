@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Breadcrumbs } from "@/components/ui/breadcrumbs";
 import { useButlerSessions } from "@/hooks/use-sessions";
 import { useUpcomingDates } from "@/hooks/use-contacts";
 
@@ -391,6 +392,7 @@ export default function ButlerDetailPage() {
 
   return (
     <div className="space-y-6">
+      <Breadcrumbs items={[{ label: "Overview", href: "/" }, { label: "Butlers", href: "/butlers" }, { label: name }]} />
       <h1 className="text-2xl font-bold tracking-tight">{name}</h1>
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>

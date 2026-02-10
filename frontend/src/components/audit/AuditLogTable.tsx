@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/empty-state";
 import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import type { AuditEntry } from "@/api/types";
@@ -52,6 +53,15 @@ export default function AuditLogTable({ entries, isLoading }: AuditLogTableProps
     setExpandedId((prev) => (prev === id ? null : id));
   }
 
+  if (!isLoading && entries.length === 0) {
+    return (
+      <EmptyState
+        title="No audit entries found"
+        description="Audit log entries will appear here as butlers perform operations."
+      />
+    );
+  }
+
   return (
     <Table>
       <TableHeader>
@@ -65,14 +75,6 @@ export default function AuditLogTable({ entries, isLoading }: AuditLogTableProps
       </TableHeader>
       <TableBody>
         {isLoading && <LoadingSkeleton />}
-
-        {!isLoading && entries.length === 0 && (
-          <TableRow>
-            <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-              No audit log entries found.
-            </TableCell>
-          </TableRow>
-        )}
 
         {!isLoading &&
           entries.map((entry) => {

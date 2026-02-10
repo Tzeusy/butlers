@@ -1,8 +1,9 @@
-import { Link, useParams } from "react-router";
+import { useParams } from "react-router";
 
 import ContactDetailView from "@/components/relationship/ContactDetailView";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useContact } from "@/hooks/use-contacts";
+import { Breadcrumbs } from "@/components/ui/breadcrumbs";
 
 // ---------------------------------------------------------------------------
 // ContactDetailPage
@@ -14,13 +15,13 @@ export default function ContactDetailPage() {
 
   return (
     <div className="space-y-6">
-      {/* Back link */}
-      <Link
-        to="/contacts"
-        className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-sm transition-colors"
-      >
-        &larr; Back to Contacts
-      </Link>
+      {/* Breadcrumbs */}
+      <Breadcrumbs
+        items={[
+          { label: "Contacts", href: "/contacts" },
+          { label: contact?.name ?? contactId ?? "Contact" },
+        ]}
+      />
 
       {/* Content */}
       {isLoading && (

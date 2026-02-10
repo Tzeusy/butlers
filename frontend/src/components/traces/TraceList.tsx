@@ -1,3 +1,4 @@
+import { EmptyState as EmptyStateUI } from "@/components/ui/empty-state";
 import { formatDistanceToNow, format } from "date-fns";
 
 import type { TraceSummary } from "@/api/types";
@@ -135,9 +136,10 @@ function SkeletonRows({ count = 5 }: { count?: number }) {
 
 function EmptyState() {
   return (
-    <div className="text-muted-foreground flex flex-col items-center justify-center py-12 text-sm">
-      <p>No traces found.</p>
-    </div>
+    <EmptyStateUI
+      title="No traces found"
+      description="Distributed traces will appear here when butlers span cross-service operations."
+    />
   );
 }
 
