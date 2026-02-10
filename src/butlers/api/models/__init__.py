@@ -280,6 +280,7 @@ from butlers.api.models.relationship import (  # noqa: E402
 )
 from butlers.api.models.schedule import Schedule, ScheduleCreate, ScheduleUpdate  # noqa: E402
 from butlers.api.models.session import SessionDetail  # noqa: E402
+from butlers.api.models.state import StateEntry, StateSetRequest  # noqa: E402
 
 __all__ = [
     "ActivityFeedItem",
@@ -318,6 +319,8 @@ __all__ = [
     "SessionDetail",
     "SessionSummary",
     "SkillInfo",
+    "StateEntry",
+    "StateSetRequest",
     "TickResponse",
     "TopSession",
     "TriggerRequest",
