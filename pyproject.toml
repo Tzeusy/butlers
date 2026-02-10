@@ -48,3 +48,6 @@ known-first-party = ["butlers"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests", "butlers"]
+# importlib mode avoids module-name collisions when multiple butler test
+# directories contain identically-named files (e.g. test_tools.py).
+addopts = "--import-mode=importlib"
