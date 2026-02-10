@@ -1475,3 +1475,563 @@ async def test_extraction_log_undo_routes_error(pool_with_extraction):
 
     assert "error" in result
     assert "not available" in result["error"]
+
+
+# ------------------------------------------------------------------
+# _build_channel_args (unit tests)
+# ------------------------------------------------------------------
+
+
+def test_build_channel_args_telegram():
+    """_build_channel_args builds correct args for telegram channel."""
+    from butlers.tools.switchboard import _build_channel_args
+
+    result = _build_channel_args("telegram", "Hello!", "123456")
+    assert result == {"chat_id": "123456", "text": "Hello!"}
+
+
+def test_build_channel_args_email_default_subject():
+    """_build_channel_args builds correct args for email with default subject."""
+    from butlers.tools.switchboard import _build_channel_args
+
+    result = _build_channel_args("email", "Body text", "user@example.com")
+    assert result == {"to": "user@example.com", "subject": "Notification", "body": "Body text"}
+
+
+def test_build_channel_args_email_custom_subject():
+    """_build_channel_args uses subject from metadata for email."""
+    from butlers.tools.switchboard import _build_channel_args
+
+    result = _build_channel_args(
+        "email", "Body text", "user@example.com", metadata={"subject": "Custom Subject"}
+    )
+    assert result == {
+        "to": "user@example.com",
+        "subject": "Custom Subject",
+        "body": "Body text",
+    }
+
+
+def test_build_channel_args_unsupported_channel():
+    """_build_channel_args raises ValueError for unsupported channels."""
+    from butlers.tools.switchboard import _build_channel_args
+
+    with pytest.raises(ValueError, match="Unsupported channel"):
+        _build_channel_args("sms", "Hello", "12345")
+
+
+# ------------------------------------------------------------------
+# log_notification
+# ------------------------------------------------------------------
+
+
+@pytest.fixture
+async def pool_with_notifications(pool):
+    """Add notifications table to the test pool."""
+    await pool.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            source_butler TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            recipient TEXT NOT NULL,
+            message TEXT NOT NULL,
+            metadata JSONB NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'sent',
+            error TEXT,
+            session_id UUID,
+            trace_id TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+    """)
+    yield pool
+
+
+async def test_log_notification_creates_entry(pool_with_notifications):
+    """log_notification creates a notification entry and returns its UUID."""
+    from uuid import UUID
+
+    from butlers.tools.switchboard import log_notification
+
+    notif_id = await log_notification(
+        pool_with_notifications,
+        source_butler="health",
+        channel="telegram",
+        recipient="123456",
+        message="Time for your medication!",
+        metadata={"type": "medication_reminder"},
+        status="sent",
+    )
+
+    # Verify UUID format
+    assert UUID(notif_id)
+
+    # Verify entry was created
+    row = await pool_with_notifications.fetchrow(
+        "SELECT * FROM notifications WHERE id = $1", notif_id
+    )
+    assert row is not None
+    assert row["source_butler"] == "health"
+    assert row["channel"] == "telegram"
+    assert row["recipient"] == "123456"
+    assert row["message"] == "Time for your medication!"
+    assert row["status"] == "sent"
+    assert row["error"] is None
+
+
+async def test_log_notification_with_error(pool_with_notifications):
+    """log_notification stores error messages for failed deliveries."""
+    from butlers.tools.switchboard import log_notification
+
+    notif_id = await log_notification(
+        pool_with_notifications,
+        source_butler="health",
+        channel="email",
+        recipient="user@example.com",
+        message="Report ready",
+        status="failed",
+        error="SMTP connection refused",
+    )
+
+    row = await pool_with_notifications.fetchrow(
+        "SELECT * FROM notifications WHERE id = $1", notif_id
+    )
+    assert row["status"] == "failed"
+    assert row["error"] == "SMTP connection refused"
+
+
+async def test_log_notification_minimal_fields(pool_with_notifications):
+    """log_notification works with only required fields."""
+    from butlers.tools.switchboard import log_notification
+
+    notif_id = await log_notification(
+        pool_with_notifications,
+        source_butler="general",
+        channel="telegram",
+        recipient="789",
+        message="Hello",
+    )
+
+    row = await pool_with_notifications.fetchrow(
+        "SELECT * FROM notifications WHERE id = $1", notif_id
+    )
+    assert row is not None
+    assert row["source_butler"] == "general"
+    assert row["status"] == "sent"
+    assert row["error"] is None
+    assert row["session_id"] is None
+    assert row["trace_id"] is None
+
+
+# ------------------------------------------------------------------
+# deliver
+# ------------------------------------------------------------------
+
+
+@pytest.fixture
+async def deliver_pool(pool_with_notifications):
+    """Pool with both notifications and butler_registry tables for deliver tests."""
+    yield pool_with_notifications
+
+
+async def test_deliver_telegram_success(deliver_pool):
+    """deliver() routes a telegram notification and logs it."""
+    from butlers.tools.switchboard import deliver, register_butler
+
+    await deliver_pool.execute("DELETE FROM butler_registry")
+    await deliver_pool.execute("DELETE FROM notifications")
+
+    # Register a butler with telegram module
+    await register_butler(
+        deliver_pool, "switchboard", "http://localhost:8100/sse", "Router", ["telegram", "email"]
+    )
+
+    async def mock_call(endpoint_url, tool_name, args):
+        return {"ok": True, "message_id": 42}
+
+    result = await deliver(
+        deliver_pool,
+        channel="telegram",
+        message="Hello from health butler!",
+        recipient="123456",
+        source_butler="health",
+        call_fn=mock_call,
+    )
+
+    assert result["status"] == "sent"
+    assert "notification_id" in result
+    assert result["result"] == {"ok": True, "message_id": 42}
+
+    # Verify notification was logged
+    row = await deliver_pool.fetchrow(
+        "SELECT * FROM notifications WHERE id = $1", result["notification_id"]
+    )
+    assert row is not None
+    assert row["channel"] == "telegram"
+    assert row["recipient"] == "123456"
+    assert row["message"] == "Hello from health butler!"
+    assert row["source_butler"] == "health"
+    assert row["status"] == "sent"
+
+
+async def test_deliver_email_success(deliver_pool):
+    """deliver() routes an email notification with custom subject."""
+    from butlers.tools.switchboard import deliver, register_butler
+
+    await deliver_pool.execute("DELETE FROM butler_registry")
+    await deliver_pool.execute("DELETE FROM notifications")
+
+    await register_butler(
+        deliver_pool, "switchboard", "http://localhost:8100/sse", "Router", ["telegram", "email"]
+    )
+
+    captured_args: list[dict] = []
+
+    async def mock_call(endpoint_url, tool_name, args):
+        captured_args.append({"tool_name": tool_name, "args": args})
+        return {"status": "sent"}
+
+    result = await deliver(
+        deliver_pool,
+        channel="email",
+        message="Your health report is ready.",
+        recipient="user@example.com",
+        metadata={"subject": "Health Report"},
+        source_butler="health",
+        call_fn=mock_call,
+    )
+
+    assert result["status"] == "sent"
+    assert "notification_id" in result
+
+    # Verify correct tool was called with right args
+    assert len(captured_args) == 1
+    assert captured_args[0]["tool_name"] == "send_email"
+    # Args include trace context, so check the relevant keys
+    call_args = captured_args[0]["args"]
+    assert call_args["to"] == "user@example.com"
+    assert call_args["subject"] == "Health Report"
+    assert call_args["body"] == "Your health report is ready."
+
+
+async def test_deliver_unsupported_channel(deliver_pool):
+    """deliver() returns error for unsupported channels."""
+    from butlers.tools.switchboard import deliver
+
+    result = await deliver(
+        deliver_pool,
+        channel="sms",
+        message="Hello",
+        recipient="12345",
+    )
+
+    assert result["status"] == "failed"
+    assert "Unsupported channel" in result["error"]
+    assert "sms" in result["error"]
+
+
+async def test_deliver_missing_recipient(deliver_pool):
+    """deliver() returns error when recipient is missing."""
+    from butlers.tools.switchboard import deliver
+
+    result = await deliver(
+        deliver_pool,
+        channel="telegram",
+        message="Hello",
+        recipient=None,
+    )
+
+    assert result["status"] == "failed"
+    assert "Recipient is required" in result["error"]
+
+
+async def test_deliver_empty_recipient(deliver_pool):
+    """deliver() returns error when recipient is empty string."""
+    from butlers.tools.switchboard import deliver
+
+    result = await deliver(
+        deliver_pool,
+        channel="telegram",
+        message="Hello",
+        recipient="",
+    )
+
+    assert result["status"] == "failed"
+    assert "Recipient is required" in result["error"]
+
+
+async def test_deliver_no_butler_with_module(deliver_pool):
+    """deliver() returns error when no butler has the required module."""
+    from butlers.tools.switchboard import deliver, register_butler
+
+    await deliver_pool.execute("DELETE FROM butler_registry")
+    await deliver_pool.execute("DELETE FROM notifications")
+
+    # Register a butler without the telegram module
+    await register_butler(deliver_pool, "health", "http://localhost:8101/sse", "Health", ["email"])
+
+    result = await deliver(
+        deliver_pool,
+        channel="telegram",
+        message="Hello",
+        recipient="123456",
+    )
+
+    assert result["status"] == "failed"
+    assert "No butler with 'telegram' module" in result["error"]
+    assert "notification_id" in result
+
+    # Verify failure was logged in notifications
+    row = await deliver_pool.fetchrow(
+        "SELECT * FROM notifications WHERE id = $1", result["notification_id"]
+    )
+    assert row is not None
+    assert row["status"] == "failed"
+    assert "telegram" in row["error"]
+
+
+async def test_deliver_route_failure_logs_error(deliver_pool):
+    """deliver() logs failure when routing to the target butler fails."""
+    from butlers.tools.switchboard import deliver, register_butler
+
+    await deliver_pool.execute("DELETE FROM butler_registry")
+    await deliver_pool.execute("DELETE FROM notifications")
+
+    await register_butler(
+        deliver_pool, "switchboard", "http://localhost:8100/sse", "Router", ["telegram"]
+    )
+
+    async def failing_call(endpoint_url, tool_name, args):
+        raise ConnectionError("Telegram API unavailable")
+
+    result = await deliver(
+        deliver_pool,
+        channel="telegram",
+        message="Hello",
+        recipient="123456",
+        source_butler="health",
+        call_fn=failing_call,
+    )
+
+    assert result["status"] == "failed"
+    assert "ConnectionError" in result["error"]
+    assert "notification_id" in result
+
+    # Verify failure was logged
+    row = await deliver_pool.fetchrow(
+        "SELECT * FROM notifications WHERE id = $1", result["notification_id"]
+    )
+    assert row["status"] == "failed"
+    assert "ConnectionError" in row["error"]
+
+
+async def test_deliver_logs_to_routing_log(deliver_pool):
+    """deliver() creates a routing_log entry via route()."""
+    from butlers.tools.switchboard import deliver, register_butler
+
+    await deliver_pool.execute("DELETE FROM butler_registry")
+    await deliver_pool.execute("DELETE FROM routing_log")
+
+    await register_butler(
+        deliver_pool, "switchboard", "http://localhost:8100/sse", "Router", ["telegram"]
+    )
+
+    async def mock_call(endpoint_url, tool_name, args):
+        return {"ok": True}
+
+    await deliver(
+        deliver_pool,
+        channel="telegram",
+        message="Test",
+        recipient="123",
+        source_butler="health",
+        call_fn=mock_call,
+    )
+
+    # Verify routing_log entry was created by route()
+    rows = await deliver_pool.fetch("SELECT * FROM routing_log")
+    assert len(rows) == 1
+    assert rows[0]["source_butler"] == "health"
+    assert rows[0]["target_butler"] == "switchboard"
+    assert rows[0]["tool_name"] == "send_message"
+    assert rows[0]["success"] is True
+
+
+async def test_deliver_email_default_subject(deliver_pool):
+    """deliver() uses default subject for email when not in metadata."""
+    from butlers.tools.switchboard import deliver, register_butler
+
+    await deliver_pool.execute("DELETE FROM butler_registry")
+    await deliver_pool.execute("DELETE FROM notifications")
+
+    await register_butler(deliver_pool, "mailer", "http://localhost:8102/sse", "Mailer", ["email"])
+
+    captured_args: list[dict] = []
+
+    async def mock_call(endpoint_url, tool_name, args):
+        captured_args.append(args)
+        return {"status": "sent"}
+
+    await deliver(
+        deliver_pool,
+        channel="email",
+        message="Body text",
+        recipient="user@example.com",
+        call_fn=mock_call,
+    )
+
+    assert len(captured_args) == 1
+    # Subject should default to "Notification"
+    assert captured_args[0]["subject"] == "Notification"
+
+
+async def test_deliver_metadata_stored_in_notification(deliver_pool):
+    """deliver() stores metadata in the notifications table."""
+    import json
+
+    from butlers.tools.switchboard import deliver, register_butler
+
+    await deliver_pool.execute("DELETE FROM butler_registry")
+    await deliver_pool.execute("DELETE FROM notifications")
+
+    await register_butler(
+        deliver_pool, "switchboard", "http://localhost:8100/sse", "Router", ["telegram"]
+    )
+
+    async def mock_call(endpoint_url, tool_name, args):
+        return {"ok": True}
+
+    result = await deliver(
+        deliver_pool,
+        channel="telegram",
+        message="Hello",
+        recipient="123456",
+        metadata={"priority": "high", "category": "reminder"},
+        call_fn=mock_call,
+    )
+
+    row = await deliver_pool.fetchrow(
+        "SELECT metadata FROM notifications WHERE id = $1", result["notification_id"]
+    )
+    metadata = json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
+    assert metadata["priority"] == "high"
+    assert metadata["category"] == "reminder"
+
+
+async def test_deliver_selects_butler_with_matching_module(deliver_pool):
+    """deliver() picks the correct butler based on module availability."""
+    from butlers.tools.switchboard import deliver, register_butler
+
+    await deliver_pool.execute("DELETE FROM butler_registry")
+    await deliver_pool.execute("DELETE FROM notifications")
+
+    # Register butlers with different modules
+    await register_butler(
+        deliver_pool, "emailer", "http://localhost:8102/sse", "Email Butler", ["email"]
+    )
+    await register_butler(
+        deliver_pool, "chatter", "http://localhost:8103/sse", "Chat Butler", ["telegram"]
+    )
+
+    captured_urls: list[str] = []
+
+    async def mock_call(endpoint_url, tool_name, args):
+        captured_urls.append(endpoint_url)
+        return {"ok": True}
+
+    # Send via telegram — should route to chatter
+    await deliver(
+        deliver_pool,
+        channel="telegram",
+        message="Hello",
+        recipient="123",
+        call_fn=mock_call,
+    )
+    assert captured_urls[-1] == "http://localhost:8103/sse"
+
+    # Send via email — should route to emailer
+    await deliver(
+        deliver_pool,
+        channel="email",
+        message="Hello",
+        recipient="user@example.com",
+        call_fn=mock_call,
+    )
+    assert captured_urls[-1] == "http://localhost:8102/sse"
+
+
+# ------------------------------------------------------------------
+# deliver span creation
+# ------------------------------------------------------------------
+
+
+async def test_deliver_creates_span_with_attributes(deliver_pool, otel_provider):
+    """deliver() creates a switchboard.deliver span with channel and source attributes."""
+    from butlers.tools.switchboard import deliver, register_butler
+
+    await deliver_pool.execute("DELETE FROM butler_registry")
+    await register_butler(
+        deliver_pool, "switchboard", "http://localhost:8100/sse", "Router", ["telegram"]
+    )
+
+    async def mock_call(endpoint_url, tool_name, args):
+        return {"ok": True}
+
+    await deliver(
+        deliver_pool,
+        channel="telegram",
+        message="Test",
+        recipient="123",
+        source_butler="health",
+        call_fn=mock_call,
+    )
+
+    spans = otel_provider.get_finished_spans()
+    deliver_spans = [s for s in spans if s.name == "switchboard.deliver"]
+    assert len(deliver_spans) == 1
+    span = deliver_spans[0]
+    assert span.attributes["channel"] == "telegram"
+    assert span.attributes["source_butler"] == "health"
+    assert span.attributes["target_butler"] == "switchboard"
+
+
+async def test_deliver_span_error_on_unsupported_channel(deliver_pool, otel_provider):
+    """deliver() sets span status to ERROR for unsupported channels."""
+    from butlers.tools.switchboard import deliver
+
+    await deliver(
+        deliver_pool,
+        channel="sms",
+        message="Test",
+        recipient="123",
+    )
+
+    spans = otel_provider.get_finished_spans()
+    deliver_spans = [s for s in spans if s.name == "switchboard.deliver"]
+    assert len(deliver_spans) == 1
+    assert deliver_spans[0].status.status_code == trace.StatusCode.ERROR
+
+
+async def test_deliver_span_error_on_route_failure(deliver_pool, otel_provider):
+    """deliver() sets span status to ERROR when routing fails."""
+    from butlers.tools.switchboard import deliver, register_butler
+
+    await deliver_pool.execute("DELETE FROM butler_registry")
+    await register_butler(
+        deliver_pool, "switchboard", "http://localhost:8100/sse", "Router", ["telegram"]
+    )
+
+    async def failing_call(endpoint_url, tool_name, args):
+        raise RuntimeError("kaboom")
+
+    await deliver(
+        deliver_pool,
+        channel="telegram",
+        message="Test",
+        recipient="123",
+        call_fn=failing_call,
+    )
+
+    spans = otel_provider.get_finished_spans()
+    deliver_spans = [s for s in spans if s.name == "switchboard.deliver"]
+    assert len(deliver_spans) == 1
+    assert deliver_spans[0].status.status_code == trace.StatusCode.ERROR
