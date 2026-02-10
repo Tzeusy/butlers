@@ -805,3 +805,101 @@ class TestApprovalConfigValidation:
         registered_tools = {"email_send", "purchase_create"}
         # Should not raise
         validate_approval_config(ac, registered_tools)
+
+
+# ---------------------------------------------------------------------------
+# Switchboard URL config tests
+# ---------------------------------------------------------------------------
+
+
+class TestSwitchboardUrlConfig:
+    """Tests for [butler.switchboard] section parsing."""
+
+    def test_default_switchboard_url_for_non_switchboard(self, tmp_path: Path):
+        """Non-switchboard butlers default to http://localhost:8100/sse."""
+        toml = """\
+[butler]
+name = "general"
+port = 8101
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.switchboard_url == "http://localhost:8100/sse"
+
+    def test_switchboard_butler_has_no_url(self, tmp_path: Path):
+        """The switchboard butler itself should have switchboard_url=None."""
+        toml = """\
+[butler]
+name = "switchboard"
+port = 8100
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.switchboard_url is None
+
+    def test_explicit_switchboard_url(self, tmp_path: Path):
+        """An explicit [butler.switchboard] url overrides the default."""
+        toml = """\
+[butler]
+name = "health"
+port = 8103
+
+[butler.switchboard]
+url = "http://switchboard.internal:9000/sse"
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.switchboard_url == "http://switchboard.internal:9000/sse"
+
+    def test_explicit_switchboard_url_overrides_for_switchboard_name(self, tmp_path: Path):
+        """Even the switchboard can have an explicit URL (edge case)."""
+        toml = """\
+[butler]
+name = "switchboard"
+port = 8100
+
+[butler.switchboard]
+url = "http://other-switchboard:8100/sse"
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.switchboard_url == "http://other-switchboard:8100/sse"
+
+    def test_switchboard_url_env_var_resolution(self, tmp_path: Path, monkeypatch):
+        """switchboard_url supports ${ENV_VAR} resolution."""
+        monkeypatch.setenv("SWITCHBOARD_HOST", "sb.prod.internal")
+        toml = """\
+[butler]
+name = "health"
+port = 8103
+
+[butler.switchboard]
+url = "http://${SWITCHBOARD_HOST}:8100/sse"
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.switchboard_url == "http://sb.prod.internal:8100/sse"
+
+    def test_switchboard_url_in_butler_config_dataclass(self):
+        """ButlerConfig dataclass defaults switchboard_url to None."""
+        cfg = ButlerConfig(name="test", port=9000)
+        assert cfg.switchboard_url is None
+
+    def test_switchboard_section_without_url(self, tmp_path: Path):
+        """[butler.switchboard] section present but without url falls back to default."""
+        toml = """\
+[butler]
+name = "health"
+port = 8103
+
+[butler.switchboard]
+"""
+        config_dir = _write_toml(tmp_path, toml)
+        cfg = load_config(config_dir)
+
+        assert cfg.switchboard_url == "http://localhost:8100/sse"

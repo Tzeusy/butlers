@@ -105,6 +105,7 @@ class ButlerConfig:
     env_required: list[str] = field(default_factory=list)
     env_optional: list[str] = field(default_factory=list)
     shutdown_timeout_s: float = 30.0
+    switchboard_url: str | None = None
 
 
 def resolve_env_vars(value: Any) -> Any:
@@ -315,6 +316,14 @@ def load_config(config_dir: Path) -> ButlerConfig:
     shutdown_section = butler_section.get("shutdown", {})
     shutdown_timeout_s = float(shutdown_section.get("timeout_s", 30.0))
 
+    # --- [butler.switchboard] sub-section ---
+    switchboard_section = butler_section.get("switchboard", {})
+    switchboard_url: str | None = switchboard_section.get("url")
+    # Default: derive from the Switchboard butler's known port (8100)
+    # unless this butler IS the switchboard.
+    if switchboard_url is None and name != "switchboard":
+        switchboard_url = "http://localhost:8100/sse"
+
     # --- [[butler.schedule]] array ---
     raw_schedules = butler_section.get("schedule", [])
     schedules: list[ScheduleConfig] = []
@@ -358,4 +367,5 @@ def load_config(config_dir: Path) -> ButlerConfig:
         env_required=env_required,
         env_optional=env_optional,
         shutdown_timeout_s=shutdown_timeout_s,
+        switchboard_url=switchboard_url,
     )

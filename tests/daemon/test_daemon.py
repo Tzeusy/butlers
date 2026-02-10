@@ -213,6 +213,9 @@ def _patch_infra():
         "FastMCP": patch("butlers.daemon.FastMCP"),
         "Spawner": patch("butlers.daemon.Spawner", return_value=mock_spawner),
         "start_mcp_server": patch.object(ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock),
+        "connect_switchboard": patch.object(
+            ButlerDaemon, "_connect_switchboard", new_callable=AsyncMock
+        ),
         "get_adapter": patch("butlers.daemon.get_adapter", return_value=mock_adapter_cls),
         "shutil_which": patch("butlers.daemon.shutil.which", return_value="/usr/bin/claude"),
         "mock_db": mock_db,
@@ -247,6 +250,7 @@ class TestStartupSequence:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"] as mock_start_server,
+            patches["connect_switchboard"],
         ):
             mock_db = patches["mock_db"]
 
@@ -309,6 +313,7 @@ class TestStartupSequence:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -332,6 +337,7 @@ class TestStartupSequence:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             before = time.monotonic()
@@ -389,6 +395,7 @@ class TestCoreToolRegistration:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -415,6 +422,7 @@ class TestModuleToolRegistration:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -439,6 +447,7 @@ class TestModuleToolRegistration:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -462,6 +471,7 @@ class TestModuleToolRegistration:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -490,6 +500,7 @@ class TestModuleToolRegistration:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -518,6 +529,7 @@ class TestShutdownSequence:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -553,6 +565,7 @@ class TestShutdownSequence:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -577,6 +590,7 @@ class TestShutdownSequence:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -615,6 +629,7 @@ class TestShutdownSequence:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -782,6 +797,7 @@ class TestStatusTool:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -827,6 +843,7 @@ class TestStatusTool:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -865,6 +882,7 @@ class TestHealthCheck:
             patches["Spawner"],
             patches["get_adapter"],
             patches["shutil_which"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -974,6 +992,7 @@ class TestStartupFailurePropagation:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             with pytest.raises(CredentialError, match="missing ANTHROPIC_API_KEY"):
@@ -999,6 +1018,7 @@ class TestStartupFailurePropagation:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             with pytest.raises(ConnectionRefusedError):
@@ -1025,6 +1045,7 @@ class TestScheduleSync:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -1057,6 +1078,7 @@ class TestModuleCredentials:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -1234,6 +1256,7 @@ class TestModuleCredentialsTomlSource:
             patches["Spawner"],
             patches["get_adapter"],
             patches["shutil_which"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -1264,6 +1287,7 @@ class TestModuleCredentialsTomlSource:
             patches["Spawner"],
             patches["get_adapter"],
             patches["shutil_which"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
             await daemon.start()
@@ -1299,6 +1323,7 @@ class TestModuleCredentialsTomlSource:
             patches["Spawner"],
             patches["get_adapter"],
             patches["shutil_which"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -1336,6 +1361,7 @@ class TestModuleCredentialsTomlSource:
             patches["Spawner"],
             patches["get_adapter"],
             patches["shutil_which"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -1370,6 +1396,7 @@ class TestModuleCredentialsTomlSource:
             patches["Spawner"] as mock_spawner_cls,
             patches["get_adapter"],
             patches["shutil_which"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -1540,6 +1567,7 @@ class TestRuntimeAdapterPassedToSpawner:
             patches["Spawner"] as mock_spawner_cls,
             patches["get_adapter"],
             patches["shutil_which"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -1635,3 +1663,251 @@ class TestRuntimeBinaryCheck:
                 await daemon.start()
 
         mock_spawner_cls.assert_not_called()
+
+
+class TestSwitchboardClientConnection:
+    """Verify the Switchboard MCP client connection lifecycle."""
+
+    async def test_connect_switchboard_called_during_startup(self, butler_dir: Path) -> None:
+        """_connect_switchboard should be called during startup for non-switchboard butlers."""
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
+            patches["connect_switchboard"] as mock_connect,
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        mock_connect.assert_awaited_once()
+
+    async def test_switchboard_client_none_initially(self, butler_dir: Path) -> None:
+        """switchboard_client should be None before start() is called."""
+        daemon = ButlerDaemon(butler_dir)
+        assert daemon.switchboard_client is None
+
+    async def test_connect_switchboard_skips_when_url_is_none(self, tmp_path: Path) -> None:
+        """_connect_switchboard skips connection when switchboard_url is None."""
+        # The switchboard butler has switchboard_url=None
+        toml = """\
+[butler]
+name = "switchboard"
+port = 8100
+
+[butler.db]
+name = "butler_switchboard"
+"""
+        (tmp_path / "butler.toml").write_text(toml)
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
+            # Do NOT mock _connect_switchboard — let it run
+        ):
+            daemon = ButlerDaemon(tmp_path)
+            await daemon.start()
+
+        # switchboard_client should remain None
+        assert daemon.switchboard_client is None
+
+    async def test_connect_switchboard_success(self, butler_dir: Path) -> None:
+        """Successful connection should set switchboard_client."""
+        patches = _patch_infra()
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
+            patch("butlers.daemon.MCPClient", return_value=mock_client),
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        assert daemon.switchboard_client is mock_client
+        mock_client.__aenter__.assert_awaited_once()
+
+    async def test_connect_switchboard_failure_non_fatal(self, butler_dir: Path) -> None:
+        """Connection failure should not prevent butler startup."""
+        patches = _patch_infra()
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(side_effect=RuntimeError("Connection refused"))
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
+            patch("butlers.daemon.MCPClient", return_value=mock_client),
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            # Should NOT raise — failure is logged as warning
+            await daemon.start()
+
+        # switchboard_client should remain None
+        assert daemon.switchboard_client is None
+        # Butler should still be marked as started
+        assert daemon._started_at is not None
+
+    async def test_disconnect_switchboard_on_shutdown(self, butler_dir: Path) -> None:
+        """shutdown() should close the Switchboard client."""
+        patches = _patch_infra()
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
+            patch("butlers.daemon.MCPClient", return_value=mock_client),
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        assert daemon.switchboard_client is mock_client
+
+        await daemon.shutdown()
+
+        # Client should have been closed and set to None
+        mock_client.__aexit__.assert_awaited_once_with(None, None, None)
+        assert daemon.switchboard_client is None
+
+    async def test_disconnect_switchboard_error_non_fatal(self, butler_dir: Path) -> None:
+        """Error closing Switchboard client should not prevent shutdown."""
+        patches = _patch_infra()
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(side_effect=OSError("connection reset"))
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
+            patch("butlers.daemon.MCPClient", return_value=mock_client),
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        # Should not raise
+        await daemon.shutdown()
+
+        # Client should be set to None despite error
+        assert daemon.switchboard_client is None
+
+    async def test_switchboard_url_from_config(self, tmp_path: Path) -> None:
+        """Switchboard URL should come from butler config."""
+        toml = """\
+[butler]
+name = "health"
+port = 8103
+
+[butler.db]
+name = "butler_health"
+
+[butler.switchboard]
+url = "http://custom-switchboard:9000/sse"
+"""
+        (tmp_path / "butler.toml").write_text(toml)
+        patches = _patch_infra()
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        client_init_args = []
+
+        def capture_client_init(url, **kwargs):
+            client_init_args.append((url, kwargs))
+            return mock_client
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
+            patch("butlers.daemon.MCPClient", side_effect=capture_client_init),
+        ):
+            daemon = ButlerDaemon(tmp_path)
+            await daemon.start()
+
+        assert len(client_init_args) == 1
+        assert client_init_args[0][0] == "http://custom-switchboard:9000/sse"
+        assert client_init_args[0][1]["name"] == "butler-health"
+
+    async def test_shutdown_without_switchboard_client(self, butler_dir: Path) -> None:
+        """shutdown() should work when switchboard_client is None."""
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
+            patches["connect_switchboard"],
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        # switchboard_client is None (mocked _connect_switchboard)
+        assert daemon.switchboard_client is None
+
+        # Should not raise
+        await daemon.shutdown()

@@ -206,6 +206,9 @@ def _patch_infra():
         ),
         "shutil_which": patch("butlers.daemon.shutil.which", return_value="/usr/bin/claude"),
         "start_mcp_server": patch.object(ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock),
+        "connect_switchboard": patch.object(
+            ButlerDaemon, "_connect_switchboard", new_callable=AsyncMock
+        ),
         "mock_db": mock_db,
         "mock_pool": mock_pool,
         "mock_spawner": mock_spawner,
@@ -382,6 +385,7 @@ class TestDaemonGracefulShutdown:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -408,6 +412,7 @@ class TestDaemonGracefulShutdown:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -434,6 +439,7 @@ class TestDaemonGracefulShutdown:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir)
             await daemon.start()
@@ -472,6 +478,7 @@ class TestDaemonGracefulShutdown:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             await daemon.start()
@@ -538,6 +545,7 @@ class TestStartupFailureCleanup:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             with pytest.raises(RuntimeError, match="Module startup failed"):
@@ -573,6 +581,7 @@ class TestStartupFailureCleanup:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             with pytest.raises(RuntimeError, match="Module startup failed"):
@@ -605,6 +614,7 @@ class TestStartupFailureCleanup:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
 
@@ -665,6 +675,7 @@ class TestStartupFailureCleanup:
             patches["get_adapter"],
             patches["shutil_which"],
             patches["start_mcp_server"],
+            patches["connect_switchboard"],
         ):
             daemon = ButlerDaemon(butler_dir, registry=registry)
             with pytest.raises(RuntimeError, match="first module fails"):

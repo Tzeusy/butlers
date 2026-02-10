@@ -11,6 +11,7 @@ The ButlerDaemon manages the lifecycle of a butler:
 8. Module on_startup (topological order)
 9. Create Spawner with runtime adapter (verify binary on PATH)
 10. Sync TOML schedules to DB
+10b. Open MCP client connection to Switchboard (non-switchboard butlers)
 11. Create FastMCP server and register core tools
 12. Register module MCP tools
 12b. Apply approval gates to configured gated tools
@@ -20,7 +21,8 @@ On startup failure, already-initialized modules get on_shutdown() called.
 
 Graceful shutdown: (a) stops the MCP server, (b) stops accepting new triggers,
 (c) drains in-flight CC sessions up to a configurable timeout,
-(d) shuts down modules in reverse topological order, (e) closes DB pool.
+(d) closes Switchboard MCP client, (e) shuts down modules in reverse
+topological order, (f) closes DB pool.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
+from fastmcp import Client as MCPClient
 from fastmcp import FastMCP
 from opentelemetry import trace
 from pydantic import ConfigDict, ValidationError
@@ -160,6 +163,7 @@ class ButlerDaemon:
         self._accepting_connections = False
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task | None = None
+        self.switchboard_client: MCPClient | None = None
 
     async def start(self) -> None:
         """Execute the full startup sequence.
@@ -256,6 +260,9 @@ class ButlerDaemon:
         ]
         await sync_schedules(pool, schedules)
 
+        # 10b. Open MCP client connection to Switchboard (non-switchboard butlers)
+        await self._connect_switchboard()
+
         # 11. Create FastMCP and register core tools
         self.mcp = FastMCP(self.config.name)
         self._register_core_tools()
@@ -290,6 +297,54 @@ class ButlerDaemon:
         )
         self._server = uvicorn.Server(config)
         self._server_task = asyncio.create_task(self._server.serve())
+
+    async def _connect_switchboard(self) -> None:
+        """Open an MCP client connection to the Switchboard butler.
+
+        Skips connection for the Switchboard butler itself (it IS the
+        Switchboard) and when no ``switchboard_url`` is configured.
+
+        Connection failures are logged as warnings but do not prevent
+        butler startup — the butler can operate without the Switchboard,
+        though the ``notify()`` tool will return errors until the
+        connection is established.
+
+        The FastMCP Client is entered as a long-lived async context
+        manager (via ``__aenter__``). ``_disconnect_switchboard`` calls
+        ``__aexit__`` to clean up.
+        """
+        url = self.config.switchboard_url
+        if url is None:
+            logger.debug(
+                "No switchboard_url configured for %s; skipping Switchboard connection",
+                self.config.name,
+            )
+            return
+
+        try:
+            client = MCPClient(url, name=f"butler-{self.config.name}")
+            await client.__aenter__()
+            self.switchboard_client = client
+            logger.info("Connected to Switchboard at %s for butler %s", url, self.config.name)
+        except Exception:
+            logger.warning(
+                "Failed to connect to Switchboard at %s for butler %s; "
+                "notify() will be unavailable until Switchboard is reachable",
+                url,
+                self.config.name,
+                exc_info=True,
+            )
+
+    async def _disconnect_switchboard(self) -> None:
+        """Close the Switchboard MCP client connection if open."""
+        if self.switchboard_client is not None:
+            try:
+                await self.switchboard_client.__aexit__(None, None, None)
+                logger.info("Disconnected from Switchboard")
+            except Exception:
+                logger.warning("Error closing Switchboard client", exc_info=True)
+            finally:
+                self.switchboard_client = None
 
     def _collect_module_credentials(self) -> dict[str, list[str]]:
         """Collect credentials_env from enabled modules.
@@ -599,8 +654,9 @@ class ButlerDaemon:
 
         1. Stop MCP server
         2. Stop accepting new triggers and drain in-flight CC sessions
-        3. Module on_shutdown in reverse topological order
-        4. Close DB pool
+        3. Close Switchboard MCP client
+        4. Module on_shutdown in reverse topological order
+        5. Close DB pool
         """
         logger.info(
             "Shutting down butler: %s",
@@ -625,14 +681,17 @@ class ButlerDaemon:
             timeout = self.config.shutdown_timeout_s if self.config else 30.0
             await self.spawner.drain(timeout=timeout)
 
-        # 3. Module shutdown in reverse topological order
+        # 3. Close Switchboard MCP client
+        await self._disconnect_switchboard()
+
+        # 4. Module shutdown in reverse topological order
         for mod in reversed(self._modules):
             try:
                 await mod.on_shutdown()
             except Exception:
                 logger.exception("Error during shutdown of module: %s", mod.name)
 
-        # 4. Close DB pool
+        # 5. Close DB pool
         if self.db:
             await self.db.close()
 
