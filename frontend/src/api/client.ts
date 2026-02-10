@@ -9,6 +9,7 @@ import type {
   ButlerSummary,
   ErrorResponse,
   HealthResponse,
+  Issue,
   NotificationParams,
   NotificationStats,
   NotificationSummary,
@@ -162,4 +163,13 @@ export function getButlerNotifications(
   const base = `/butlers/${encodeURIComponent(name)}/notifications`;
   const path = qs ? `${base}?${qs}` : base;
   return apiFetch<PaginatedResponse<NotificationSummary>>(path);
+}
+
+// ---------------------------------------------------------------------------
+// Issues
+// ---------------------------------------------------------------------------
+
+/** Fetch active issues across all butlers. */
+export function getIssues(): Promise<ApiResponse<Issue[]>> {
+  return apiFetch<ApiResponse<Issue[]>>("/issues");
 }

@@ -114,3 +114,16 @@ export interface NotificationParams {
   since?: string;
   until?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Issues
+// ---------------------------------------------------------------------------
+
+/** Active issue detected across butler infrastructure. */
+export interface Issue {
+  severity: string;
+  type: string;
+  butler: string;
+  description: string;
+  link: string | null;
+}
