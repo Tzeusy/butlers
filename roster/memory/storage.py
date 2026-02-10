@@ -527,3 +527,47 @@ async def forget_memory(
 
     # asyncpg execute returns a status string like "UPDATE 1" or "UPDATE 0"
     return result.endswith("1")
+
+
+# ---------------------------------------------------------------------------
+# Confirm (reset confidence decay timer)
+# ---------------------------------------------------------------------------
+
+
+async def confirm_memory(
+    pool: Pool,
+    memory_type: str,
+    memory_id: uuid.UUID,
+) -> bool:
+    """Confirm a fact or rule is still accurate, resetting confidence decay.
+
+    Updates ``last_confirmed_at`` to now. This effectively resets the
+    confidence decay timer, restoring effective confidence to its base level.
+
+    Episodes cannot be confirmed (they don't have confidence decay) and
+    attempting to do so raises a ValueError.
+
+    Args:
+        pool: asyncpg connection pool.
+        memory_type: One of 'fact' or 'rule'.
+        memory_id: UUID of the memory to confirm.
+
+    Returns:
+        True if the memory was found and updated, False if not found.
+
+    Raises:
+        ValueError: If memory_type is 'episode' or invalid.
+    """
+    if memory_type not in _VALID_MEMORY_TYPES:
+        raise ValueError(
+            f"Invalid memory_type: {memory_type!r}. Must be one of {sorted(_VALID_MEMORY_TYPES)}"
+        )
+    if memory_type == "episode":
+        raise ValueError("Episodes cannot be confirmed — they don't have confidence decay")
+
+    table = _TYPE_TABLE[memory_type]
+    result = await pool.execute(
+        f"UPDATE {table} SET last_confirmed_at = now() WHERE id = $1",
+        memory_id,
+    )
+    return result.endswith("1")
