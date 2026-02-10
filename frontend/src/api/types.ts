@@ -423,3 +423,138 @@ export interface TriggerResponse {
   success: boolean;
   output: string;
 }
+
+// ---------------------------------------------------------------------------
+// Relationship / CRM
+// ---------------------------------------------------------------------------
+
+/** A label that can be attached to contacts or groups. */
+export interface Label {
+  id: string;
+  name: string;
+  color: string | null;
+}
+
+/** Lightweight contact representation for list views. */
+export interface ContactSummary {
+  id: string;
+  full_name: string;
+  nickname: string | null;
+  email: string | null;
+  phone: string | null;
+  labels: Label[];
+  last_interaction_at: string | null;
+}
+
+/** Full contact detail with additional fields. */
+export interface ContactDetail extends ContactSummary {
+  notes: string | null;
+  birthday: string | null;
+  company: string | null;
+  job_title: string | null;
+  address: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A contact group. */
+export interface Group {
+  id: string;
+  name: string;
+  description: string | null;
+  member_count: number;
+  labels: Label[];
+  created_at: string;
+  updated_at: string;
+}
+
+/** A note attached to a contact. */
+export interface Note {
+  id: string;
+  contact_id: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** An interaction record for a contact. */
+export interface Interaction {
+  id: string;
+  contact_id: string;
+  type: string;
+  summary: string;
+  details: string | null;
+  occurred_at: string;
+  created_at: string;
+}
+
+/** A gift given to or received from a contact. */
+export interface Gift {
+  id: string;
+  contact_id: string;
+  description: string;
+  direction: string;
+  occasion: string | null;
+  date: string;
+  value: number | null;
+  created_at: string;
+}
+
+/** A loan between the user and a contact. */
+export interface Loan {
+  id: string;
+  contact_id: string;
+  description: string;
+  direction: string;
+  amount: number;
+  currency: string;
+  status: string;
+  date: string;
+  due_date: string | null;
+  created_at: string;
+}
+
+/** An upcoming date (birthday, anniversary, etc.). */
+export interface UpcomingDate {
+  contact_id: string;
+  contact_name: string;
+  date_type: string;
+  date: string;
+  days_until: number;
+}
+
+/** Paginated contact list response. */
+export interface ContactListResponse {
+  contacts: ContactSummary[];
+  total: number;
+}
+
+/** Paginated group list response. */
+export interface GroupListResponse {
+  groups: Group[];
+  total: number;
+}
+
+/** An activity feed item for a contact. */
+export interface ActivityFeedItem {
+  id: string;
+  contact_id: string;
+  action: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+/** Query parameters for the contacts list endpoint. */
+export interface ContactParams {
+  q?: string;
+  label?: string;
+  offset?: number;
+  limit?: number;
+}
+
+/** Query parameters for the groups list endpoint. */
+export interface GroupParams {
+  offset?: number;
+  limit?: number;
+}

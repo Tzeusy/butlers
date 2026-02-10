@@ -8,6 +8,8 @@ const navItems = [
   { path: '/timeline', label: 'Timeline' },
   { path: '/notifications', label: 'Notifications' },
   { path: '/audit-log', label: 'Audit Log' },
+  { path: '/contacts', label: 'Contacts' },
+  { path: '/groups', label: 'Groups' },
   { path: '/settings', label: 'Settings' },
 ]
 

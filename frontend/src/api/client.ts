@@ -5,17 +5,29 @@
  */
 
 import type {
+  ActivityFeedItem,
   ApiResponse,
   AuditEntry,
   AuditLogParams,
   ButlerConfigResponse,
   ButlerSkill,
   ButlerSummary,
+  ContactDetail,
+  ContactListResponse,
+  ContactParams,
   CostSummary,
   DailyCost,
   ErrorResponse,
+  Gift,
+  Group,
+  GroupListResponse,
+  GroupParams,
   HealthResponse,
+  Interaction,
   Issue,
+  Label,
+  Loan,
+  Note,
   NotificationParams,
   NotificationStats,
   NotificationSummary,
@@ -36,6 +48,7 @@ import type {
   TraceParams,
   TraceSummary,
   TriggerResponse,
+  UpcomingDate,
 } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -452,4 +465,100 @@ export function getTimeline(params?: TimelineParams): Promise<TimelineResponse> 
   params?.event_type?.forEach((t) => sp.append("event_type", t));
   const qs = sp.toString();
   return apiFetch<TimelineResponse>(qs ? `/timeline?${qs}` : "/timeline");
+}
+
+// ---------------------------------------------------------------------------
+// Relationship / CRM
+// ---------------------------------------------------------------------------
+
+/** Build URLSearchParams from contact query parameters. */
+function contactSearchParams(params?: ContactParams): URLSearchParams {
+  const sp = new URLSearchParams();
+  if (params?.q != null && params.q !== "") sp.set("q", params.q);
+  if (params?.label != null && params.label !== "") sp.set("label", params.label);
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  return sp;
+}
+
+/** Fetch a paginated list of contacts. */
+export function getContacts(params?: ContactParams): Promise<ContactListResponse> {
+  const qs = contactSearchParams(params).toString();
+  const path = qs ? `/relationship/contacts?${qs}` : "/relationship/contacts";
+  return apiFetch<ContactListResponse>(path);
+}
+
+/** Fetch a single contact by ID. */
+export function getContact(contactId: string): Promise<ContactDetail> {
+  return apiFetch<ContactDetail>(
+    `/relationship/contacts/${encodeURIComponent(contactId)}`,
+  );
+}
+
+/** Fetch notes for a contact. */
+export function getContactNotes(contactId: string): Promise<Note[]> {
+  return apiFetch<Note[]>(
+    `/relationship/contacts/${encodeURIComponent(contactId)}/notes`,
+  );
+}
+
+/** Fetch interactions for a contact. */
+export function getContactInteractions(contactId: string): Promise<Interaction[]> {
+  return apiFetch<Interaction[]>(
+    `/relationship/contacts/${encodeURIComponent(contactId)}/interactions`,
+  );
+}
+
+/** Fetch gifts for a contact. */
+export function getContactGifts(contactId: string): Promise<Gift[]> {
+  return apiFetch<Gift[]>(
+    `/relationship/contacts/${encodeURIComponent(contactId)}/gifts`,
+  );
+}
+
+/** Fetch loans for a contact. */
+export function getContactLoans(contactId: string): Promise<Loan[]> {
+  return apiFetch<Loan[]>(
+    `/relationship/contacts/${encodeURIComponent(contactId)}/loans`,
+  );
+}
+
+/** Fetch activity feed for a contact. */
+export function getContactFeed(contactId: string): Promise<ActivityFeedItem[]> {
+  return apiFetch<ActivityFeedItem[]>(
+    `/relationship/contacts/${encodeURIComponent(contactId)}/feed`,
+  );
+}
+
+/** Build URLSearchParams from group query parameters. */
+function groupSearchParams(params?: GroupParams): URLSearchParams {
+  const sp = new URLSearchParams();
+  if (params?.offset != null) sp.set("offset", String(params.offset));
+  if (params?.limit != null) sp.set("limit", String(params.limit));
+  return sp;
+}
+
+/** Fetch a paginated list of groups. */
+export function getGroups(params?: GroupParams): Promise<GroupListResponse> {
+  const qs = groupSearchParams(params).toString();
+  const path = qs ? `/relationship/groups?${qs}` : "/relationship/groups";
+  return apiFetch<GroupListResponse>(path);
+}
+
+/** Fetch a single group by ID. */
+export function getGroup(groupId: string): Promise<Group> {
+  return apiFetch<Group>(
+    `/relationship/groups/${encodeURIComponent(groupId)}`,
+  );
+}
+
+/** Fetch all labels. */
+export function getLabels(): Promise<Label[]> {
+  return apiFetch<Label[]>("/relationship/labels");
+}
+
+/** Fetch upcoming dates within a given number of days. */
+export function getUpcomingDates(days?: number): Promise<UpcomingDate[]> {
+  const params = days != null ? `?days=${days}` : "";
+  return apiFetch<UpcomingDate[]>(`/relationship/upcoming-dates${params}`);
 }

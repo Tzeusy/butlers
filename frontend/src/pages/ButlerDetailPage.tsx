@@ -1,11 +1,12 @@
 import { lazy, Suspense, useState } from "react";
-import { useParams, useSearchParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 
 import type { SessionParams, SessionSummary } from "@/api/types";
 import ButlerConfigTab from "@/components/butler-detail/ButlerConfigTab";
 import ButlerOverviewTab from "@/components/butler-detail/ButlerOverviewTab";
-import SessionDetailDrawer from "@/components/sessions/SessionDetailDrawer";
-import SessionTable from "@/components/sessions/SessionTable";
+import { SessionDetailDrawer } from "@/components/sessions/SessionDetailDrawer";
+import { SessionTable } from "@/components/sessions/SessionTable";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -14,8 +15,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useButlerSessions } from "@/hooks/use-sessions";
+import { useUpcomingDates } from "@/hooks/use-contacts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -34,7 +37,7 @@ const ButlerStateTab = lazy(
   () => import("@/components/butler-detail/ButlerStateTab.tsx"),
 );
 
-const TABS = ["overview", "sessions", "config", "skills", "schedules", "state", "trigger"] as const;
+const TABS = ["overview", "sessions", "config", "skills", "schedules", "state", "trigger", "crm"] as const;
 type TabValue = (typeof TABS)[number];
 
 const PAGE_SIZE = 20;
@@ -124,6 +127,107 @@ function ButlerSessionsTab({ butlerName }: { butlerName: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// CRM Tab sub-component
+// ---------------------------------------------------------------------------
+
+function ButlerCrmTab({ butlerName }: { butlerName: string }) {
+  const isRelationship = butlerName === "relationship";
+  const { data: upcomingDates, isLoading } = useUpcomingDates(
+    isRelationship ? 30 : undefined,
+  );
+
+  if (!isRelationship) {
+    return (
+      <Card>
+        <CardContent className="py-12">
+          <p className="text-muted-foreground text-center text-sm">
+            CRM features are only available for the relationship butler.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Upcoming dates widget */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Upcoming Dates</CardTitle>
+          <CardDescription>
+            Birthdays, anniversaries, and other important dates in the next 30 days
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 3 }, (_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
+          ) : !upcomingDates || upcomingDates.length === 0 ? (
+            <p className="text-muted-foreground py-6 text-center text-sm">
+              No upcoming dates in the next 30 days.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {upcomingDates.map((item, idx) => (
+                <div
+                  key={`${item.contact_id}-${item.date_type}-${idx}`}
+                  className="flex items-center justify-between rounded-md border px-3 py-2"
+                >
+                  <div className="flex items-center gap-3">
+                    <Badge variant="outline" className="text-xs">
+                      {item.date_type}
+                    </Badge>
+                    <Link
+                      to={`/contacts/${item.contact_id}`}
+                      className="text-sm font-medium hover:underline"
+                    >
+                      {item.contact_name}
+                    </Link>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground text-sm">{item.date}</span>
+                    <Badge
+                      variant={item.days_until <= 3 ? "destructive" : "secondary"}
+                      className="text-xs"
+                    >
+                      {item.days_until === 0
+                        ? "Today"
+                        : item.days_until === 1
+                          ? "Tomorrow"
+                          : `${item.days_until} days`}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Quick links */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Quick Links</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-3">
+            <Button variant="outline" asChild>
+              <Link to="/contacts">Contacts</Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link to="/groups">Groups</Link>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ButlerDetailPage
 // ---------------------------------------------------------------------------
 
@@ -156,6 +260,7 @@ export default function ButlerDetailPage() {
           <TabsTrigger value="schedules">Schedules</TabsTrigger>
           <TabsTrigger value="trigger">Trigger</TabsTrigger>
           <TabsTrigger value="state">State</TabsTrigger>
+          <TabsTrigger value="crm">CRM</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -216,6 +321,10 @@ export default function ButlerDetailPage() {
           >
             <ButlerStateTab butlerName={name} />
           </Suspense>
+        </TabsContent>
+
+        <TabsContent value="crm">
+          <ButlerCrmTab butlerName={name} />
         </TabsContent>
       </Tabs>
     </div>
