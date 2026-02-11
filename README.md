@@ -4,7 +4,11 @@ A personal AI agent framework where each **butler** is a long-running MCP server
 
 ## WARNING
 
-This application is entirely vibe coded, borne out of my curiosity to experiment with the capabilities of Claude Code's Teams feature combined with Steve Yegge's [beads](https://github.com/steveyegge/beads). 
+This application is entirely vibe coded, borne out of my desire to experiment with the capabilities of Claude Code/Codex, combined with Steve Yegge's [beads](https://github.com/steveyegge/beads). This project is pretty far from being considered 'ready for usage' - play with it at your own risk!
+
+## Motivation
+
+I've always wanted to build a 'Jarvis' for myself - a system where I could offload the majority of 'mental toil' tasks while retaining the benefits of having kept them in mind. This has come closer and closer to true feasibility as LLMs have become more and more advanced; this project represents the first of my efforts to materialize the use cases and UX of a personal butler-like microservice.
 
 ## How It Works
 
