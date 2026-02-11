@@ -60,6 +60,47 @@ async def classify_message(
     return fallback
 
 
+async def classify_message_multi(
+    pool: Any,
+    message: str,
+    dispatch_fn: Any,
+) -> list[str]:
+    """Backward-compatible classifier returning only target butler names.
+
+    Supports both modern JSON-array classifier responses and legacy plain
+    text outputs like ``"health, email"`` or ``"calendar"``.
+    """
+    fallback = ["general"]
+    butlers = await list_butlers(pool)
+    known = {b["name"] for b in butlers}
+    known.add("general")
+
+    prompt = (
+        "Classify this message into one or more butlers.\n"
+        "Return either a JSON array of {butler,prompt} or a comma-separated list.\n\n"
+        f"Message: {message}"
+    )
+
+    try:
+        result = await dispatch_fn(prompt=prompt, trigger_source="tick")
+        raw = result.result if result and hasattr(result, "result") and result.result else ""
+    except Exception:
+        logger.exception("Classification failed")
+        return fallback
+
+    if not raw:
+        return fallback
+
+    entries = _parse_classification(raw, butlers, message)
+    if not (len(entries) == 1 and entries[0]["butler"] == "general"):
+        return [entry["butler"] for entry in entries]
+
+    # Legacy fallback parser: plain comma/newline separated butler names.
+    candidates = [part.strip().lower() for part in raw.replace("\n", ",").split(",")]
+    targets = [name for name in candidates if name and name in known]
+    return targets or fallback
+
+
 def _parse_classification(
     raw: str,
     butlers: list[dict[str, Any]],

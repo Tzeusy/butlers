@@ -2,17 +2,56 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from typing import Any
 
 import asyncpg
+from fastmcp import Client as MCPClient
 from opentelemetry import trace
 
 from butlers.core.telemetry import inject_trace_context
 
 logger = logging.getLogger(__name__)
+
+
+class _InterButlerClientPool:
+    """Pool/reuse FastMCP clients per endpoint URL."""
+
+    def __init__(self) -> None:
+        self._clients: dict[str, MCPClient] = {}
+        self._lock = asyncio.Lock()
+
+    async def get(self, endpoint_url: str) -> MCPClient:
+        async with self._lock:
+            client = self._clients.get(endpoint_url)
+            if client is not None and client.is_connected():
+                return client
+            if client is not None:
+                await self._close(endpoint_url, client)
+
+            name = f"switchboard-route-{hash(endpoint_url) & 0xFFFF:x}"
+            fresh = MCPClient(endpoint_url, name=name)
+            await fresh.__aenter__()
+            self._clients[endpoint_url] = fresh
+            return fresh
+
+    async def invalidate(self, endpoint_url: str) -> None:
+        async with self._lock:
+            client = self._clients.pop(endpoint_url, None)
+            if client is not None:
+                await self._close(endpoint_url, client)
+
+    async def _close(self, endpoint_url: str, client: MCPClient) -> None:
+        try:
+            await client.__aexit__(None, None, None)
+        except Exception:
+            logger.warning("Failed to close MCP client for %s", endpoint_url, exc_info=True)
+
+
+_CLIENT_POOL = _InterButlerClientPool()
 
 
 async def route(
@@ -196,14 +235,22 @@ async def post_mail(
 
 
 async def _call_butler_tool(endpoint_url: str, tool_name: str, args: dict[str, Any]) -> Any:
-    """Call a tool on another butler via MCP SSE client.
-
-    In production this would use the MCP SDK client; for now it raises
-    ConnectionError to signal that real MCP integration is pending.
-    """
-    raise ConnectionError(
-        f"Failed to call tool {tool_name} on {endpoint_url} — requires MCP client SDK integration"
-    )
+    """Call a tool on another butler via MCP SSE client."""
+    try:
+        client = await _CLIENT_POOL.get(endpoint_url)
+        result = await client.call_tool(tool_name, args)
+        if getattr(result, "is_error", False):
+            content = getattr(result, "content", None)
+            if isinstance(content, list) and content:
+                message = getattr(content[0], "text", None)
+                if isinstance(message, str) and message.strip():
+                    raise RuntimeError(message.strip())
+            raise RuntimeError("MCP tool call returned an error")
+        data = getattr(result, "data", None)
+        return data if data is not None else result
+    except Exception as exc:
+        await _CLIENT_POOL.invalidate(endpoint_url)
+        raise ConnectionError(f"Failed to call tool {tool_name} on {endpoint_url}: {exc}") from exc
 
 
 async def _log_routing(

@@ -94,7 +94,8 @@ class MessagePipeline:
 
         # Step 1: Classify
         try:
-            target = await classify(self._pool, message_text, self._dispatch_fn)
+            classified = await classify(self._pool, message_text, self._dispatch_fn)
+            target = self._resolve_target_butler(classified)
         except Exception as exc:
             error_msg = f"{type(exc).__name__}: {exc}"
             logger.exception("Classification failed for message")
@@ -127,3 +128,21 @@ class MessagePipeline:
             target_butler=target,
             route_result=result,
         )
+
+    @staticmethod
+    def _resolve_target_butler(classified: Any) -> str:
+        """Normalize classify_message output to a target butler name.
+
+        Supports both legacy ``str`` return values and the current list-based
+        decomposition format (``[{butler, prompt}, ...]``). If no valid butler
+        is present, defaults to ``general``.
+        """
+        if isinstance(classified, str):
+            return classified
+        if isinstance(classified, list) and classified:
+            first = classified[0]
+            if isinstance(first, dict):
+                butler = first.get("butler")
+                if isinstance(butler, str) and butler.strip():
+                    return butler.strip()
+        return "general"

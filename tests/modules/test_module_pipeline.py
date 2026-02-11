@@ -80,6 +80,54 @@ class TestMessagePipelineProcess:
         assert result.classification_error is None
         assert result.routing_error is None
 
+    async def test_uses_first_butler_from_list_classification(self):
+        """Pipeline supports list-based classify_message output."""
+        captured_target: list[str] = []
+
+        async def mock_classify(pool, message, dispatch_fn):
+            return [{"butler": "health", "prompt": "I have a headache"}]
+
+        async def mock_route(pool, target, tool_name, args, source):
+            captured_target.append(target)
+            return {"result": "handled"}
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(),
+            dispatch_fn=AsyncMock(),
+            classify_fn=mock_classify,
+            route_fn=mock_route,
+        )
+
+        result = await pipeline.process("I have a headache")
+
+        assert captured_target == ["health"]
+        assert result.target_butler == "health"
+        assert result.route_result == {"result": "handled"}
+
+    async def test_defaults_to_general_for_empty_list_classification(self):
+        """Pipeline falls back to general when classification is empty."""
+        captured_target: list[str] = []
+
+        async def mock_classify(pool, message, dispatch_fn):
+            return []
+
+        async def mock_route(pool, target, tool_name, args, source):
+            captured_target.append(target)
+            return {"result": "ok"}
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(),
+            dispatch_fn=AsyncMock(),
+            classify_fn=mock_classify,
+            route_fn=mock_route,
+        )
+
+        result = await pipeline.process("hello")
+
+        assert captured_target == ["general"]
+        assert result.target_butler == "general"
+        assert result.route_result == {"result": "ok"}
+
     async def test_passes_message_as_tool_arg(self):
         """Pipeline includes message text in the tool_args sent to route."""
         captured_args: dict = {}

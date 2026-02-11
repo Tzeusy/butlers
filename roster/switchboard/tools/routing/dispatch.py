@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -84,6 +85,39 @@ async def dispatch_decomposed(
     return results
 
 
+async def dispatch_to_targets(
+    pool: Any,
+    targets: list[str],
+    message: str,
+    *,
+    call_fn: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Backward-compatible dispatch helper for list[str] targets.
+
+    Unlike ``dispatch_decomposed`` (which accepts decomposed ``{butler, prompt}``
+    pairs), this function routes the same original message to each target and
+    returns ``{target, result, error}`` entries.
+    """
+    results: list[dict[str, Any]] = []
+    for target in targets:
+        route_result = await route(
+            pool,
+            target_butler=target,
+            tool_name="handle_message",
+            args={"message": message},
+            source_butler="switchboard",
+            call_fn=call_fn,
+        )
+        results.append(
+            {
+                "target": target,
+                "result": route_result.get("result"),
+                "error": route_result.get("error"),
+            }
+        )
+    return results
+
+
 @dataclass
 class ButlerResult:
     """Result from a single butler dispatch."""
@@ -105,10 +139,57 @@ def _fallback_concatenate(results: list[ButlerResult]) -> str:
     return "\n\n".join(parts)
 
 
-async def aggregate_responses(
+def _normalize_butler_results(
+    results: list[ButlerResult] | list[dict[str, Any]],
+) -> list[ButlerResult]:
+    """Normalize ButlerResult/dataclass and dict response payloads."""
+    normalized: list[ButlerResult] = []
+    for item in results:
+        if isinstance(item, ButlerResult):
+            normalized.append(item)
+            continue
+
+        if not isinstance(item, dict):
+            continue
+
+        butler = str(item.get("butler") or item.get("target") or "unknown")
+        response = item.get("response", item.get("result"))
+        error = item.get("error")
+
+        if response is not None and not isinstance(response, str):
+            response = str(response)
+        if error is not None and not isinstance(error, str):
+            error = str(error)
+
+        success = error is None and response is not None
+        normalized.append(
+            ButlerResult(
+                butler=butler,
+                response=response,
+                success=success,
+                error=error,
+            )
+        )
+
+    return normalized
+
+
+def _fallback_aggregate_text(results: list[ButlerResult]) -> str:
+    """Synchronous fallback text for compatibility call sites."""
+    if not results:
+        return "No butler responses were received."
+    if len(results) == 1:
+        r = results[0]
+        if r.success and r.response:
+            return r.response
+        return f"The {r.butler} butler was unavailable: {r.error or 'unknown error'}"
+    return _fallback_concatenate(results)
+
+
+async def _aggregate_responses_async(
     results: list[ButlerResult],
     *,
-    dispatch_fn: Any,
+    dispatch_fn: Any | None,
 ) -> str:
     """Aggregate multiple butler responses into a single coherent reply.
 
@@ -137,16 +218,17 @@ async def aggregate_responses(
     - Multiple results: spawns a CC instance to synthesize them.
     - If CC synthesis fails, falls back to simple concatenation.
     """
-    # Empty results
     if not results:
         return "No butler responses were received."
 
-    # Single result — return directly, no CC overhead
     if len(results) == 1:
         r = results[0]
         if r.success and r.response:
             return r.response
         return f"The {r.butler} butler was unavailable: {r.error or 'unknown error'}"
+
+    if dispatch_fn is None:
+        return _fallback_concatenate(results)
 
     # Multiple results — build a prompt for CC synthesis
     response_parts: list[str] = []
@@ -179,3 +261,37 @@ async def aggregate_responses(
 
     # Fallback: simple concatenation
     return _fallback_concatenate(results)
+
+
+class _AggregateResponse(str):
+    """String-like value that is also awaitable for async aggregation callers."""
+
+    def __new__(
+        cls,
+        value: str,
+        await_factory: Callable[[], Awaitable[str]],
+    ) -> _AggregateResponse:
+        obj = super().__new__(cls, value)
+        obj._await_factory = await_factory
+        return obj
+
+    def __await__(self):
+        return self._await_factory().__await__()
+
+
+def aggregate_responses(
+    results: list[ButlerResult] | list[dict[str, Any]],
+    *,
+    dispatch_fn: Any | None = None,
+) -> _AggregateResponse:
+    """Aggregate butler responses with sync+async backward compatibility.
+
+    - Sync usage: ``text = aggregate_responses(results)`` returns a ``str``.
+    - Async usage: ``text = await aggregate_responses(results, dispatch_fn=...)``.
+    """
+    normalized = _normalize_butler_results(results)
+    fallback_text = _fallback_aggregate_text(normalized)
+    return _AggregateResponse(
+        fallback_text,
+        lambda: _aggregate_responses_async(normalized, dispatch_fn=dispatch_fn),
+    )
