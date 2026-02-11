@@ -134,6 +134,7 @@ All 122 beads closed. 449 tests passing on main. Full implementation complete.
 ### Test Patterns
 - All DB tests use `testcontainers.postgres.PostgresContainer` with `asyncpg.create_pool()`
 - Tables created via direct SQL from migration files (not Alembic runner)
+- When tests create `sessions` manually, keep schema aligned with `core_003`+ columns (`model`, `success`, `error`, `input_tokens`, `output_tokens`, `parent_session_id`) to avoid `UndefinedColumnError` in `core.sessions` queries.
 - Root `conftest.py` has `SpawnerResult` and `MockSpawner` (visible to all test trees)
 - `tests/conftest.py` re-exports from root for backward compat (`from tests.conftest import ...`)
 - CLI tests use Click's `CliRunner`
