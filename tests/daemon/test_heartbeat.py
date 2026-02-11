@@ -62,7 +62,13 @@ async def pool_with_sessions(pool):
             tool_calls JSONB,
             duration_ms INTEGER,
             trace_id TEXT,
+            model TEXT,
             cost JSONB,
+            success BOOLEAN,
+            error TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            parent_session_id UUID,
             started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             completed_at TIMESTAMPTZ
         )

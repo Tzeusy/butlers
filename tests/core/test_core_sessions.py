@@ -74,6 +74,9 @@ async def pool(postgres_container):
             cost JSONB,
             success BOOLEAN,
             error TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            parent_session_id UUID,
             started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             completed_at TIMESTAMPTZ
         )
@@ -115,6 +118,8 @@ async def test_create_session_persists_fields(pool):
     assert session["duration_ms"] is None
     assert session["success"] is None
     assert session["error"] is None
+    assert session["input_tokens"] is None
+    assert session["output_tokens"] is None
     assert session["completed_at"] is None
     assert session["started_at"] is not None
 
@@ -358,6 +363,8 @@ async def test_sessions_get_returns_full_record(pool):
         "cost",
         "success",
         "error",
+        "input_tokens",
+        "output_tokens",
         "started_at",
         "completed_at",
     }
