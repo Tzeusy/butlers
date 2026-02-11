@@ -139,7 +139,7 @@ class TestLoadConfigEnvVars:
 
     def test_module_config_resolved(self, tmp_path, monkeypatch):
         """Module config values with ${VAR} are resolved before being returned."""
-        monkeypatch.setenv("EMAIL_PASSWORD", "p@ssw0rd")
+        monkeypatch.setenv("SOURCE_EMAIL_PASSWORD", "p@ssw0rd")
         monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
         toml = """\
 [butler]
@@ -147,7 +147,7 @@ name = "mailbot"
 port = 8200
 
 [modules.email]
-password = "${EMAIL_PASSWORD}"
+password = "${SOURCE_EMAIL_PASSWORD}"
 host = "${SMTP_HOST}"
 port = 587
 """

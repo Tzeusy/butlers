@@ -182,17 +182,21 @@ class TrackingMockAdapter(MockAdapter):
 # ---------------------------------------------------------------------------
 
 
+_SENTINEL = object()
+
+
 def _make_config(
     name: str = "test-butler",
     port: int = 9100,
     env_required: list[str] | None = None,
     env_optional: list[str] | None = None,
-    model: str | None = None,
+    model: str | None | object = _SENTINEL,
 ) -> ButlerConfig:
+    runtime = RuntimeConfig(model=model) if model is not _SENTINEL else RuntimeConfig()
     return ButlerConfig(
         name=name,
         port=port,
-        runtime=RuntimeConfig(model=model),
+        runtime=runtime,
         env_required=env_required or [],
         env_optional=env_optional or [],
     )
@@ -530,7 +534,7 @@ class TestSessionLogging:
             assert create_args[0] is mock_pool
             assert create_args[1] == "log me"
             assert create_args[2] == "schedule"
-            assert create_kwargs.get("model") is None
+            assert create_kwargs.get("model") == "claude-haiku-4-5-20251001"
 
             # session_complete called with result data
             mock_complete.assert_called_once()
@@ -693,11 +697,11 @@ class TestModelPassthrough:
         assert len(captured_options) == 1
         assert captured_options[0].model == "claude-sonnet-4-20250514"
 
-    async def test_model_none_when_not_configured(self, tmp_path: Path):
-        """When model is not set, ClaudeCodeOptions.model is None (runtime default)."""
+    async def test_model_default_when_not_configured(self, tmp_path: Path):
+        """When model is not set, ClaudeCodeOptions.model defaults to Haiku."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
-        config = _make_config()  # model defaults to None
+        config = _make_config()  # model defaults to Haiku
 
         captured_options: list[Any] = []
 
@@ -716,7 +720,7 @@ class TestModelPassthrough:
             await spawner.trigger("test default", "tick")
 
         assert len(captured_options) == 1
-        assert captured_options[0].model is None
+        assert captured_options[0].model == "claude-haiku-4-5-20251001"
 
     async def test_model_in_spawner_result_on_success(self, tmp_path: Path):
         """SpawnerResult includes the model used on successful invocation."""
@@ -749,8 +753,8 @@ class TestModelPassthrough:
         assert result.error is not None
         assert result.model == "claude-opus-4-20250514"
 
-    async def test_model_none_in_spawner_result_when_not_configured(self, tmp_path: Path):
-        """SpawnerResult.model is None when not configured."""
+    async def test_model_default_in_spawner_result_when_not_configured(self, tmp_path: Path):
+        """SpawnerResult.model defaults to Haiku when not explicitly configured."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
@@ -762,7 +766,7 @@ class TestModelPassthrough:
         )
 
         result = await spawner.trigger("test", "tick")
-        assert result.model is None
+        assert result.model == "claude-haiku-4-5-20251001"
 
 
 # ---------------------------------------------------------------------------

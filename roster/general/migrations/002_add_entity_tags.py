@@ -1,7 +1,7 @@
 """add_entity_tags
 
-Revision ID: 002
-Revises: 001
+Revision ID: gen_002
+Revises: gen_001
 Create Date: 2025-01-01 00:00:01.000000
 
 """
@@ -11,8 +11,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "002"
-down_revision = "001"
+revision = "gen_002"
+down_revision = "gen_001"
 branch_labels = None
 depends_on = None
 

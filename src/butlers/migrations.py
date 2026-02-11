@@ -138,10 +138,11 @@ def _build_alembic_config(db_url: str, chains: list[str] | None = None) -> Confi
     config.set_main_option("script_location", str(ALEMBIC_DIR))
     config.set_main_option("sqlalchemy.url", db_url)
 
-    # Build version_locations from requested chains
-    chains = chains or get_all_chains()
+    # Always include ALL version locations so Alembic can resolve every
+    # revision in alembic_version, even when upgrading a single branch.
+    all_chains = get_all_chains()
     locations = []
-    for chain in chains:
+    for chain in all_chains:
         chain_dir = _resolve_chain_dir(chain)
         if chain_dir is not None:
             locations.append(str(chain_dir))

@@ -1,7 +1,7 @@
 """relationship_types taxonomy
 
-Revision ID: 002
-Revises: 001
+Revision ID: rel_002d
+Revises: rel_001
 Create Date: 2026-02-10 00:00:00.000000
 
 """
@@ -11,8 +11,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "002"
-down_revision = "001"
+revision = "rel_002d"
+down_revision = "rel_002c"
 branch_labels = None
 depends_on = None
 

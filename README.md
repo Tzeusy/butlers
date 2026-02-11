@@ -2,6 +2,10 @@
 
 A personal AI agent framework where each **butler** is a long-running MCP server daemon that you interact with day-to-day. Butlers handle recurring tasks, manage integrations, and act on your behalf — powered by Claude Code under the hood.
 
+## WARNING
+
+This application is entirely vibe coded, borne out of my curiosity to experiment with the capabilities of Claude Code's Teams feature combined with Steve Yegge's [beads](https://github.com/steveyegge/beads). 
+
 ## How It Works
 
 Each butler runs as a persistent daemon with built-in infrastructure:
@@ -168,11 +172,11 @@ graph TB
 
 ### Trigger Sources
 
-| Source | How it fires | `trigger_source` value |
-|--------|-------------|----------------------|
-| External MCP call | Client calls `trigger(prompt)` tool | `trigger_tool` |
-| Scheduler | Cron expression fires, dispatched by `tick()` | `schedule` |
-| Heartbeat | Heartbeat butler calls `tick_now()` every 10 min | `tick` |
+| Source            | How it fires                                     | `trigger_source` value |
+| ----------------- | ------------------------------------------------ | ---------------------- |
+| External MCP call | Client calls `trigger(prompt)` tool              | `trigger_tool`         |
+| Scheduler         | Cron expression fires, dispatched by `tick()`    | `schedule`             |
+| Heartbeat         | Heartbeat butler calls `tick_now()` every 10 min | `tick`                 |
 
 ### Module System
 
@@ -218,7 +222,30 @@ butlers list
 
 Access points:
 - Butler MCP servers on their configured ports (8100-8199)
+- Dashboard API on port 8200
 - Grafana Tempo for distributed tracing (external Alloy endpoint)
+
+### Dashboard (Frontend)
+
+The web dashboard provides real-time monitoring and management of all butlers. It requires the Dashboard API backend.
+
+```bash
+# 1. Start the Dashboard API (requires PostgreSQL)
+uv run butlers dashboard --port 8200
+
+# 2. Start the frontend dev server (in another terminal)
+cd frontend && npm install && npm run dev
+```
+
+The dashboard will be available at `http://localhost:5173`.
+
+Alternatively, use Docker Compose with the `dev` profile to run everything together:
+
+```bash
+docker compose --profile dev up
+```
+
+This starts PostgreSQL, the Dashboard API (port 8200), and the Vite dev server (port 5173).
 
 ### Production
 
@@ -243,14 +270,16 @@ Each butler service mounts its config directory read-only from `butlers/<name>/`
 
 ### Service Ports
 
-| Service | Port | Description |
-|---------|------|-------------|
-| Switchboard | 8100 | Message router — routes MCP requests to domain butlers |
-| General | 8101 | Catch-all assistant with collections/entities |
-| Relationship | 8102 | Contacts, interactions, gifts, activity feed |
-| Health | 8103 | Measurements, medications, conditions, symptoms |
-| Heartbeat | 8199 | System monitor — ticks all butlers every 10 min |
-| PostgreSQL | 5432 | Shared database server (one DB per butler) |
+| Service       | Port | Description                                            |
+| ------------- | ---- | ------------------------------------------------------ |
+| Switchboard   | 8100 | Message router — routes MCP requests to domain butlers |
+| General       | 8101 | Catch-all assistant with collections/entities          |
+| Relationship  | 8102 | Contacts, interactions, gifts, activity feed           |
+| Health        | 8103 | Measurements, medications, conditions, symptoms        |
+| Heartbeat     | 8199 | System monitor — ticks all butlers every 10 min        |
+| Dashboard API | 8200 | Web UI backend for monitoring and managing butlers     |
+| Frontend      | 5173 | Vite dev server (development only)                     |
+| PostgreSQL    | 5432 | Shared database server (one DB per butler)             |
 
 **Note:** OTLP HTTP traces (port 4318) are sent to an external Alloy instance (not exposed locally).
 
@@ -284,14 +313,14 @@ butlers/mybutler/
 
 These apply to all butler instances:
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | Yes | — | API key for Claude Code SDK. Checked at startup for every butler. |
-| `POSTGRES_HOST` | No | `localhost` | PostgreSQL server hostname |
-| `POSTGRES_PORT` | No | `5432` | PostgreSQL server port |
-| `POSTGRES_USER` | No | `postgres` | PostgreSQL username |
-| `POSTGRES_PASSWORD` | No | `postgres` | PostgreSQL password |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OTLP HTTP endpoint for trace export (e.g., `http://alloy:4318/v1/traces`). When unset, tracing is no-op. |
+| Variable                      | Required | Default     | Description                                                                                              |
+| ----------------------------- | -------- | ----------- | -------------------------------------------------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY`           | Yes      | —           | API key for Claude Code SDK. Checked at startup for every butler.                                        |
+| `POSTGRES_HOST`               | No       | `localhost` | PostgreSQL server hostname                                                                               |
+| `POSTGRES_PORT`               | No       | `5432`      | PostgreSQL server port                                                                                   |
+| `POSTGRES_USER`               | No       | `postgres`  | PostgreSQL username                                                                                      |
+| `POSTGRES_PASSWORD`           | No       | `postgres`  | PostgreSQL password                                                                                      |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No       | —           | OTLP HTTP endpoint for trace export (e.g., `http://alloy:4318/v1/traces`). When unset, tracing is no-op. |
 
 ### Butler-Specific Variables
 
@@ -309,11 +338,11 @@ These are validated at startup by the credential checker and passed through to s
 
 Each module declares its own required credentials via `credentials_env`. These are validated at startup alongside global and butler-specific vars.
 
-| Module | Variable | Description |
-|--------|----------|-------------|
-| `email` | `EMAIL_ADDRESS` | Email address for IMAP/SMTP authentication |
-| `email` | `EMAIL_PASSWORD` | Email password or app-specific password |
-| `telegram` | `TELEGRAM_BOT_TOKEN` | Telegram Bot API token from @BotFather |
+| Module     | Variable                | Description                                |
+| ---------- | ----------------------- | ------------------------------------------ |
+| `email`    | `SOURCE_EMAIL`          | Email address for IMAP/SMTP authentication |
+| `email`    | `SOURCE_EMAIL_PASSWORD` | Email password or app-specific password    |
+| `telegram` | `BUTLER_TELEGRAM_TOKEN` | Telegram Bot API token from @BotFather     |
 
 Module credentials are only required when the module is enabled in `butler.toml`. They are scoped to the CC spawner — only declared credentials are forwarded to ephemeral Claude Code instances.
 

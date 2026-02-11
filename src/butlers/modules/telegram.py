@@ -66,7 +66,7 @@ class TelegramModule(Module):
     @property
     def credentials_env(self) -> list[str]:
         """Environment variables required by this module."""
-        return ["TELEGRAM_BOT_TOKEN"]
+        return ["BUTLER_TELEGRAM_TOKEN"]
 
     def migration_revisions(self) -> str | None:
         return None  # No custom tables needed
@@ -81,7 +81,7 @@ class TelegramModule(Module):
 
     def _base_url(self) -> str:
         """Build the Telegram API base URL using the bot token."""
-        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        token = os.environ.get("BUTLER_TELEGRAM_TOKEN", "")
         return TELEGRAM_API_BASE.format(token=token)
 
     def _get_client(self) -> httpx.AsyncClient:
@@ -92,7 +92,9 @@ class TelegramModule(Module):
 
     async def register_tools(self, mcp: Any, config: Any, db: Any) -> None:
         """Register send_message and get_updates MCP tools."""
-        self._config = TelegramConfig(**(config or {}))
+        self._config = (
+            config if isinstance(config, TelegramConfig) else TelegramConfig(**(config or {}))
+        )
         module = self  # capture for closures
 
         @mcp.tool()
@@ -107,7 +109,9 @@ class TelegramModule(Module):
 
     async def on_startup(self, config: Any, db: Any) -> None:
         """Start polling or set webhook based on config."""
-        self._config = TelegramConfig(**(config or {}))
+        self._config = (
+            config if isinstance(config, TelegramConfig) else TelegramConfig(**(config or {}))
+        )
         self._client = httpx.AsyncClient()
         self._last_update_id = 0
         self._updates_buffer = []

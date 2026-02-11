@@ -56,15 +56,15 @@ class TestCredentials:
 
     def test_credentials_env_property(self):
         mod = EmailModule()
-        assert mod.credentials_env == ["EMAIL_ADDRESS", "EMAIL_PASSWORD"]
+        assert mod.credentials_env == ["SOURCE_EMAIL", "SOURCE_EMAIL_PASSWORD"]
 
     def test_credentials_env_contains_address(self):
         mod = EmailModule()
-        assert "EMAIL_ADDRESS" in mod.credentials_env
+        assert "SOURCE_EMAIL" in mod.credentials_env
 
     def test_credentials_env_contains_password(self):
         mod = EmailModule()
-        assert "EMAIL_PASSWORD" in mod.credentials_env
+        assert "SOURCE_EMAIL_PASSWORD" in mod.credentials_env
 
 
 # ---------------------------------------------------------------------------
@@ -208,8 +208,8 @@ class TestSendEmail:
     """Verify send_email with mocked SMTP connections."""
 
     async def test_send_email_success(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("EMAIL_ADDRESS", "test@example.com")
-        monkeypatch.setenv("EMAIL_PASSWORD", "secret123")
+        monkeypatch.setenv("SOURCE_EMAIL", "test@example.com")
+        monkeypatch.setenv("SOURCE_EMAIL_PASSWORD", "secret123")
 
         mod = EmailModule()
         await mod.on_startup(config=None, db=None)
@@ -235,8 +235,8 @@ class TestSendEmail:
         mock_smtp_instance.quit.assert_called_once()
 
     async def test_send_email_no_tls(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("EMAIL_ADDRESS", "test@example.com")
-        monkeypatch.setenv("EMAIL_PASSWORD", "secret123")
+        monkeypatch.setenv("SOURCE_EMAIL", "test@example.com")
+        monkeypatch.setenv("SOURCE_EMAIL_PASSWORD", "secret123")
 
         mod = EmailModule()
         await mod.on_startup(config={"use_tls": False}, db=None)
@@ -255,13 +255,13 @@ class TestSendEmail:
         mock_smtp_instance.starttls.assert_not_called()
 
     async def test_send_email_missing_credentials(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv("EMAIL_ADDRESS", raising=False)
-        monkeypatch.delenv("EMAIL_PASSWORD", raising=False)
+        monkeypatch.delenv("SOURCE_EMAIL", raising=False)
+        monkeypatch.delenv("SOURCE_EMAIL_PASSWORD", raising=False)
 
         mod = EmailModule()
         await mod.on_startup(config=None, db=None)
 
-        with pytest.raises(RuntimeError, match="EMAIL_ADDRESS and EMAIL_PASSWORD"):
+        with pytest.raises(RuntimeError, match="SOURCE_EMAIL and SOURCE_EMAIL_PASSWORD"):
             await mod._send_email(
                 to="recipient@example.com",
                 subject="Test",
@@ -269,8 +269,8 @@ class TestSendEmail:
             )
 
     async def test_send_email_smtp_error_still_quits(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("EMAIL_ADDRESS", "test@example.com")
-        monkeypatch.setenv("EMAIL_PASSWORD", "secret123")
+        monkeypatch.setenv("SOURCE_EMAIL", "test@example.com")
+        monkeypatch.setenv("SOURCE_EMAIL_PASSWORD", "secret123")
 
         mod = EmailModule()
         await mod.on_startup(config=None, db=None)
@@ -302,8 +302,8 @@ class TestSearchInbox:
     """Verify search_inbox with mocked IMAP connections."""
 
     async def test_search_inbox_success(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("EMAIL_ADDRESS", "test@example.com")
-        monkeypatch.setenv("EMAIL_PASSWORD", "secret123")
+        monkeypatch.setenv("SOURCE_EMAIL", "test@example.com")
+        monkeypatch.setenv("SOURCE_EMAIL_PASSWORD", "secret123")
 
         mod = EmailModule()
         await mod.on_startup(config=None, db=None)
@@ -335,8 +335,8 @@ class TestSearchInbox:
         mock_conn.logout.assert_called_once()
 
     async def test_search_inbox_empty(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("EMAIL_ADDRESS", "test@example.com")
-        monkeypatch.setenv("EMAIL_PASSWORD", "secret123")
+        monkeypatch.setenv("SOURCE_EMAIL", "test@example.com")
+        monkeypatch.setenv("SOURCE_EMAIL_PASSWORD", "secret123")
 
         mod = EmailModule()
         await mod.on_startup(config=None, db=None)
@@ -353,8 +353,8 @@ class TestSearchInbox:
         mock_conn.logout.assert_called_once()
 
     async def test_search_inbox_no_tls(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("EMAIL_ADDRESS", "test@example.com")
-        monkeypatch.setenv("EMAIL_PASSWORD", "secret123")
+        monkeypatch.setenv("SOURCE_EMAIL", "test@example.com")
+        monkeypatch.setenv("SOURCE_EMAIL_PASSWORD", "secret123")
 
         mod = EmailModule()
         await mod.on_startup(config={"use_tls": False, "imap_port": 143}, db=None)
@@ -379,8 +379,8 @@ class TestReadEmail:
     """Verify read_email with mocked IMAP connections."""
 
     async def test_read_email_success(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("EMAIL_ADDRESS", "test@example.com")
-        monkeypatch.setenv("EMAIL_PASSWORD", "secret123")
+        monkeypatch.setenv("SOURCE_EMAIL", "test@example.com")
+        monkeypatch.setenv("SOURCE_EMAIL_PASSWORD", "secret123")
 
         mod = EmailModule()
         await mod.on_startup(config=None, db=None)
@@ -415,8 +415,8 @@ class TestReadEmail:
         mock_conn.logout.assert_called_once()
 
     async def test_read_email_not_found(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("EMAIL_ADDRESS", "test@example.com")
-        monkeypatch.setenv("EMAIL_PASSWORD", "secret123")
+        monkeypatch.setenv("SOURCE_EMAIL", "test@example.com")
+        monkeypatch.setenv("SOURCE_EMAIL_PASSWORD", "secret123")
 
         mod = EmailModule()
         await mod.on_startup(config=None, db=None)
@@ -433,13 +433,13 @@ class TestReadEmail:
         assert "999" in result["error"]
 
     async def test_read_email_missing_credentials(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv("EMAIL_ADDRESS", raising=False)
-        monkeypatch.delenv("EMAIL_PASSWORD", raising=False)
+        monkeypatch.delenv("SOURCE_EMAIL", raising=False)
+        monkeypatch.delenv("SOURCE_EMAIL_PASSWORD", raising=False)
 
         mod = EmailModule()
         await mod.on_startup(config=None, db=None)
 
-        with pytest.raises(RuntimeError, match="EMAIL_ADDRESS and EMAIL_PASSWORD"):
+        with pytest.raises(RuntimeError, match="SOURCE_EMAIL and SOURCE_EMAIL_PASSWORD"):
             await mod._read_email("1")
 
 
@@ -452,8 +452,8 @@ class TestGetCredentials:
     """Verify _get_credentials helper."""
 
     def test_returns_tuple(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("EMAIL_ADDRESS", "me@test.com")
-        monkeypatch.setenv("EMAIL_PASSWORD", "pass123")
+        monkeypatch.setenv("SOURCE_EMAIL", "me@test.com")
+        monkeypatch.setenv("SOURCE_EMAIL_PASSWORD", "pass123")
 
         mod = EmailModule()
         addr, pwd = mod._get_credentials()
@@ -461,24 +461,24 @@ class TestGetCredentials:
         assert pwd == "pass123"
 
     def test_raises_on_missing_address(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv("EMAIL_ADDRESS", raising=False)
-        monkeypatch.setenv("EMAIL_PASSWORD", "pass123")
+        monkeypatch.delenv("SOURCE_EMAIL", raising=False)
+        monkeypatch.setenv("SOURCE_EMAIL_PASSWORD", "pass123")
 
         mod = EmailModule()
         with pytest.raises(RuntimeError):
             mod._get_credentials()
 
     def test_raises_on_missing_password(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("EMAIL_ADDRESS", "me@test.com")
-        monkeypatch.delenv("EMAIL_PASSWORD", raising=False)
+        monkeypatch.setenv("SOURCE_EMAIL", "me@test.com")
+        monkeypatch.delenv("SOURCE_EMAIL_PASSWORD", raising=False)
 
         mod = EmailModule()
         with pytest.raises(RuntimeError):
             mod._get_credentials()
 
     def test_raises_on_both_missing(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.delenv("EMAIL_ADDRESS", raising=False)
-        monkeypatch.delenv("EMAIL_PASSWORD", raising=False)
+        monkeypatch.delenv("SOURCE_EMAIL", raising=False)
+        monkeypatch.delenv("SOURCE_EMAIL_PASSWORD", raising=False)
 
         mod = EmailModule()
         with pytest.raises(RuntimeError):

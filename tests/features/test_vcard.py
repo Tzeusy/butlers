@@ -564,6 +564,6 @@ END:VCARD"""
     assert "+1-555-3333" in phone_numbers
 
     assert len(details["emails"]) == 2
-    email_addresses = [e["address"] for e in details["emails"]]
-    assert "work@example.com" in email_addresses
-    assert "home@example.com" in email_addresses
+    SOURCE_EMAILes = [e["address"] for e in details["emails"]]
+    assert "work@example.com" in SOURCE_EMAILes
+    assert "home@example.com" in SOURCE_EMAILes

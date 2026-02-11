@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 
-from butlers.api.deps import init_pricing
+from butlers.api.deps import init_dependencies, init_pricing, shutdown_dependencies
 from butlers.api.middleware import register_error_handlers
 from butlers.api.routers.audit import router as audit_router
 from butlers.api.routers.butlers import router as butlers_router
@@ -59,12 +59,14 @@ async def lifespan(app: FastAPI):
     On shutdown: close all connections cleanly
     """
     # Startup
+    init_dependencies()
     try:
         init_pricing()
     except Exception:
         logger.warning("Failed to load pricing config; cost estimation disabled")
     yield
     # Shutdown
+    await shutdown_dependencies()
 
 
 def create_app(

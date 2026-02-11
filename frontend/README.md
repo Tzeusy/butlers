@@ -20,7 +20,26 @@ A modern web dashboard for monitoring and managing Butlers AI agent framework. B
 ## Prerequisites
 
 - Node.js 18+ with npm
-- Running Butlers backend (FastAPI server on `http://localhost:8200`)
+- PostgreSQL running (e.g. `docker compose up -d postgres` from the project root)
+- Dashboard API backend running on `http://localhost:8200`
+
+### Starting the Backend
+
+From the project root:
+
+```bash
+# Start PostgreSQL (if not already running)
+docker compose up -d postgres
+
+# Start the Dashboard API
+uv run butlers dashboard --port 8200
+```
+
+Or use Docker Compose to run both together:
+
+```bash
+docker compose up -d postgres dashboard-api
+```
 
 ## Getting Started
 
@@ -39,6 +58,12 @@ npm run dev
 ```
 
 The dashboard will be available at `http://localhost:5173` with API requests proxied to the backend at `http://localhost:8200`.
+
+Alternatively, run the entire stack (Postgres + API + frontend) via Docker Compose from the project root:
+
+```bash
+docker compose --profile dev up
+```
 
 ### Build
 

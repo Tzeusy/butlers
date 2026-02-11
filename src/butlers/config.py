@@ -15,6 +15,9 @@ from typing import Any
 
 from butlers.core.runtimes import get_adapter
 
+# Default LLM model used by all butlers unless overridden in butler.toml.
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+
 # Pattern matching ${VAR_NAME} — supports alphanumeric + underscore variable names.
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -42,7 +45,7 @@ class RuntimeConfig:
     """
 
     type: str = "claude-code"
-    model: str | None = None
+    model: str | None = DEFAULT_MODEL
 
 
 @dataclass
@@ -193,17 +196,20 @@ def _resolve_string(s: str) -> str:
 def _parse_runtime(butler_section: dict) -> RuntimeConfig:
     """Parse the optional [butler.runtime] sub-section.
 
-    Returns a RuntimeConfig with model set to None if the section or field
-    is absent. Empty-string model values are normalised to None.
+    Returns a RuntimeConfig using the dataclass default model (Haiku) if the
+    section or field is absent. Empty-string model values fall through to the
+    default.
     """
     runtime_section = butler_section.get("runtime", {})
     model = runtime_section.get("model")
 
-    # Normalise empty string to None
+    # Normalise empty/whitespace string → use default
     if isinstance(model, str) and not model.strip():
         model = None
 
-    return RuntimeConfig(model=model)
+    if model is not None:
+        return RuntimeConfig(model=model)
+    return RuntimeConfig()
 
 
 def parse_approval_config(raw: dict[str, Any] | None) -> ApprovalConfig | None:

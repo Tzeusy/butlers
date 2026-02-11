@@ -63,8 +63,8 @@ def cli() -> None:
 @cli.command()
 @click.option(
     "--only",
-    callback=_parse_comma_separated,
-    help="Start only specific butlers (comma-separated names)",
+    multiple=True,
+    help="Start only specific butlers (repeatable, or comma-separated)",
 )
 @click.option(
     "--dir",
@@ -75,6 +75,11 @@ def cli() -> None:
 )
 def up(only: tuple[str, ...], butlers_dir: Path) -> None:
     """Start all butler daemons (or filtered by --only)."""
+    # Flatten: support both --only a --only b and --only a,b
+    only = tuple(
+        name.strip() for entry in only for name in entry.split(",") if name.strip()
+    )
+
     configs = _discover_configs(butlers_dir)
     if not configs:
         click.echo(f"No butler configs found in {butlers_dir}/")

@@ -1,6 +1,6 @@
 """create_episodes
 
-Revision ID: 001
+Revision ID: mem_001
 Revises:
 Create Date: 2025-01-01 00:00:00.000000
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "001"
+revision = "mem_001"
 down_revision = None
 branch_labels = ("memory",)
 depends_on = None

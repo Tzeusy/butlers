@@ -1,7 +1,7 @@
 """add token tracking columns to sessions table
 
-Revision ID: 003
-Revises: 002, 002b
+Revision ID: core_003
+Revises: core_002, core_002b
 Create Date: 2026-02-10 12:00:00.000000
 
 """
@@ -11,8 +11,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "003"
-down_revision = ("002", "002b")  # Merge both 002 revisions
+revision = "core_003"
+down_revision = ("core_002", "core_002b")  # Merge both 002 revisions
 branch_labels = None
 depends_on = None
 

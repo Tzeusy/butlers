@@ -1,7 +1,7 @@
 """add relationship tables: contact_info, addresses, life_events
 
-Revision ID: 002
-Revises: 001
+Revision ID: rel_002c
+Revises: rel_001
 Create Date: 2026-02-09 00:00:00.000000
 
 """
@@ -11,8 +11,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "002"
-down_revision = "001"
+revision = "rel_002c"
+down_revision = "rel_002a"
 branch_labels = None
 depends_on = None
 

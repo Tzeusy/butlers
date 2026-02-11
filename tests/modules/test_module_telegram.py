@@ -77,8 +77,8 @@ class TestModuleABCCompliance:
         assert telegram_module.migration_revisions() is None
 
     def test_credentials_env(self, telegram_module: TelegramModule):
-        """Module declares TELEGRAM_BOT_TOKEN as required credential."""
-        assert telegram_module.credentials_env == ["TELEGRAM_BOT_TOKEN"]
+        """Module declares BUTLER_TELEGRAM_TOKEN as required credential."""
+        assert telegram_module.credentials_env == ["BUTLER_TELEGRAM_TOKEN"]
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ class TestSendMessage:
 
     async def test_calls_correct_endpoint(self, telegram_module: TelegramModule, monkeypatch):
         """send_message POSTs to the sendMessage endpoint."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token-123")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token-123")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.return_value = _mock_response({"ok": True, "result": {"message_id": 42}})
@@ -194,7 +194,7 @@ class TestSendMessage:
         self, telegram_module: TelegramModule, mock_mcp: MagicMock, monkeypatch
     ):
         """send_message tool delegates to _send_message."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.return_value = _mock_response({"ok": True, "result": {}})
@@ -213,7 +213,7 @@ class TestGetUpdates:
 
     async def test_calls_correct_endpoint(self, telegram_module: TelegramModule, monkeypatch):
         """get_updates GETs the getUpdates endpoint."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token-123")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token-123")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.return_value = _mock_response(
@@ -237,7 +237,7 @@ class TestGetUpdates:
 
     async def test_updates_last_update_id(self, telegram_module: TelegramModule, monkeypatch):
         """get_updates advances _last_update_id to the latest."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.return_value = _mock_response(
@@ -250,7 +250,7 @@ class TestGetUpdates:
 
     async def test_uses_offset_after_first_call(self, telegram_module: TelegramModule, monkeypatch):
         """After receiving updates, subsequent calls use offset parameter."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.return_value = _mock_response(
@@ -271,7 +271,7 @@ class TestGetUpdates:
 
     async def test_empty_updates(self, telegram_module: TelegramModule, monkeypatch):
         """get_updates returns empty list when no new messages."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.return_value = _mock_response({"ok": True, "result": []})
@@ -285,7 +285,7 @@ class TestGetUpdates:
         self, telegram_module: TelegramModule, mock_mcp: MagicMock, monkeypatch
     ):
         """get_updates tool delegates to _get_updates."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.get.return_value = _mock_response({"ok": True, "result": []})
@@ -308,7 +308,7 @@ class TestPollingMode:
 
     async def test_starts_poll_task(self, telegram_module: TelegramModule, monkeypatch):
         """Polling mode creates an asyncio task for _poll_loop."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         # Mock _poll_loop to avoid real polling
         telegram_module._poll_loop = AsyncMock()  # type: ignore[method-assign]
@@ -323,7 +323,7 @@ class TestPollingMode:
 
     async def test_poll_loop_calls_get_updates(self, telegram_module: TelegramModule, monkeypatch):
         """The poll loop calls _get_updates repeatedly."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         call_count = 0
 
@@ -354,7 +354,7 @@ class TestWebhookMode:
 
     async def test_calls_set_webhook(self, telegram_module: TelegramModule, monkeypatch):
         """Webhook mode calls setWebhook API on startup."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.return_value = _mock_response({"ok": True, "result": True})
@@ -385,7 +385,7 @@ class TestWebhookMode:
 
     async def test_webhook_no_url_does_not_set(self, telegram_module: TelegramModule, monkeypatch):
         """Webhook mode without a URL does not call setWebhook."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         telegram_module._set_webhook = AsyncMock()  # type: ignore[method-assign]
 
@@ -407,7 +407,7 @@ class TestShutdown:
 
     async def test_cancels_poll_task(self, telegram_module: TelegramModule, monkeypatch):
         """Shutdown cancels the polling task."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         # Create a long-running fake task
         async def forever():
@@ -451,7 +451,7 @@ class TestWebhookHelpers:
 
     async def test_set_webhook(self, telegram_module: TelegramModule, monkeypatch):
         """_set_webhook POSTs to the setWebhook endpoint."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token-abc")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token-abc")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.return_value = _mock_response({"ok": True, "result": True})
@@ -467,7 +467,7 @@ class TestWebhookHelpers:
 
     async def test_delete_webhook(self, telegram_module: TelegramModule, monkeypatch):
         """_delete_webhook POSTs to the deleteWebhook endpoint."""
-        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token-abc")
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token-abc")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
         mock_client.post.return_value = _mock_response(

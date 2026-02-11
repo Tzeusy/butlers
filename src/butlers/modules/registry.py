@@ -2,9 +2,41 @@
 
 from __future__ import annotations
 
+import importlib
+import inspect
+import logging
+import pkgutil
 from collections import deque
 
+import butlers.modules
 from butlers.modules.base import Module
+
+logger = logging.getLogger(__name__)
+
+
+def default_registry() -> ModuleRegistry:
+    """Create a ModuleRegistry pre-populated with all built-in modules.
+
+    Discovers all concrete ``Module`` subclasses in the ``butlers.modules``
+    package by walking its sub-packages and inspecting their members.
+    """
+    registry = ModuleRegistry()
+    package = butlers.modules
+    for importer, modname, ispkg in pkgutil.walk_packages(
+        package.__path__, prefix=package.__name__ + "."
+    ):
+        try:
+            mod = importlib.import_module(modname)
+        except Exception:
+            logger.debug("Skipping unimportable module: %s", modname, exc_info=True)
+            continue
+        for _name, obj in inspect.getmembers(mod, inspect.isclass):
+            if issubclass(obj, Module) and obj is not Module and not inspect.isabstract(obj):
+                try:
+                    registry.register(obj)
+                except ValueError:
+                    pass  # Already registered (e.g. re-exported from __init__)
+    return registry
 
 
 class ModuleRegistry:

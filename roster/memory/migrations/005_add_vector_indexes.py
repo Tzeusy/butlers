@@ -1,7 +1,7 @@
 """add_vector_indexes
 
-Revision ID: 005
-Revises: 004
+Revision ID: mem_005
+Revises: mem_004
 Create Date: 2026-02-10 00:00:00.000000
 
 """
@@ -11,8 +11,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "005"
-down_revision = "004"
+revision = "mem_005"
+down_revision = "mem_004"
 branch_labels = None
 depends_on = None
 

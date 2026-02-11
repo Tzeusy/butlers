@@ -387,7 +387,7 @@ class Spawner:
         if context:
             final_prompt = f"{context}\n\n{prompt}"
 
-        # Read the configured model (may be None for runtime default)
+        # Read the configured model (defaults to Haiku if not overridden)
         model = self._config.runtime.model
 
         # Get tracer and start butler.cc_session span

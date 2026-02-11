@@ -65,7 +65,7 @@ class EmailModule(Module):
     @property
     def credentials_env(self) -> list[str]:
         """Environment variables required for email authentication."""
-        return ["EMAIL_ADDRESS", "EMAIL_PASSWORD"]
+        return ["SOURCE_EMAIL", "SOURCE_EMAIL_PASSWORD"]
 
     def migration_revisions(self) -> str | None:
         return None  # No custom tables needed
@@ -80,7 +80,7 @@ class EmailModule(Module):
 
     async def register_tools(self, mcp: Any, config: Any, db: Any) -> None:
         """Register send_email, search_inbox, read_email, check_and_route_inbox MCP tools."""
-        self._config = EmailConfig(**(config or {}))
+        self._config = config if isinstance(config, EmailConfig) else EmailConfig(**(config or {}))
         module = self  # capture for closures
 
         @mcp.tool()
@@ -105,7 +105,7 @@ class EmailModule(Module):
 
     async def on_startup(self, config: Any, db: Any) -> None:
         """Initialize email config. Connections are created per-operation."""
-        self._config = EmailConfig(**(config or {}))
+        self._config = config if isinstance(config, EmailConfig) else EmailConfig(**(config or {}))
 
     async def on_shutdown(self) -> None:
         """No persistent connections to clean up."""
@@ -232,13 +232,15 @@ class EmailModule(Module):
     def _get_credentials(self) -> tuple[str, str]:
         """Read email credentials from environment variables.
 
-        Raises ``RuntimeError`` if either EMAIL_ADDRESS or EMAIL_PASSWORD
+        Raises ``RuntimeError`` if either SOURCE_EMAIL or SOURCE_EMAIL_PASSWORD
         is not set.
         """
-        address = os.environ.get("EMAIL_ADDRESS")
-        password = os.environ.get("EMAIL_PASSWORD")
+        address = os.environ.get("SOURCE_EMAIL")
+        password = os.environ.get("SOURCE_EMAIL_PASSWORD")
         if not address or not password:
-            raise RuntimeError("EMAIL_ADDRESS and EMAIL_PASSWORD environment variables must be set")
+            raise RuntimeError(
+                "SOURCE_EMAIL and SOURCE_EMAIL_PASSWORD environment variables must be set"
+            )
         return address, password
 
     def _smtp_send(self, to: str, subject: str, body: str) -> dict:

@@ -1,7 +1,7 @@
 """create_facts
 
-Revision ID: 002
-Revises: 001
+Revision ID: mem_002
+Revises: mem_001
 Create Date: 2026-02-10 00:00:00.000000
 
 """
@@ -11,8 +11,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "002"
-down_revision = "001"
+revision = "mem_002"
+down_revision = "mem_001"
 branch_labels = None
 depends_on = None
 

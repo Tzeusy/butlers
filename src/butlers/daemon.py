@@ -63,7 +63,7 @@ from butlers.db import Database
 from butlers.migrations import has_butler_chain, run_migrations
 from butlers.modules.approvals.gate import apply_approval_gates
 from butlers.modules.base import Module
-from butlers.modules.registry import ModuleRegistry
+from butlers.modules.registry import ModuleRegistry, default_registry
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,7 @@ class ButlerDaemon:
         registry: ModuleRegistry | None = None,
     ) -> None:
         self.config_dir = config_dir
-        self._registry = registry or ModuleRegistry()
+        self._registry = registry or default_registry()
         self.config: ButlerConfig | None = None
         self.db: Database | None = None
         self.mcp: FastMCP | None = None
@@ -517,8 +517,19 @@ class ButlerDaemon:
             return {"id": str(task_id), "status": "created"}
 
         @mcp.tool()
-        async def schedule_update(task_id: str, **fields) -> dict:
-            """Update a scheduled task."""
+        async def schedule_update(
+            task_id: str,
+            name: str | None = None,
+            cron: str | None = None,
+            prompt: str | None = None,
+            enabled: bool | None = None,
+        ) -> dict:
+            """Update a scheduled task. Only provided fields are changed."""
+            fields = {
+                k: v
+                for k, v in {"name": name, "cron": cron, "prompt": prompt, "enabled": enabled}.items()
+                if v is not None
+            }
             await _schedule_update(pool, uuid.UUID(task_id), **fields)
             return {"id": task_id, "status": "updated"}
 

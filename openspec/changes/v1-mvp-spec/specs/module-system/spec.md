@@ -289,6 +289,6 @@ AND pass it to `register_tools` and `on_startup`.
 
 #### Scenario: Environment variable references in config
 
-WHEN a `butler.toml` module config value references an environment variable (e.g., `password = "${EMAIL_PASSWORD}"`)
+WHEN a `butler.toml` module config value references an environment variable (e.g., `password = "${SOURCE_EMAIL_PASSWORD}"`)
 THEN the butler runtime SHALL resolve the environment variable before passing the config to the module
 AND SHALL raise an error at startup if the referenced environment variable is not set.

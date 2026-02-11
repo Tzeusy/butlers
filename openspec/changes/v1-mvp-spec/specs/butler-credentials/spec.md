@@ -96,8 +96,8 @@ AND the error message MUST clearly identify the module name and the missing vari
 #### Scenario: Multiple modules with missing credentials
 
 WHEN the `[modules.email]` section declares `credentials_env = "GMAIL_CREDS"`
-AND the `[modules.telegram]` section declares `credentials_env = "TELEGRAM_BOT_TOKEN"`
-AND both `GMAIL_CREDS` and `TELEGRAM_BOT_TOKEN` are missing from the environment
+AND the `[modules.telegram]` section declares `credentials_env = "BUTLER_TELEGRAM_TOKEN"`
+AND both `GMAIL_CREDS` and `BUTLER_TELEGRAM_TOKEN` are missing from the environment
 THEN the butler MUST refuse to start
 AND the error message MUST name both modules and their respective missing variables.
 
@@ -236,8 +236,8 @@ AND the error message MUST indicate which component requires each variable (CC S
 
 #### Scenario: Error messages name specific components
 
-WHEN `[modules.telegram]` declares `credentials_env = "TELEGRAM_BOT_TOKEN"` and it is missing
-THEN the error message MUST state that module `telegram` requires `TELEGRAM_BOT_TOKEN`
+WHEN `[modules.telegram]` declares `credentials_env = "BUTLER_TELEGRAM_TOKEN"` and it is missing
+THEN the error message MUST state that module `telegram` requires `BUTLER_TELEGRAM_TOKEN`
 AND the error message MUST NOT be a generic "missing environment variable" without identifying the source.
 
 #### Scenario: Optional vars produce warnings, not errors

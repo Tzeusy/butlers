@@ -101,14 +101,14 @@ Every butler has two layers:
 
 These are the shared infrastructure every butler needs. They are built into the daemon directly and provide the foundation that modules build on.
 
-| Component | What it does | MCP Tools it provides |
-|-----------|-------------|----------------------|
-| **State Store** | Key-value JSONB persistence in butler's DB | `state_get`, `state_set`, `state_delete`, `state_list` |
-| **Task Scheduler** | Cron-driven task dispatch. TOML for bootstrap, DB for runtime. Always dispatches prompts to CC. | `schedule_list`, `schedule_create`, `schedule_update`, `schedule_delete` |
-| **CC Spawner** | Spawns locked-down Claude Code instances via SDK. Generates ephemeral MCP config pointing only to this butler. | `trigger` (spawn CC with a prompt) |
-| **Session Log** | Logs every CC invocation — prompt, tool calls, outcome, duration. | `sessions_list`, `sessions_get` |
-| **Tick Handler** | Entry point for heartbeat. Calls the scheduler, returns summary. | `tick` |
-| **Status** | Butler identity, loaded modules, health, uptime. | `status` |
+| Component          | What it does                                                                                                   | MCP Tools it provides                                                    |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| **State Store**    | Key-value JSONB persistence in butler's DB                                                                     | `state_get`, `state_set`, `state_delete`, `state_list`                   |
+| **Task Scheduler** | Cron-driven task dispatch. TOML for bootstrap, DB for runtime. Always dispatches prompts to CC.                | `schedule_list`, `schedule_create`, `schedule_update`, `schedule_delete` |
+| **CC Spawner**     | Spawns locked-down Claude Code instances via SDK. Generates ephemeral MCP config pointing only to this butler. | `trigger` (spawn CC with a prompt)                                       |
+| **Session Log**    | Logs every CC invocation — prompt, tool calls, outcome, duration.                                              | `sessions_list`, `sessions_get`                                          |
+| **Tick Handler**   | Entry point for heartbeat. Calls the scheduler, returns summary.                                               | `tick`                                                                   |
+| **Status**         | Butler identity, loaded modules, health, uptime.                                                               | `status`                                                                 |
 
 **Core MCP tools (every butler exposes these):**
 
@@ -231,18 +231,18 @@ port = 8100
 
 ### Core Concepts
 
-| Concept | Description |
-|---------|-------------|
-| **Butler** | A long-running MCP server daemon. Has core components (state, scheduler, spawner, sessions) + opt-in modules. Owns a dedicated DB. |
-| **Core Component** | Shared infrastructure built into every butler: state store, task scheduler, CC spawner, session log. Not opt-in. |
-| **Module** | A pluggable unit that adds domain-specific MCP tools to a butler. Many-to-many with butlers. Opt-in via butler.toml. |
-| **Trigger** | Spawning a CC instance with a prompt. Can be initiated by: scheduler, heartbeat tick, external MCP call. |
-| **CC Spawner** | Generates a locked-down MCP config and spawns Claude Code via SDK. CC only sees this butler's tools. |
-| **Scheduler** | Cron-driven. Checks for due tasks on `tick()`. Always dispatches prompts to CC Spawner. Tasks from TOML (bootstrap) + DB (runtime). |
-| **Skill** | A directory in `skills/` with SKILL.md (prompt template) and optionally scripts. CC reads the skill and decides what to do. |
-| **Switchboard** | The hub butler that routes external MCP requests to the correct butler. |
-| **Heartbeat Butler** | Calls `tick()` on every registered butler every N minutes (default 10). |
-| **Butler DB** | Each butler's dedicated PostgreSQL database — strict isolation, MCP-only access between butlers. |
+| Concept              | Description                                                                                                                         |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Butler**           | A long-running MCP server daemon. Has core components (state, scheduler, spawner, sessions) + opt-in modules. Owns a dedicated DB.  |
+| **Core Component**   | Shared infrastructure built into every butler: state store, task scheduler, CC spawner, session log. Not opt-in.                    |
+| **Module**           | A pluggable unit that adds domain-specific MCP tools to a butler. Many-to-many with butlers. Opt-in via butler.toml.                |
+| **Trigger**          | Spawning a CC instance with a prompt. Can be initiated by: scheduler, heartbeat tick, external MCP call.                            |
+| **CC Spawner**       | Generates a locked-down MCP config and spawns Claude Code via SDK. CC only sees this butler's tools.                                |
+| **Scheduler**        | Cron-driven. Checks for due tasks on `tick()`. Always dispatches prompts to CC Spawner. Tasks from TOML (bootstrap) + DB (runtime). |
+| **Skill**            | A directory in `skills/` with SKILL.md (prompt template) and optionally scripts. CC reads the skill and decides what to do.         |
+| **Switchboard**      | The hub butler that routes external MCP requests to the correct butler.                                                             |
+| **Heartbeat Butler** | Calls `tick()` on every registered butler every N minutes (default 10).                                                             |
+| **Butler DB**        | Each butler's dedicated PostgreSQL database — strict isolation, MCP-only access between butlers.                                    |
 
 ### Database Isolation
 
@@ -409,7 +409,7 @@ port = 8100
 name = "butler_switchboard"
 
 [modules.telegram]
-bot_token_env = "TELEGRAM_BOT_TOKEN"
+bot_token_env = "BUTLER_TELEGRAM_TOKEN"
 
 [modules.email]
 provider = "gmail"
@@ -449,20 +449,20 @@ A personal relationship manager inspired by [Monica CRM](https://www.monicahq.co
 
 **MCP tools (butler-specific, beyond core):**
 
-| Category | Tools |
-|----------|-------|
-| **Contacts** | `contact_create`, `contact_update`, `contact_get`, `contact_search`, `contact_archive` |
-| **Relationships** | `relationship_add`, `relationship_list`, `relationship_remove` |
-| **Important Dates** | `date_add`, `date_list`, `upcoming_dates` |
-| **Notes** | `note_create`, `note_list`, `note_search` |
-| **Interactions** | `interaction_log`, `interaction_list` (calls, meetings, messages) |
-| **Reminders** | `reminder_create`, `reminder_list`, `reminder_dismiss` |
-| **Gifts** | `gift_add`, `gift_update_status`, `gift_list` |
-| **Loans** | `loan_create`, `loan_settle`, `loan_list` |
-| **Groups** | `group_create`, `group_add_member`, `group_list` |
-| **Labels** | `label_create`, `label_assign`, `contact_search_by_label` |
-| **Quick Facts** | `fact_set`, `fact_list` |
-| **Activity Feed** | `feed_get` (per contact, chronological) |
+| Category            | Tools                                                                                  |
+| ------------------- | -------------------------------------------------------------------------------------- |
+| **Contacts**        | `contact_create`, `contact_update`, `contact_get`, `contact_search`, `contact_archive` |
+| **Relationships**   | `relationship_add`, `relationship_list`, `relationship_remove`                         |
+| **Important Dates** | `date_add`, `date_list`, `upcoming_dates`                                              |
+| **Notes**           | `note_create`, `note_list`, `note_search`                                              |
+| **Interactions**    | `interaction_log`, `interaction_list` (calls, meetings, messages)                      |
+| **Reminders**       | `reminder_create`, `reminder_list`, `reminder_dismiss`                                 |
+| **Gifts**           | `gift_add`, `gift_update_status`, `gift_list`                                          |
+| **Loans**           | `loan_create`, `loan_settle`, `loan_list`                                              |
+| **Groups**          | `group_create`, `group_add_member`, `group_list`                                       |
+| **Labels**          | `label_create`, `label_assign`, `contact_search_by_label`                              |
+| **Quick Facts**     | `fact_set`, `fact_list`                                                                |
+| **Activity Feed**   | `feed_get` (per contact, chronological)                                                |
 
 **Config: `butlers/relationship/butler.toml`**
 ```toml
@@ -690,15 +690,15 @@ Tracks health data, medications, conditions, diet, and aggregates research. Desi
 
 **MCP tools (butler-specific):**
 
-| Category | Tools |
-|----------|-------|
-| **Measurements** | `measurement_log`, `measurement_history`, `measurement_latest` |
-| **Medications** | `medication_add`, `medication_list`, `medication_log_dose`, `medication_history` |
-| **Conditions** | `condition_add`, `condition_list`, `condition_update` |
-| **Diet** | `meal_log`, `meal_history`, `nutrition_summary` |
-| **Symptoms** | `symptom_log`, `symptom_history`, `symptom_search` |
-| **Research** | `research_save`, `research_search`, `research_summarize` |
-| **Reports** | `health_summary`, `trend_report` |
+| Category         | Tools                                                                            |
+| ---------------- | -------------------------------------------------------------------------------- |
+| **Measurements** | `measurement_log`, `measurement_history`, `measurement_latest`                   |
+| **Medications**  | `medication_add`, `medication_list`, `medication_log_dose`, `medication_history` |
+| **Conditions**   | `condition_add`, `condition_list`, `condition_update`                            |
+| **Diet**         | `meal_log`, `meal_history`, `nutrition_summary`                                  |
+| **Symptoms**     | `symptom_log`, `symptom_history`, `symptom_search`                               |
+| **Research**     | `research_save`, `research_search`, `research_summarize`                         |
+| **Reports**      | `health_summary`, `trend_report`                                                 |
 
 **Config: `butlers/health/butler.toml`**
 ```toml
@@ -826,11 +826,11 @@ The **catch-all** for requests that don't fit other butlers. Uses a **freeform J
 
 **MCP tools (butler-specific):**
 
-| Category | Tools |
-|----------|-------|
-| **Entities** | `entity_create`, `entity_get`, `entity_update`, `entity_search`, `entity_delete` |
-| **Collections** | `collection_create`, `collection_list`, `collection_get` |
-| **Migration** | `export_collection`, `export_by_tag` |
+| Category        | Tools                                                                            |
+| --------------- | -------------------------------------------------------------------------------- |
+| **Entities**    | `entity_create`, `entity_get`, `entity_update`, `entity_search`, `entity_delete` |
+| **Collections** | `collection_create`, `collection_list`, `collection_get`                         |
+| **Migration**   | `export_collection`, `export_by_tag`                                             |
 
 **Config: `butlers/general/butler.toml`**
 ```toml
@@ -999,15 +999,15 @@ Docker Compose includes the LGTM stack (Alloy/Tempo/Grafana) for local trace vis
 
 ### What Gets Traced
 
-| Event | Span Name | Key Attributes |
-|-------|-----------|---------------|
-| Message received | `switchboard.receive` | `channel`, `source_id` |
-| Routing decision | `switchboard.classify` | `routed_to` |
-| Inter-butler call | `switchboard.route` | `target`, `tool_name` |
-| CC spawned | `butler.cc_session` | `session_id`, `prompt_length` |
-| MCP tool called | `butler.tool.<name>` | tool-specific attributes |
-| Scheduler tick | `butler.tick` | `tasks_due`, `tasks_run` |
-| Heartbeat cycle | `heartbeat.cycle` | `butlers_ticked`, `failures` |
+| Event             | Span Name              | Key Attributes                |
+| ----------------- | ---------------------- | ----------------------------- |
+| Message received  | `switchboard.receive`  | `channel`, `source_id`        |
+| Routing decision  | `switchboard.classify` | `routed_to`                   |
+| Inter-butler call | `switchboard.route`    | `target`, `tool_name`         |
+| CC spawned        | `butler.cc_session`    | `session_id`, `prompt_length` |
+| MCP tool called   | `butler.tool.<name>`   | tool-specific attributes      |
+| Scheduler tick    | `butler.tick`          | `tasks_due`, `tasks_run`      |
+| Heartbeat cycle   | `heartbeat.cycle`      | `butlers_ticked`, `failures`  |
 
 ---
 
@@ -1056,16 +1056,16 @@ class MockSpawner:
 
 ### Test Layers
 
-| Layer | What | DB | CC | How |
-|-------|------|----|----|-----|
-| **Unit: Config** | Config loading, validation | No | No | `tmp_path` fixtures |
-| **Unit: Modules** | Module ABC, registry, tool registration | No | No | FastMCP in-memory |
-| **Unit: Core tools** | State store, scheduler, session log | Mock or testcontainer | `MockSpawner` | Async tests |
-| **Unit: Butler-specific tools** | Relationship CRUD, Health tracking, etc. | Testcontainer PostgreSQL | No | Test each tool function directly |
-| **Unit: Switchboard routing** | Registry, route logic | Mock | `MockSpawner` | Test routing decisions |
-| **Unit: Heartbeat** | Tick cycle, butler enumeration | Mock | No | Mock MCP client |
-| **Integration** | Full butler startup, tool call, trigger | Testcontainer PostgreSQL | `MockSpawner` | End-to-end with mocked CC |
-| **Integration: Tracing** | Span creation, context propagation | No | `MockSpawner` | InMemorySpanExporter |
+| Layer                           | What                                     | DB                       | CC            | How                              |
+| ------------------------------- | ---------------------------------------- | ------------------------ | ------------- | -------------------------------- |
+| **Unit: Config**                | Config loading, validation               | No                       | No            | `tmp_path` fixtures              |
+| **Unit: Modules**               | Module ABC, registry, tool registration  | No                       | No            | FastMCP in-memory                |
+| **Unit: Core tools**            | State store, scheduler, session log      | Mock or testcontainer    | `MockSpawner` | Async tests                      |
+| **Unit: Butler-specific tools** | Relationship CRUD, Health tracking, etc. | Testcontainer PostgreSQL | No            | Test each tool function directly |
+| **Unit: Switchboard routing**   | Registry, route logic                    | Mock                     | `MockSpawner` | Test routing decisions           |
+| **Unit: Heartbeat**             | Tick cycle, butler enumeration           | Mock                     | No            | Mock MCP client                  |
+| **Integration**                 | Full butler startup, tool call, trigger  | Testcontainer PostgreSQL | `MockSpawner` | End-to-end with mocked CC        |
+| **Integration: Tracing**        | Span creation, context propagation       | No                       | `MockSpawner` | InMemorySpanExporter             |
 
 ### DB Tests
 
@@ -1716,20 +1716,20 @@ butlers/
 
 ## Open Questions
 
-| Question | Status | Notes |
-|----------|--------|-------|
-| Claude Code SDK API for passing MCP config? | TBD | Need to investigate exact SDK options for `--mcp-config` equivalent |
-| MCP transport between butlers (SSE vs streamable HTTP)? | TBD | SSE likely for daemon-to-daemon; need to test FastMCP SSE transport |
-| Cron expression library? | TBD | `croniter` is the standard Python choice |
-| How are new butler databases provisioned? | Decided | Auto-provision on startup: `CREATE DATABASE IF NOT EXISTS`, then apply migrations. No separate init script. |
-| Auth/security between butlers on Docker network? | TBD | Not needed for v0.1 |
-| Concurrent CC instances per butler? | TBD | Serial initially, queue later |
-| How do integration modules handle OAuth? | TBD | Out-of-band setup, credentials as env vars |
-| CC instance timeout? | TBD | Configurable per-trigger, default ~5 min |
-| Can CC instances create new scheduled tasks? | Yes | Via `schedule_create` MCP tool — CC can self-schedule follow-up work |
-| How does CC know about skills? | TBD | System prompt lists available skills, or CC reads `skills/` directory via bash |
-| Telegram: polling vs webhook? | TBD | Polling simpler for dev, webhook for production |
-| How does Switchboard send responses back? | TBD | Likely stores in state, Telegram module polls or callback |
-| OTel sampling strategy? | TBD | Sample 100% in dev, configurable in prod |
-| Butler-specific migrations: auto-apply or explicit? | TBD | Auto-apply on startup for simplicity |
-| How to handle Switchboard routing when CC is unsure? | TBD | Default to General butler |
+| Question                                                | Status  | Notes                                                                                                       |
+| ------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
+| Claude Code SDK API for passing MCP config?             | TBD     | Need to investigate exact SDK options for `--mcp-config` equivalent                                         |
+| MCP transport between butlers (SSE vs streamable HTTP)? | TBD     | SSE likely for daemon-to-daemon; need to test FastMCP SSE transport                                         |
+| Cron expression library?                                | TBD     | `croniter` is the standard Python choice                                                                    |
+| How are new butler databases provisioned?               | Decided | Auto-provision on startup: `CREATE DATABASE IF NOT EXISTS`, then apply migrations. No separate init script. |
+| Auth/security between butlers on Docker network?        | TBD     | Not needed for v0.1                                                                                         |
+| Concurrent CC instances per butler?                     | TBD     | Serial initially, queue later                                                                               |
+| How do integration modules handle OAuth?                | TBD     | Out-of-band setup, credentials as env vars                                                                  |
+| CC instance timeout?                                    | TBD     | Configurable per-trigger, default ~5 min                                                                    |
+| Can CC instances create new scheduled tasks?            | Yes     | Via `schedule_create` MCP tool — CC can self-schedule follow-up work                                        |
+| How does CC know about skills?                          | TBD     | System prompt lists available skills, or CC reads `skills/` directory via bash                              |
+| Telegram: polling vs webhook?                           | TBD     | Polling simpler for dev, webhook for production                                                             |
+| How does Switchboard send responses back?               | TBD     | Likely stores in state, Telegram module polls or callback                                                   |
+| OTel sampling strategy?                                 | TBD     | Sample 100% in dev, configurable in prod                                                                    |
+| Butler-specific migrations: auto-apply or explicit?     | TBD     | Auto-apply on startup for simplicity                                                                        |
+| How to handle Switchboard routing when CC is unsure?    | TBD     | Default to General butler                                                                                   |

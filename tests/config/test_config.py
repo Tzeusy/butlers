@@ -117,7 +117,7 @@ def test_load_minimal_config(tmp_path: Path):
     assert cfg.name == "alfred"
     assert cfg.port == 9000
     assert cfg.description is None
-    assert cfg.runtime.model is None
+    assert cfg.runtime.model == "claude-haiku-4-5-20251001"
     assert cfg.schedules == []
     assert cfg.modules == {}
     assert cfg.env_required == []
@@ -218,7 +218,7 @@ model = "claude-opus-4-20250514"
         assert cfg.runtime.model == "claude-opus-4-20250514"
 
     def test_model_absent(self, tmp_path: Path):
-        """Omitting [butler.runtime] entirely defaults model to None."""
+        """Omitting [butler.runtime] entirely defaults model to Haiku."""
         toml = """\
 [butler]
 name = "nomodel"
@@ -227,10 +227,10 @@ port = 7011
         config_dir = _write_toml(tmp_path, toml)
         cfg = load_config(config_dir)
 
-        assert cfg.runtime.model is None
+        assert cfg.runtime.model == "claude-haiku-4-5-20251001"
 
     def test_model_empty_string(self, tmp_path: Path):
-        """Empty string model is normalised to None."""
+        """Empty string model is normalised to Haiku default."""
         toml = """\
 [butler]
 name = "emptymodel"
@@ -242,10 +242,10 @@ model = ""
         config_dir = _write_toml(tmp_path, toml)
         cfg = load_config(config_dir)
 
-        assert cfg.runtime.model is None
+        assert cfg.runtime.model == "claude-haiku-4-5-20251001"
 
     def test_model_whitespace_only(self, tmp_path: Path):
-        """Whitespace-only model is normalised to None."""
+        """Whitespace-only model is normalised to Haiku default."""
         toml = """\
 [butler]
 name = "wsmodel"
@@ -257,10 +257,10 @@ model = "   "
         config_dir = _write_toml(tmp_path, toml)
         cfg = load_config(config_dir)
 
-        assert cfg.runtime.model is None
+        assert cfg.runtime.model == "claude-haiku-4-5-20251001"
 
     def test_runtime_section_without_model(self, tmp_path: Path):
-        """[butler.runtime] present but without model field defaults to None."""
+        """[butler.runtime] present but without model field defaults to Haiku."""
         toml = """\
 [butler]
 name = "nofield"
@@ -271,7 +271,7 @@ port = 7014
         config_dir = _write_toml(tmp_path, toml)
         cfg = load_config(config_dir)
 
-        assert cfg.runtime.model is None
+        assert cfg.runtime.model == "claude-haiku-4-5-20251001"
 
     def test_model_opaque_string(self, tmp_path: Path):
         """Model string is opaque — any non-empty value is accepted."""
@@ -289,9 +289,9 @@ model = "gpt-4o-2025-01-01"
         assert cfg.runtime.model == "gpt-4o-2025-01-01"
 
     def test_runtime_config_dataclass_defaults(self):
-        """RuntimeConfig defaults to model=None."""
+        """RuntimeConfig defaults to Haiku model."""
         rc = RuntimeConfig()
-        assert rc.model is None
+        assert rc.model == "claude-haiku-4-5-20251001"
 
     def test_runtime_config_with_model(self):
         """RuntimeConfig can be constructed with a model string."""
@@ -317,7 +317,7 @@ required = ["API_KEY"]
 
         assert cfg.name == "legacy"
         assert cfg.port == 7016
-        assert cfg.runtime.model is None
+        assert cfg.runtime.model == "claude-haiku-4-5-20251001"
         assert cfg.db_name == "legacy_db"
         assert cfg.env_required == ["API_KEY"]
 

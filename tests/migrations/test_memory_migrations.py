@@ -50,7 +50,7 @@ def test_branch_labels():
 def test_revision_identifiers():
     """The migration has correct revision identifiers."""
     mod = _load_migration()
-    assert mod.revision == "001"
+    assert mod.revision == "mem_001"
     assert mod.down_revision is None
     assert mod.depends_on is None
 
@@ -87,8 +87,8 @@ class TestRulesMigration:
     def test_revision_identifiers(self):
         """The migration has correct revision identifiers."""
         mod = self._load()
-        assert mod.revision == "003"
-        assert mod.down_revision == "002"
+        assert mod.revision == "mem_003"
+        assert mod.down_revision == "mem_002"
         assert mod.branch_labels is None
         assert mod.depends_on is None
 
@@ -185,8 +185,8 @@ def test_004_file_exists():
 def test_004_revision_identifiers():
     """Migration 004 has correct revision chain."""
     mod = _load_memory_links()
-    assert mod.revision == "004"
-    assert mod.down_revision == "003"
+    assert mod.revision == "mem_004"
+    assert mod.down_revision == "mem_003"
     assert mod.depends_on is None
 
 
