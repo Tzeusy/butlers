@@ -74,6 +74,9 @@ async def pool(postgres_container):
             cost JSONB,
             success BOOLEAN,
             error TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            parent_session_id UUID,
             started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             completed_at TIMESTAMPTZ
         )
@@ -358,6 +361,8 @@ async def test_sessions_get_returns_full_record(pool):
         "cost",
         "success",
         "error",
+        "input_tokens",
+        "output_tokens",
         "started_at",
         "completed_at",
     }
