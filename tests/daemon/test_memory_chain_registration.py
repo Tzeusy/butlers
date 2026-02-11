@@ -95,11 +95,11 @@ class TestFullRevisionChain:
     """Validate the complete 001->002->003->004->005 revision chain."""
 
     EXPECTED_CHAIN = [
-        ("001_create_episodes.py", "001", None),
-        ("002_create_facts.py", "002", "001"),
-        ("003_create_rules.py", "003", "002"),
-        ("004_create_memory_links.py", "004", "003"),
-        ("005_add_vector_indexes.py", "005", "004"),
+        ("001_create_episodes.py", "mem_001", None),
+        ("002_create_facts.py", "mem_002", "mem_001"),
+        ("003_create_rules.py", "mem_003", "mem_002"),
+        ("004_create_memory_links.py", "mem_004", "mem_003"),
+        ("005_add_vector_indexes.py", "mem_005", "mem_004"),
     ]
 
     @staticmethod
@@ -133,7 +133,7 @@ class TestFullRevisionChain:
         """Only 001 should have branch_labels=('memory',); the rest should be None."""
         for filename, expected_rev, _ in self.EXPECTED_CHAIN:
             mod = self._load_migration(filename)
-            if expected_rev == "001":
+            if expected_rev == "mem_001":
                 assert mod.branch_labels == ("memory",), (
                     f"{filename} should have branch_labels=('memory',)"
                 )
@@ -170,13 +170,13 @@ class TestFullRevisionChain:
             chain_map[mod.revision] = mod.down_revision
 
         # Walk from 005 back to 001
-        current = "005"
+        current = "mem_005"
         path = [current]
         while chain_map.get(current) is not None:
             current = chain_map[current]
             path.append(current)
 
         path.reverse()
-        assert path == ["001", "002", "003", "004", "005"], (
-            f"Expected linear chain [001..005], got {path}"
+        assert path == ["mem_001", "mem_002", "mem_003", "mem_004", "mem_005"], (
+            f"Expected linear chain [mem_001..mem_005], got {path}"
         )

@@ -143,6 +143,9 @@ All 122 beads closed. 449 tests passing on main. Full implementation complete.
 ### Memory System Architecture
 The memory system is a **shared Memory Butler** (port 8150, DB `butler_memory`) — not per-butler isolated. Three tables: `episodes` (session observations, 7d TTL), `facts` (subject-predicate knowledge with per-fact subjective decay), `rules` (procedural playbook, maturity: candidate→established→proven). Uses pgvector + local MiniLM-L6 embeddings (384d). Scoped (`global` or butler-name) but in one shared DB. See `MEMORY_PROJECT_PLAN.md` for full design. Dashboard integration at `/memory` (cross-butler) and `/butlers/:name/memory` (scoped).
 
+### Migration naming/path convention
+Alembic revisions are chain-prefixed (`core_*`, `mem_*`, `sw_*`) rather than bare numeric IDs. Butler-specific migrations resolve from `roster/<butler>/migrations/` via `butlers.migrations._resolve_chain_dir()` (not legacy `butlers/<name>/migrations/` paths).
+
 ### Known Warnings (not bugs)
 - 2 RuntimeWarnings in CLI tests from monkeypatched `asyncio.run` — unawaited coroutines in test mocking
 

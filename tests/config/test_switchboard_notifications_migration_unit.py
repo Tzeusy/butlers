@@ -10,27 +10,24 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
+def _migration_file() -> Path:
+    """Return the switchboard notifications migration file path."""
+    from butlers.migrations import _resolve_chain_dir
+
+    chain_dir = _resolve_chain_dir("switchboard")
+    assert chain_dir is not None, "Switchboard chain should exist"
+    return chain_dir / "003_add_notifications_table.py"
+
+
 def test_notifications_migration_file_exists():
     """Verify the 003_add_notifications_table.py migration file exists."""
-    migration_file = (
-        Path(__file__).parent.parent.parent
-        / "butlers"
-        / "switchboard"
-        / "migrations"
-        / "003_add_notifications_table.py"
-    )
+    migration_file = _migration_file()
     assert migration_file.exists(), "Migration file should exist"
 
 
 def test_notifications_migration_has_correct_metadata():
     """Verify migration metadata (revision, down_revision, etc.)."""
-    migration_file = (
-        Path(__file__).parent.parent.parent
-        / "butlers"
-        / "switchboard"
-        / "migrations"
-        / "003_add_notifications_table.py"
-    )
+    migration_file = _migration_file()
 
     # Load the module
     spec = importlib.util.spec_from_file_location("migration_003", migration_file)
@@ -42,10 +39,10 @@ def test_notifications_migration_has_correct_metadata():
 
     # Check metadata
     assert hasattr(module, "revision"), "Should have revision attribute"
-    assert module.revision == "003", "Revision should be 003"
+    assert module.revision == "sw_003", "Revision should be sw_003"
 
     assert hasattr(module, "down_revision"), "Should have down_revision attribute"
-    assert module.down_revision == "002", "Should revise from 002"
+    assert module.down_revision == "sw_002", "Should revise from sw_002"
 
     assert hasattr(module, "branch_labels"), "Should have branch_labels attribute"
     assert module.branch_labels is None, "Branch labels should be None (not head of chain)"
@@ -56,13 +53,7 @@ def test_notifications_migration_has_correct_metadata():
 
 def test_notifications_migration_has_upgrade_function():
     """Verify upgrade function exists and is callable."""
-    migration_file = (
-        Path(__file__).parent.parent.parent
-        / "butlers"
-        / "switchboard"
-        / "migrations"
-        / "003_add_notifications_table.py"
-    )
+    migration_file = _migration_file()
 
     spec = importlib.util.spec_from_file_location("migration_003", migration_file)
     assert spec is not None
@@ -77,13 +68,7 @@ def test_notifications_migration_has_upgrade_function():
 
 def test_notifications_migration_has_downgrade_function():
     """Verify downgrade function exists and is callable."""
-    migration_file = (
-        Path(__file__).parent.parent.parent
-        / "butlers"
-        / "switchboard"
-        / "migrations"
-        / "003_add_notifications_table.py"
-    )
+    migration_file = _migration_file()
 
     spec = importlib.util.spec_from_file_location("migration_003", migration_file)
     assert spec is not None
