@@ -37,7 +37,7 @@ class TestEpisodesMigration:
 
     def test_revision_identifiers(self) -> None:
         mod = _load_migration("001_create_episodes.py")
-        assert mod.revision == "001"
+        assert mod.revision == "mem_001"
         assert mod.down_revision is None
 
     def test_branch_labels(self) -> None:
@@ -138,8 +138,8 @@ class TestFactsMigration:
     def test_revision_identifiers(self) -> None:
         """The migration should have correct Alembic revision metadata."""
         mod = _load_migration("002_create_facts.py")
-        assert mod.revision == "002"
-        assert mod.down_revision == "001"
+        assert mod.revision == "mem_002"
+        assert mod.down_revision == "mem_001"
 
     def test_branch_labels(self) -> None:
         """002 is not the branch root, so branch_labels should be None."""
@@ -262,8 +262,8 @@ class TestRulesMigration:
     def test_revision_identifiers(self) -> None:
         """The migration should have correct Alembic revision metadata."""
         mod = _load_migration("003_create_rules.py")
-        assert mod.revision == "003"
-        assert mod.down_revision == "002"
+        assert mod.revision == "mem_003"
+        assert mod.down_revision == "mem_002"
 
     def test_branch_labels(self) -> None:
         """003 is not the branch root, so branch_labels should be None."""
@@ -327,8 +327,8 @@ class TestMemoryLinksMigration:
 
     def test_revision_identifiers(self) -> None:
         mod = _load_migration("004_create_memory_links.py")
-        assert mod.revision == "004"
-        assert mod.down_revision == "003"
+        assert mod.revision == "mem_004"
+        assert mod.down_revision == "mem_003"
 
     def test_branch_labels(self) -> None:
         mod = _load_migration("004_create_memory_links.py")
@@ -352,8 +352,14 @@ class TestMemoryLinksMigration:
     def test_upgrade_has_required_columns(self) -> None:
         mod = _load_migration("004_create_memory_links.py")
         source = inspect.getsource(mod.upgrade)
-        for col in ("source_type", "source_id", "target_type", "target_id",
-                     "relation", "created_at"):
+        for col in (
+            "source_type",
+            "source_id",
+            "target_type",
+            "target_id",
+            "relation",
+            "created_at",
+        ):
             assert col in source, f"Missing column: {col}"
 
     def test_upgrade_has_composite_primary_key(self) -> None:
@@ -365,8 +371,7 @@ class TestMemoryLinksMigration:
         mod = _load_migration("004_create_memory_links.py")
         source = inspect.getsource(mod.upgrade)
         assert "CHECK" in source
-        for relation in ("derived_from", "supports", "contradicts",
-                         "supersedes", "related_to"):
+        for relation in ("derived_from", "supports", "contradicts", "supersedes", "related_to"):
             assert relation in source, f"Missing relation: {relation}"
 
     def test_upgrade_has_target_index(self) -> None:
@@ -392,8 +397,8 @@ class TestVectorIndexesMigration:
     def test_revision_identifiers(self) -> None:
         """The migration should have correct Alembic revision metadata."""
         mod = _load_migration("005_add_vector_indexes.py")
-        assert mod.revision == "005"
-        assert mod.down_revision == "004"
+        assert mod.revision == "mem_005"
+        assert mod.down_revision == "mem_004"
 
     def test_branch_labels(self) -> None:
         """005 is not the branch root, so branch_labels should be None."""
@@ -425,7 +430,7 @@ class TestVectorIndexesMigration:
         """Upgrade should enable the uuid-ossp extension."""
         mod = _load_migration("005_add_vector_indexes.py")
         source = inspect.getsource(mod.upgrade)
-        assert 'uuid-ossp' in source
+        assert "uuid-ossp" in source
 
     def test_upgrade_creates_episodes_ivfflat_index(self) -> None:
         """Upgrade should create IVFFlat index on episodes.embedding."""
