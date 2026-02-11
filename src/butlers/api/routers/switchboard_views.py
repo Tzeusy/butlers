@@ -12,6 +12,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_db_manager
 from butlers.api.models import ApiResponse, PaginatedResponse, PaginationMeta
 from butlers.api.models.general import RegistryEntry, RoutingEntry
 
@@ -22,9 +23,7 @@ router = APIRouter(prefix="/api/switchboard", tags=["switchboard"])
 BUTLER_DB = "switchboard"
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub — overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 def _pool(db: DatabaseManager):
@@ -54,7 +53,7 @@ async def list_routing_log(
     until: str | None = Query(None, description="Filter up to this timestamp (inclusive)"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[RoutingEntry]:
     """List routing log entries with optional filters, paginated."""
     pool = _pool(db)
@@ -125,7 +124,7 @@ async def list_routing_log(
 
 @router.get("/registry", response_model=ApiResponse[list[RegistryEntry]])
 async def list_registry(
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[list[RegistryEntry]]:
     """List all registered butlers from the switchboard registry."""
     pool = _pool(db)

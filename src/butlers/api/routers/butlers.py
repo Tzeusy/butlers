@@ -23,6 +23,7 @@ from butlers.api.deps import (
     ButlerUnreachableError,
     MCPClientManager,
     get_butler_configs,
+    get_db_manager,
     get_mcp_manager,
 )
 from butlers.api.models import (
@@ -57,9 +58,7 @@ def _get_roster_dir() -> Path:
     return _DEFAULT_ROSTER_DIR
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub -- overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +405,7 @@ async def trigger_butler(
     request: TriggerRequest,
     configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
     mcp_manager: MCPClientManager = Depends(get_mcp_manager),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[TriggerResponse]:
     """Trigger a CC session on the named butler with the provided prompt.
 
@@ -489,7 +488,7 @@ async def force_butler_tick(
     name: str,
     configs: list[ButlerConnectionInfo] = Depends(get_butler_configs),
     mcp_manager: MCPClientManager = Depends(get_mcp_manager),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[TickResponse] | JSONResponse:
     """Force a scheduler tick on the specified butler.
 

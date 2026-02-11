@@ -13,6 +13,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_db_manager
 from butlers.api.models import PaginatedResponse, PaginationMeta
 from butlers.api.models.health import (
     Condition,
@@ -31,9 +32,7 @@ router = APIRouter(prefix="/api/health", tags=["health"])
 BUTLER_DB = "health"
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub — overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 def _pool(db: DatabaseManager):
@@ -62,7 +61,7 @@ async def list_measurements(
     until: str | None = Query(None, description="Filter up to this timestamp (inclusive)"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[Measurement]:
     """List measurements with optional type and date range filters."""
     pool = _pool(db)
@@ -128,7 +127,7 @@ async def list_medications(
     active: bool | None = Query(None, description="Filter by active status"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[Medication]:
     """List medications with optional active status filter."""
     pool = _pool(db)
@@ -187,7 +186,7 @@ async def list_medication_doses(
     medication_id: str,
     since: str | None = Query(None, description="Filter from this timestamp (inclusive)"),
     until: str | None = Query(None, description="Filter up to this timestamp (inclusive)"),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> list[Dose]:
     """List dose log entries for a specific medication."""
     pool = _pool(db)
@@ -237,7 +236,7 @@ async def list_medication_doses(
 async def list_conditions(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[Condition]:
     """List health conditions."""
     pool = _pool(db)
@@ -284,7 +283,7 @@ async def list_symptoms(
     until: str | None = Query(None, description="Filter up to this timestamp (inclusive)"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[Symptom]:
     """List symptoms with optional name and date range filters."""
     pool = _pool(db)
@@ -353,7 +352,7 @@ async def list_meals(
     until: str | None = Query(None, description="Filter up to this timestamp (inclusive)"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[Meal]:
     """List meals with optional type and date range filters."""
     pool = _pool(db)
@@ -421,7 +420,7 @@ async def list_research(
     tag: str | None = Query(None, description="Filter by tag"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[Research]:
     """List or search research entries."""
     pool = _pool(db)

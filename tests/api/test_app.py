@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, patch
+
 import httpx
 import pytest
 
@@ -57,3 +59,19 @@ class TestAppFactory:
         app = create_app(cors_origins=["https://dashboard.example.com"])
         # Verify the middleware is present by checking the app
         assert app is not None
+
+
+class TestLifespan:
+    async def test_lifespan_initializes_and_shuts_down_dependencies(self):
+        app = create_app()
+
+        with (
+            patch("butlers.api.app.init_dependencies", new=AsyncMock()) as init_mock,
+            patch("butlers.api.app.shutdown_dependencies", new=AsyncMock()) as shutdown_mock,
+            patch("butlers.api.app.init_pricing"),
+        ):
+            async with app.router.lifespan_context(app):
+                pass
+
+        init_mock.assert_awaited_once()
+        shutdown_mock.assert_awaited_once()

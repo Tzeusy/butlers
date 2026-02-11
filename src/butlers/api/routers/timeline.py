@@ -18,6 +18,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 
 from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_db_manager
 from butlers.api.models.timeline import TimelineEvent, TimelineResponse
 
 logger = logging.getLogger(__name__)
@@ -25,9 +26,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/timeline", tags=["timeline"])
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub — overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +90,7 @@ async def list_timeline(
     limit: int = Query(50, ge=1, le=200, description="Max events to return"),
     butler: list[str] | None = Query(None, description="Filter by butler name(s)"),
     event_type: list[str] | None = Query(None, description="Filter by event type(s)"),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> TimelineResponse:
     """Return a cursor-paginated cross-butler event stream.
 

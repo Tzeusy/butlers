@@ -16,8 +16,10 @@ from pathlib import Path
 
 from fastmcp import Client as MCPClient
 
+from butlers.api.db import DatabaseManager
 from butlers.api.pricing import PricingConfig, load_pricing
 from butlers.config import ConfigError, load_config
+from butlers.db import Database
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ class ButlerConnectionInfo:
     name: str
     port: int
     description: str | None = None
+    db_name: str | None = None
 
     @property
     def sse_url(self) -> str:
@@ -202,6 +205,7 @@ def discover_butlers(
                     name=config.name,
                     port=config.port,
                     description=config.description,
+                    db_name=config.db_name,
                 )
             )
         except ConfigError as exc:
@@ -216,39 +220,65 @@ def discover_butlers(
 # ---------------------------------------------------------------------------
 
 _mcp_manager: MCPClientManager | None = None
+_db_manager: DatabaseManager | None = None
 _butler_configs: list[ButlerConnectionInfo] | None = None
 
 
-def init_dependencies(
+async def init_dependencies(
     roster_dir: Path | None = None,
-) -> tuple[MCPClientManager, list[ButlerConnectionInfo]]:
+) -> tuple[MCPClientManager, DatabaseManager, list[ButlerConnectionInfo]]:
     """Initialize the module-level singletons.
 
     Called once during app startup (in the lifespan handler). Discovers
-    butlers from the roster and pre-registers them in the MCP client manager.
+    butlers from the roster, pre-registers them in the MCP client manager,
+    and initializes DB pools in the database manager.
 
-    Returns the manager and config list for use in the lifespan handler.
+    Returns the managers and config list for use in the lifespan handler.
     """
-    global _mcp_manager, _butler_configs  # noqa: PLW0603
+    global _mcp_manager, _db_manager, _butler_configs  # noqa: PLW0603
 
     configs = discover_butlers(roster_dir)
-    manager = MCPClientManager()
+    mcp_manager = MCPClientManager()
 
     for info in configs:
-        manager.register(info.name, info)
+        mcp_manager.register(info.name, info)
 
-    _mcp_manager = manager
+    db_cfg = Database.from_env("postgres")
+    db_manager = DatabaseManager(
+        host=db_cfg.host,
+        port=db_cfg.port,
+        user=db_cfg.user,
+        password=db_cfg.password,
+    )
+
+    for info in configs:
+        effective_db_name = info.db_name or f"butler_{info.name}"
+        try:
+            await db_manager.add_butler(info.name, effective_db_name)
+        except Exception:
+            logger.warning(
+                "Failed to initialize DB pool for butler %s (db=%s)",
+                info.name,
+                effective_db_name,
+                exc_info=True,
+            )
+
+    _mcp_manager = mcp_manager
+    _db_manager = db_manager
     _butler_configs = configs
-    return manager, configs
+    return mcp_manager, db_manager, configs
 
 
 async def shutdown_dependencies() -> None:
     """Clean up module-level singletons. Called during app shutdown."""
-    global _mcp_manager, _butler_configs  # noqa: PLW0603
+    global _mcp_manager, _db_manager, _butler_configs  # noqa: PLW0603
 
     if _mcp_manager is not None:
         await _mcp_manager.close()
         _mcp_manager = None
+    if _db_manager is not None:
+        await _db_manager.close()
+        _db_manager = None
     _butler_configs = None
 
 
@@ -265,6 +295,13 @@ def get_mcp_manager() -> MCPClientManager:
     if _mcp_manager is None:
         raise RuntimeError("MCPClientManager not initialized — call init_dependencies() first")
     return _mcp_manager
+
+
+def get_db_manager() -> DatabaseManager:
+    """FastAPI dependency: provides the DatabaseManager singleton."""
+    if _db_manager is None:
+        raise RuntimeError("DatabaseManager not initialized — call init_dependencies() first")
+    return _db_manager
 
 
 def get_butler_configs() -> list[ButlerConnectionInfo]:

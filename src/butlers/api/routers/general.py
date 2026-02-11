@@ -12,6 +12,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_db_manager
 from butlers.api.models import ApiResponse, PaginatedResponse, PaginationMeta
 from butlers.api.models.general import Collection, Entity
 
@@ -22,9 +23,7 @@ router = APIRouter(prefix="/api/general", tags=["general"])
 BUTLER_DB = "general"
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub — overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 def _pool(db: DatabaseManager):
@@ -50,7 +49,7 @@ def _pool(db: DatabaseManager):
 async def list_collections(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[Collection]:
     """List collections with entity counts, paginated."""
     pool = _pool(db)
@@ -105,7 +104,7 @@ async def list_collection_entities(
     collection_id: str,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[Entity]:
     """List entities within a specific collection, paginated."""
     pool = _pool(db)
@@ -170,7 +169,7 @@ async def list_entities(
     tag: str | None = Query(None, description="Filter by tag"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[Entity]:
     """Search or list all entities across collections."""
     pool = _pool(db)
@@ -239,7 +238,7 @@ async def list_entities(
 @router.get("/entities/{entity_id}", response_model=ApiResponse[Entity])
 async def get_entity(
     entity_id: str,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[Entity]:
     """Get a single entity by ID."""
     pool = _pool(db)

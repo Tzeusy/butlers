@@ -14,6 +14,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_db_manager
 from butlers.api.models.relationship import (
     ActivityFeedItem,
     ContactDetail,
@@ -36,9 +37,7 @@ router = APIRouter(prefix="/api/relationship", tags=["relationship"])
 BUTLER_DB = "relationship"
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub — overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 def _pool(db: DatabaseManager):
@@ -66,7 +65,7 @@ async def list_contacts(
     label: str | None = Query(None, description="Filter by label name"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ContactListResponse:
     """List contacts with optional search and label filter, paginated."""
     pool = _pool(db)
@@ -170,7 +169,7 @@ async def list_contacts(
 @router.get("/contacts/{contact_id}", response_model=ContactDetail)
 async def get_contact(
     contact_id: UUID,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ContactDetail:
     """Get full contact detail with labels, email, phone, birthday."""
     pool = _pool(db)
@@ -292,7 +291,7 @@ async def get_contact(
 @router.get("/contacts/{contact_id}/notes", response_model=list[Note])
 async def list_contact_notes(
     contact_id: UUID,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> list[Note]:
     """List notes for a contact, newest first."""
     pool = _pool(db)
@@ -325,7 +324,7 @@ async def list_contact_notes(
 @router.get("/contacts/{contact_id}/interactions", response_model=list[Interaction])
 async def list_contact_interactions(
     contact_id: UUID,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> list[Interaction]:
     """List interactions for a contact, newest first."""
     pool = _pool(db)
@@ -360,7 +359,7 @@ async def list_contact_interactions(
 @router.get("/contacts/{contact_id}/gifts", response_model=list[Gift])
 async def list_contact_gifts(
     contact_id: UUID,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> list[Gift]:
     """List gifts for a contact, newest first."""
     pool = _pool(db)
@@ -396,7 +395,7 @@ async def list_contact_gifts(
 @router.get("/contacts/{contact_id}/loans", response_model=list[Loan])
 async def list_contact_loans(
     contact_id: UUID,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> list[Loan]:
     """List loans for a contact, newest first."""
     pool = _pool(db)
@@ -435,7 +434,7 @@ async def list_contact_loans(
 @router.get("/contacts/{contact_id}/feed", response_model=list[ActivityFeedItem])
 async def list_contact_feed(
     contact_id: UUID,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> list[ActivityFeedItem]:
     """Activity feed for a contact, newest first."""
     pool = _pool(db)
@@ -469,7 +468,7 @@ async def list_contact_feed(
 async def list_groups(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> GroupListResponse:
     """List all groups with member counts, paginated."""
     pool = _pool(db)
@@ -519,7 +518,7 @@ async def list_groups(
 @router.get("/groups/{group_id}", response_model=Group)
 async def get_group(
     group_id: UUID,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> Group:
     """Get a group with its member count."""
     pool = _pool(db)
@@ -562,7 +561,7 @@ async def get_group(
 
 @router.get("/labels", response_model=list[Label])
 async def list_labels(
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> list[Label]:
     """List all labels."""
     pool = _pool(db)
@@ -578,7 +577,7 @@ async def list_labels(
 @router.get("/upcoming-dates", response_model=list[UpcomingDate])
 async def list_upcoming_dates(
     days: int = Query(30, ge=1, le=365, description="Look-ahead window in days"),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> list[UpcomingDate]:
     """List upcoming important dates within the next N days (default 30).
 

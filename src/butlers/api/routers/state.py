@@ -18,6 +18,7 @@ from butlers.api.db import DatabaseManager
 from butlers.api.deps import (
     ButlerUnreachableError,
     MCPClientManager,
+    get_db_manager,
     get_mcp_manager,
 )
 from butlers.api.models import ApiResponse
@@ -29,9 +30,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/butlers", tags=["butlers", "state"])
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub -- overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +44,7 @@ def _get_db_manager() -> DatabaseManager:
 )
 async def list_state(
     name: str,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[list[StateEntry]]:
     """Return all state entries for a butler.
 
@@ -81,7 +80,7 @@ async def list_state(
 async def get_state(
     name: str,
     key: str,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[StateEntry]:
     """Return a single state entry by key.
 
@@ -124,7 +123,7 @@ async def set_state(
     key: str,
     request: StateSetRequest,
     mgr: MCPClientManager = Depends(get_mcp_manager),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[dict]:
     """Set a state value via the butler's MCP ``state_set`` tool.
 
@@ -156,7 +155,7 @@ async def delete_state(
     name: str,
     key: str,
     mgr: MCPClientManager = Depends(get_mcp_manager),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[dict]:
     """Delete a state entry via the butler's MCP ``state_delete`` tool.
 

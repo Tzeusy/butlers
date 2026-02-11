@@ -20,7 +20,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 
 from butlers.api.db import DatabaseManager
-from butlers.api.deps import ButlerUnreachableError, MCPClientManager, get_mcp_manager
+from butlers.api.deps import (
+    ButlerUnreachableError,
+    MCPClientManager,
+    get_db_manager,
+    get_mcp_manager,
+)
 from butlers.api.models import ApiResponse
 from butlers.api.models.schedule import Schedule, ScheduleCreate, ScheduleUpdate
 from butlers.api.routers.audit import log_audit_entry
@@ -30,9 +35,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/butlers", tags=["butlers", "schedules"])
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub -- overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +110,7 @@ async def _call_mcp_tool(
 )
 async def list_schedules(
     name: str,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[list[Schedule]]:
     """Return all scheduled tasks for a single butler."""
     try:
@@ -137,7 +140,7 @@ async def create_schedule(
     name: str,
     body: ScheduleCreate,
     mgr: MCPClientManager = Depends(get_mcp_manager),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[dict]:
     """Create a new scheduled task via MCP tool call to the butler."""
     summary = {"name": body.name, "cron": body.cron}
@@ -171,7 +174,7 @@ async def update_schedule(
     schedule_id: UUID,
     body: ScheduleUpdate,
     mgr: MCPClientManager = Depends(get_mcp_manager),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[dict]:
     """Update a scheduled task via MCP tool call to the butler."""
     arguments: dict = {"id": str(schedule_id)}
@@ -203,7 +206,7 @@ async def delete_schedule(
     name: str,
     schedule_id: UUID,
     mgr: MCPClientManager = Depends(get_mcp_manager),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[dict]:
     """Delete a scheduled task via MCP tool call to the butler."""
     summary = {"schedule_id": str(schedule_id)}
@@ -231,7 +234,7 @@ async def toggle_schedule(
     name: str,
     schedule_id: UUID,
     mgr: MCPClientManager = Depends(get_mcp_manager),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[dict]:
     """Toggle a scheduled task's enabled/disabled state via MCP."""
     summary = {"schedule_id": str(schedule_id)}

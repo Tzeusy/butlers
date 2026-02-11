@@ -55,11 +55,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle for DB pools and MCP clients.
 
-    On startup: initialize resources (will be implemented in future tasks)
+    On startup: initialize shared dependency singletons and DB pools.
     On shutdown: close all connections cleanly
     """
     # Startup
-    init_dependencies()
+    await init_dependencies()
     try:
         init_pricing()
     except Exception:

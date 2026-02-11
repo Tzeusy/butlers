@@ -14,6 +14,7 @@ from butlers.api.deps import (
     MCPClientManager,
     discover_butlers,
     get_butler_configs,
+    get_db_manager,
     get_mcp_manager,
     init_dependencies,
     shutdown_dependencies,
@@ -314,11 +315,24 @@ class TestFastAPIDependencies:
         finally:
             deps_mod._butler_configs = original_configs
 
+    async def test_get_db_manager_before_init_raises(self):
+        """Calling get_db_manager() before init raises RuntimeError."""
+        import butlers.api.deps as deps_mod
+
+        original_db = deps_mod._db_manager
+        deps_mod._db_manager = None
+        try:
+            with pytest.raises(RuntimeError, match="not initialized"):
+                get_db_manager()
+        finally:
+            deps_mod._db_manager = original_db
+
     async def test_init_and_get(self, tmp_path: Path):
         """init_dependencies wires up the manager and configs."""
         import butlers.api.deps as deps_mod
 
         orig_mgr = deps_mod._mcp_manager
+        orig_db = deps_mod._db_manager
         orig_cfg = deps_mod._butler_configs
 
         try:
@@ -328,11 +342,15 @@ class TestFastAPIDependencies:
                 '[butler]\nname = "test-butler"\nport = 8500\n[runtime]\ntype = "claude-code"\n'
             )
 
-            mgr, configs = init_dependencies(roster_dir=tmp_path)
+            with patch("butlers.api.deps.DatabaseManager.add_butler", new_callable=AsyncMock) as m:
+                mgr, db, configs = await init_dependencies(roster_dir=tmp_path)
             assert isinstance(mgr, MCPClientManager)
+            assert db is get_db_manager()
             assert len(configs) == 1
             assert configs[0].name == "test-butler"
             assert configs[0].port == 8500
+            assert configs[0].db_name == "butler_test-butler"
+            m.assert_awaited_once_with("test-butler", "butler_test-butler")
 
             # Dependency functions should now work
             assert get_mcp_manager() is mgr
@@ -342,6 +360,7 @@ class TestFastAPIDependencies:
             assert "test-butler" in mgr.butler_names
         finally:
             deps_mod._mcp_manager = orig_mgr
+            deps_mod._db_manager = orig_db
             deps_mod._butler_configs = orig_cfg
 
     async def test_shutdown_cleans_up(self, tmp_path: Path):
@@ -349,6 +368,7 @@ class TestFastAPIDependencies:
         import butlers.api.deps as deps_mod
 
         orig_mgr = deps_mod._mcp_manager
+        orig_db = deps_mod._db_manager
         orig_cfg = deps_mod._butler_configs
 
         try:
@@ -357,14 +377,17 @@ class TestFastAPIDependencies:
             (d / "butler.toml").write_text(
                 '[butler]\nname = "sb"\nport = 8100\n[runtime]\ntype = "claude-code"\n'
             )
-            init_dependencies(roster_dir=tmp_path)
+            with patch("butlers.api.deps.DatabaseManager.add_butler", new_callable=AsyncMock):
+                await init_dependencies(roster_dir=tmp_path)
 
             await shutdown_dependencies()
 
             assert deps_mod._mcp_manager is None
+            assert deps_mod._db_manager is None
             assert deps_mod._butler_configs is None
         finally:
             deps_mod._mcp_manager = orig_mgr
+            deps_mod._db_manager = orig_db
             deps_mod._butler_configs = orig_cfg
 
 

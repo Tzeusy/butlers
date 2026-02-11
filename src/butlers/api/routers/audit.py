@@ -16,6 +16,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_db_manager
 from butlers.api.models import PaginatedResponse, PaginationMeta
 from butlers.api.models.audit import AuditEntry
 
@@ -24,9 +25,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/audit-log", tags=["audit"])
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub — overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +82,7 @@ async def list_audit_log(
     operation: str | None = Query(None, description="Filter by operation type"),
     since: str | None = Query(None, description="ISO 8601 timestamp lower bound"),
     until: str | None = Query(None, description="ISO 8601 timestamp upper bound"),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[AuditEntry]:
     """Return paginated audit log entries from the Switchboard database.
 

@@ -18,6 +18,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, Query
 
 from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_db_manager
 from butlers.api.models import ApiResponse, PaginatedResponse, PaginationMeta
 from butlers.api.models.notification import NotificationStats, NotificationSummary
 
@@ -27,9 +28,7 @@ router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 butler_notifications_router = APIRouter(prefix="/api/butlers", tags=["butlers", "notifications"])
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub — overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +137,7 @@ async def list_notifications(
     status: str | None = Query(None, description="Filter by status (sent/failed/pending)"),
     since: datetime | None = Query(None, description="Only notifications created after this time"),
     until: datetime | None = Query(None, description="Only notifications created before this time"),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[NotificationSummary]:
     """Return paginated notification history from the Switchboard database.
 
@@ -175,7 +174,7 @@ async def list_butler_notifications(
     status: str | None = Query(None, description="Filter by status (sent/failed/pending)"),
     since: datetime | None = Query(None, description="Only notifications created after this time"),
     until: datetime | None = Query(None, description="Only notifications created before this time"),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[NotificationSummary]:
     """Return paginated notifications for a specific butler.
 
@@ -197,7 +196,7 @@ async def list_butler_notifications(
 
 @router.get("/stats", response_model=ApiResponse[NotificationStats])
 async def notification_stats(
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[NotificationStats]:
     """Return aggregated notification statistics.
 

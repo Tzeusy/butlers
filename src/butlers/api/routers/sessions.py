@@ -19,6 +19,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_db_manager
 from butlers.api.models import (
     ApiResponse,
     PaginatedResponse,
@@ -33,9 +34,7 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 butler_sessions_router = APIRouter(prefix="/api/butlers", tags=["butlers", "sessions"])
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub — overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +150,7 @@ async def list_sessions(
     success: bool | None = Query(None, description="Filter by success status"),
     from_date: datetime | None = Query(None, description="Sessions started after this time"),
     to_date: datetime | None = Query(None, description="Sessions started before this time"),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[SessionSummary]:
     """Return paginated sessions aggregated across all butler databases.
 
@@ -214,7 +213,7 @@ async def list_butler_sessions(
     success: bool | None = Query(None, description="Filter by success status"),
     from_date: datetime | None = Query(None, description="Sessions started after this time"),
     to_date: datetime | None = Query(None, description="Sessions started before this time"),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[SessionSummary]:
     """Return paginated sessions for a single butler.
 
@@ -269,7 +268,7 @@ async def list_butler_sessions(
 async def get_butler_session(
     name: str,
     session_id: UUID,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[SessionDetail]:
     """Return full detail for a single session from a butler's database."""
     try:

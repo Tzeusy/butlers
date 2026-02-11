@@ -12,6 +12,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_db_manager
 from butlers.api.models import ApiResponse, PaginatedResponse, PaginationMeta
 from butlers.api.models.memory import Episode, Fact, MemoryActivity, MemoryStats, Rule
 
@@ -22,9 +23,7 @@ router = APIRouter(prefix="/api/memory", tags=["memory"])
 BUTLER_DB = "memory"
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub — overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 def _pool(db: DatabaseManager):
@@ -66,7 +65,7 @@ def _parse_tags(value):
 
 @router.get("/stats", response_model=ApiResponse[MemoryStats])
 async def get_memory_stats(
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[MemoryStats]:
     """Return aggregated counts across all memory tiers."""
     pool = _pool(db)
@@ -130,7 +129,7 @@ async def list_episodes(
     until: str | None = Query(None, description="Created before this timestamp"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[Episode]:
     """List episodes with optional filters, paginated."""
     pool = _pool(db)
@@ -211,7 +210,7 @@ async def list_facts(
     subject: str | None = Query(None, description="Filter by subject"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[Fact]:
     """List/search facts with optional filters, paginated."""
     pool = _pool(db)
@@ -278,7 +277,7 @@ async def list_facts(
 @router.get("/facts/{fact_id}", response_model=ApiResponse[Fact])
 async def get_fact(
     fact_id: str,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[Fact]:
     """Return a single fact by ID."""
     pool = _pool(db)
@@ -310,7 +309,7 @@ async def list_rules(
     maturity: str | None = Query(None, description="Filter by maturity"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[Rule]:
     """List/search rules with optional filters, paginated."""
     pool = _pool(db)
@@ -367,7 +366,7 @@ async def list_rules(
 @router.get("/rules/{rule_id}", response_model=ApiResponse[Rule])
 async def get_rule(
     rule_id: str,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[Rule]:
     """Return a single rule by ID."""
     pool = _pool(db)
@@ -395,7 +394,7 @@ async def get_rule(
 @router.get("/activity", response_model=ApiResponse[list[MemoryActivity]])
 async def list_activity(
     limit: int = Query(50, ge=1, le=200, description="Max activity items to return"),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[list[MemoryActivity]]:
     """Return recent memory activity interleaved from all three tables."""
     pool = _pool(db)

@@ -17,6 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_db_manager
 from butlers.api.models import ApiResponse, PaginatedResponse, PaginationMeta
 from butlers.api.models.trace import SpanNode, TraceDetail, TraceSummary
 
@@ -25,9 +26,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/traces", tags=["traces"])
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub — overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +134,7 @@ def assemble_span_tree(sessions: list[dict]) -> list[SpanNode]:
 async def list_traces(
     offset: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=200, description="Max records to return"),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> PaginatedResponse[TraceSummary]:
     """Return paginated trace summaries aggregated across all butler databases.
 
@@ -264,7 +263,7 @@ async def list_traces(
 @router.get("/{trace_id}", response_model=ApiResponse[TraceDetail])
 async def get_trace(
     trace_id: str,
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> ApiResponse[TraceDetail]:
     """Return full trace detail with assembled span tree.
 

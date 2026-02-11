@@ -16,6 +16,7 @@ import logging
 from fastapi import APIRouter, Depends, Query
 
 from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_db_manager
 from butlers.api.models.search import SearchResponse, SearchResult
 
 logger = logging.getLogger(__name__)
@@ -23,9 +24,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/search", tags=["search"])
 
 
-def _get_db_manager() -> DatabaseManager:
-    """Dependency stub — overridden at app startup or in tests."""
-    raise RuntimeError("DatabaseManager not initialized")
+_get_db_manager = get_db_manager
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +71,7 @@ def _extract_snippet(text: str, query: str, max_len: int = 200) -> str:
 async def search(
     q: str = Query("", description="Search query (ILIKE pattern)"),
     limit: int = Query(20, ge=1, le=100, description="Max results per category"),
-    db: DatabaseManager = Depends(_get_db_manager),
+    db: DatabaseManager = Depends(get_db_manager),
 ) -> SearchResponse:
     """Search across all butler databases for sessions and state entries.
 
