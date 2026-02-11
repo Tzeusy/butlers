@@ -145,6 +145,9 @@ The memory system is a **shared Memory Butler** (port 8150, DB `butler_memory`) 
 ### Known Warnings (not bugs)
 - 2 RuntimeWarnings in CLI tests from monkeypatched `asyncio.run` — unawaited coroutines in test mocking
 
+### Session Fixture Schema Parity
+- Tests that create `sessions` via raw SQL (instead of migrations) must include `input_tokens` and `output_tokens` (and preferably `parent_session_id`) to stay compatible with `butlers.core.sessions` queries.
+
 ### Quality Gates
 ```bash
 uv run ruff check src/ tests/ roster/ conftest.py
