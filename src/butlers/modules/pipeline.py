@@ -7,6 +7,7 @@ to the switchboard's ``classify_message()`` and ``route()`` functions.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
@@ -60,6 +61,31 @@ class MessagePipeline:
         self._classify_fn = classify_fn
         self._route_fn = route_fn
 
+    @staticmethod
+    def _message_preview(text: str, max_chars: int = 80) -> str:
+        compact = " ".join(text.split())
+        if len(compact) <= max_chars:
+            return compact
+        return f"{compact[: max_chars - 3]}..."
+
+    @staticmethod
+    def _log_fields(
+        *,
+        source: str,
+        chat_id: str | None,
+        target_butler: str | None,
+        latency_ms: float | None,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        fields: dict[str, Any] = {
+            "source": source,
+            "chat_id": chat_id,
+            "target_butler": target_butler,
+            "latency_ms": latency_ms,
+        }
+        fields.update(extra)
+        return fields
+
     async def process(
         self,
         message_text: str,
@@ -92,21 +118,62 @@ class MessagePipeline:
         classify = self._classify_fn or classify_message
         route_to = self._route_fn or route
 
+        args = dict(tool_args or {})
+        args["message"] = message_text
+
+        source = str(args.get("source") or "unknown")
+        raw_chat_id = args.get("chat_id")
+        chat_id = str(raw_chat_id) if raw_chat_id not in (None, "") else None
+        message_length = len(message_text)
+        message_preview = self._message_preview(message_text)
+
+        start = time.perf_counter()
+        logger.info(
+            "Pipeline processing message",
+            extra=self._log_fields(
+                source=source,
+                chat_id=chat_id,
+                target_butler=None,
+                latency_ms=0.0,
+                message_length=message_length,
+                message_preview=message_preview,
+            ),
+        )
+
         # Step 1: Classify
+        classify_start = time.perf_counter()
         try:
             target = await classify(self._pool, message_text, self._dispatch_fn)
         except Exception as exc:
             error_msg = f"{type(exc).__name__}: {exc}"
-            logger.exception("Classification failed for message")
+            classification_latency_ms = (time.perf_counter() - classify_start) * 1000
+            logger.warning(
+                "Classification failed; falling back to general",
+                extra=self._log_fields(
+                    source=source,
+                    chat_id=chat_id,
+                    target_butler="general",
+                    latency_ms=classification_latency_ms,
+                    classification_error=error_msg,
+                ),
+            )
             return RoutingResult(
                 target_butler="general",
                 classification_error=error_msg,
             )
+        classification_latency_ms = (time.perf_counter() - classify_start) * 1000
+        logger.info(
+            "Pipeline classified message",
+            extra=self._log_fields(
+                source=source,
+                chat_id=chat_id,
+                target_butler=target,
+                latency_ms=classification_latency_ms,
+            ),
+        )
 
         # Step 2: Route
-        args = dict(tool_args or {})
-        args["message"] = message_text
-
+        route_start = time.perf_counter()
         try:
             result = await route_to(
                 self._pool,
@@ -117,11 +184,35 @@ class MessagePipeline:
             )
         except Exception as exc:
             error_msg = f"{type(exc).__name__}: {exc}"
-            logger.exception("Routing failed for message to butler %s", target)
+            routing_latency_ms = (time.perf_counter() - route_start) * 1000
+            logger.exception(
+                "Routing failed for message to butler %s",
+                target,
+                extra=self._log_fields(
+                    source=source,
+                    chat_id=chat_id,
+                    target_butler=target,
+                    latency_ms=routing_latency_ms,
+                    routing_error=error_msg,
+                ),
+            )
             return RoutingResult(
                 target_butler=target,
                 routing_error=error_msg,
             )
+        routing_latency_ms = (time.perf_counter() - route_start) * 1000
+        total_latency_ms = (time.perf_counter() - start) * 1000
+        logger.info(
+            "Pipeline routed message",
+            extra=self._log_fields(
+                source=source,
+                chat_id=chat_id,
+                target_butler=target,
+                latency_ms=total_latency_ms,
+                classification_latency_ms=classification_latency_ms,
+                routing_latency_ms=routing_latency_ms,
+            ),
+        )
 
         return RoutingResult(
             target_butler=target,
