@@ -91,6 +91,20 @@ def _build_app_with_mock_db(
 class TestListNotificationsDefaults:
     """Test the default pagination behaviour (offset=0, limit=50)."""
 
+    async def test_returns_200_without_trailing_slash(self):
+        rows = [_make_notification_row() for _ in range(2)]
+        app, _, _ = _build_app_with_mock_db(rows, total=2)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/notifications")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["data"]) == 2
+        assert body["meta"]["total"] == 2
+
     async def test_returns_200_with_paginated_response(self):
         rows = [_make_notification_row() for _ in range(3)]
         app, mock_pool, _ = _build_app_with_mock_db(rows, total=3)

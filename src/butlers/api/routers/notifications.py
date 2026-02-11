@@ -130,6 +130,7 @@ async def _query_notifications(
 
 
 @router.get("", response_model=PaginatedResponse[NotificationSummary])
+@router.get("/", response_model=PaginatedResponse[NotificationSummary], include_in_schema=False)
 async def list_notifications(
     offset: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=200, description="Max records to return"),
