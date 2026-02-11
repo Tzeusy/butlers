@@ -8,6 +8,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,6 +16,11 @@ import pytest
 from butlers.modules.pipeline import MessagePipeline, RoutingResult
 
 pytestmark = pytest.mark.unit
+
+
+def _pipeline_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [record for record in caplog.records if record.name == "butlers.modules.pipeline"]
+
 
 # ---------------------------------------------------------------------------
 # RoutingResult
@@ -165,6 +171,81 @@ class TestMessagePipelineProcess:
         assert result.target_butler == "general"
         assert result.classification_error is not None
         assert "RuntimeError" in result.classification_error
+
+    async def test_logs_entry_and_exit_with_structured_fields(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """Pipeline emits structured start/end logs with context and latency."""
+
+        async def mock_classify(pool, message, dispatch_fn):
+            return "health"
+
+        async def mock_route(pool, target, tool_name, args, source):
+            return {"result": "handled"}
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(),
+            dispatch_fn=AsyncMock(),
+            classify_fn=mock_classify,
+            route_fn=mock_route,
+        )
+
+        message = "I have a headache and feel dizzy."
+        with caplog.at_level(logging.INFO, logger="butlers.modules.pipeline"):
+            await pipeline.process(message, tool_args={"source": "telegram", "chat_id": "42"})
+
+        records = _pipeline_records(caplog)
+        assert records
+        for record in records:
+            assert hasattr(record, "source")
+            assert hasattr(record, "chat_id")
+            assert hasattr(record, "target_butler")
+            assert hasattr(record, "latency_ms")
+
+        start = next(r for r in records if r.getMessage() == "Pipeline processing message")
+        end = next(r for r in records if r.getMessage() == "Pipeline routed message")
+        assert start.source == "telegram"
+        assert start.chat_id == "42"
+        assert start.message_length == len(message)
+        assert start.message_preview == message
+        assert end.target_butler == "health"
+        assert end.latency_ms >= 0
+        assert end.classification_latency_ms >= 0
+        assert end.routing_latency_ms >= 0
+
+    async def test_classification_fallback_logs_warning_with_reason(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """Classification fallback emits warning with error reason."""
+
+        async def failing_classify(pool, message, dispatch_fn):
+            raise RuntimeError("classifier broke")
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(),
+            dispatch_fn=AsyncMock(),
+            classify_fn=failing_classify,
+        )
+
+        with caplog.at_level(logging.INFO, logger="butlers.modules.pipeline"):
+            result = await pipeline.process(
+                "test message",
+                tool_args={"source": "telegram", "chat_id": 7},
+            )
+
+        assert result.target_butler == "general"
+
+        warning = next(
+            r
+            for r in _pipeline_records(caplog)
+            if r.levelno == logging.WARNING
+            and r.getMessage() == "Classification failed; falling back to general"
+        )
+        assert warning.source == "telegram"
+        assert warning.chat_id == "7"
+        assert warning.target_butler == "general"
+        assert warning.latency_ms >= 0
+        assert "RuntimeError: classifier broke" in warning.classification_error
 
     async def test_routing_failure_records_error(self):
         """When routing fails, pipeline records the error."""

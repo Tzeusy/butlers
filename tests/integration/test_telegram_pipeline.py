@@ -9,6 +9,8 @@ Verifies that:
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -162,6 +164,30 @@ class TestProcessUpdate:
         result = await mod.process_update(update)
         assert result is None
 
+    async def test_returns_none_without_pipeline_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """process_update logs warning when no pipeline is set."""
+        mod = TelegramModule()
+        update = {"update_id": 11, "message": {"text": "hello", "chat": {"id": 1}}}
+        with caplog.at_level(logging.WARNING, logger="butlers.modules.telegram"):
+            result = await mod.process_update(update)
+        assert result is None
+
+        warning = next(
+            r
+            for r in caplog.records
+            if r.name == "butlers.modules.telegram"
+            and r.levelno == logging.WARNING
+            and r.getMessage()
+            == "Skipping Telegram update because no classification pipeline is configured"
+        )
+        assert warning.source == "telegram"
+        assert warning.chat_id == "1"
+        assert warning.target_butler is None
+        assert warning.latency_ms is None
+        assert warning.update_id == 11
+
     async def test_returns_none_for_no_text(self):
         """process_update returns None when the update has no text."""
         mod = TelegramModule()
@@ -298,8 +324,6 @@ class TestPollLoopPipeline:
                 ]
             raise asyncio.CancelledError
 
-        import asyncio
-
         mod._get_updates = mock_get_updates  # type: ignore[method-assign]
         mod._config.poll_interval = 0.01
 
@@ -323,8 +347,6 @@ class TestPollLoopPipeline:
                 return [{"update_id": 1, "message": {"text": "msg", "chat": {"id": 1}}}]
             raise asyncio.CancelledError
 
-        import asyncio
-
         mod._get_updates = mock_get_updates  # type: ignore[method-assign]
         mod._config.poll_interval = 0.01
 
@@ -333,3 +355,34 @@ class TestPollLoopPipeline:
 
         assert len(mod._updates_buffer) == 1
         assert mod._routed_messages == []
+
+    async def test_poll_loop_logs_update_count_at_info(self, caplog: pytest.LogCaptureFixture):
+        """Poll loop emits INFO log with update count."""
+        mod = TelegramModule()
+        mod.set_pipeline(_make_pipeline(classify_result="general"))
+
+        iteration = 0
+
+        async def mock_get_updates():
+            nonlocal iteration
+            iteration += 1
+            if iteration == 1:
+                return [{"update_id": 1, "message": {"text": "msg", "chat": {"id": 1}}}]
+            raise asyncio.CancelledError
+
+        mod._get_updates = mock_get_updates  # type: ignore[method-assign]
+        mod._config.poll_interval = 0.01
+
+        with caplog.at_level(logging.INFO, logger="butlers.modules.telegram"):
+            with pytest.raises(asyncio.CancelledError):
+                await mod._poll_loop()
+
+        poll_log = next(
+            r
+            for r in caplog.records
+            if r.name == "butlers.modules.telegram"
+            and r.levelno == logging.INFO
+            and r.getMessage() == "Polled Telegram updates"
+        )
+        assert poll_log.source == "telegram"
+        assert poll_log.update_count == 1

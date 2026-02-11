@@ -147,14 +147,24 @@ class TelegramModule(Module):
         Returns ``None`` if no pipeline is configured or the update has
         no extractable text.
         """
+        chat_id = _extract_chat_id(update)
         if self._pipeline is None:
+            logger.warning(
+                "Skipping Telegram update because no classification pipeline is configured",
+                extra={
+                    "source": "telegram",
+                    "chat_id": chat_id,
+                    "target_butler": None,
+                    "latency_ms": None,
+                    "update_id": update.get("update_id"),
+                },
+            )
             return None
 
         text = _extract_text(update)
         if not text:
             return None
 
-        chat_id = _extract_chat_id(update)
         result = await self._pipeline.process(
             message_text=text,
             tool_name="handle_message",
@@ -166,9 +176,13 @@ class TelegramModule(Module):
 
         self._routed_messages.append(result)
         logger.info(
-            "Telegram message routed to %s (chat_id=%s)",
-            result.target_butler,
-            chat_id,
+            "Telegram message routed",
+            extra={
+                "source": "telegram",
+                "chat_id": chat_id,
+                "target_butler": result.target_butler,
+                "latency_ms": None,
+            },
         )
         return result
 
@@ -232,7 +246,13 @@ class TelegramModule(Module):
                 updates = await self._get_updates()
                 if updates:
                     self._updates_buffer.extend(updates)
-                    logger.debug("Polled %d update(s) from Telegram", len(updates))
+                    logger.info(
+                        "Polled Telegram updates",
+                        extra={
+                            "source": "telegram",
+                            "update_count": len(updates),
+                        },
+                    )
 
                     # Route through classification pipeline if available
                     for update in updates:
