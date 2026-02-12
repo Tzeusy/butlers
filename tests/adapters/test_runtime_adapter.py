@@ -469,3 +469,84 @@ def test_adapter_must_implement_binary_name():
 
     with pytest.raises(TypeError):
         AdapterWithoutBinary()  # type: ignore[abstract]
+
+
+# ---------------------------------------------------------------------------
+# ClaudeCodeAdapter SDK error reason surfacing (butlers-571)
+# ---------------------------------------------------------------------------
+
+
+async def test_cc_adapter_surfaces_result_text_on_sdk_error():
+    """When SDK yields error ResultMessage then raises, adapter surfaces result_text."""
+    from claude_code_sdk import ResultMessage
+
+    async def mock_query(*, prompt, options):
+        yield ResultMessage(
+            subtype="result",
+            duration_ms=0,
+            duration_api_ms=0,
+            is_error=True,
+            num_turns=0,
+            session_id="err",
+            total_cost_usd=0.0,
+            usage=None,
+            result="Credit balance is too low",
+        )
+        raise RuntimeError("Command failed with exit code 1")
+
+    adapter = ClaudeCodeAdapter(sdk_query=mock_query)
+    with pytest.raises(RuntimeError, match="Credit balance is too low") as exc_info:
+        await adapter.invoke(
+            prompt="test",
+            system_prompt="",
+            mcp_servers={"test": {"url": "http://localhost:9100/sse"}},
+            env={},
+        )
+    # Original exception is chained
+    assert exc_info.value.__cause__ is not None
+    assert "exit code 1" in str(exc_info.value.__cause__)
+
+
+async def test_cc_adapter_preserves_error_when_no_result_text():
+    """When SDK raises without a prior error ResultMessage, original exception propagates."""
+
+    async def mock_query(*, prompt, options):
+        raise RuntimeError("Connection refused")
+        yield  # make it an async generator  # noqa: E501
+
+    adapter = ClaudeCodeAdapter(sdk_query=mock_query)
+    with pytest.raises(RuntimeError, match="Connection refused"):
+        await adapter.invoke(
+            prompt="test",
+            system_prompt="",
+            mcp_servers={"test": {"url": "http://localhost:9100/sse"}},
+            env={},
+        )
+
+
+async def test_cc_adapter_success_path_unaffected():
+    """Success path (is_error=False) still returns normally."""
+    from claude_code_sdk import ResultMessage
+
+    async def mock_query(*, prompt, options):
+        yield ResultMessage(
+            subtype="result",
+            duration_ms=10,
+            duration_api_ms=8,
+            is_error=False,
+            num_turns=1,
+            session_id="ok",
+            total_cost_usd=0.0,
+            usage=None,
+            result="All good",
+        )
+
+    adapter = ClaudeCodeAdapter(sdk_query=mock_query)
+    result_text, tool_calls, usage = await adapter.invoke(
+        prompt="hi",
+        system_prompt="",
+        mcp_servers={"test": {"url": "http://localhost:9100/sse"}},
+        env={},
+    )
+    assert result_text == "All good"
+    assert tool_calls == []

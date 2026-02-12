@@ -1429,3 +1429,75 @@ class TestTokenUsageCapture:
         assert result2.error is None
         assert result2.input_tokens == 42
         assert result2.output_tokens == 84
+
+
+# ---------------------------------------------------------------------------
+# SDK error reason surfacing (butlers-571)
+# ---------------------------------------------------------------------------
+
+
+class TestSDKErrorReasonSurfacing:
+    """Verify that meaningful SDK error reasons flow through SpawnerResult and session logs."""
+
+    async def test_error_reason_in_spawner_result(self, tmp_path: Path):
+        """Adapter raising RuntimeError('Credit balance...') surfaces in result.error."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        # Simulate the fixed adapter: raises RuntimeError with the real error reason
+        adapter = MockAdapter(error="Credit balance is too low")
+        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
+
+        result = await spawner.trigger("test", "tick")
+        assert result.success is False
+        assert result.error is not None
+        assert "Credit balance is too low" in result.error
+
+    async def test_error_reason_in_session_log(self, tmp_path: Path):
+        """Session completion DB record includes the meaningful error reason."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        mock_pool = AsyncMock()
+
+        with (
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
+            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock) as mock_complete,
+        ):
+            import uuid
+
+            fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000099")
+            mock_create.return_value = fake_session_id
+
+            adapter = MockAdapter(error="Credit balance is too low")
+            spawner = Spawner(
+                config=config,
+                config_dir=config_dir,
+                pool=mock_pool,
+                runtime=adapter,
+            )
+
+            result = await spawner.trigger("test", "tick")
+            assert result.success is False
+
+            # session_complete must include the meaningful error reason
+            mock_complete.assert_called_once()
+            _, kwargs = mock_complete.call_args
+            assert kwargs["success"] is False
+            assert "Credit balance is too low" in kwargs["error"]
+
+    async def test_success_path_still_works(self, tmp_path: Path):
+        """Normal success path is completely unaffected by the error handling change."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+
+        adapter = MockAdapter(result_text="Everything is fine")
+        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
+
+        result = await spawner.trigger("test", "tick")
+        assert result.success is True
+        assert result.output == "Everything is fine"
+        assert result.error is None

@@ -92,23 +92,32 @@ class ClaudeCodeAdapter(RuntimeAdapter):
         result_text: str | None = None
         tool_calls: list[dict[str, Any]] = []
         usage: dict[str, Any] | None = None
+        is_error = False
 
-        async for message in self._sdk_query(prompt=prompt, options=options):
-            if isinstance(message, ResultMessage):
-                result_text = message.result or ""
-                # Extract token usage from the ResultMessage
-                if message.usage:
-                    usage = dict(message.usage)
-            elif hasattr(message, "content"):
-                for block in getattr(message, "content", []):
-                    if isinstance(block, ToolUseBlock):
-                        tool_calls.append(
-                            {
-                                "id": block.id,
-                                "name": block.name,
-                                "input": block.input,
-                            }
-                        )
+        try:
+            async for message in self._sdk_query(prompt=prompt, options=options):
+                if isinstance(message, ResultMessage):
+                    result_text = message.result or ""
+                    is_error = getattr(message, "is_error", False)
+                    # Extract token usage from the ResultMessage
+                    if message.usage:
+                        usage = dict(message.usage)
+                elif hasattr(message, "content"):
+                    for block in getattr(message, "content", []):
+                        if isinstance(block, ToolUseBlock):
+                            tool_calls.append(
+                                {
+                                    "id": block.id,
+                                    "name": block.name,
+                                    "input": block.input,
+                                }
+                            )
+        except Exception as exc:
+            # If the SDK yielded an error ResultMessage before raising,
+            # surface that meaningful message instead of the opaque exception
+            if result_text and is_error:
+                raise RuntimeError(result_text) from exc
+            raise
 
         return result_text, tool_calls, usage
 
