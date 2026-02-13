@@ -13,6 +13,7 @@ from butlers.tools.switchboard.routing.contracts import (
     IngestEnvelopeV1,
     RouteEnvelopeV1,
     RouteRequestContextV1,
+    parse_notify_request,
 )
 
 pytestmark = pytest.mark.unit
@@ -79,6 +80,15 @@ def test_route_v1_valid_envelope() -> None:
     assert envelope.schema_version == "route.v1"
     assert envelope.request_context.request_id.version == 7
     assert envelope.subrequest.fanout_mode == "parallel"
+
+
+def test_route_v1_accepts_mapping_context() -> None:
+    payload = _valid_route_payload()
+    payload["input"]["context"] = {"notify_request": {"schema_version": "notify.v1"}}
+
+    envelope = RouteEnvelopeV1.model_validate(payload)
+
+    assert envelope.input.context == payload["input"]["context"]
 
 
 def test_route_v1_missing_request_context_required_field() -> None:
@@ -198,3 +208,21 @@ def test_request_context_lineage_allows_optional_extension() -> None:
 
     assert candidate.source_thread_identity == "chat-456"
     assert candidate.request_id == original.request_id
+
+
+def test_notify_v1_valid_request() -> None:
+    payload = {
+        "schema_version": "notify.v1",
+        "origin_butler": "health",
+        "delivery": {
+            "intent": "send",
+            "channel": "telegram",
+            "message": "Take medication.",
+            "recipient": "12345",
+        },
+    }
+
+    request = parse_notify_request(payload)
+
+    assert request.schema_version == "notify.v1"
+    assert request.delivery.channel == "telegram"

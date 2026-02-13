@@ -264,7 +264,7 @@ class RouteInputV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     prompt: NonEmptyStr
-    context: NonEmptyStr | None = None
+    context: NonEmptyStr | dict[str, Any] | None = None
 
 
 class RouteSubrequestV1(BaseModel):
@@ -336,6 +336,38 @@ class RouteEnvelopeV1(BaseModel):
         return self
 
 
+NotifyChannel = Literal["telegram", "email"]
+NotifyIntent = Literal["send", "reply"]
+
+
+class NotifyDeliveryV1(BaseModel):
+    """Delivery payload for `notify.v1` requests."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    intent: NotifyIntent
+    channel: NotifyChannel
+    message: NonEmptyStr
+    recipient: NonEmptyStr | None = None
+    subject: str | None = None
+
+
+class NotifyRequestV1(BaseModel):
+    """Canonical versioned notify payload (`notify.v1`)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: str
+    origin_butler: NonEmptyStr
+    delivery: NotifyDeliveryV1
+    request_context: RouteRequestContextV1 | None = None
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_notify_schema_version(cls, value: str) -> str:
+        return _validate_schema_version(value, expected="notify.v1")
+
+
 def parse_ingest_envelope(payload: Mapping[str, Any]) -> IngestEnvelopeV1:
     """Parse and validate an `ingest.v1` envelope."""
 
@@ -348,6 +380,12 @@ def parse_route_envelope(payload: Mapping[str, Any]) -> RouteEnvelopeV1:
     return RouteEnvelopeV1.model_validate(payload)
 
 
+def parse_notify_request(payload: Mapping[str, Any]) -> NotifyRequestV1:
+    """Parse and validate a `notify.v1` request."""
+
+    return NotifyRequestV1.model_validate(payload)
+
+
 __all__ = [
     "IngestControlV1",
     "IngestEnvelopeV1",
@@ -355,6 +393,8 @@ __all__ = [
     "IngestPayloadV1",
     "IngestSenderV1",
     "IngestSourceV1",
+    "NotifyDeliveryV1",
+    "NotifyRequestV1",
     "RouteEnvelopeV1",
     "RouteInputV1",
     "RouteRequestContextV1",
@@ -362,5 +402,6 @@ __all__ = [
     "RouteSubrequestV1",
     "RouteTargetV1",
     "parse_ingest_envelope",
+    "parse_notify_request",
     "parse_route_envelope",
 ]

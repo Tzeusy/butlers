@@ -287,8 +287,8 @@ class TestProcessUpdate:
         assert result is not None
         assert result.target_butler == "general"
 
-    async def test_uses_database_pool_for_message_inbox_logging(self):
-        """process_update logs to message_inbox via db.pool.acquire()."""
+    async def test_skips_legacy_message_inbox_logging_path(self):
+        """process_update no longer writes message_inbox rows before pipeline routing."""
         mod = TelegramModule()
 
         pipeline = MagicMock()
@@ -317,10 +317,10 @@ class TestProcessUpdate:
         result = await mod.process_update(update)
 
         assert result is not None
-        pool.acquire.assert_called_once()
-        conn.fetchval.assert_awaited_once()
+        pool.acquire.assert_not_called()
+        conn.fetchval.assert_not_awaited()
         pipeline.process.assert_awaited_once()
-        assert pipeline.process.await_args.kwargs["message_inbox_id"] == 123
+        assert "message_inbox_id" not in pipeline.process.await_args.kwargs
 
 
 # ---------------------------------------------------------------------------
