@@ -93,6 +93,44 @@ def test_route_v1_missing_request_context_required_field() -> None:
     assert error["type"] == "missing"
 
 
+@pytest.mark.parametrize("value", [1700000000, "2026-02-13 00:00:00+00:00"])
+def test_ingest_v1_observed_at_requires_rfc3339_string(value: Any) -> None:
+    payload = _valid_ingest_payload()
+    payload["event"]["observed_at"] = value
+
+    with pytest.raises(ValidationError) as exc_info:
+        IngestEnvelopeV1.model_validate(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["loc"] == ("event", "observed_at")
+    assert error["type"] == "rfc3339_string_required"
+
+
+def test_route_v1_received_at_requires_rfc3339_string() -> None:
+    payload = _valid_route_payload()
+    payload["request_context"]["received_at"] = "2026-02-13 00:00:00+00:00"
+
+    with pytest.raises(ValidationError) as exc_info:
+        RouteEnvelopeV1.model_validate(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["loc"] == ("request_context", "received_at")
+    assert error["type"] == "rfc3339_string_required"
+
+
+def test_ingest_v1_rejects_inconsistent_source_channel_provider_pair() -> None:
+    payload = _valid_ingest_payload()
+    payload["source"]["channel"] = "email"
+    payload["source"]["provider"] = "telegram"
+
+    with pytest.raises(ValidationError) as exc_info:
+        IngestEnvelopeV1.model_validate(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["loc"] == ("source",)
+    assert error["type"] == "invalid_source_provider"
+
+
 @pytest.mark.parametrize(
     ("model_cls", "schema_version"),
     [

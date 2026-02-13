@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Annotated, Any, Literal
@@ -24,6 +25,16 @@ SourceChannel = Literal["telegram", "slack", "email", "api", "mcp"]
 SourceProvider = Literal["telegram", "slack", "imap", "internal"]
 PolicyTier = Literal["default", "interactive", "high_priority"]
 FanoutMode = Literal["parallel", "ordered", "conditional"]
+_ALLOWED_PROVIDERS_BY_CHANNEL: dict[SourceChannel, frozenset[SourceProvider]] = {
+    "telegram": frozenset({"telegram"}),
+    "slack": frozenset({"slack"}),
+    "email": frozenset({"imap"}),
+    "api": frozenset({"internal"}),
+    "mcp": frozenset({"internal"}),
+}
+_RFC3339_WITH_TZ_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
+)
 _IMMUTABLE_REQUEST_CONTEXT_FIELDS = (
     "request_id",
     "received_at",
@@ -54,6 +65,35 @@ def _validate_tz_aware(value: datetime, *, field_name: str) -> datetime:
     return value
 
 
+def _validate_rfc3339_timestamp_input(value: Any, *, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise PydanticCustomError(
+            "rfc3339_string_required",
+            "{field_name} must be an RFC3339 timestamp string with timezone offset.",
+            {"field_name": field_name},
+        )
+
+    normalized = value.strip()
+    if not _RFC3339_WITH_TZ_RE.fullmatch(normalized):
+        raise PydanticCustomError(
+            "rfc3339_string_required",
+            "{field_name} must be an RFC3339 timestamp string with timezone offset.",
+            {"field_name": field_name},
+        )
+    return normalized
+
+
+def _normalize_request_context_payload(payload: Any) -> Any:
+    if not isinstance(payload, Mapping):
+        return payload
+
+    normalized = dict(payload)
+    received_at = normalized.get("received_at")
+    if isinstance(received_at, datetime):
+        normalized["received_at"] = received_at.isoformat()
+    return normalized
+
+
 class IngestSourceV1(BaseModel):
     """Source identity for canonical ingest payloads."""
 
@@ -62,6 +102,17 @@ class IngestSourceV1(BaseModel):
     channel: SourceChannel
     provider: SourceProvider
     endpoint_identity: NonEmptyStr
+
+    @model_validator(mode="after")
+    def _validate_channel_provider_pair(self) -> IngestSourceV1:
+        allowed_providers = _ALLOWED_PROVIDERS_BY_CHANNEL[self.channel]
+        if self.provider not in allowed_providers:
+            raise PydanticCustomError(
+                "invalid_source_provider",
+                "source.provider '{provider}' is not valid for source.channel '{channel}'.",
+                {"provider": self.provider, "channel": self.channel},
+            )
+        return self
 
 
 class IngestEventV1(BaseModel):
@@ -72,6 +123,11 @@ class IngestEventV1(BaseModel):
     external_event_id: NonEmptyStr
     external_thread_id: NonEmptyStr | None = None
     observed_at: datetime
+
+    @field_validator("observed_at", mode="before")
+    @classmethod
+    def _observed_at_must_be_rfc3339_string(cls, value: Any) -> str:
+        return _validate_rfc3339_timestamp_input(value, field_name="event.observed_at")
 
     @field_validator("observed_at")
     @classmethod
@@ -155,6 +211,11 @@ class RouteRequestContextV1(BaseModel):
     def _received_at_must_be_tz_aware(cls, value: datetime) -> datetime:
         return _validate_tz_aware(value, field_name="request_context.received_at")
 
+    @field_validator("received_at", mode="before")
+    @classmethod
+    def _received_at_must_be_rfc3339_string(cls, value: Any) -> str:
+        return _validate_rfc3339_timestamp_input(value, field_name="request_context.received_at")
+
     @model_validator(mode="after")
     def _validate_lineage_immutability(self, info: ValidationInfo) -> RouteRequestContextV1:
         context = info.context if isinstance(info.context, dict) else {}
@@ -189,7 +250,12 @@ class RouteRequestContextV1(BaseModel):
         lineage: RouteRequestContextV1 | dict[str, Any],
     ) -> RouteRequestContextV1:
         """Validate request context while enforcing immutable lineage fields."""
-        return cls.model_validate(obj, context={"lineage": lineage})
+        normalized_obj = _normalize_request_context_payload(obj)
+        normalized_lineage = _normalize_request_context_payload(lineage)
+        return cls.model_validate(
+            normalized_obj,
+            context={"lineage": normalized_lineage},
+        )
 
 
 class RouteInputV1(BaseModel):
