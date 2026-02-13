@@ -287,6 +287,39 @@ class TestProcessUpdate:
         assert result is not None
         assert result.target_butler == "general"
 
+    async def test_forwards_ingress_event_identity_metadata(self):
+        """process_update forwards channel-specific ingress identity metadata."""
+        mod = TelegramModule()
+
+        pipeline = MagicMock()
+        pipeline.process = AsyncMock(
+            return_value=RoutingResult(
+                target_butler="general",
+                route_result={"routed": True},
+            )
+        )
+        mod.set_pipeline(pipeline)
+
+        update = {
+            "update_id": 88,
+            "message": {
+                "text": "hello",
+                "chat": {"id": 7},
+                "from": {"id": 222},
+            },
+        }
+        result = await mod.process_update(update)
+
+        assert result is not None
+        pipeline.process.assert_awaited_once()
+        tool_args = pipeline.process.await_args.kwargs["tool_args"]
+        assert tool_args["source"] == "telegram"
+        assert tool_args["source_channel"] == "telegram"
+        assert tool_args["source_identity"] == "bot"
+        assert tool_args["source_tool"] == "bot_telegram_get_updates"
+        assert tool_args["chat_id"] == "7"
+        assert tool_args["source_id"] == "update:88"
+
     async def test_uses_database_pool_for_message_inbox_logging(self):
         """process_update logs to message_inbox via db.pool.acquire()."""
         mod = TelegramModule()
