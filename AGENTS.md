@@ -251,6 +251,10 @@ make test-qg
 - Repo push checks enforce a clean beads state; `git push` can fail with "Uncommitted changes detected" even after commits if `.beads/issues.jsonl` was re-synced/staged during pre-push checks.
 - If this happens, run `bd sync --status`, inspect staged `.beads/issues.jsonl`, commit the sync normalization (or intentionally restore it), then re-run `git push`.
 
+### Beads worktree state guardrail
+- In git worktrees, `bd` default DB auto-discovery may target the shared repo-root store instead of the worktree-local `.beads/issues.jsonl`; this can update beads state outside the worker branch.
+- For worker-branch-local bead edits, run `bd --no-db ...` (or pass an explicit `--db` path in the worktree) before syncing/committing.
+
 ### Beads PR-review `external_ref` uniqueness contract
 - Beads enforces global uniqueness for `issues.external_ref`; a dedicated `pr-review-task` bead cannot reuse the same `gh-pr:<number>` already attached to the original implementation bead.
 - For split original/review-bead workflows, keep `external_ref` on the original bead and store PR metadata (`PR URL`, `PR NUMBER`, original bead id) in review-bead notes/labels, then dispatch reviewer workers with explicit PR context.
