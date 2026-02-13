@@ -14,6 +14,21 @@ from butlers.tools.relationship.feed import _log_activity
 _VALID_DIRECTIONS = ("incoming", "outgoing", "mutual")
 
 
+async def _interaction_optional_columns(pool: asyncpg.Pool) -> set[str]:
+    """Return optional interactions columns present in the current schema."""
+    rows = await pool.fetch(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'interactions'
+          AND column_name = ANY($1::text[])
+        """,
+        ["direction", "duration_minutes", "metadata"],
+    )
+    return {row["column_name"] for row in rows}
+
+
 async def interaction_log(
     pool: asyncpg.Pool,
     contact_id: uuid.UUID,
@@ -41,20 +56,32 @@ async def interaction_log(
     )
     if existing is not None:
         return {"skipped": "duplicate", "existing_id": str(existing["id"])}
+
+    optional_columns = await _interaction_optional_columns(pool)
+    columns = ["contact_id", "type", "summary", "occurred_at"]
+    values: list[Any] = [contact_id, type, summary, occurred_at]
+    value_exprs = ["$1", "$2", "$3", "COALESCE($4, now())"]
+
+    if "direction" in optional_columns:
+        values.append(direction)
+        columns.append("direction")
+        value_exprs.append(f"${len(values)}")
+    if "duration_minutes" in optional_columns:
+        values.append(duration_minutes)
+        columns.append("duration_minutes")
+        value_exprs.append(f"${len(values)}")
+    if "metadata" in optional_columns:
+        values.append(json.dumps(metadata) if metadata is not None else None)
+        columns.append("metadata")
+        value_exprs.append(f"${len(values)}::jsonb")
+
     row = await pool.fetchrow(
-        """
-        INSERT INTO interactions (contact_id, type, summary, occurred_at,
-                                  direction, duration_minutes, metadata)
-        VALUES ($1, $2, $3, COALESCE($4, now()), $5, $6, $7::jsonb)
+        f"""
+        INSERT INTO interactions ({", ".join(columns)})
+        VALUES ({", ".join(value_exprs)})
         RETURNING *
         """,
-        contact_id,
-        type,
-        summary,
-        occurred_at,
-        direction,
-        duration_minutes,
-        json.dumps(metadata) if metadata is not None else None,
+        *values,
     )
     result = dict(row)
     if isinstance(result.get("metadata"), str):

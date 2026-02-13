@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 import asyncpg
@@ -11,6 +12,19 @@ import asyncpg
 from butlers.tools.relationship.feed import _log_activity
 
 logger = logging.getLogger(__name__)
+
+
+async def _life_events_columns(pool: asyncpg.Pool) -> set[str]:
+    """Return available columns for life_events in the active schema."""
+    rows = await pool.fetch(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'life_events'
+        """
+    )
+    return {row["column_name"] for row in rows}
 
 
 async def life_event_types_list(pool: asyncpg.Pool) -> list[dict[str, Any]]:
@@ -30,9 +44,10 @@ async def life_event_log(
     pool: asyncpg.Pool,
     contact_id: uuid.UUID,
     type_name: str,
-    summary: str,
+    summary: str | None = None,
     description: str | None = None,
     happened_at: str | None = None,
+    occurred_at: datetime | None = None,
 ) -> dict[str, Any]:
     """
     Log a life event for a contact.
@@ -40,50 +55,108 @@ async def life_event_log(
     Args:
         contact_id: UUID of the contact
         type_name: Name of the life event type (e.g., 'promotion', 'married')
-        summary: Short summary of the event
+        summary: Optional short summary of the event
         description: Optional longer description
         happened_at: Optional date string (YYYY-MM-DD format)
+        occurred_at: Optional timestamp (used by ingestion-style schemas)
     """
-    # Look up the life_event_type_id by name
-    type_row = await pool.fetchrow(
-        """
-        SELECT id FROM life_event_types WHERE name = $1
-        """,
-        type_name,
-    )
-    if type_row is None:
-        raise ValueError(
-            f"Unknown life event type '{type_name}'. Use life_event_types_list() to see options."
+    event_columns = await _life_events_columns(pool)
+    if not event_columns:
+        raise ValueError("life_events table is not available")
+
+    happened_at_date = date.fromisoformat(happened_at) if happened_at is not None else None
+    dedup_datetime = occurred_at
+    if dedup_datetime is None and happened_at_date is not None:
+        dedup_datetime = datetime.combine(happened_at_date, time.min, tzinfo=UTC)
+    if dedup_datetime is None:
+        dedup_datetime = datetime.now(UTC)
+    dedup_date = dedup_datetime.date()
+
+    type_column = "type"
+    type_value: uuid.UUID | str = type_name
+    if "life_event_type_id" in event_columns:
+        type_row = await pool.fetchrow(
+            """
+            SELECT id FROM life_event_types WHERE name = $1
+            """,
+            type_name,
         )
+        if type_row is None:
+            raise ValueError(
+                f"Unknown life event type '{type_name}'. "
+                "Use life_event_types_list() to see options."
+            )
+        type_column = "life_event_type_id"
+        type_value = type_row["id"]
+    elif "type" not in event_columns:
+        raise ValueError("life_events table does not expose a recognizable type column")
 
-    # Parse the date string if provided
-    from datetime import date
+    if "occurred_at" in event_columns:
+        dedup_date_expr = "DATE(occurred_at)"
+    elif "happened_at" in event_columns:
+        dedup_date_expr = "COALESCE(happened_at, DATE(created_at AT TIME ZONE 'UTC'))"
+    else:
+        dedup_date_expr = "DATE(created_at AT TIME ZONE 'UTC')"
 
-    happened_at_date = None
-    if happened_at is not None:
-        happened_at_date = date.fromisoformat(happened_at)
-
-    # Insert the life event
-    row = await pool.fetchrow(
-        """
-        INSERT INTO life_events (contact_id, life_event_type_id, summary, description, happened_at)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING *
+    existing = await pool.fetchrow(
+        f"""
+        SELECT id
+        FROM life_events
+        WHERE contact_id = $1
+          AND {type_column} = $2
+          AND {dedup_date_expr} = $3::date
+        LIMIT 1
         """,
         contact_id,
-        type_row["id"],
-        summary,
-        description,
-        happened_at_date,
+        type_value,
+        dedup_date,
+    )
+    if existing is not None:
+        return {"skipped": "duplicate", "existing_id": str(existing["id"])}
+
+    effective_summary = summary or description or type_name
+    columns = ["contact_id"]
+    values: list[Any] = [contact_id]
+    value_exprs = ["$1"]
+
+    values.append(type_value)
+    columns.append(type_column)
+    value_exprs.append(f"${len(values)}")
+
+    if "summary" in event_columns:
+        values.append(effective_summary)
+        columns.append("summary")
+        value_exprs.append(f"${len(values)}")
+    if "description" in event_columns:
+        values.append(description)
+        columns.append("description")
+        value_exprs.append(f"${len(values)}")
+    if "happened_at" in event_columns:
+        values.append(happened_at_date or (occurred_at.date() if occurred_at is not None else None))
+        columns.append("happened_at")
+        value_exprs.append(f"${len(values)}")
+    if "occurred_at" in event_columns:
+        values.append(occurred_at)
+        columns.append("occurred_at")
+        value_exprs.append(f"COALESCE(${len(values)}, now())")
+
+    row = await pool.fetchrow(
+        f"""
+        INSERT INTO life_events ({", ".join(columns)})
+        VALUES ({", ".join(value_exprs)})
+        RETURNING *
+        """,
+        *values,
     )
     result = dict(row)
+    result.setdefault("type", type_name)
 
     # Log to activity feed
     await _log_activity(
         pool,
         contact_id,
         "life_event_logged",
-        f"Life event: {type_name} - {summary}",
+        f"Life event: {type_name} - {effective_summary}",
     )
 
     return result
