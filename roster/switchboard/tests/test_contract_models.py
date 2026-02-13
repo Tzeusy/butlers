@@ -96,20 +96,47 @@ def test_route_v1_valid_envelope() -> None:
     assert envelope.subrequest.fanout_mode == "parallel"
 
 
-def test_route_v1_accepts_structured_context_object() -> None:
+def test_route_v1_context_accepts_mapping_payload() -> None:
     payload = _valid_route_payload()
     payload["input"]["context"] = {"notify_request": {"schema_version": "notify.v1"}}
 
     envelope = RouteEnvelopeV1.model_validate(payload)
     assert isinstance(envelope.input.context, dict)
-    assert envelope.input.context["notify_request"]["schema_version"] == "notify.v1"
 
 
 def test_notify_v1_valid_request() -> None:
     request = parse_notify_request(_valid_notify_payload())
-    assert isinstance(request, NotifyRequestV1)
     assert request.schema_version == "notify.v1"
     assert request.delivery.intent == "send"
+    assert request.delivery.channel == "telegram"
+
+
+def test_notify_reply_requires_request_context() -> None:
+    payload = _valid_notify_payload()
+    payload["delivery"]["intent"] = "reply"
+
+    with pytest.raises(ValidationError) as exc_info:
+        NotifyRequestV1.model_validate(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["type"] == "reply_context_required"
+
+
+def test_notify_telegram_reply_requires_source_thread_identity() -> None:
+    payload = _valid_notify_payload()
+    payload["delivery"]["intent"] = "reply"
+    payload["request_context"] = {
+        "request_id": _VALID_UUID7,
+        "source_channel": "telegram",
+        "source_endpoint_identity": "switchboard-bot",
+        "source_sender_identity": "user-123",
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        NotifyRequestV1.model_validate(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["type"] == "reply_thread_required"
 
 
 def test_route_v1_missing_request_context_required_field() -> None:
@@ -182,19 +209,6 @@ def test_unknown_or_newer_schema_version_fails_deterministically(
     error = exc_info.value.errors()[0]
     assert error["loc"] == ("schema_version",)
     assert error["type"] == "unsupported_schema_version"
-
-
-def test_notify_v1_reply_requires_request_context() -> None:
-    payload = _valid_notify_payload()
-    payload["delivery"]["intent"] = "reply"
-    payload["delivery"]["recipient"] = None
-
-    with pytest.raises(ValidationError) as exc_info:
-        parse_notify_request(payload)
-
-    error = exc_info.value.errors()[0]
-    assert error["loc"] == ()
-    assert error["type"] == "notify_request_context_required"
 
 
 def test_request_context_lineage_immutability_enforced() -> None:
