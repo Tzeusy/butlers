@@ -153,17 +153,18 @@ def _build_alembic_config(db_url: str, chains: list[str] | None = None) -> Confi
 
 
 def has_butler_chain(butler_name: str) -> bool:
-    """Check whether a butler-name-specific Alembic version chain exists.
+    """Check for a butler-specific migration chain not owned by a module.
 
-    A chain is considered to exist when the directory
-    ``roster/<butler_name>/migrations/`` is present and contains at least one
-    ``.py`` migration file (excluding ``__init__.py``).
+    Butler-specific chains are discovered in ``roster/<butler_name>/migrations/``.
+    If a module migration chain exists at ``src/butlers/modules/<butler_name>/migrations/``
+    and contains revisions, this function returns ``False`` so module chains
+    take precedence.
 
     Args:
         butler_name: The butler identity name (e.g. ``"relationship"``).
 
     Returns:
-        ``True`` if a non-empty migration chain directory exists for the butler.
+        ``True`` if a non-empty, non-module migration chain exists for the butler.
     """
     module_chain_dir = MODULES_DIR / butler_name / "migrations"
     if module_chain_dir.is_dir():
