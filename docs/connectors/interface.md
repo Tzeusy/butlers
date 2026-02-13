@@ -69,8 +69,12 @@ Connectors submit `ingest.v1` payloads.
 ```
 
 Canonical channel-provider pairings:
+- `source.channel=telegram` MUST use `source.provider=telegram`.
+- `source.channel=slack` MUST use `source.provider=slack`.
 - `source.channel=email` with Gmail connectors MUST use `source.provider=gmail`.
 - `source.channel=email` with generic IMAP connectors MUST use `source.provider=imap`.
+- `source.channel=api` MUST use `source.provider=internal`.
+- `source.channel=mcp` MUST use `source.provider=internal`.
 
 Request-context rule:
 - Connector sends source/event/sender facts.
