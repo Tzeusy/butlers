@@ -318,6 +318,10 @@ make test-qg
 - Env var name fields in those scopes (`*_env`) must be valid environment variable identifiers and are schema-validated in module config models.
 - Butler startup credential validation collects enabled identity-scope env vars and reports missing values with scope-qualified sources (for example `module:telegram.bot`, `module:email.bot`).
 
+### Canonical ingest adapter/lock contract
+- `TelegramModule._supports_canonical_ingest()` and `EmailModule._supports_canonical_ingest()` should only enable canonical async ingest for real `MessagePipeline` instances; mock/spec pipelines can expose `ingest_*` callables without honoring completion callbacks and can deadlock synchronous `process_*` wait paths.
+- In `TelegramModule` legacy routing flow, `_handle_routing_result()` must not re-acquire a per-message lock already held by `_process_update_legacy()`, and lifecycle/lock cleanup must run after releasing the outer lock so `_reaction_locks` entries are pruned.
+
 ### Identity-aware approval defaults contract
 - `ToolIODescriptor` includes `approval_default` (`none`, `conditional`, `always`) and module output descriptors should set it explicitly.
 - `ButlerDaemon._apply_approval_gates()` merges default-gated user output tools before wrapping gates: user send/reply outputs (`approval_default="always"` and `user_*_*send*` / `user_*_*reply*` safety fallback) are auto-gated whenever approvals are enabled.
