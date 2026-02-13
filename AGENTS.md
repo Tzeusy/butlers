@@ -250,6 +250,9 @@ make test-qg
 - `bd show <id> --json` can emit invalid JSON when issue notes contain a mix of escaped newline sequences (`\\n`) and newly appended raw newline text; do not assume strict JSON parsing always succeeds.
 - For PR-review worker scripts, keep a regex fallback for extracting `PR NUMBER` / `/pull/<n>` / `Original implementation bead` from raw command output when `jq` parsing fails.
 
+### PR-review marker-thread guardrail
+- When `gh pr view <n> --json files` reports an empty `files` list, `addPullRequestReviewThread` marker creation may return `{"thread": null}` even with explicit `path`/`line`; treat this as non-mergeable for reviewer-worker flow, leave a timeline comment, and keep the review bead blocked.
+
 ### Beads lint template contract
 - `bd lint` enforces section headers in issue descriptions, not only structured fields.
 - For `task` issues include `## Acceptance Criteria` in `description`; for `epic` issues include `## Success Criteria`.
