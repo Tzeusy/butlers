@@ -51,20 +51,20 @@ def _extract_issue_id(json_text: str) -> str:
 def test_stale_worktree_issue_lookup_hydrates_via_sync_import(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["BEADS_NO_DAEMON"] = "1"
-    env["BD_NO_DAEMON"] = "1"
 
     repo = tmp_path / "repo"
     repo.mkdir()
 
-    assert _run(["git", "init"], cwd=repo, env=env).returncode == 0
-    assert (
-        _run(
-            ["git", "config", "user.email", "beads-test@example.com"], cwd=repo, env=env
-        ).returncode
-        == 0
+    git_init = _run(["git", "init"], cwd=repo, env=env)
+    assert git_init.returncode == 0, git_init.stderr
+    git_config_email = _run(
+        ["git", "config", "user.email", "beads-test@example.com"], cwd=repo, env=env
     )
-    assert _run(["git", "config", "user.name", "Beads Test"], cwd=repo, env=env).returncode == 0
-    assert _run(["bd", "init", "--json"], cwd=repo, env=env).returncode == 0
+    assert git_config_email.returncode == 0, git_config_email.stderr
+    git_config_name = _run(["git", "config", "user.name", "Beads Test"], cwd=repo, env=env)
+    assert git_config_name.returncode == 0, git_config_name.stderr
+    beads_init = _run(["bd", "init", "--json"], cwd=repo, env=env)
+    assert beads_init.returncode == 0, beads_init.stderr
     (repo / ".beads" / "config.yaml").write_text("no-db: true\n")
 
     seed_issue = _run(
@@ -85,8 +85,10 @@ def test_stale_worktree_issue_lookup_hydrates_via_sync_import(tmp_path: Path) ->
     )
     assert seed_issue.returncode == 0, seed_issue.stderr
 
-    assert _run(["git", "add", "."], cwd=repo, env=env).returncode == 0
-    assert _run(["git", "commit", "-m", "seed"], cwd=repo, env=env).returncode == 0
+    git_add = _run(["git", "add", "."], cwd=repo, env=env)
+    assert git_add.returncode == 0, git_add.stderr
+    git_commit = _run(["git", "commit", "-m", "seed"], cwd=repo, env=env)
+    assert git_commit.returncode == 0, git_commit.stderr
 
     worktree = repo / ".worktrees" / "worker"
     worktree.parent.mkdir()
@@ -115,7 +117,7 @@ def test_stale_worktree_issue_lookup_hydrates_via_sync_import(tmp_path: Path) ->
     created_issue_id = _extract_issue_id(created.stdout)
 
     stale_show = _run(["bd", "show", created_issue_id, "--json"], cwd=worktree, env=env)
-    assert stale_show.returncode == 0
+    assert stale_show.returncode == 0, stale_show.stderr
     assert stale_show.stdout.strip() == ""
     assert f'no issue found matching "{created_issue_id}"' in stale_show.stderr
 
