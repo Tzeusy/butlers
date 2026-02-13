@@ -175,6 +175,96 @@ class ModuleToolValidationError(ValueError):
 
 
 _TOOL_NAME_RE = re.compile(r"^(user|bot)_[a-z0-9_]+_[a-z0-9_]+$")
+_NOTIFY_SUPPORTED_CHANNELS = frozenset({"telegram", "email"})
+_NOTIFY_SUPPORTED_INTENTS = frozenset({"send", "reply"})
+_NOTIFY_REPLY_REQUIRED_FIELDS: tuple[str, ...] = (
+    "request_id",
+    "source_channel",
+    "source_endpoint_identity",
+    "source_sender_identity",
+)
+_NOTIFY_THREAD_TARGET_REQUIRED_CHANNELS = frozenset({"telegram", "chat"})
+
+
+def _is_non_empty_str(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _validate_notify_request_payload(
+    notify_request: dict[str, Any],
+    *,
+    butler_name: str,
+) -> str | None:
+    if not isinstance(notify_request, dict):
+        return "notify_request must be an object."
+
+    schema_version = notify_request.get("schema_version")
+    if schema_version != "notify.v1":
+        return "notify_request.schema_version must be 'notify.v1'."
+
+    origin_butler = notify_request.get("origin_butler")
+    if not _is_non_empty_str(origin_butler):
+        return "notify_request.origin_butler is required."
+    if origin_butler != butler_name:
+        return f"notify_request.origin_butler must match the requesting butler ('{butler_name}')."
+
+    delivery = notify_request.get("delivery")
+    if not isinstance(delivery, dict):
+        return "notify_request.delivery is required."
+
+    intent = delivery.get("intent")
+    if not _is_non_empty_str(intent) or intent not in _NOTIFY_SUPPORTED_INTENTS:
+        return (
+            "notify_request.delivery.intent must be one of: "
+            f"{', '.join(sorted(_NOTIFY_SUPPORTED_INTENTS))}."
+        )
+
+    channel = delivery.get("channel")
+    if not _is_non_empty_str(channel) or channel not in _NOTIFY_SUPPORTED_CHANNELS:
+        return (
+            "notify_request.delivery.channel must be one of: "
+            f"{', '.join(sorted(_NOTIFY_SUPPORTED_CHANNELS))}."
+        )
+
+    message = delivery.get("message")
+    if not _is_non_empty_str(message):
+        return "notify_request.delivery.message must not be empty or whitespace-only."
+
+    request_context = notify_request.get("request_context")
+    if request_context is not None and not isinstance(request_context, dict):
+        return "notify_request.request_context must be an object when provided."
+
+    if intent != "reply":
+        return None
+
+    if not isinstance(request_context, dict):
+        return "notify reply requires notify_request.request_context."
+
+    missing_fields = [
+        field
+        for field in _NOTIFY_REPLY_REQUIRED_FIELDS
+        if not _is_non_empty_str(request_context.get(field))
+    ]
+    if missing_fields:
+        joined_fields = ", ".join(missing_fields)
+        return f"notify reply requires request_context fields: {joined_fields}."
+
+    request_id_raw = str(request_context.get("request_id")).strip()
+    try:
+        request_id = uuid.UUID(request_id_raw)
+    except (ValueError, TypeError):
+        return "notify reply request_context.request_id must be a valid UUID7."
+    if request_id.version != 7:
+        return "notify reply request_context.request_id must be a valid UUID7."
+
+    if channel in _NOTIFY_THREAD_TARGET_REQUIRED_CHANNELS and not _is_non_empty_str(
+        request_context.get("source_thread_identity")
+    ):
+        return (
+            f"notify reply for channel '{channel}' requires request_context.source_thread_identity."
+        )
+
+    return None
 
 
 def _validate_tool_name(name: str, module_name: str, *, context: str = "registered tool") -> None:
@@ -818,40 +908,101 @@ class ButlerDaemon:
         # Notification tool
         @mcp.tool()
         @tool_span("notify", butler_name=butler_name)
-        async def notify(channel: str, message: str, recipient: str | None = None) -> dict:
+        async def notify(
+            channel: str | None = None,
+            message: str | None = None,
+            recipient: str | None = None,
+            subject: str | None = None,
+            intent: str = "send",
+            request_context: dict[str, Any] | None = None,
+            origin_butler: str | None = None,
+            notify_request: dict[str, Any] | None = None,
+        ) -> dict:
             """Send an outbound notification via the Switchboard.
 
-            Forwards to the Switchboard's deliver() tool over the MCP client
-            connection. Blocks until delivered or fails. Returns an error result
-            (not an exception) if the Switchboard is unreachable or the channel
-            is invalid.
+            Compatibility surface:
+            - Legacy args (`channel`, `message`, `recipient`) are accepted.
+            - Versioned `notify_request` (`notify.v1`) envelopes are accepted.
 
             Parameters
             ----------
             channel:
-                Notification channel — must be 'telegram' or 'email'.
+                Legacy channel argument (`telegram`/`email`).
             message:
-                The message text to deliver.
+                Legacy message argument.
             recipient:
-                Optional recipient identifier. If omitted, the Switchboard
-                delivers to the system owner's default for the channel.
+                Optional recipient override.
+            subject:
+                Optional channel-specific subject (for example email).
+            intent:
+                Delivery intent (`send` or `reply`) for legacy args mode.
+            request_context:
+                Optional routed lineage metadata used for replies.
+            origin_butler:
+                Optional explicit origin identity. When provided it must match
+                the local butler name.
+            notify_request:
+                Full `notify.v1` request envelope.
             """
-            # Validate message is not empty/whitespace
-            if not message or not message.strip():
-                return {
-                    "status": "error",
-                    "error": "Message must not be empty or whitespace-only.",
-                }
+            notify_payload: dict[str, Any]
+            if notify_request is not None:
+                if (
+                    any(
+                        value is not None
+                        for value in (
+                            channel,
+                            message,
+                            recipient,
+                            subject,
+                            request_context,
+                            origin_butler,
+                        )
+                    )
+                    or intent != "send"
+                ):
+                    return {
+                        "status": "error",
+                        "error": ("Pass either notify_request or legacy notify fields, not both."),
+                    }
+                notify_payload = notify_request
+            else:
+                if not _is_non_empty_str(channel):
+                    return {
+                        "status": "error",
+                        "error": (
+                            "Legacy notify mode requires a non-empty channel "
+                            f"({', '.join(sorted(_NOTIFY_SUPPORTED_CHANNELS))})."
+                        ),
+                    }
+                if not _is_non_empty_str(message):
+                    return {
+                        "status": "error",
+                        "error": "Message must not be empty or whitespace-only.",
+                    }
 
-            _SUPPORTED_CHANNELS = {"telegram", "email"}
-            if channel not in _SUPPORTED_CHANNELS:
-                return {
-                    "status": "error",
-                    "error": (
-                        f"Unsupported channel '{channel}'. "
-                        f"Supported channels: {', '.join(sorted(_SUPPORTED_CHANNELS))}"
-                    ),
+                origin = origin_butler if origin_butler is not None else butler_name
+                notify_payload = {
+                    "schema_version": "notify.v1",
+                    "origin_butler": origin,
+                    "delivery": {
+                        "intent": intent,
+                        "channel": channel,
+                        "message": message,
+                    },
                 }
+                if recipient is not None:
+                    notify_payload["delivery"]["recipient"] = recipient
+                if subject is not None:
+                    notify_payload["delivery"]["subject"] = subject
+                if request_context is not None:
+                    notify_payload["request_context"] = request_context
+
+            validation_error = _validate_notify_request_payload(
+                notify_payload,
+                butler_name=butler_name,
+            )
+            if validation_error:
+                return {"status": "error", "error": validation_error}
 
             client = daemon.switchboard_client
             if client is None:
@@ -860,14 +1011,10 @@ class ButlerDaemon:
                     "error": ("Switchboard is not connected. Cannot deliver notification."),
                 }
 
-            # Build args for Switchboard's deliver() tool
             deliver_args: dict[str, Any] = {
-                "channel": channel,
-                "message": message,
                 "source_butler": butler_name,
+                "notify_request": notify_payload,
             }
-            if recipient is not None:
-                deliver_args["recipient"] = recipient
 
             _NOTIFY_TIMEOUT_S = 30
             try:

@@ -2303,8 +2303,7 @@ class TestNotifyTool:
 
         result = await notify_fn(channel="sms", message="Hello")
         assert result["status"] == "error"
-        assert "sms" in result["error"]
-        assert "Unsupported channel" in result["error"]
+        assert "delivery.channel" in result["error"]
 
     async def test_notify_telegram_channel_accepted(self, butler_dir: Path) -> None:
         """notify with channel='telegram' should not return channel error."""
@@ -2362,14 +2361,18 @@ class TestNotifyTool:
         assert result["result"] == {"notification_id": "abc-123", "status": "sent"}
 
         # Verify call_tool was called with correct args
-        mock_client.call_tool.assert_awaited_once_with(
-            "deliver",
-            {
-                "channel": "telegram",
-                "message": "Hello world",
-                "source_butler": "test-butler",
-            },
-        )
+        mock_client.call_tool.assert_awaited_once()
+        call_args = mock_client.call_tool.await_args
+        assert call_args.args[0] == "deliver"
+        payload = call_args.args[1]
+        assert payload["source_butler"] == "test-butler"
+        assert payload["notify_request"]["schema_version"] == "notify.v1"
+        assert payload["notify_request"]["origin_butler"] == "test-butler"
+        assert payload["notify_request"]["delivery"] == {
+            "intent": "send",
+            "channel": "telegram",
+            "message": "Hello world",
+        }
 
     async def test_notify_with_recipient(self, butler_dir: Path) -> None:
         """notify with explicit recipient should forward it to Switchboard."""
@@ -2392,15 +2395,15 @@ class TestNotifyTool:
         assert result["status"] == "ok"
 
         # Verify recipient was included in the call
-        mock_client.call_tool.assert_awaited_once_with(
-            "deliver",
-            {
-                "channel": "email",
-                "message": "Weekly report",
-                "recipient": "user@example.com",
-                "source_butler": "test-butler",
-            },
-        )
+        mock_client.call_tool.assert_awaited_once()
+        call_args = mock_client.call_tool.await_args
+        assert call_args.args[0] == "deliver"
+        payload = call_args.args[1]
+        delivery = payload["notify_request"]["delivery"]
+        assert payload["source_butler"] == "test-butler"
+        assert delivery["channel"] == "email"
+        assert delivery["message"] == "Weekly report"
+        assert delivery["recipient"] == "user@example.com"
 
     async def test_notify_without_recipient(self, butler_dir: Path) -> None:
         """notify without recipient should omit it from the Switchboard call."""
@@ -2423,7 +2426,7 @@ class TestNotifyTool:
         # Verify recipient is NOT in the call args
         call_args = mock_client.call_tool.call_args
         deliver_args = call_args[0][1]
-        assert "recipient" not in deliver_args
+        assert "recipient" not in deliver_args["notify_request"]["delivery"]
 
     async def test_notify_switchboard_returns_error(self, butler_dir: Path) -> None:
         """notify should return error when Switchboard's deliver() returns error."""
@@ -2499,6 +2502,169 @@ class TestNotifyTool:
         call_args = mock_client.call_tool.call_args
         deliver_args = call_args[0][1]
         assert deliver_args["source_butler"] == "test-butler"
+        assert deliver_args["notify_request"]["origin_butler"] == "test-butler"
+
+    async def test_notify_rejects_mixed_envelope_and_legacy_args(self, butler_dir: Path) -> None:
+        """notify should reject payloads that mix legacy args and notify_request."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        mock_client = AsyncMock()
+        daemon.switchboard_client = mock_client
+
+        result = await notify_fn(
+            channel="telegram",
+            message="Hello",
+            notify_request={
+                "schema_version": "notify.v1",
+                "origin_butler": "test-butler",
+                "delivery": {
+                    "intent": "send",
+                    "channel": "telegram",
+                    "message": "Hello",
+                },
+            },
+        )
+
+        assert result["status"] == "error"
+        assert "either notify_request or legacy notify fields" in result["error"]
+        mock_client.call_tool.assert_not_called()
+
+    async def test_notify_reply_requires_request_context(self, butler_dir: Path) -> None:
+        """reply intent should deterministically fail without request_context."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        mock_client = AsyncMock()
+        daemon.switchboard_client = mock_client
+
+        result = await notify_fn(channel="telegram", message="Hello", intent="reply")
+        assert result["status"] == "error"
+        assert "requires notify_request.request_context" in result["error"]
+        mock_client.call_tool.assert_not_called()
+
+    async def test_notify_reply_requires_all_lineage_fields(self, butler_dir: Path) -> None:
+        """reply intent should require request lineage fields before dispatch."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        mock_client = AsyncMock()
+        daemon.switchboard_client = mock_client
+
+        result = await notify_fn(
+            channel="email",
+            message="Hello",
+            intent="reply",
+            request_context={
+                "request_id": "01945129-4f75-7111-8ea8-aad0f89641f4",
+                "source_channel": "email",
+            },
+        )
+        assert result["status"] == "error"
+        assert "source_endpoint_identity" in result["error"]
+        assert "source_sender_identity" in result["error"]
+        mock_client.call_tool.assert_not_called()
+
+    async def test_notify_reply_requires_thread_identity_for_telegram(
+        self, butler_dir: Path
+    ) -> None:
+        """telegram reply intent should require source_thread_identity."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        mock_client = AsyncMock()
+        daemon.switchboard_client = mock_client
+
+        result = await notify_fn(
+            channel="telegram",
+            message="Hello",
+            intent="reply",
+            request_context={
+                "request_id": "01945129-4f75-7111-8ea8-aad0f89641f4",
+                "source_channel": "telegram",
+                "source_endpoint_identity": "bot_switchboard_handle_message",
+                "source_sender_identity": "user-123",
+            },
+        )
+        assert result["status"] == "error"
+        assert "source_thread_identity" in result["error"]
+        mock_client.call_tool.assert_not_called()
+
+    async def test_notify_reply_propagates_lineage_metadata(self, butler_dir: Path) -> None:
+        """valid reply intent should preserve request_context to Switchboard."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        mock_call_result = MagicMock()
+        mock_call_result.is_error = False
+        mock_call_result.data = {"notification_id": "reply-123", "status": "sent"}
+
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(return_value=mock_call_result)
+        daemon.switchboard_client = mock_client
+
+        request_context = {
+            "request_id": "01945129-4f75-7111-8ea8-aad0f89641f4",
+            "source_channel": "telegram",
+            "source_endpoint_identity": "bot_switchboard_handle_message",
+            "source_sender_identity": "user-123",
+            "source_thread_identity": "chat-456",
+        }
+        result = await notify_fn(
+            channel="telegram",
+            message="Reply payload",
+            intent="reply",
+            recipient="chat-456",
+            request_context=request_context,
+        )
+
+        assert result["status"] == "ok"
+        call_args = mock_client.call_tool.await_args
+        payload = call_args.args[1]
+        assert payload["notify_request"]["delivery"]["intent"] == "reply"
+        assert payload["notify_request"]["delivery"]["recipient"] == "chat-456"
+        assert payload["notify_request"]["request_context"] == request_context
+
+    async def test_notify_accepts_notify_v1_envelope(self, butler_dir: Path) -> None:
+        """notify_request payload should be accepted as a first-class interface."""
+        patches = _patch_infra()
+        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        assert notify_fn is not None
+
+        mock_call_result = MagicMock()
+        mock_call_result.is_error = False
+        mock_call_result.data = {"notification_id": "env-123", "status": "sent"}
+
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(return_value=mock_call_result)
+        daemon.switchboard_client = mock_client
+
+        envelope = {
+            "schema_version": "notify.v1",
+            "origin_butler": "test-butler",
+            "delivery": {
+                "intent": "send",
+                "channel": "email",
+                "message": "Hello from envelope",
+                "recipient": "user@example.com",
+                "subject": "[test-butler] Notification",
+            },
+        }
+
+        result = await notify_fn(notify_request=envelope)
+        assert result["status"] == "ok"
+        mock_client.call_tool.assert_awaited_once_with(
+            "deliver",
+            {
+                "source_butler": "test-butler",
+                "notify_request": envelope,
+            },
+        )
 
     async def test_notify_empty_message(self, butler_dir: Path) -> None:
         """notify with empty or whitespace-only message should return error."""
