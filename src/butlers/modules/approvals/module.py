@@ -18,6 +18,7 @@ Provides thirteen tools:
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import uuid
@@ -421,7 +422,7 @@ class ApprovalsModule(Module):
         # Build decided_by with optional reason
         decided_by = "user:manual"
         if reason:
-            decided_by = f"user:manual (reason: {reason})"
+            decided_by = f"user:manual (reason: {html.escape(reason, quote=True)})"
 
         rejected_row = await self._db.fetchrow(
             "UPDATE pending_actions SET status = $1, decided_by = $2, decided_at = $3 "

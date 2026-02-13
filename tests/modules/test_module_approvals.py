@@ -730,6 +730,21 @@ class TestRejectAction:
         assert result["status"] == "rejected"
         assert "Not appropriate" in result["decided_by"]
 
+    async def test_reject_with_reason_escapes_html(self, module: ApprovalsModule, mock_db: MockDB):
+        await module.on_startup(config=None, db=mock_db)
+
+        action_id = uuid.uuid4()
+        mock_db._insert_action(id=action_id, tool_name="email_send", status="pending")
+
+        result = await module._reject_action(
+            str(action_id), reason="<script>alert('xss')</script>"
+        )
+        assert result["status"] == "rejected"
+        assert "<script>" not in result["decided_by"]
+        assert "</script>" not in result["decided_by"]
+        assert "&lt;script&gt;" in result["decided_by"]
+        assert "&lt;/script&gt;" in result["decided_by"]
+
     async def test_reject_records_timestamp(self, module: ApprovalsModule, mock_db: MockDB):
         await module.on_startup(config=None, db=mock_db)
 
