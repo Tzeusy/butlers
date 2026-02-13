@@ -1091,3 +1091,131 @@ class TestCallButlerTool:
         assert "Source metadata" in fallback_args["context"]
         assert "bot_telegram_get_updates" in fallback_args["context"]
         assert "msg-12" in fallback_args["context"]
+
+    async def test_route_execute_consumes_route_response_success(self) -> None:
+        """route.execute responses must parse route_response.v1 and return result payload."""
+        from butlers.tools.switchboard import _call_butler_tool
+
+        route_response = {
+            "schema_version": "route_response.v1",
+            "request_context": {
+                "request_id": "018f52f3-9d8a-7ef2-8f2d-9fb6b32f12aa",
+                "received_at": "2026-02-13T15:00:00+00:00",
+                "source_channel": "telegram",
+                "source_endpoint_identity": "switchboard-bot",
+                "source_sender_identity": "user-123",
+            },
+            "status": "ok",
+            "result": {"notify_response": {"schema_version": "notify_response.v1"}},
+            "timing": {"duration_ms": 21},
+        }
+        mock_result = SimpleNamespace(is_error=False, data=route_response, content=[])
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(return_value=mock_result)
+
+        mock_ctor = MagicMock()
+        mock_ctx = mock_ctor.return_value
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("butlers.tools.switchboard.routing.route.MCPClient", mock_ctor):
+            result = await _call_butler_tool(
+                "http://localhost:8101/sse",
+                "route.execute",
+                {"request_context": {"request_id": "018f52f3-9d8a-7ef2-8f2d-9fb6b32f12aa"}},
+            )
+
+        assert result == {"notify_response": {"schema_version": "notify_response.v1"}}
+
+    async def test_route_execute_invalid_envelope_maps_validation_error(self) -> None:
+        """Missing required route_response.v1 fields should fail as validation_error."""
+        from butlers.tools.switchboard import _call_butler_tool
+
+        invalid_route_response = {
+            "schema_version": "route_response.v1",
+            "request_context": {
+                "request_id": "018f52f3-9d8a-7ef2-8f2d-9fb6b32f12aa",
+                "received_at": "2026-02-13T15:00:00+00:00",
+                "source_channel": "telegram",
+                "source_endpoint_identity": "switchboard-bot",
+                "source_sender_identity": "user-123",
+            },
+            "status": "ok",
+            "result": {"ok": True},
+        }
+        mock_result = SimpleNamespace(is_error=False, data=invalid_route_response, content=[])
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(return_value=mock_result)
+
+        mock_ctor = MagicMock()
+        mock_ctx = mock_ctor.return_value
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("butlers.tools.switchboard.routing.route.MCPClient", mock_ctor):
+            with pytest.raises(RuntimeError) as exc_info:
+                await _call_butler_tool("http://localhost:8101/sse", "route.execute", {})
+
+        exc = exc_info.value
+        assert getattr(exc, "error_class", None) == "validation_error"
+        assert "Invalid route_response.v1 envelope" in str(exc)
+        assert "validation_errors" in getattr(exc, "raw", {})
+
+    async def test_route_execute_unknown_error_class_maps_internal_error(self) -> None:
+        """Unknown downstream classes should normalize to internal_error."""
+        from butlers.tools.switchboard import _call_butler_tool
+
+        error_response = {
+            "schema_version": "route_response.v1",
+            "request_context": {
+                "request_id": "018f52f3-9d8a-7ef2-8f2d-9fb6b32f12aa",
+                "received_at": "2026-02-13T15:00:00+00:00",
+                "source_channel": "telegram",
+                "source_endpoint_identity": "switchboard-bot",
+                "source_sender_identity": "user-123",
+            },
+            "status": "error",
+            "error": {
+                "class": "downstream_unknown",
+                "message": "unexpected failure mode",
+                "retryable": False,
+            },
+            "timing": {"duration_ms": 37},
+        }
+        mock_result = SimpleNamespace(is_error=False, data=error_response, content=[])
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(return_value=mock_result)
+
+        mock_ctor = MagicMock()
+        mock_ctx = mock_ctor.return_value
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("butlers.tools.switchboard.routing.route.MCPClient", mock_ctor):
+            with pytest.raises(RuntimeError) as exc_info:
+                await _call_butler_tool("http://localhost:8101/sse", "route.execute", {})
+
+        exc = exc_info.value
+        assert getattr(exc, "error_class", None) == "internal_error"
+        assert str(exc) == "unexpected failure mode"
+        assert getattr(exc, "raw", {}).get("raw_error_class") == "downstream_unknown"
+
+    async def test_route_execute_transport_timeout_maps_timeout(self) -> None:
+        """Transport timeout before envelope arrival should map to timeout class."""
+        from butlers.tools.switchboard import _call_butler_tool
+
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(side_effect=TimeoutError("deadline exceeded"))
+
+        mock_ctor = MagicMock()
+        mock_ctx = mock_ctor.return_value
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("butlers.tools.switchboard.routing.route.MCPClient", mock_ctor):
+            with pytest.raises(RuntimeError) as exc_info:
+                await _call_butler_tool("http://localhost:8101/sse", "route.execute", {})
+
+        exc = exc_info.value
+        assert getattr(exc, "error_class", None) == "timeout"
+        assert "deadline exceeded" in getattr(exc, "raw", {}).get("exception", "").lower()

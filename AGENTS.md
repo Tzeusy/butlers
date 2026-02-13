@@ -350,3 +350,8 @@ make test-qg
 
 ### Core tool registration contract
 - `src/butlers/daemon.py` exports `CORE_TOOL_NAMES` as the canonical core-tool set (including `notify`); registration tests should assert against this set to prevent drift between `_register_core_tools()` behavior and expected tool coverage.
+
+### Route response normalization contract
+- `roster/switchboard/tools/routing/route.py::_call_butler_tool` must treat `route.execute` responses as strict `route_response.v1` envelopes and fail deterministic envelope violations as `validation_error`.
+- `route.execute` transport/time-budget failures before envelope receipt should normalize to `target_unavailable` or `timeout` with raw exception/response metadata preserved for audit surfaces.
+- Unknown downstream `error.class` values in `route_response.v1` must normalize to `internal_error` while preserving the original class in non-user-facing metadata (`raw_error_class`).

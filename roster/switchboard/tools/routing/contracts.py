@@ -25,6 +25,7 @@ SourceChannel = Literal["telegram", "slack", "email", "api", "mcp"]
 SourceProvider = Literal["telegram", "slack", "imap", "internal"]
 PolicyTier = Literal["default", "interactive", "high_priority"]
 FanoutMode = Literal["parallel", "ordered", "conditional"]
+RouteResponseStatus = Literal["ok", "error"]
 _ALLOWED_PROVIDERS_BY_CHANNEL: dict[SourceChannel, frozenset[SourceProvider]] = {
     "telegram": frozenset({"telegram"}),
     "slack": frozenset({"slack"}),
@@ -336,6 +337,67 @@ class RouteEnvelopeV1(BaseModel):
         return self
 
 
+class RouteResponseErrorV1(BaseModel):
+    """Canonical route failure payload."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+    class_: NonEmptyStr = Field(alias="class")
+    message: NonEmptyStr
+    retryable: bool
+
+
+class RouteResponseTimingV1(BaseModel):
+    """Route execution timing payload."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    duration_ms: int = Field(ge=0)
+
+
+class RouteResponseEnvelopeV1(BaseModel):
+    """Canonical versioned route response envelope (`route_response.v1`)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: str
+    request_context: RouteRequestContextV1
+    status: RouteResponseStatus
+    result: Any | None = None
+    error: RouteResponseErrorV1 | None = None
+    timing: RouteResponseTimingV1
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_route_response_schema_version(cls, value: str) -> str:
+        return _validate_schema_version(value, expected="route_response.v1")
+
+    @model_validator(mode="after")
+    def _validate_status_payload_shape(self) -> RouteResponseEnvelopeV1:
+        if self.status == "ok":
+            if "result" not in self.model_fields_set:
+                raise PydanticCustomError(
+                    "missing_success_result",
+                    "route_response.status='ok' requires a result payload.",
+                    {},
+                )
+            if self.error is not None:
+                raise PydanticCustomError(
+                    "unexpected_error_payload",
+                    "route_response.status='ok' must not include an error payload.",
+                    {},
+                )
+            return self
+
+        if self.error is None:
+            raise PydanticCustomError(
+                "missing_error_payload",
+                "route_response.status='error' requires an error payload.",
+                {},
+            )
+        return self
+
+
 def parse_ingest_envelope(payload: Mapping[str, Any]) -> IngestEnvelopeV1:
     """Parse and validate an `ingest.v1` envelope."""
 
@@ -348,6 +410,12 @@ def parse_route_envelope(payload: Mapping[str, Any]) -> RouteEnvelopeV1:
     return RouteEnvelopeV1.model_validate(payload)
 
 
+def parse_route_response_envelope(payload: Mapping[str, Any]) -> RouteResponseEnvelopeV1:
+    """Parse and validate a `route_response.v1` envelope."""
+
+    return RouteResponseEnvelopeV1.model_validate(payload)
+
+
 __all__ = [
     "IngestControlV1",
     "IngestEnvelopeV1",
@@ -356,6 +424,9 @@ __all__ = [
     "IngestSenderV1",
     "IngestSourceV1",
     "RouteEnvelopeV1",
+    "RouteResponseEnvelopeV1",
+    "RouteResponseErrorV1",
+    "RouteResponseTimingV1",
     "RouteInputV1",
     "RouteRequestContextV1",
     "RouteSourceMetadataV1",
@@ -363,4 +434,5 @@ __all__ = [
     "RouteTargetV1",
     "parse_ingest_envelope",
     "parse_route_envelope",
+    "parse_route_response_envelope",
 ]

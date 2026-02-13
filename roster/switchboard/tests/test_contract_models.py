@@ -13,6 +13,8 @@ from butlers.tools.switchboard.routing.contracts import (
     IngestEnvelopeV1,
     RouteEnvelopeV1,
     RouteRequestContextV1,
+    RouteResponseEnvelopeV1,
+    parse_route_response_envelope,
 )
 
 pytestmark = pytest.mark.unit
@@ -67,6 +69,31 @@ def _valid_route_payload() -> dict[str, Any]:
     }
 
 
+def _valid_route_response_payload(*, status: str = "ok") -> dict[str, Any]:
+    now = datetime.now(UTC).isoformat()
+    payload: dict[str, Any] = {
+        "schema_version": "route_response.v1",
+        "request_context": {
+            "request_id": _VALID_UUID7,
+            "received_at": now,
+            "source_channel": "telegram",
+            "source_endpoint_identity": "switchboard-bot",
+            "source_sender_identity": "user-123",
+        },
+        "status": status,
+        "timing": {"duration_ms": 42},
+    }
+    if status == "ok":
+        payload["result"] = {"handled": True}
+    else:
+        payload["error"] = {
+            "class": "validation_error",
+            "message": "invalid payload",
+            "retryable": False,
+        }
+    return payload
+
+
 def test_ingest_v1_valid_envelope() -> None:
     envelope = IngestEnvelopeV1.model_validate(_valid_ingest_payload())
     assert envelope.schema_version == "ingest.v1"
@@ -81,6 +108,13 @@ def test_route_v1_valid_envelope() -> None:
     assert envelope.subrequest.fanout_mode == "parallel"
 
 
+def test_route_response_v1_valid_envelope() -> None:
+    envelope = parse_route_response_envelope(_valid_route_response_payload(status="ok"))
+    assert envelope.schema_version == "route_response.v1"
+    assert envelope.request_context.request_id.version == 7
+    assert envelope.timing.duration_ms == 42
+
+
 def test_route_v1_missing_request_context_required_field() -> None:
     payload = _valid_route_payload()
     del payload["request_context"]["source_sender_identity"]
@@ -90,6 +124,18 @@ def test_route_v1_missing_request_context_required_field() -> None:
 
     error = exc_info.value.errors()[0]
     assert error["loc"] == ("request_context", "source_sender_identity")
+    assert error["type"] == "missing"
+
+
+def test_route_response_v1_missing_request_id_fails() -> None:
+    payload = _valid_route_response_payload()
+    del payload["request_context"]["request_id"]
+
+    with pytest.raises(ValidationError) as exc_info:
+        RouteResponseEnvelopeV1.model_validate(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["loc"] == ("request_context", "request_id")
     assert error["type"] == "missing"
 
 
@@ -118,6 +164,30 @@ def test_route_v1_received_at_requires_rfc3339_string() -> None:
     assert error["type"] == "rfc3339_string_required"
 
 
+def test_route_response_v1_ok_requires_result_payload() -> None:
+    payload = _valid_route_response_payload(status="ok")
+    payload.pop("result")
+
+    with pytest.raises(ValidationError) as exc_info:
+        RouteResponseEnvelopeV1.model_validate(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["loc"] == ()
+    assert error["type"] == "missing_success_result"
+
+
+def test_route_response_v1_error_requires_error_payload() -> None:
+    payload = _valid_route_response_payload(status="error")
+    payload.pop("error")
+
+    with pytest.raises(ValidationError) as exc_info:
+        RouteResponseEnvelopeV1.model_validate(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["loc"] == ()
+    assert error["type"] == "missing_error_payload"
+
+
 def test_ingest_v1_rejects_inconsistent_source_channel_provider_pair() -> None:
     payload = _valid_ingest_payload()
     payload["source"]["channel"] = "email"
@@ -136,13 +206,19 @@ def test_ingest_v1_rejects_inconsistent_source_channel_provider_pair() -> None:
     [
         (IngestEnvelopeV1, "ingest.v99"),
         (RouteEnvelopeV1, "route.v2"),
+        (RouteResponseEnvelopeV1, "route_response.v2"),
     ],
 )
 def test_unknown_or_newer_schema_version_fails_deterministically(
-    model_cls: type[IngestEnvelopeV1 | RouteEnvelopeV1],
+    model_cls: type[IngestEnvelopeV1 | RouteEnvelopeV1 | RouteResponseEnvelopeV1],
     schema_version: str,
 ) -> None:
-    payload = _valid_ingest_payload() if model_cls is IngestEnvelopeV1 else _valid_route_payload()
+    if model_cls is IngestEnvelopeV1:
+        payload = _valid_ingest_payload()
+    elif model_cls is RouteEnvelopeV1:
+        payload = _valid_route_payload()
+    else:
+        payload = _valid_route_response_payload()
     payload["schema_version"] = schema_version
 
     with pytest.raises(ValidationError) as exc_info:

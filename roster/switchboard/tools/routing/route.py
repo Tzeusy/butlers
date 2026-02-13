@@ -7,18 +7,56 @@ import json
 import logging
 import re
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import asyncpg
 from fastmcp import Client as MCPClient
 from opentelemetry import trace
+from pydantic import ValidationError
 
 from butlers.core.telemetry import inject_trace_context
+from butlers.tools.switchboard.routing.contracts import parse_route_response_envelope
 
 logger = logging.getLogger(__name__)
 _ROUTER_CLIENTS: dict[str, tuple[MCPClient, Any]] = {}
 _ROUTER_CLIENT_LOCKS: dict[str, asyncio.Lock] = {}
 _IDENTITY_TOOL_RE = re.compile(r"^(user|bot)_[a-z0-9_]+_[a-z0-9_]+$")
+_ROUTE_EXECUTE_TOOL_NAME = "route.execute"
+_TIMEOUT_ERROR_TOKENS = ("timeout", "timed out", "deadline exceeded")
+_CANONICAL_ROUTE_ERROR_CLASSES = frozenset(
+    {"validation_error", "target_unavailable", "timeout", "overload_rejected", "internal_error"}
+)
+
+
+@dataclass(slots=True)
+class _NormalizedRouteError(RuntimeError):
+    """Canonical normalized route failure with user + audit surfaces."""
+
+    error_class: str
+    message: str
+    retryable: bool
+    raw: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        RuntimeError.__init__(self, self.message)
+
+    def user_error(self) -> str:
+        return f"{self.error_class}: {self.message}"
+
+    def audit_error(self) -> str:
+        return json.dumps(
+            {
+                "class": self.error_class,
+                "message": self.message,
+                "retryable": self.retryable,
+                "raw": self.raw,
+            },
+            default=str,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
 
 
 def _router_lock(endpoint_url: str) -> asyncio.Lock:
@@ -134,6 +172,185 @@ def _extract_mcp_error_text(result: Any) -> str:
 
 def _is_identity_prefixed_tool_name(tool_name: str) -> bool:
     return bool(_IDENTITY_TOOL_RE.fullmatch(tool_name))
+
+
+def _is_timeout_exception(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    seen: set[int] = set()
+
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (asyncio.TimeoutError, TimeoutError)):
+            return True
+        text = str(current).lower()
+        if any(token in text for token in _TIMEOUT_ERROR_TOKENS):
+            return True
+        current = current.__cause__ or current.__context__
+
+    return False
+
+
+def _normalize_transport_failure(
+    exc: BaseException,
+    *,
+    endpoint_url: str,
+    tool_name: str,
+) -> _NormalizedRouteError:
+    error_class = "timeout" if _is_timeout_exception(exc) else "target_unavailable"
+    return _NormalizedRouteError(
+        error_class=error_class,
+        message=f"{type(exc).__name__}: {exc}",
+        retryable=error_class in {"timeout", "target_unavailable"},
+        raw={
+            "endpoint_url": endpoint_url,
+            "tool_name": tool_name,
+            "exception_type": type(exc).__name__,
+            "exception": str(exc),
+        },
+    )
+
+
+def _extract_expected_request_id(args: dict[str, Any]) -> str | None:
+    request_context = args.get("request_context")
+    if not isinstance(request_context, Mapping):
+        return None
+    request_id = request_context.get("request_id")
+    if request_id in (None, ""):
+        return None
+    return str(request_id)
+
+
+def _extract_call_tool_data(result: Any) -> Any:
+    # FastMCP 2.x CallToolResult carries structured data directly.
+    if hasattr(result, "data"):
+        return result.data
+
+    # Backward-compat fallback for list-of-block results.
+    if result and hasattr(result, "__iter__"):
+        for block in result:
+            text = getattr(block, "text", None)
+            if text is None:
+                continue
+            if isinstance(text, str):
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    return text
+            return text
+
+    return result
+
+
+def _consume_route_response_envelope(
+    response_payload: Any,
+    *,
+    endpoint_url: str,
+    tool_name: str,
+    args: dict[str, Any],
+) -> Any:
+    if not isinstance(response_payload, Mapping):
+        raise _NormalizedRouteError(
+            error_class="validation_error",
+            message="Downstream response is not a route_response.v1 envelope object.",
+            retryable=False,
+            raw={
+                "endpoint_url": endpoint_url,
+                "tool_name": tool_name,
+                "response_payload": response_payload,
+            },
+        )
+
+    raw_payload = dict(response_payload)
+    try:
+        envelope = parse_route_response_envelope(raw_payload)
+    except ValidationError as exc:
+        raise _NormalizedRouteError(
+            error_class="validation_error",
+            message="Invalid route_response.v1 envelope from downstream target.",
+            retryable=False,
+            raw={
+                "endpoint_url": endpoint_url,
+                "tool_name": tool_name,
+                "response_payload": raw_payload,
+                "validation_errors": exc.errors(include_url=False),
+            },
+        ) from exc
+
+    expected_request_id = _extract_expected_request_id(args)
+    response_request_id = str(envelope.request_context.request_id)
+    if expected_request_id is not None and response_request_id != expected_request_id:
+        raise _NormalizedRouteError(
+            error_class="validation_error",
+            message="route_response.v1 request_context.request_id mismatch.",
+            retryable=False,
+            raw={
+                "endpoint_url": endpoint_url,
+                "tool_name": tool_name,
+                "expected_request_id": expected_request_id,
+                "response_request_id": response_request_id,
+                "response_payload": raw_payload,
+            },
+        )
+
+    if envelope.status == "ok":
+        return envelope.result
+
+    error = envelope.error
+    if error is None:  # pragma: no cover - guarded by contract model validation
+        raise _NormalizedRouteError(
+            error_class="validation_error",
+            message="route_response.v1 error payload missing for failed status.",
+            retryable=False,
+            raw={
+                "endpoint_url": endpoint_url,
+                "tool_name": tool_name,
+                "response_payload": raw_payload,
+            },
+        )
+
+    normalized_class = (
+        error.class_ if error.class_ in _CANONICAL_ROUTE_ERROR_CLASSES else "internal_error"
+    )
+    raw_metadata: dict[str, Any] = {
+        "endpoint_url": endpoint_url,
+        "tool_name": tool_name,
+        "response_payload": raw_payload,
+    }
+    if normalized_class != error.class_:
+        raw_metadata["raw_error_class"] = error.class_
+
+    raise _NormalizedRouteError(
+        error_class=normalized_class,
+        message=error.message,
+        retryable=bool(error.retryable),
+        raw=raw_metadata,
+    )
+
+
+def _normalize_route_exception(
+    exc: BaseException,
+    *,
+    endpoint_url: str,
+    tool_name: str,
+) -> _NormalizedRouteError:
+    if isinstance(exc, _NormalizedRouteError):
+        return exc
+
+    if isinstance(exc, (ConnectionError, asyncio.TimeoutError, TimeoutError)):
+        return _normalize_transport_failure(exc, endpoint_url=endpoint_url, tool_name=tool_name)
+
+    message = f"{type(exc).__name__}: {exc}"
+    return _NormalizedRouteError(
+        error_class="internal_error",
+        message=message,
+        retryable=False,
+        raw={
+            "endpoint_url": endpoint_url,
+            "tool_name": tool_name,
+            "exception_type": type(exc).__name__,
+            "exception": str(exc),
+        },
+    )
 
 
 def _extract_source_metadata(args: dict[str, Any]) -> dict[str, Any]:
@@ -262,13 +479,23 @@ async def route(
             )
             return {"result": result}
         except Exception as exc:
-            span.set_status(trace.StatusCode.ERROR, str(exc))
+            normalized_error = _normalize_route_exception(
+                exc,
+                endpoint_url=endpoint_url,
+                tool_name=tool_name,
+            )
+            span.set_status(trace.StatusCode.ERROR, normalized_error.user_error())
             duration_ms = int((time.monotonic() - t0) * 1000)
-            error_msg = f"{type(exc).__name__}: {exc}"
+            error_msg = normalized_error.audit_error()
             await _log_routing(
                 pool, source_butler, target_butler, tool_name, False, duration_ms, error_msg
             )
-            return {"error": error_msg}
+            return {
+                "error": normalized_error.user_error(),
+                "error_class": normalized_error.error_class,
+                "error_retryable": normalized_error.retryable,
+                "error_metadata": normalized_error.raw,
+            }
 
 
 async def post_mail(
@@ -383,7 +610,17 @@ async def _call_butler_tool(endpoint_url: str, tool_name: str, args: dict[str, A
     RuntimeError
         If the target tool returns an MCP error result.
     """
-    result = await _call_tool_with_router_client(endpoint_url, tool_name, args)
+    try:
+        result = await _call_tool_with_router_client(endpoint_url, tool_name, args)
+    except Exception as exc:
+        if tool_name != _ROUTE_EXECUTE_TOOL_NAME:
+            raise
+        raise _normalize_transport_failure(
+            exc,
+            endpoint_url=endpoint_url,
+            tool_name=tool_name,
+        ) from exc
+
     if getattr(result, "is_error", False):
         error_text = _extract_mcp_error_text(result)
         # Route-level compatibility:
@@ -395,28 +632,30 @@ async def _call_butler_tool(endpoint_url: str, tool_name: str, args: dict[str, A
 
     if getattr(result, "is_error", False):
         error_text = _extract_mcp_error_text(result)
+        if tool_name == _ROUTE_EXECUTE_TOOL_NAME:
+            raise _NormalizedRouteError(
+                error_class="validation_error",
+                message="Downstream returned MCP error instead of route_response.v1 envelope.",
+                retryable=False,
+                raw={
+                    "endpoint_url": endpoint_url,
+                    "tool_name": tool_name,
+                    "mcp_error": error_text or "unknown mcp error",
+                },
+            )
         if not error_text:
             error_text = f"Tool '{tool_name}' returned an error."
         raise RuntimeError(error_text)
 
-    # FastMCP 2.x CallToolResult carries structured data directly.
-    if hasattr(result, "data"):
-        return result.data
-
-    # Backward-compat fallback for list-of-block results.
-    if result and hasattr(result, "__iter__"):
-        for block in result:
-            text = getattr(block, "text", None)
-            if text is None:
-                continue
-            if isinstance(text, str):
-                try:
-                    return json.loads(text)
-                except json.JSONDecodeError:
-                    return text
-            return text
-
-    return result
+    payload = _extract_call_tool_data(result)
+    if tool_name == _ROUTE_EXECUTE_TOOL_NAME:
+        return _consume_route_response_envelope(
+            payload,
+            endpoint_url=endpoint_url,
+            tool_name=tool_name,
+            args=args,
+        )
+    return payload
 
 
 async def _log_routing(
