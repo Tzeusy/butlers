@@ -8,6 +8,7 @@ integration tests in test_tools.py which use a real Postgres container.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -42,7 +43,15 @@ def _make_mock_pool(
     pool = AsyncMock()
 
     if fetchrow_side_effect is not None:
-        pool.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
+        side_effect = list(fetchrow_side_effect)
+        registry_lookup = side_effect.pop(0) if side_effect else None
+        if isinstance(registry_lookup, list):
+            pool.fetch = AsyncMock(return_value=registry_lookup)
+        elif registry_lookup is None:
+            pool.fetch = AsyncMock(return_value=[])
+        else:
+            pool.fetch = AsyncMock(return_value=[registry_lookup])
+        pool.fetchrow = AsyncMock(side_effect=side_effect)
     elif registry_rows is not None:
         row_mocks = []
         for row in registry_rows:
@@ -51,16 +60,14 @@ def _make_mock_pool(
             m.get = lambda key, default=None, r=row: r.get(key, default)
             row_mocks.append(m)
 
-        # fetchrow is called multiple times:
-        #  1. butler_registry lookup (from deliver)
-        #  2. butler_registry endpoint lookup (from route)
-        #  3. notifications INSERT RETURNING id
+        pool.fetch = AsyncMock(return_value=row_mocks)
+        # fetchrow is called for route target lookup + notification insert.
         pool.fetchrow = AsyncMock(side_effect=row_mocks)
     else:
+        pool.fetch = AsyncMock(return_value=[])
         pool.fetchrow = AsyncMock(return_value=None)
 
     pool.execute = AsyncMock()
-    pool.fetch = AsyncMock(return_value=[])
     return pool
 
 
@@ -74,7 +81,16 @@ def _notif_id_row() -> MagicMock:
 
 def _registry_row(name: str, endpoint: str = "http://localhost:9100/sse") -> MagicMock:
     """Return a mock row for butler_registry lookups."""
-    data = {"name": name, "endpoint_url": endpoint}
+    data = {
+        "name": name,
+        "endpoint_url": endpoint,
+        "last_seen_at": datetime.now(UTC),
+        "eligibility_state": "active",
+        "liveness_ttl_seconds": 300,
+        "route_contract_min": 1,
+        "route_contract_max": 1,
+        "capabilities": ["trigger", "telegram", "email"],
+    }
     m = MagicMock()
     m.__getitem__ = lambda self, key, d=data: d[key]
     m.get = lambda key, default=None, d=data: d.get(key, default)
