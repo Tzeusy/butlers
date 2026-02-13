@@ -14,7 +14,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from butlers.modules.pipeline import MessagePipeline, RoutingResult
+from butlers.modules.pipeline import (
+    LIFECYCLE_ERRORED,
+    LIFECYCLE_PARSED,
+    LIFECYCLE_PROGRESS,
+    MessagePipeline,
+    RoutingResult,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -41,6 +47,9 @@ class TestRoutingResult:
         assert result.routed_targets == []
         assert result.acked_targets == []
         assert result.failed_targets == []
+        assert result.lifecycle_state == LIFECYCLE_PROGRESS
+        assert result.terminal_error_class is None
+        assert result.user_error_message is None
 
     def test_with_all_fields(self):
         """RoutingResult can be constructed with all fields."""
@@ -52,12 +61,14 @@ class TestRoutingResult:
             routed_targets=["health"],
             acked_targets=["health"],
             failed_targets=[],
+            lifecycle_state=LIFECYCLE_PARSED,
         )
         assert result.target_butler == "health"
         assert result.route_result == {"result": "ok"}
         assert result.routed_targets == ["health"]
         assert result.acked_targets == ["health"]
         assert result.failed_targets == []
+        assert result.lifecycle_state == LIFECYCLE_PARSED
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +109,8 @@ class TestMessagePipelineProcess:
         assert result.routed_targets == ["health"]
         assert result.acked_targets == ["health"]
         assert result.failed_targets == []
+        assert result.lifecycle_state == LIFECYCLE_PARSED
+        assert result.terminal_error_class is None
 
     async def test_passes_message_as_tool_arg(self):
         """Pipeline includes message text in the tool_args sent to route."""
@@ -231,6 +244,8 @@ class TestMessagePipelineProcess:
         assert result.routed_targets == ["health", "relationship"]
         assert result.acked_targets == ["health", "relationship"]
         assert result.failed_targets == []
+        assert result.lifecycle_state == LIFECYCLE_PARSED
+        assert result.terminal_error_class is None
         assert captured["targets"][0] == {"butler": "health", "prompt": "Log my headache"}
         assert captured["targets"][1] == {
             "butler": "relationship",
@@ -295,6 +310,9 @@ class TestMessagePipelineProcess:
         assert result.acked_targets == ["health"]
         assert result.failed_targets == ["general"]
         assert "ConnectionError" in (result.routing_error or "")
+        assert result.lifecycle_state == LIFECYCLE_ERRORED
+        assert result.terminal_error_class == "timeout"
+        assert result.user_error_message is not None
 
     async def test_classification_list_uses_first_entry_and_sub_prompt(self):
         """Custom route_fn uses first decomposition entry for single-target routing."""
@@ -325,6 +343,7 @@ class TestMessagePipelineProcess:
         assert result.routed_targets == ["health"]
         assert result.acked_targets == ["health"]
         assert result.failed_targets == []
+        assert result.lifecycle_state == LIFECYCLE_PARSED
         assert captured["target"] == "health"
         assert captured["args"]["prompt"] == "Log my headache"
         assert captured["args"]["message"] == "Log my headache"
@@ -391,6 +410,9 @@ class TestMessagePipelineProcess:
         assert result.target_butler == "general"
         assert result.classification_error is not None
         assert "RuntimeError" in result.classification_error
+        assert result.lifecycle_state == LIFECYCLE_ERRORED
+        assert result.terminal_error_class == "classification_error"
+        assert result.user_error_message is not None
 
     async def test_logs_entry_and_exit_with_structured_fields(
         self, caplog: pytest.LogCaptureFixture
@@ -491,6 +513,9 @@ class TestMessagePipelineProcess:
         assert result.routed_targets == ["health"]
         assert result.acked_targets == []
         assert result.failed_targets == ["health"]
+        assert result.lifecycle_state == LIFECYCLE_ERRORED
+        assert result.terminal_error_class == "target_unavailable"
+        assert result.user_error_message is not None
 
     async def test_routing_returned_error_records_failure(self):
         """route() error payloads are treated as failures."""
@@ -515,6 +540,9 @@ class TestMessagePipelineProcess:
         assert result.routed_targets == ["health"]
         assert result.acked_targets == []
         assert result.failed_targets == ["health"]
+        assert result.lifecycle_state == LIFECYCLE_ERRORED
+        assert result.terminal_error_class == "target_unavailable"
+        assert result.user_error_message is not None
 
     async def test_default_tool_name(self):
         """Default tool_name is identity-prefixed."""
@@ -559,3 +587,64 @@ class TestMessagePipelineProcess:
         await pipeline.process("test")
 
         assert captured == ["switchboard"]
+
+    async def test_persists_parsed_terminal_outcome_to_message_inbox(self):
+        """Successful routing persists PARSED lifecycle and terminal outcome payload."""
+        conn = AsyncMock()
+        acquire_cm = AsyncMock()
+        acquire_cm.__aenter__.return_value = conn
+        acquire_cm.__aexit__.return_value = False
+        pool = MagicMock()
+        pool.acquire.return_value = acquire_cm
+
+        async def mock_classify(pool, message, dispatch_fn):
+            return "general"
+
+        async def mock_route(pool, target, tool_name, args, source):
+            return {"result": "ok"}
+
+        pipeline = MessagePipeline(
+            switchboard_pool=pool,
+            dispatch_fn=AsyncMock(),
+            classify_fn=mock_classify,
+            route_fn=mock_route,
+        )
+
+        await pipeline.process("hello", message_inbox_id="msg-1")
+
+        conn.execute.assert_awaited_once()
+        args = conn.execute.await_args.args
+        sql = args[0]
+        assert "lifecycle_state" in sql
+        assert "terminal_outcome" in sql
+        assert args[6] == LIFECYCLE_PARSED
+        assert '"lifecycle_state": "PARSED"' in args[7]
+
+    async def test_persists_errored_terminal_outcome_to_message_inbox(self):
+        """Routing failure persists ERRORED lifecycle and canonical error class."""
+        conn = AsyncMock()
+        acquire_cm = AsyncMock()
+        acquire_cm.__aenter__.return_value = conn
+        acquire_cm.__aexit__.return_value = False
+        pool = MagicMock()
+        pool.acquire.return_value = acquire_cm
+
+        async def mock_classify(pool, message, dispatch_fn):
+            return "health"
+
+        async def mock_route(pool, target, tool_name, args, source):
+            return {"error": "ConnectionError: target unavailable"}
+
+        pipeline = MessagePipeline(
+            switchboard_pool=pool,
+            dispatch_fn=AsyncMock(),
+            classify_fn=mock_classify,
+            route_fn=mock_route,
+        )
+
+        await pipeline.process("hello", message_inbox_id="msg-2")
+
+        conn.execute.assert_awaited_once()
+        args = conn.execute.await_args.args
+        assert args[6] == LIFECYCLE_ERRORED
+        assert '"error_class": "target_unavailable"' in args[7]

@@ -14,6 +14,38 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+LIFECYCLE_PROGRESS = "PROGRESS"
+LIFECYCLE_PARSED = "PARSED"
+LIFECYCLE_ERRORED = "ERRORED"
+
+ERROR_CLASSIFICATION_ERROR = "classification_error"
+ERROR_VALIDATION_ERROR = "validation_error"
+ERROR_ROUTING_ERROR = "routing_error"
+ERROR_TARGET_UNAVAILABLE = "target_unavailable"
+ERROR_TIMEOUT = "timeout"
+ERROR_OVERLOAD_REJECTED = "overload_rejected"
+ERROR_INTERNAL_ERROR = "internal_error"
+
+_CANONICAL_ERROR_CLASSES = {
+    ERROR_CLASSIFICATION_ERROR,
+    ERROR_VALIDATION_ERROR,
+    ERROR_ROUTING_ERROR,
+    ERROR_TARGET_UNAVAILABLE,
+    ERROR_TIMEOUT,
+    ERROR_OVERLOAD_REJECTED,
+    ERROR_INTERNAL_ERROR,
+}
+
+_ACTIONABLE_GUIDANCE_BY_ERROR_CLASS: dict[str, str] = {
+    ERROR_CLASSIFICATION_ERROR: "Please rephrase the request and try again.",
+    ERROR_VALIDATION_ERROR: "Please check request details and try again.",
+    ERROR_ROUTING_ERROR: "Please retry in a moment.",
+    ERROR_TARGET_UNAVAILABLE: "Please retry in a moment while the target recovers.",
+    ERROR_TIMEOUT: "Please retry; downstream processing timed out.",
+    ERROR_OVERLOAD_REJECTED: "Please retry shortly; the system is temporarily overloaded.",
+    ERROR_INTERNAL_ERROR: "Please retry in a moment. If it keeps failing, contact support.",
+}
+
 
 @dataclass
 class RoutingResult:
@@ -26,6 +58,9 @@ class RoutingResult:
     routed_targets: list[str] = field(default_factory=list)
     acked_targets: list[str] = field(default_factory=list)
     failed_targets: list[str] = field(default_factory=list)
+    lifecycle_state: str = LIFECYCLE_PROGRESS
+    terminal_error_class: str | None = None
+    user_error_message: str | None = None
 
 
 class MessagePipeline:
@@ -143,6 +178,117 @@ class MessagePipeline:
 
         return "general", fallback_message
 
+    @staticmethod
+    def _classify_error_class(error_text: str | None, *, fallback: str) -> str:
+        if fallback not in _CANONICAL_ERROR_CLASSES:
+            fallback = ERROR_INTERNAL_ERROR
+        if not error_text:
+            return fallback
+
+        normalized = error_text.lower()
+        for error_class in _CANONICAL_ERROR_CLASSES:
+            if error_class in normalized:
+                return error_class
+
+        if "timeout" in normalized:
+            return ERROR_TIMEOUT
+        if any(
+            token in normalized
+            for token in (
+                "target unavailable",
+                "unavailable",
+                "connectionerror",
+                "connection error",
+                "failed to call tool",
+                "network",
+                "refused",
+            )
+        ):
+            return ERROR_TARGET_UNAVAILABLE
+        if any(
+            token in normalized
+            for token in ("overload", "rate limit", "too many requests", "backpressure")
+        ):
+            return ERROR_OVERLOAD_REJECTED
+        if any(
+            token in normalized for token in ("validation", "invalid", "unsupported_schema_version")
+        ):
+            return ERROR_VALIDATION_ERROR
+        if any(token in normalized for token in ("classification", "classifier")):
+            return ERROR_CLASSIFICATION_ERROR
+        if any(token in normalized for token in ("route", "routing")):
+            return ERROR_ROUTING_ERROR
+        if "internal" in normalized:
+            return ERROR_INTERNAL_ERROR
+        return fallback
+
+    @staticmethod
+    def _build_user_error_message(
+        *,
+        error_class: str,
+        error_detail: str | None,
+        failed_targets: list[str] | None = None,
+    ) -> str:
+        canonical_error_class = (
+            error_class if error_class in _CANONICAL_ERROR_CLASSES else ERROR_INTERNAL_ERROR
+        )
+        guidance = _ACTIONABLE_GUIDANCE_BY_ERROR_CLASS[canonical_error_class]
+        parts = [
+            f"I couldn't complete this request (error class: {canonical_error_class}).",
+            guidance,
+        ]
+
+        if failed_targets:
+            unique_targets = sorted({target for target in failed_targets if target})
+            if unique_targets:
+                parts.append(f"Failed targets: {', '.join(unique_targets)}.")
+        if error_detail:
+            parts.append(f"Context: {error_detail}.")
+        return " ".join(parts)
+
+    async def _persist_message_inbox_lifecycle(
+        self,
+        *,
+        message_inbox_id: Any | None,
+        classification_payload: Any,
+        classification_latency_ms: float,
+        routing_results_payload: Any,
+        response_summary: str,
+        lifecycle_state: str,
+        terminal_outcome: dict[str, Any],
+    ) -> None:
+        if not message_inbox_id:
+            return
+
+        import json
+        from datetime import UTC, datetime
+
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE message_inbox
+                SET
+                    classification = $1,
+                    classified_at = $2,
+                    classification_duration_ms = $3,
+                    routing_results = $4,
+                    response_summary = $5,
+                    lifecycle_state = $6,
+                    terminal_outcome = $7,
+                    completed_at = $8
+                WHERE id = $9
+                """,
+                json.dumps(classification_payload),
+                datetime.now(UTC),
+                int(classification_latency_ms),
+                json.dumps(routing_results_payload),
+                response_summary,
+                lifecycle_state,
+                json.dumps(terminal_outcome),
+                datetime.now(UTC),
+                message_inbox_id,
+            )
+
     async def process(
         self,
         message_text: str,
@@ -172,9 +318,6 @@ class MessagePipeline:
         RoutingResult
             Contains the target butler name, route result, and any errors.
         """
-        import json
-        from datetime import UTC, datetime
-
         # Lazy import to avoid circular dependencies
         from butlers.tools.switchboard import (
             aggregate_responses,
@@ -262,6 +405,32 @@ class MessagePipeline:
 
                 routing_latency_ms = (time.perf_counter() - route_start) * 1000
                 total_latency_ms = (time.perf_counter() - start) * 1000
+                terminal_error_class: str | None = None
+                user_error_message: str | None = None
+                if failed_details:
+                    observed_classes = {
+                        self._classify_error_class(
+                            detail,
+                            fallback=ERROR_ROUTING_ERROR,
+                        )
+                        for detail in failed_details
+                    }
+                    if len(observed_classes) == 1:
+                        terminal_error_class = next(iter(observed_classes))
+                    else:
+                        terminal_error_class = ERROR_ROUTING_ERROR
+                    user_error_message = self._build_user_error_message(
+                        error_class=terminal_error_class,
+                        error_detail="; ".join(failed_details),
+                        failed_targets=failed_targets,
+                    )
+                lifecycle_state = LIFECYCLE_ERRORED if failed_details else LIFECYCLE_PARSED
+                terminal_outcome = {
+                    "lifecycle_state": lifecycle_state,
+                    "error_class": terminal_error_class,
+                    "error_message": "; ".join(failed_details) if failed_details else None,
+                    "failed_targets": failed_targets,
+                }
 
                 logger.info(
                     "Pipeline routed decomposed message",
@@ -275,28 +444,15 @@ class MessagePipeline:
                     ),
                 )
 
-                if message_inbox_id:
-                    async with self._pool.acquire() as conn:
-                        await conn.execute(
-                            """
-                            UPDATE message_inbox
-                            SET
-                                classification = $1,
-                                classified_at = $2,
-                                classification_duration_ms = $3,
-                                routing_results = $4,
-                                response_summary = $5,
-                                completed_at = $6
-                            WHERE id = $7
-                            """,
-                            json.dumps(classification),
-                            datetime.now(UTC),
-                            int(classification_latency_ms),
-                            json.dumps(sub_results),
-                            aggregated,
-                            datetime.now(UTC),
-                            message_inbox_id,
-                        )
+                await self._persist_message_inbox_lifecycle(
+                    message_inbox_id=message_inbox_id,
+                    classification_payload=classification,
+                    classification_latency_ms=classification_latency_ms,
+                    routing_results_payload=sub_results,
+                    response_summary=aggregated,
+                    lifecycle_state=lifecycle_state,
+                    terminal_outcome=terminal_outcome,
+                )
 
                 return RoutingResult(
                     target_butler="multi",
@@ -305,6 +461,9 @@ class MessagePipeline:
                     routed_targets=routed_targets,
                     acked_targets=acked_targets,
                     failed_targets=failed_targets,
+                    lifecycle_state=lifecycle_state,
+                    terminal_error_class=terminal_error_class,
+                    user_error_message=user_error_message,
                 )
 
             target, routed_message = self._normalize_classification(
@@ -313,6 +472,14 @@ class MessagePipeline:
             )
         except Exception as exc:
             error_msg = f"{type(exc).__name__}: {exc}"
+            error_class = self._classify_error_class(
+                error_msg,
+                fallback=ERROR_CLASSIFICATION_ERROR,
+            )
+            user_error_message = self._build_user_error_message(
+                error_class=error_class,
+                error_detail=error_msg,
+            )
             classification_latency_ms = (time.perf_counter() - classify_start) * 1000
             logger.warning(
                 "Classification failed; falling back to general",
@@ -325,30 +492,27 @@ class MessagePipeline:
                 ),
             )
 
-            if message_inbox_id:
-                async with self._pool.acquire() as conn:
-                    await conn.execute(
-                        """
-                        UPDATE message_inbox
-                        SET
-                            classification = $1,
-                            classified_at = $2,
-                            classification_duration_ms = $3,
-                            response_summary = $4,
-                            completed_at = $5
-                        WHERE id = $6
-                        """,
-                        json.dumps({"error": error_msg}),
-                        datetime.now(UTC),
-                        int(classification_latency_ms),
-                        "Classification failed",
-                        datetime.now(UTC),
-                        message_inbox_id,
-                    )
+            await self._persist_message_inbox_lifecycle(
+                message_inbox_id=message_inbox_id,
+                classification_payload={"error": error_msg},
+                classification_latency_ms=classification_latency_ms,
+                routing_results_payload={"error": error_msg},
+                response_summary="Classification failed",
+                lifecycle_state=LIFECYCLE_ERRORED,
+                terminal_outcome={
+                    "lifecycle_state": LIFECYCLE_ERRORED,
+                    "error_class": error_class,
+                    "error_message": error_msg,
+                    "failed_targets": [],
+                },
+            )
 
             return RoutingResult(
                 target_butler="general",
                 classification_error=error_msg,
+                lifecycle_state=LIFECYCLE_ERRORED,
+                terminal_error_class=error_class,
+                user_error_message=user_error_message,
             )
         classification_latency_ms = (time.perf_counter() - classify_start) * 1000
         args["prompt"] = routed_message
@@ -382,6 +546,15 @@ class MessagePipeline:
             )
         except Exception as exc:
             error_msg = f"{type(exc).__name__}: {exc}"
+            error_class = self._classify_error_class(
+                error_msg,
+                fallback=ERROR_ROUTING_ERROR,
+            )
+            user_error_message = self._build_user_error_message(
+                error_class=error_class,
+                error_detail=error_msg,
+                failed_targets=[target],
+            )
             routing_latency_ms = (time.perf_counter() - route_start) * 1000
             logger.exception(
                 "Routing failed for message to butler %s",
@@ -395,37 +568,41 @@ class MessagePipeline:
                 ),
             )
 
-            if message_inbox_id:
-                async with self._pool.acquire() as conn:
-                    await conn.execute(
-                        """
-                        UPDATE message_inbox
-                        SET
-                            classification = $1,
-                            classified_at = $2,
-                            classification_duration_ms = $3,
-                            routing_results = $4,
-                            response_summary = $5,
-                            completed_at = $6
-                        WHERE id = $7
-                        """,
-                        json.dumps(classification),
-                        datetime.now(UTC),
-                        int(classification_latency_ms),
-                        json.dumps({"error": error_msg}),
-                        "Routing failed",
-                        datetime.now(UTC),
-                        message_inbox_id,
-                    )
+            await self._persist_message_inbox_lifecycle(
+                message_inbox_id=message_inbox_id,
+                classification_payload=classification,
+                classification_latency_ms=classification_latency_ms,
+                routing_results_payload={"error": error_msg},
+                response_summary="Routing failed",
+                lifecycle_state=LIFECYCLE_ERRORED,
+                terminal_outcome={
+                    "lifecycle_state": LIFECYCLE_ERRORED,
+                    "error_class": error_class,
+                    "error_message": error_msg,
+                    "failed_targets": [target],
+                },
+            )
 
             return RoutingResult(
                 target_butler=target,
                 routing_error=error_msg,
                 routed_targets=[target],
                 failed_targets=[target],
+                lifecycle_state=LIFECYCLE_ERRORED,
+                terminal_error_class=error_class,
+                user_error_message=user_error_message,
             )
         if isinstance(result, dict) and result.get("error"):
             error_msg = str(result["error"])
+            error_class = self._classify_error_class(
+                error_msg,
+                fallback=ERROR_ROUTING_ERROR,
+            )
+            user_error_message = self._build_user_error_message(
+                error_class=error_class,
+                error_detail=error_msg,
+                failed_targets=[target],
+            )
             routing_latency_ms = (time.perf_counter() - route_start) * 1000
             logger.warning(
                 "Routing returned error for message to butler %s",
@@ -439,28 +616,20 @@ class MessagePipeline:
                 ),
             )
 
-            if message_inbox_id:
-                async with self._pool.acquire() as conn:
-                    await conn.execute(
-                        """
-                        UPDATE message_inbox
-                        SET
-                            classification = $1,
-                            classified_at = $2,
-                            classification_duration_ms = $3,
-                            routing_results = $4,
-                            response_summary = $5,
-                            completed_at = $6
-                        WHERE id = $7
-                        """,
-                        json.dumps(classification),
-                        datetime.now(UTC),
-                        int(classification_latency_ms),
-                        json.dumps(result),
-                        "Routing failed",
-                        datetime.now(UTC),
-                        message_inbox_id,
-                    )
+            await self._persist_message_inbox_lifecycle(
+                message_inbox_id=message_inbox_id,
+                classification_payload=classification,
+                classification_latency_ms=classification_latency_ms,
+                routing_results_payload=result,
+                response_summary="Routing failed",
+                lifecycle_state=LIFECYCLE_ERRORED,
+                terminal_outcome={
+                    "lifecycle_state": LIFECYCLE_ERRORED,
+                    "error_class": error_class,
+                    "error_message": error_msg,
+                    "failed_targets": [target],
+                },
+            )
 
             return RoutingResult(
                 target_butler=target,
@@ -468,6 +637,9 @@ class MessagePipeline:
                 routing_error=error_msg,
                 routed_targets=[target],
                 failed_targets=[target],
+                lifecycle_state=LIFECYCLE_ERRORED,
+                terminal_error_class=error_class,
+                user_error_message=user_error_message,
             )
         routing_latency_ms = (time.perf_counter() - route_start) * 1000
         total_latency_ms = (time.perf_counter() - start) * 1000
@@ -483,32 +655,25 @@ class MessagePipeline:
             ),
         )
 
-        if message_inbox_id:
-            async with self._pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    UPDATE message_inbox
-                    SET
-                        classification = $1,
-                        classified_at = $2,
-                        classification_duration_ms = $3,
-                        routing_results = $4,
-                        response_summary = $5,
-                        completed_at = $6
-                    WHERE id = $7
-                    """,
-                    json.dumps(classification),
-                    datetime.now(UTC),
-                    int(classification_latency_ms),
-                    json.dumps(result),
-                    "Success",
-                    datetime.now(UTC),
-                    message_inbox_id,
-                )
+        await self._persist_message_inbox_lifecycle(
+            message_inbox_id=message_inbox_id,
+            classification_payload=classification,
+            classification_latency_ms=classification_latency_ms,
+            routing_results_payload=result,
+            response_summary="Success",
+            lifecycle_state=LIFECYCLE_PARSED,
+            terminal_outcome={
+                "lifecycle_state": LIFECYCLE_PARSED,
+                "error_class": None,
+                "error_message": None,
+                "failed_targets": [],
+            },
+        )
 
         return RoutingResult(
             target_butler=target,
             route_result=result,
             routed_targets=[target],
             acked_targets=[target],
+            lifecycle_state=LIFECYCLE_PARSED,
         )

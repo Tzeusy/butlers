@@ -25,7 +25,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from butlers.modules.base import Module, ToolIODescriptor
-from butlers.modules.pipeline import MessagePipeline, RoutingResult
+from butlers.modules.pipeline import ERROR_INTERNAL_ERROR, MessagePipeline, RoutingResult
 
 logger = logging.getLogger(__name__)
 
@@ -359,6 +359,53 @@ class TelegramModule(Module):
         ):
             lifecycle.acked_targets.add(result.target_butler)
 
+    @staticmethod
+    def _resolve_failure_context(result: RoutingResult) -> tuple[str, str]:
+        error_class = result.terminal_error_class or ERROR_INTERNAL_ERROR
+        if result.user_error_message:
+            return error_class, result.user_error_message
+
+        detail = (
+            result.routing_error
+            or result.classification_error
+            or str(result.route_result.get("error") or "")
+            or "The request failed before downstream processing completed."
+        )
+        message = (
+            f"I couldn't complete this request (error class: {error_class}). "
+            f"Please retry in a moment. Context: {detail}."
+        )
+        return error_class, message
+
+    async def _emit_failure_reply(
+        self,
+        *,
+        chat_id: str | None,
+        message_id: int | None,
+        result: RoutingResult,
+    ) -> None:
+        if chat_id in (None, ""):
+            return
+        if self._client is None:
+            return
+
+        error_class, message = self._resolve_failure_context(result)
+        try:
+            if message_id is not None:
+                await self._reply_to_message(chat_id, message_id, message)
+            else:
+                await self._send_message(chat_id, message)
+        except Exception:
+            logger.warning(
+                "Failed to emit Telegram user-visible failure reply",
+                extra={
+                    "source": "telegram",
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "error_class": error_class,
+                },
+            )
+
     async def _update_reaction(
         self,
         *,
@@ -366,33 +413,35 @@ class TelegramModule(Module):
         message_id: int | None,
         message_key: str | None,
         reaction: str,
-    ) -> None:
+    ) -> bool:
         if chat_id in (None, "") or message_id is None or message_key is None:
-            return
+            return False
         if os.environ.get("BUTLER_TELEGRAM_TOKEN", "") == "":
-            return
+            return False
         if reaction not in REACTION_TO_EMOJI:
-            return
+            return False
 
         terminal_reaction = self._cached_terminal_reaction(message_key)
         if terminal_reaction is not None:
             if reaction == REACTION_IN_PROGRESS:
-                return
+                return False
             if reaction == terminal_reaction:
-                return
-            return
+                return False
+            return False
 
         lifecycle = self._lifecycle(message_key)
         if lifecycle.terminal_reaction is not None:
             if lifecycle.terminal_reaction == reaction:
-                return
+                return False
             if reaction == REACTION_IN_PROGRESS:
-                return
-            return
+                return False
+            return False
 
+        transitioned_terminal = False
         if reaction in (REACTION_SUCCESS, REACTION_FAILURE):
             lifecycle.terminal_reaction = reaction
             self._record_terminal_reaction(message_key, reaction)
+            transitioned_terminal = True
 
         try:
             await self._set_message_reaction(
@@ -419,7 +468,7 @@ class TelegramModule(Module):
                             "telegram_error_description": description,
                         },
                     )
-                    return
+                    return transitioned_terminal
             logger.exception(
                 "Failed to set Telegram message reaction",
                 extra={
@@ -429,6 +478,7 @@ class TelegramModule(Module):
                     "reaction": reaction,
                 },
             )
+        return transitioned_terminal
 
     async def register_tools(self, mcp: Any, config: Any, db: Any) -> None:
         """Register identity-prefixed Telegram MCP tools."""
@@ -551,9 +601,16 @@ class TelegramModule(Module):
                     message_inbox_id = await conn.fetchval(
                         """
                         INSERT INTO message_inbox
-                            (source_channel, sender_id, raw_content, raw_metadata, received_at)
+                            (
+                                source_channel,
+                                sender_id,
+                                raw_content,
+                                raw_metadata,
+                                received_at,
+                                lifecycle_state
+                            )
                         VALUES
-                            ($1, $2, $3, $4, $5)
+                            ($1, $2, $3, $4, $5, $6)
                         RETURNING id
                         """,
                         "telegram",
@@ -561,6 +618,7 @@ class TelegramModule(Module):
                         text,
                         json.dumps(update),
                         datetime.now(UTC),
+                        "PROGRESS",
                     )
 
             result = await self._pipeline.process(
@@ -577,6 +635,7 @@ class TelegramModule(Module):
                 message_inbox_id=message_inbox_id,
             )
 
+            terminal_transitioned = False
             if message_key is not None:
                 lifecycle = self._lifecycle(message_key)
                 self._track_routing_progress(lifecycle, result)
@@ -584,7 +643,7 @@ class TelegramModule(Module):
                     lifecycle.routed_targets - lifecycle.acked_targets - lifecycle.failed_targets
                 )
                 if self._result_has_failure(result) or lifecycle.failed_targets:
-                    await self._update_reaction(
+                    terminal_transitioned = await self._update_reaction(
                         chat_id=chat_id,
                         message_id=message_id,
                         message_key=message_key,
@@ -597,13 +656,38 @@ class TelegramModule(Module):
                         message_key=message_key,
                         reaction=REACTION_SUCCESS,
                     )
+            elif self._result_has_failure(result):
+                terminal_transitioned = True
+
+            if terminal_transitioned and (
+                self._result_has_failure(result) or result.failed_targets
+            ):
+                await self._emit_failure_reply(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    result=result,
+                )
         except Exception:
-            await self._update_reaction(
+            terminal_transitioned = await self._update_reaction(
                 chat_id=chat_id,
                 message_id=message_id,
                 message_key=message_key,
                 reaction=REACTION_FAILURE,
             )
+            if terminal_transitioned:
+                await self._emit_failure_reply(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    result=RoutingResult(
+                        target_butler="unknown",
+                        lifecycle_state="ERRORED",
+                        terminal_error_class=ERROR_INTERNAL_ERROR,
+                        user_error_message=(
+                            "I couldn't complete this request (error class: internal_error). "
+                            "Please retry in a moment."
+                        ),
+                    ),
+                )
             raise
         finally:
             if lock is not None and lock.locked():

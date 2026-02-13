@@ -623,6 +623,99 @@ class TestPipelineIntegration:
         reactions = [call.kwargs["reaction"] for call in calls]
         assert reactions == [":eye", ":space invader"]
 
+    async def test_failed_route_emits_user_visible_reply_with_canonical_error_class(
+        self, telegram_module: TelegramModule, monkeypatch
+    ):
+        """Failure transition emits a user-visible reply with canonical class context."""
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+        telegram_module._set_message_reaction = AsyncMock(  # type: ignore[method-assign]
+            return_value={"ok": True}
+        )
+        telegram_module._client = AsyncMock(spec=httpx.AsyncClient)
+        telegram_module._reply_to_message = AsyncMock(  # type: ignore[method-assign]
+            return_value={"ok": True}
+        )
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.process = AsyncMock(
+            return_value=RoutingResult(
+                target_butler="health",
+                route_result={"error": "ConnectionError: timeout"},
+                routing_error="ConnectionError: timeout",
+                routed_targets=["health"],
+                failed_targets=["health"],
+                lifecycle_state="ERRORED",
+                terminal_error_class="timeout",
+                user_error_message=(
+                    "I couldn't complete this request (error class: timeout). "
+                    "Please retry; downstream processing timed out. "
+                    "Context: ConnectionError: timeout."
+                ),
+            )
+        )
+        telegram_module.set_pipeline(mock_pipeline)
+
+        update = {
+            "update_id": 305,
+            "message": {
+                "message_id": 101,
+                "text": "route with timeout",
+                "chat": {"id": 335},
+            },
+        }
+
+        await telegram_module.process_update(update)
+
+        telegram_module._reply_to_message.assert_awaited_once()
+        call = telegram_module._reply_to_message.await_args
+        assert call.args[0] == "335"
+        assert call.args[1] == 101
+        assert "error class: timeout" in call.args[2]
+
+    async def test_terminal_failure_reply_is_emitted_once_for_duplicate_updates(
+        self, telegram_module: TelegramModule, monkeypatch
+    ):
+        """Duplicate updates with cached terminal failure should not duplicate user replies."""
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+        telegram_module._set_message_reaction = AsyncMock(  # type: ignore[method-assign]
+            return_value={"ok": True}
+        )
+        telegram_module._client = AsyncMock(spec=httpx.AsyncClient)
+        telegram_module._reply_to_message = AsyncMock(  # type: ignore[method-assign]
+            return_value={"ok": True}
+        )
+
+        failed_result = RoutingResult(
+            target_butler="health",
+            route_result={"error": "ConnectionError: target unavailable"},
+            routing_error="ConnectionError: target unavailable",
+            routed_targets=["health"],
+            failed_targets=["health"],
+            lifecycle_state="ERRORED",
+            terminal_error_class="target_unavailable",
+            user_error_message=(
+                "I couldn't complete this request (error class: target_unavailable). "
+                "Please retry in a moment while the target recovers."
+            ),
+        )
+        mock_pipeline = MagicMock()
+        mock_pipeline.process = AsyncMock(side_effect=[failed_result, failed_result])
+        telegram_module.set_pipeline(mock_pipeline)
+
+        update = {
+            "update_id": 306,
+            "message": {
+                "message_id": 102,
+                "text": "duplicate failed route",
+                "chat": {"id": 336},
+            },
+        }
+
+        await telegram_module.process_update(update)
+        await telegram_module.process_update(update)
+
+        telegram_module._reply_to_message.assert_awaited_once()
+
     async def test_failure_reaction_400_logs_warning_and_skips_stack_trace(
         self, telegram_module: TelegramModule, monkeypatch
     ) -> None:

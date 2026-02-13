@@ -305,6 +305,12 @@ make test-qg
 - `roster/switchboard/tools/routing/dispatch.py::dispatch_decomposed` should pass through identity-aware source metadata and the prefixed logical `tool_name` for each sub-route.
 - `roster/switchboard/tools/routing/route.py::_call_butler_tool` should retry `trigger` for unknown identity-prefixed tool names, preserving source metadata via trigger context.
 
+### Interactive lifecycle contract
+- `src/butlers/modules/pipeline.py::RoutingResult` now carries canonical lifecycle/error metadata (`lifecycle_state`, `terminal_error_class`, `user_error_message`) and should terminate in `PARSED` (all-success) or `ERRORED` (any terminal failure) for interactive flows.
+- `src/butlers/modules/pipeline.py::_persist_message_inbox_lifecycle` is the canonical write path for request lifecycle persistence; `message_inbox` updates should include `lifecycle_state` and JSON `terminal_outcome`.
+- `roster/switchboard/migrations/006_add_message_inbox_lifecycle_columns.py` adds `message_inbox.lifecycle_state` (default `PROGRESS`) and `message_inbox.terminal_outcome`; Telegram ingress insert should initialize `lifecycle_state='PROGRESS'`.
+- `src/butlers/modules/telegram.py::process_update` should emit one user-visible terminal failure reply (when terminal failure transition occurs) containing canonical error class context, while preserving reaction mapping (`:eye` -> `:done` / `:space invader`) and expected-nonfatal reaction 400 handling.
+
 ### Spawner trigger-source/failure contract
 - Core daemon `trigger` MCP tool should dispatch with `trigger_source="trigger"` (not `trigger_tool`) to stay aligned with `core.sessions` validation.
 - `src/butlers/core/spawner.py::_run` should initialize duration timing before `session_create()` so early failures preserve original errors instead of masking with timer variable errors.
