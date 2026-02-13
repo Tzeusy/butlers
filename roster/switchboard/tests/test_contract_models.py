@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from butlers.tools.switchboard.routing.contracts import (
     IngestEnvelopeV1,
+    NotifyRequestV1,
     RouteEnvelopeV1,
     RouteRequestContextV1,
 )
@@ -67,6 +68,28 @@ def _valid_route_payload() -> dict[str, Any]:
     }
 
 
+def _valid_notify_payload() -> dict[str, Any]:
+    now = datetime.now(UTC).isoformat()
+    return {
+        "schema_version": "notify.v1",
+        "origin_butler": "health",
+        "delivery": {
+            "intent": "send",
+            "channel": "telegram",
+            "message": "Take your medication now.",
+            "recipient": "chat-456",
+        },
+        "request_context": {
+            "request_id": _VALID_UUID7,
+            "received_at": now,
+            "source_channel": "telegram",
+            "source_endpoint_identity": "switchboard-bot",
+            "source_sender_identity": "user-123",
+            "source_thread_identity": "chat-456",
+        },
+    }
+
+
 def test_ingest_v1_valid_envelope() -> None:
     envelope = IngestEnvelopeV1.model_validate(_valid_ingest_payload())
     assert envelope.schema_version == "ingest.v1"
@@ -79,6 +102,13 @@ def test_route_v1_valid_envelope() -> None:
     assert envelope.schema_version == "route.v1"
     assert envelope.request_context.request_id.version == 7
     assert envelope.subrequest.fanout_mode == "parallel"
+
+
+def test_notify_v1_valid_envelope() -> None:
+    envelope = NotifyRequestV1.model_validate(_valid_notify_payload())
+    assert envelope.schema_version == "notify.v1"
+    assert envelope.origin_butler == "health"
+    assert envelope.delivery.intent == "send"
 
 
 def test_route_v1_missing_request_context_required_field() -> None:
@@ -136,13 +166,19 @@ def test_ingest_v1_rejects_inconsistent_source_channel_provider_pair() -> None:
     [
         (IngestEnvelopeV1, "ingest.v99"),
         (RouteEnvelopeV1, "route.v2"),
+        (NotifyRequestV1, "notify.v2"),
     ],
 )
 def test_unknown_or_newer_schema_version_fails_deterministically(
-    model_cls: type[IngestEnvelopeV1 | RouteEnvelopeV1],
+    model_cls: type[IngestEnvelopeV1 | RouteEnvelopeV1 | NotifyRequestV1],
     schema_version: str,
 ) -> None:
-    payload = _valid_ingest_payload() if model_cls is IngestEnvelopeV1 else _valid_route_payload()
+    if model_cls is IngestEnvelopeV1:
+        payload = _valid_ingest_payload()
+    elif model_cls is RouteEnvelopeV1:
+        payload = _valid_route_payload()
+    else:
+        payload = _valid_notify_payload()
     payload["schema_version"] = schema_version
 
     with pytest.raises(ValidationError) as exc_info:
@@ -176,6 +212,32 @@ def test_request_context_lineage_immutability_enforced() -> None:
     error = exc_info.value.errors()[0]
     assert error["loc"] == ()
     assert error["type"] == "immutable_request_context"
+
+
+def test_notify_reply_requires_request_context() -> None:
+    payload = _valid_notify_payload()
+    payload["delivery"]["intent"] = "reply"
+    payload["request_context"] = None
+
+    with pytest.raises(ValidationError) as exc_info:
+        NotifyRequestV1.model_validate(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["loc"] == ()
+    assert error["type"] == "notify_reply_requires_request_context"
+
+
+def test_notify_reply_for_telegram_requires_source_thread_identity() -> None:
+    payload = _valid_notify_payload()
+    payload["delivery"]["intent"] = "reply"
+    payload["request_context"].pop("source_thread_identity")
+
+    with pytest.raises(ValidationError) as exc_info:
+        NotifyRequestV1.model_validate(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["loc"] == ()
+    assert error["type"] == "notify_reply_requires_source_thread_identity"
 
 
 def test_request_context_lineage_allows_optional_extension() -> None:
