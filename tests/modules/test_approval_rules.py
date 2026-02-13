@@ -260,6 +260,12 @@ def module() -> ApprovalsModule:
     return ApprovalsModule()
 
 
+@pytest.fixture
+def human_actor() -> dict[str, Any]:
+    """Authenticated human actor context for approval decision calls."""
+    return {"type": "human", "id": "owner", "authenticated": True}
+
+
 # ---------------------------------------------------------------------------
 # Helper: make rule dicts for testing match_rules_from_list
 # ---------------------------------------------------------------------------
@@ -705,13 +711,16 @@ class TestSuggestConstraints:
 class TestCreateApprovalRule:
     """Test create_approval_rule tool."""
 
-    async def test_create_basic_rule(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_create_basic_rule(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         result = await module._create_approval_rule(
             tool_name="email_send",
             arg_constraints={"to": {"type": "exact", "value": "alice@example.com"}},
             description="Allow emails to Alice",
+            actor=human_actor,
         )
 
         assert "id" in result
@@ -722,7 +731,9 @@ class TestCreateApprovalRule:
         assert result["max_uses"] is None
         assert result["expires_at"] is None
 
-    async def test_create_rule_with_expiry(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_create_rule_with_expiry(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         future = datetime.now(UTC) + timedelta(days=7)
@@ -731,11 +742,14 @@ class TestCreateApprovalRule:
             arg_constraints={},
             description="Temporary rule",
             expires_at=future.isoformat(),
+            actor=human_actor,
         )
 
         assert result["expires_at"] is not None
 
-    async def test_create_rule_with_max_uses(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_create_rule_with_max_uses(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         result = await module._create_approval_rule(
@@ -743,11 +757,14 @@ class TestCreateApprovalRule:
             arg_constraints={},
             description="Limited rule",
             max_uses=10,
+            actor=human_actor,
         )
 
         assert result["max_uses"] == 10
 
-    async def test_create_rule_invalid_expiry(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_create_rule_invalid_expiry(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         result = await module._create_approval_rule(
@@ -755,24 +772,13 @@ class TestCreateApprovalRule:
             arg_constraints={},
             description="test",
             expires_at="not-a-date",
+            actor=human_actor,
         )
 
         assert "error" in result
 
-    async def test_create_rule_stored_in_db(self, module: ApprovalsModule, mock_db: MockDB):
-        await module.on_startup(config=None, db=mock_db)
-
-        result = await module._create_approval_rule(
-            tool_name="email_send",
-            arg_constraints={"to": "alice"},
-            description="test",
-        )
-
-        rule_id = uuid.UUID(result["id"])
-        assert rule_id in mock_db.approval_rules
-
-    async def test_create_rule_emits_rule_created_event(
-        self, module: ApprovalsModule, mock_db: MockDB
+    async def test_create_rule_stored_in_db(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
     ):
         await module.on_startup(config=None, db=mock_db)
 
@@ -780,6 +786,35 @@ class TestCreateApprovalRule:
             tool_name="email_send",
             arg_constraints={"to": "alice"},
             description="test",
+            actor=human_actor,
+        )
+
+        rule_id = uuid.UUID(result["id"])
+        assert rule_id in mock_db.approval_rules
+
+    async def test_create_rule_rejects_non_human_actor(
+        self, module: ApprovalsModule, mock_db: MockDB
+    ):
+        await module.on_startup(config=None, db=mock_db)
+
+        result = await module._create_approval_rule(
+            tool_name="email_send",
+            arg_constraints={},
+            description="test",
+            actor={"type": "llm", "id": "runtime", "authenticated": True},
+        )
+        assert result["error_code"] == "human_actor_required"
+
+    async def test_create_rule_emits_rule_created_event(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
+        await module.on_startup(config=None, db=mock_db)
+
+        result = await module._create_approval_rule(
+            tool_name="email_send",
+            arg_constraints={"to": "alice"},
+            description="test",
+            actor=human_actor,
         )
 
         rule_id = uuid.UUID(result["id"])
@@ -791,7 +826,9 @@ class TestCreateApprovalRule:
 class TestCreateRuleFromAction:
     """Test create_rule_from_action tool."""
 
-    async def test_create_from_action_basic(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_create_from_action_basic(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = mock_db._insert_action(
@@ -799,7 +836,7 @@ class TestCreateRuleFromAction:
             tool_args={"to": "alice@example.com", "body": "hello"},
         )
 
-        result = await module._create_rule_from_action(str(action_id))
+        result = await module._create_rule_from_action(str(action_id), actor=human_actor)
 
         assert "id" in result
         assert result["tool_name"] == "email_send"
@@ -813,7 +850,7 @@ class TestCreateRuleFromAction:
         assert constraints["body"]["type"] == "any"
 
     async def test_create_from_action_with_overrides(
-        self, module: ApprovalsModule, mock_db: MockDB
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
     ):
         await module.on_startup(config=None, db=mock_db)
 
@@ -827,6 +864,7 @@ class TestCreateRuleFromAction:
             constraint_overrides={
                 "to": {"type": "pattern", "value": "*@example.com"},
             },
+            actor=human_actor,
         )
 
         constraints = result["arg_constraints"]
@@ -836,21 +874,27 @@ class TestCreateRuleFromAction:
         # Non-overridden constraint should keep suggestion
         assert constraints["body"]["type"] == "any"
 
-    async def test_create_from_action_not_found(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_create_from_action_not_found(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
-        result = await module._create_rule_from_action(str(uuid.uuid4()))
+        result = await module._create_rule_from_action(str(uuid.uuid4()), actor=human_actor)
         assert "error" in result
         assert "not found" in result["error"]
 
-    async def test_create_from_action_invalid_uuid(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_create_from_action_invalid_uuid(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
-        result = await module._create_rule_from_action("not-a-uuid")
+        result = await module._create_rule_from_action("not-a-uuid", actor=human_actor)
         assert "error" in result
         assert "Invalid action_id" in result["error"]
 
-    async def test_create_from_action_stored_in_db(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_create_from_action_stored_in_db(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = mock_db._insert_action(
@@ -858,7 +902,7 @@ class TestCreateRuleFromAction:
             tool_args={"to": "alice@example.com"},
         )
 
-        result = await module._create_rule_from_action(str(action_id))
+        result = await module._create_rule_from_action(str(action_id), actor=human_actor)
 
         rule_id = uuid.UUID(result["id"])
         assert rule_id in mock_db.approval_rules
@@ -951,7 +995,9 @@ class TestShowApprovalRule:
 class TestRevokeApprovalRule:
     """Test revoke_approval_rule tool."""
 
-    async def test_revoke_active_rule(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_revoke_active_rule(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         rule_id = mock_db._insert_rule(
@@ -960,10 +1006,12 @@ class TestRevokeApprovalRule:
             active=True,
         )
 
-        result = await module._revoke_approval_rule(str(rule_id))
+        result = await module._revoke_approval_rule(str(rule_id), actor=human_actor)
         assert result["active"] is False
 
-    async def test_revoke_already_revoked(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_revoke_already_revoked(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         rule_id = mock_db._insert_rule(
@@ -972,23 +1020,35 @@ class TestRevokeApprovalRule:
             active=False,
         )
 
-        result = await module._revoke_approval_rule(str(rule_id))
+        result = await module._revoke_approval_rule(str(rule_id), actor=human_actor)
         assert "error" in result
         assert "already revoked" in result["error"]
 
-    async def test_revoke_nonexistent_rule(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_revoke_nonexistent_rule(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
-        result = await module._revoke_approval_rule(str(uuid.uuid4()))
+        result = await module._revoke_approval_rule(str(uuid.uuid4()), actor=human_actor)
         assert "error" in result
         assert "not found" in result["error"]
 
-    async def test_revoke_invalid_uuid(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_revoke_invalid_uuid(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
-        result = await module._revoke_approval_rule("bad-uuid")
+        result = await module._revoke_approval_rule("bad-uuid", actor=human_actor)
         assert "error" in result
         assert "Invalid rule_id" in result["error"]
 
-    async def test_revoke_emits_rule_revoked_event(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_revoke_rejects_missing_actor(self, module: ApprovalsModule, mock_db: MockDB):
+        await module.on_startup(config=None, db=mock_db)
+        rule_id = mock_db._insert_rule(tool_name="email_send", active=True)
+        result = await module._revoke_approval_rule(str(rule_id))
+        assert result["error_code"] == "human_actor_required"
+
+    async def test_revoke_emits_rule_revoked_event(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         rule_id = mock_db._insert_rule(
@@ -996,7 +1056,7 @@ class TestRevokeApprovalRule:
             description="Active rule",
             active=True,
         )
-        await module._revoke_approval_rule(str(rule_id))
+        await module._revoke_approval_rule(str(rule_id), actor=human_actor)
 
         event = next(e for e in mock_db.approval_events if e["rule_id"] == rule_id)
         assert event["event_type"] == "rule_revoked"
@@ -1144,7 +1204,9 @@ class TestRegisterToolsCount:
 class TestRulesLifecycle:
     """End-to-end lifecycle: create action -> suggest -> create rule -> list -> revoke."""
 
-    async def test_full_lifecycle(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_full_lifecycle(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         # Step 1: Create a pending action
@@ -1160,7 +1222,7 @@ class TestRulesLifecycle:
         assert suggestions["suggested_constraints"]["body"]["type"] == "any"
 
         # Step 3: Create a rule from the action
-        rule_result = await module._create_rule_from_action(str(action_id))
+        rule_result = await module._create_rule_from_action(str(action_id), actor=human_actor)
         assert rule_result["active"] is True
         rule_id = rule_result["id"]
 
@@ -1175,7 +1237,7 @@ class TestRulesLifecycle:
         assert detail["created_from"] == str(action_id)
 
         # Step 6: Revoke the rule
-        revoked = await module._revoke_approval_rule(rule_id)
+        revoked = await module._revoke_approval_rule(rule_id, actor=human_actor)
         assert revoked["active"] is False
 
         # Step 7: List active only — should be empty
@@ -1187,7 +1249,9 @@ class TestRulesLifecycle:
         assert len(all_rules) == 1
         assert all_rules[0]["active"] is False
 
-    async def test_create_rule_directly_then_show(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_create_rule_directly_then_show(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         """Create a rule directly (not from action) and verify it can be shown."""
         await module.on_startup(config=None, db=mock_db)
 
@@ -1196,6 +1260,7 @@ class TestRulesLifecycle:
             arg_constraints={"chat_id": {"type": "exact", "value": 123}},
             description="Allow telegram to chat 123",
             max_uses=50,
+            actor=human_actor,
         )
 
         rule_id = result["id"]

@@ -185,6 +185,10 @@ make test-qg
 - For bugfixes/features under active development or investigation, default to targeted `pytest` runs to keep loops fast and context lean.
 - Run full-suite tests when branch changes are finalized and you need a pre-merge readiness signal.
 
+### Approvals CAS/idempotency contract
+- `src/butlers/modules/approvals/module.py` decision paths (`_approve_action`, `_reject_action`, `_expire_stale_actions`) must use compare-and-set SQL writes (`... WHERE status='pending'`) so concurrent decision attempts cannot overwrite each other.
+- `src/butlers/modules/approvals/executor.py::execute_approved_action` is idempotent per `action_id`: it serializes execution with a process-local per-action lock, replays stored `execution_result` when status is already `executed`, and only performs the terminal write when status is still `approved`.
+
 ### Calendar recurrence normalization contract
 - `_normalize_recurrence()` in `src/butlers/modules/calendar.py` must reject any rule containing `\\n` or `\\r` to prevent iCalendar CRLF/newline injection.
 - `FREQ` presence and `DTSTART`/`DTEND` exclusion checks should be case-insensitive (`rule.upper()`), so lowercase property names cannot bypass validation.
@@ -283,6 +287,10 @@ make test-qg
 - Beads enforces global uniqueness for `issues.external_ref`; a dedicated `pr-review-task` bead cannot reuse the same `gh-pr:<number>` already attached to the original implementation bead.
 - For split original/review-bead workflows, keep `external_ref` on the original bead and store PR metadata (`PR URL`, `PR NUMBER`, original bead id) in review-bead notes/labels, then dispatch reviewer workers with explicit PR context.
 
+### Beads PR-review dependency-direction guardrail
+- If the original implementation bead must be blocked by a dedicated PR-review bead, do not create the review bead with `--deps discovered-from:<original>` because that pre-wires the reverse dependency and causes a cycle when adding `<original> depends-on <review>`.
+- Preferred flow: create the review bead without `discovered-from`, then add `bd dep add <original> <review>` so review completion unblocks the original bead.
+
 ### Beads merge-blocker dedupe guardrail
 - Before creating a new `Resolve merge blockers for PR #<n>` bead from a blocked `pr-review-task`, check for an existing open blocker bead tied to the same PR/original issue and reuse it by wiring dependencies instead of creating duplicates.
 
@@ -364,6 +372,11 @@ make test-qg
 
 ### Core tool registration contract
 - `src/butlers/daemon.py` exports `CORE_TOOL_NAMES` as the canonical core-tool set (including `notify`); registration tests should assert against this set to prevent drift between `_register_core_tools()` behavior and expected tool coverage.
+
+### Switchboard ingress dedupe contract
+- `MessagePipeline` enforces canonical ingress dedupe when `enable_ingress_dedupe=True` (wired on for Switchboard in `src/butlers/daemon.py::_wire_pipelines`).
+- Dedupe keys are channel-aware: Telegram uses `<endpoint_identity>:update:<update_id>`, Email uses `<endpoint_identity>:message_id:<Message-ID>`, API/MCP use `<endpoint_identity>:idempotency:<caller-key>` when present, else `<endpoint_identity>:payload_hash:<sha256>:window:<5-minute-bucket>`.
+- Ingress decisions log as `"Ingress dedupe decision"` with `ingress_decision=accepted|deduped`; deduped replays map to the existing canonical `request_id` and short-circuit routing.
 
 ### Approvals product-contract docs alignment
 - `docs/modules/approval.md` is now a product-level contract (not just current behavior) and includes explicit guardrails for single-human approver model, idempotent decision/execution semantics, immutable approval-event auditing, data redaction/retention, risk-tier policy precedence, and friction-minimizing operator UX.

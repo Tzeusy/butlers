@@ -12,6 +12,8 @@ Unit tests verify:
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -19,7 +21,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from butlers.modules.approvals.models import ActionStatus
 from butlers.modules.approvals.module import (
@@ -76,6 +78,42 @@ class MockDB:
         }
         self.pending_actions[action_id] = row
 
+    def _update_pending_action(self, query: str, *args: Any) -> dict[str, Any] | None:
+        """Apply UPDATE pending_actions statements used in module/executor tests."""
+        if "AND status = $5" in query:
+            action_id = args[3]
+            expected_status = args[4]
+        else:
+            action_id = args[-1]
+            expected_status = None
+
+        if isinstance(action_id, str):
+            action_id = uuid.UUID(action_id)
+
+        row = self.pending_actions.get(action_id)
+        if row is None:
+            return None
+        if expected_status is not None and row["status"] != expected_status:
+            return None
+
+        if "status = $1" in query and "decided_by = $2" in query:
+            row["status"] = args[0]
+            row["decided_by"] = args[1]
+            row["decided_at"] = args[2]
+        elif (
+            "status = $1" in query
+            and "execution_result = $2" in query
+            and "decided_at = $3" in query
+        ):
+            row["status"] = args[0]
+            row["execution_result"] = args[1]
+            row["decided_at"] = args[2]
+        elif "status = $1" in query and "execution_result = $2" in query:
+            row["status"] = args[0]
+            row["execution_result"] = args[1]
+
+        return dict(row)
+
     async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
         """Simulate asyncpg fetch()."""
         if "GROUP BY status" in query:
@@ -116,6 +154,14 @@ class MockDB:
 
     async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
         """Simulate asyncpg fetchrow()."""
+        if "UPDATE pending_actions" in query:
+            updated = self._update_pending_action(query, *args)
+            if updated is None:
+                return None
+            if "RETURNING id" in query:
+                return {"id": updated["id"]}
+            return updated
+
         if "pending_actions" in query and args:
             action_id = args[0]
             if isinstance(action_id, str):
@@ -127,27 +173,7 @@ class MockDB:
     async def execute(self, query: str, *args: Any) -> None:
         """Simulate asyncpg execute()."""
         if "UPDATE pending_actions" in query:
-            # Find the action by id (last positional arg typically)
-            action_id = args[-1]
-            if isinstance(action_id, str):
-                action_id = uuid.UUID(action_id)
-            if action_id in self.pending_actions:
-                row = self.pending_actions[action_id]
-                if "status = $1" in query and "decided_by = $2" in query:
-                    row["status"] = args[0]
-                    row["decided_by"] = args[1]
-                    row["decided_at"] = args[2]
-                elif (
-                    "status = $1" in query
-                    and "execution_result = $2" in query
-                    and "decided_at = $3" in query
-                ):
-                    row["status"] = args[0]
-                    row["execution_result"] = args[1]
-                    row["decided_at"] = args[2]
-                elif "status = $1" in query and "execution_result = $2" in query:
-                    row["status"] = args[0]
-                    row["execution_result"] = args[1]
+            self._update_pending_action(query, *args)
 
         elif "UPDATE approval_rules" in query and "use_count" in query:
             # Executor uses: use_count = use_count + 1 WHERE id = $1
@@ -191,6 +217,12 @@ def mock_db() -> MockDB:
 def module() -> ApprovalsModule:
     """Provide a fresh ApprovalsModule instance."""
     return ApprovalsModule()
+
+
+@pytest.fixture
+def human_actor() -> dict[str, Any]:
+    """Authenticated human actor context for approval decision calls."""
+    return {"type": "human", "id": "owner", "authenticated": True}
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +364,33 @@ class TestRegisterTools:
 
         for tool_name, tool_fn in registered_tools.items():
             assert asyncio.iscoroutinefunction(tool_fn), f"{tool_name} should be async"
+
+    async def test_decision_tools_do_not_expose_actor_kwarg(
+        self, module: ApprovalsModule, mock_db: MockDB
+    ):
+        mcp = MagicMock()
+        registered_tools: dict[str, Any] = {}
+
+        def capture_tool():
+            def decorator(fn):
+                registered_tools[fn.__name__] = fn
+                return fn
+
+            return decorator
+
+        mcp.tool.side_effect = capture_tool
+        await module.register_tools(mcp=mcp, config=None, db=mock_db)
+
+        decision_tools = {
+            "approve_action",
+            "reject_action",
+            "create_approval_rule",
+            "create_rule_from_action",
+            "revoke_approval_rule",
+        }
+        for tool_name in decision_tools:
+            params = inspect.signature(registered_tools[tool_name]).parameters
+            assert "_actor" not in params
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +553,30 @@ class TestShowPendingAction:
 class TestApproveAction:
     """Test approve_action tool."""
 
-    async def test_approve_pending_action(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_approve_tool_rejects_spoofed_actor_kwarg(
+        self, module: ApprovalsModule, mock_db: MockDB
+    ):
+        from fastmcp import FastMCP
+
+        await module.on_startup(config=None, db=mock_db)
+        action_id = uuid.uuid4()
+        mock_db._insert_action(id=action_id, tool_name="test_tool", status="pending")
+
+        mcp = FastMCP("test-approvals")
+        await module.register_tools(mcp=mcp, config=None, db=mock_db)
+        tool = await mcp._tool_manager.get_tool("approve_action")
+
+        with pytest.raises(ValidationError, match="_actor"):
+            await tool.run(
+                {
+                    "action_id": str(action_id),
+                    "_actor": {"type": "human", "id": "attacker", "authenticated": True},
+                }
+            )
+
+    async def test_approve_pending_action(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
@@ -505,11 +587,13 @@ class TestApproveAction:
             status="pending",
         )
 
-        result = await module._approve_action(str(action_id))
+        result = await module._approve_action(str(action_id), actor=human_actor)
         assert result["status"] == "executed"
         assert result["id"] == str(action_id)
 
-    async def test_approve_executes_tool(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_approve_executes_tool(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
@@ -527,14 +611,16 @@ class TestApproveAction:
             return {"status": "sent"}
 
         module.set_tool_executor(mock_executor)
-        result = await module._approve_action(str(action_id))
+        result = await module._approve_action(str(action_id), actor=human_actor)
 
         assert len(executed_calls) == 1
         assert executed_calls[0][0] == "email_send"
         assert executed_calls[0][1] == {"to": "alice@example.com"}
         assert result["status"] == "executed"
 
-    async def test_approve_stores_execution_result(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_approve_stores_execution_result(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
@@ -544,7 +630,7 @@ class TestApproveAction:
             return {"ok": True, "data": "result"}
 
         module.set_tool_executor(mock_executor)
-        result = await module._approve_action(str(action_id))
+        result = await module._approve_action(str(action_id), actor=human_actor)
 
         assert result["status"] == "executed"
         # The execution_result should be stored in the DB row (ExecutionResult format)
@@ -554,17 +640,21 @@ class TestApproveAction:
         assert parsed_result["success"] is True
         assert parsed_result["result"]["ok"] is True
 
-    async def test_approve_without_executor(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_approve_without_executor(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         """When no executor is set, action is still marked as executed."""
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
         mock_db._insert_action(id=action_id, tool_name="test_tool", status="pending")
 
-        result = await module._approve_action(str(action_id))
+        result = await module._approve_action(str(action_id), actor=human_actor)
         assert result["status"] == "executed"
 
-    async def test_approve_with_create_rule(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_approve_with_create_rule(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
@@ -575,7 +665,7 @@ class TestApproveAction:
             status="pending",
         )
 
-        result = await module._approve_action(str(action_id), create_rule=True)
+        result = await module._approve_action(str(action_id), create_rule=True, actor=human_actor)
         assert "created_rule" in result
         rule = result["created_rule"]
         assert rule["tool_name"] == "email_send"
@@ -586,61 +676,75 @@ class TestApproveAction:
         # Verify rule was stored in DB
         assert len(mock_db.approval_rules) == 1
 
-    async def test_approve_emits_decision_event(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_approve_nonexistent_action(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
+        await module.on_startup(config=None, db=mock_db)
+        result = await module._approve_action(str(uuid.uuid4()), actor=human_actor)
+        assert "error" in result
+        assert "not found" in result["error"]
+
+    async def test_approve_emits_decision_event(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
         mock_db._insert_action(id=action_id, tool_name="email_send", status="pending")
 
-        await module._approve_action(str(action_id))
+        await module._approve_action(str(action_id), actor=human_actor)
 
         event = next(e for e in mock_db.approval_events if e["action_id"] == action_id)
         assert event["event_type"] == "action_approved"
         assert event["actor"] == "user:manual"
 
-    async def test_approve_nonexistent_action(self, module: ApprovalsModule, mock_db: MockDB):
-        await module.on_startup(config=None, db=mock_db)
-        result = await module._approve_action(str(uuid.uuid4()))
-        assert "error" in result
-        assert "not found" in result["error"]
-
-    async def test_approve_already_rejected(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_approve_already_rejected(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
         mock_db._insert_action(id=action_id, tool_name="test_tool", status="rejected")
 
-        result = await module._approve_action(str(action_id))
+        result = await module._approve_action(str(action_id), actor=human_actor)
         assert "error" in result
         assert "Cannot transition" in result["error"]
 
-    async def test_approve_already_executed(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_approve_already_executed(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
         mock_db._insert_action(id=action_id, tool_name="test_tool", status="executed")
 
-        result = await module._approve_action(str(action_id))
+        result = await module._approve_action(str(action_id), actor=human_actor)
         assert "error" in result
         assert "Cannot transition" in result["error"]
 
-    async def test_approve_already_expired(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_approve_already_expired(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
         mock_db._insert_action(id=action_id, tool_name="test_tool", status="expired")
 
-        result = await module._approve_action(str(action_id))
+        result = await module._approve_action(str(action_id), actor=human_actor)
         assert "error" in result
         assert "Cannot transition" in result["error"]
 
-    async def test_approve_invalid_uuid(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_approve_invalid_uuid(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
-        result = await module._approve_action("not-a-uuid")
+        result = await module._approve_action("not-a-uuid", actor=human_actor)
         assert "error" in result
         assert "Invalid action_id" in result["error"]
 
-    async def test_approve_handles_executor_error(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_approve_handles_executor_error(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         """If executor raises, error is captured and action still moves to executed."""
         await module.on_startup(config=None, db=mock_db)
 
@@ -651,7 +755,7 @@ class TestApproveAction:
             raise RuntimeError("Tool crashed")
 
         module.set_tool_executor(failing_executor)
-        result = await module._approve_action(str(action_id))
+        result = await module._approve_action(str(action_id), actor=human_actor)
 
         # Action should still be marked as executed with error result
         assert result["status"] == "executed"
@@ -659,6 +763,67 @@ class TestApproveAction:
         parsed_result = json.loads(stored["execution_result"])
         assert parsed_result["success"] is False
         assert "Tool crashed" in parsed_result["error"]
+
+    async def test_concurrent_decisions_converge_to_single_terminal_outcome(
+        self,
+        module: ApprovalsModule,
+        mock_db: MockDB,
+        human_actor: dict[str, Any],
+    ):
+        """Concurrent approve/reject attempts should settle on exactly one terminal state."""
+        await module.on_startup(config=None, db=mock_db)
+
+        action_id = uuid.uuid4()
+        mock_db._insert_action(id=action_id, tool_name="test_tool", status="pending")
+
+        executed_calls: list[str] = []
+
+        async def slow_executor(tool_name: str, tool_args: dict[str, Any]) -> dict[str, Any]:
+            executed_calls.append(tool_name)
+            await asyncio.sleep(0.01)
+            return {"ok": True}
+
+        module.set_tool_executor(slow_executor)
+
+        approve_result, reject_result = await asyncio.gather(
+            module._approve_action(str(action_id), actor=human_actor),
+            module._reject_action(str(action_id), reason="race", actor=human_actor),
+        )
+
+        final = await module._show_pending_action(str(action_id))
+        assert final["status"] in {"executed", "rejected"}
+
+        successful_results = [r for r in (approve_result, reject_result) if "status" in r]
+        assert len(successful_results) == 1
+        assert successful_results[0]["status"] == final["status"]
+
+        errored_results = [r for r in (approve_result, reject_result) if "error" in r]
+        assert len(errored_results) == 1
+        assert "Cannot transition" in errored_results[0]["error"]
+
+        if final["status"] == "executed":
+            assert len(executed_calls) == 1
+        else:
+            assert len(executed_calls) == 0
+
+    async def test_approve_rejects_missing_actor(self, module: ApprovalsModule, mock_db: MockDB):
+        await module.on_startup(config=None, db=mock_db)
+        action_id = uuid.uuid4()
+        mock_db._insert_action(id=action_id, tool_name="test_tool", status="pending")
+
+        result = await module._approve_action(str(action_id))
+        assert result["error_code"] == "human_actor_required"
+
+    async def test_approve_rejects_non_human_actor(self, module: ApprovalsModule, mock_db: MockDB):
+        await module.on_startup(config=None, db=mock_db)
+        action_id = uuid.uuid4()
+        mock_db._insert_action(id=action_id, tool_name="test_tool", status="pending")
+
+        result = await module._approve_action(
+            str(action_id),
+            actor={"type": "system", "id": "daemon", "authenticated": True},
+        )
+        assert result["error_code"] == "human_actor_required"
 
 
 # ---------------------------------------------------------------------------
@@ -669,78 +834,125 @@ class TestApproveAction:
 class TestRejectAction:
     """Test reject_action tool."""
 
-    async def test_reject_pending_action(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_reject_pending_action(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
         mock_db._insert_action(id=action_id, tool_name="email_send", status="pending")
 
-        result = await module._reject_action(str(action_id))
+        result = await module._reject_action(str(action_id), actor=human_actor)
         assert result["status"] == "rejected"
-        assert result["decided_by"] == "user:manual"
+        assert result["decided_by"] == "human:owner"
 
-    async def test_reject_with_reason(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_reject_with_reason(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
         mock_db._insert_action(id=action_id, tool_name="email_send", status="pending")
 
-        result = await module._reject_action(str(action_id), reason="Not appropriate")
+        result = await module._reject_action(
+            str(action_id), reason="Not appropriate", actor=human_actor
+        )
         assert result["status"] == "rejected"
         assert "Not appropriate" in result["decided_by"]
 
-    async def test_reject_emits_decision_event(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_reject_with_reason_escapes_html(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
         mock_db._insert_action(id=action_id, tool_name="email_send", status="pending")
 
-        await module._reject_action(str(action_id), reason="Denied by operator")
+        result = await module._reject_action(
+            str(action_id),
+            reason="<script>alert('xss')</script>",
+            actor=human_actor,
+        )
+        assert result["status"] == "rejected"
+        assert "<script>" not in result["decided_by"]
+        assert "</script>" not in result["decided_by"]
+        assert "&lt;script&gt;" in result["decided_by"]
+        assert "&lt;/script&gt;" in result["decided_by"]
+
+    async def test_reject_emits_decision_event(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
+        await module.on_startup(config=None, db=mock_db)
+
+        action_id = uuid.uuid4()
+        mock_db._insert_action(id=action_id, tool_name="email_send", status="pending")
+
+        await module._reject_action(
+            str(action_id), reason="Denied by operator", actor=human_actor
+        )
 
         event = next(e for e in mock_db.approval_events if e["action_id"] == action_id)
         assert event["event_type"] == "action_rejected"
         assert event["reason"] == "Denied by operator"
 
-    async def test_reject_records_timestamp(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_reject_records_timestamp(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
         mock_db._insert_action(id=action_id, tool_name="test_tool", status="pending")
 
-        result = await module._reject_action(str(action_id))
+        result = await module._reject_action(str(action_id), actor=human_actor)
         assert result["decided_at"] is not None
 
-    async def test_reject_nonexistent_action(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_reject_nonexistent_action(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
-        result = await module._reject_action(str(uuid.uuid4()))
+        result = await module._reject_action(str(uuid.uuid4()), actor=human_actor)
         assert "error" in result
         assert "not found" in result["error"]
 
-    async def test_reject_already_approved(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_reject_already_approved(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
         mock_db._insert_action(id=action_id, tool_name="test_tool", status="approved")
 
-        result = await module._reject_action(str(action_id))
+        result = await module._reject_action(str(action_id), actor=human_actor)
         assert "error" in result
         assert "Cannot transition" in result["error"]
 
-    async def test_reject_already_rejected(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_reject_already_rejected(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
 
         action_id = uuid.uuid4()
         mock_db._insert_action(id=action_id, tool_name="test_tool", status="rejected")
 
-        result = await module._reject_action(str(action_id))
+        result = await module._reject_action(str(action_id), actor=human_actor)
         assert "error" in result
         assert "Cannot transition" in result["error"]
 
-    async def test_reject_invalid_uuid(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_reject_invalid_uuid(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         await module.on_startup(config=None, db=mock_db)
-        result = await module._reject_action("bad-uuid")
+        result = await module._reject_action("bad-uuid", actor=human_actor)
         assert "error" in result
         assert "Invalid action_id" in result["error"]
+
+    async def test_reject_rejects_missing_actor(self, module: ApprovalsModule, mock_db: MockDB):
+        await module.on_startup(config=None, db=mock_db)
+        action_id = uuid.uuid4()
+        mock_db._insert_action(id=action_id, tool_name="test_tool", status="pending")
+
+        result = await module._reject_action(str(action_id))
+        assert result["error_code"] == "human_actor_required"
 
 
 # ---------------------------------------------------------------------------
@@ -891,7 +1103,9 @@ class TestExpireStaleActions:
 class TestFullLifecycle:
     """End-to-end lifecycle tests covering create -> list -> approve/reject/expire."""
 
-    async def test_create_list_approve_execute(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_create_list_approve_execute(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         """Full lifecycle: create -> list -> approve -> execute."""
         await module.on_startup(config=None, db=mock_db)
 
@@ -929,7 +1143,7 @@ class TestFullLifecycle:
             return {"status": "sent", "message_id": "msg-123"}
 
         module.set_tool_executor(mock_executor)
-        result = await module._approve_action(str(action_id))
+        result = await module._approve_action(str(action_id), actor=human_actor)
 
         assert result["status"] == "executed"
         assert len(executed_calls) == 1
@@ -940,7 +1154,9 @@ class TestFullLifecycle:
         assert final["status"] == "executed"
         assert final["decided_by"] is not None
 
-    async def test_create_reject(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_create_reject(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         """Full lifecycle: create -> reject."""
         await module.on_startup(config=None, db=mock_db)
 
@@ -953,15 +1169,19 @@ class TestFullLifecycle:
         )
 
         # Reject with reason
-        result = await module._reject_action(str(action_id), reason="This looks like spam")
+        result = await module._reject_action(
+            str(action_id), reason="This looks like spam", actor=human_actor
+        )
         assert result["status"] == "rejected"
         assert "spam" in result["decided_by"]
 
         # Cannot approve after rejection
-        approve_result = await module._approve_action(str(action_id))
+        approve_result = await module._approve_action(str(action_id), actor=human_actor)
         assert "error" in approve_result
 
-    async def test_create_expire(self, module: ApprovalsModule, mock_db: MockDB):
+    async def test_create_expire(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
         """Full lifecycle: create -> expire."""
         await module.on_startup(config=None, db=mock_db)
 
@@ -980,12 +1200,12 @@ class TestFullLifecycle:
         assert str(action_id) in result["expired_ids"]
 
         # Cannot approve after expiry
-        approve_result = await module._approve_action(str(action_id))
+        approve_result = await module._approve_action(str(action_id), actor=human_actor)
         assert "error" in approve_result
         assert "Cannot transition" in approve_result["error"]
 
         # Cannot reject after expiry
-        reject_result = await module._reject_action(str(action_id))
+        reject_result = await module._reject_action(str(action_id), actor=human_actor)
         assert "error" in reject_result
         assert "Cannot transition" in reject_result["error"]
 
