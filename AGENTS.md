@@ -237,6 +237,10 @@ make test-qg
 ### Beads coordinator handoff guardrail
 - Some worker runs can finish with branch pushed but bead still `in_progress` (no PR/bead transition). Coordinator should detect `agent/<id>` ahead of `main` with no PR and normalize by creating a PR and marking the bead `blocked` with `pr-review` + `external_ref`.
 
+### Beads PR-review metadata fallback
+- PR-review task beads may omit `external_ref` because the unique `gh-pr:<N>` reference is already attached to the original implementation bead.
+- Reviewer/coordinator flows should fall back to parsing `PR NUMBER` from bead notes (or PR URL in title/description) when deriving the target PR.
+
 ### Beads push guardrail
 - Repo push checks enforce a clean beads state; `git push` can fail with "Uncommitted changes detected" even after commits if `.beads/issues.jsonl` was re-synced/staged during pre-push checks.
 - If this happens, run `bd sync --status`, inspect staged `.beads/issues.jsonl`, commit the sync normalization (or intentionally restore it), then re-run `git push`.
