@@ -638,8 +638,8 @@ class TelegramModule(Module):
                     "source_channel": "telegram",
                     "source_identity": "bot",
                     "source_endpoint_identity": "telegram:bot",
-                    "sender_identity": chat_id,
-                    "external_event_id": message_key or chat_id,
+                    "sender_identity": _extract_sender_identity(update, fallback=chat_id),
+                    "external_event_id": _extract_update_id(update),
                     "external_thread_id": chat_id,
                     "source_tool": "bot_telegram_get_updates",
                     "chat_id": chat_id,
@@ -841,6 +841,30 @@ def _extract_message_id(update: dict[str, Any]) -> int | None:
             except (TypeError, ValueError):
                 return None
     return None
+
+
+def _extract_update_id(update: dict[str, Any]) -> str | None:
+    """Extract update_id as a normalized string when present."""
+    update_id = update.get("update_id")
+    if update_id in (None, ""):
+        return None
+    return str(update_id)
+
+
+def _extract_sender_identity(update: dict[str, Any], *, fallback: str | None = None) -> str:
+    """Extract sender identity from Telegram update payload."""
+    for key in ("message", "edited_message", "channel_post"):
+        msg = update.get(key)
+        if not isinstance(msg, dict):
+            continue
+
+        sender = msg.get("from")
+        if isinstance(sender, dict) and sender.get("id") not in (None, ""):
+            return str(sender["id"])
+
+    if fallback not in (None, ""):
+        return str(fallback)
+    return "unknown"
 
 
 def _message_tracking_key(
