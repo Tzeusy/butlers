@@ -309,6 +309,10 @@ make test-qg
 - When a worker worktree may be stale relative to newly-created issues, run `bd sync --import` in that worktree before `bd show <id>` lookups.
 - Regression coverage lives in `tests/tools/test_beads_worktree_hydration.py` and verifies stale lookup failure followed by successful hydration.
 
+### Beads worktree write guardrail
+- In git worktrees, `bd` operations can target the primary repo DB/JSONL instead of the worktree copy; verify with `bd --no-db show <id>` before write operations.
+- For worker-branch bead metadata commits, run `bd --no-db` for create/update/dep commands in the worktree so `.beads/issues.jsonl` changes are tracked on that branch.
+
 ### Beads PR-review `external_ref` uniqueness contract
 - Beads enforces global uniqueness for `issues.external_ref`; a dedicated `pr-review-task` bead cannot reuse the same `gh-pr:<number>` already attached to the original implementation bead.
 - For split original/review-bead workflows, keep `external_ref` on the original bead and store PR metadata (`PR URL`, `PR NUMBER`, original bead id) in review-bead notes/labels, then dispatch reviewer workers with explicit PR context.
