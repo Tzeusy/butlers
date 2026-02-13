@@ -25,6 +25,8 @@ SourceChannel = Literal["telegram", "slack", "email", "api", "mcp"]
 SourceProvider = Literal["telegram", "slack", "imap", "internal"]
 PolicyTier = Literal["default", "interactive", "high_priority"]
 FanoutMode = Literal["parallel", "ordered", "conditional"]
+NotifyDeliveryIntent = Literal["send", "reply"]
+NotifyChannel = Literal["telegram", "email", "sms", "chat"]
 _ALLOWED_PROVIDERS_BY_CHANNEL: dict[SourceChannel, frozenset[SourceProvider]] = {
     "telegram": frozenset({"telegram"}),
     "slack": frozenset({"slack"}),
@@ -264,7 +266,7 @@ class RouteInputV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     prompt: NonEmptyStr
-    context: NonEmptyStr | None = None
+    context: dict[str, Any] | NonEmptyStr | None = None
 
 
 class RouteSubrequestV1(BaseModel):
@@ -336,6 +338,44 @@ class RouteEnvelopeV1(BaseModel):
         return self
 
 
+class NotifyDeliveryV1(BaseModel):
+    """Delivery request for canonical notify payloads."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    intent: NotifyDeliveryIntent
+    channel: NotifyChannel
+    message: NonEmptyStr
+    recipient: NonEmptyStr | None = None
+    subject: NonEmptyStr | None = None
+
+
+class NotifyRequestV1(BaseModel):
+    """Canonical versioned notify request envelope (`notify.v1`)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: str
+    origin_butler: NonEmptyStr
+    delivery: NotifyDeliveryV1
+    request_context: RouteRequestContextV1 | None = None
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_notify_schema_version(cls, value: str) -> str:
+        return _validate_schema_version(value, expected="notify.v1")
+
+    @model_validator(mode="after")
+    def _validate_reply_request_context(self) -> NotifyRequestV1:
+        if self.delivery.intent == "reply" and self.request_context is None:
+            raise PydanticCustomError(
+                "notify_request_context_required",
+                "notify_request.request_context is required for reply intent.",
+                {},
+            )
+        return self
+
+
 def parse_ingest_envelope(payload: Mapping[str, Any]) -> IngestEnvelopeV1:
     """Parse and validate an `ingest.v1` envelope."""
 
@@ -348,6 +388,12 @@ def parse_route_envelope(payload: Mapping[str, Any]) -> RouteEnvelopeV1:
     return RouteEnvelopeV1.model_validate(payload)
 
 
+def parse_notify_request(payload: Mapping[str, Any]) -> NotifyRequestV1:
+    """Parse and validate a `notify.v1` request."""
+
+    return NotifyRequestV1.model_validate(payload)
+
+
 __all__ = [
     "IngestControlV1",
     "IngestEnvelopeV1",
@@ -355,6 +401,8 @@ __all__ = [
     "IngestPayloadV1",
     "IngestSenderV1",
     "IngestSourceV1",
+    "NotifyDeliveryV1",
+    "NotifyRequestV1",
     "RouteEnvelopeV1",
     "RouteInputV1",
     "RouteRequestContextV1",
@@ -362,5 +410,6 @@ __all__ = [
     "RouteSubrequestV1",
     "RouteTargetV1",
     "parse_ingest_envelope",
+    "parse_notify_request",
     "parse_route_envelope",
 ]
