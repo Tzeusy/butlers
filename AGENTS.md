@@ -295,6 +295,12 @@ make test-qg
 - `docs/roles/switchboard_butler.md` owns the channel-facing tool surface policy: outbound delivery send/reply tools are messenger-only, ingress connectors remain Switchboard-owned, and non-messenger butlers must use `notify.v1`.
 - `docs/roles/switchboard_butler.md` explicitly overrides base `notify` semantics so Switchboard is the notify control-plane termination point (not a self-routed notify caller).
 
+### Core notify.v1 daemon contract
+- `src/butlers/daemon.py::notify` supports two mutually exclusive request modes: legacy fields (`channel`, `message`, etc.) or `notify_request` envelope (`notify.v1`), and must return a deterministic validation error when both modes are mixed.
+- Legacy notify invocations are normalized to `notify_request` (`schema_version=notify.v1`, `origin_butler=<local butler>`, `delivery=*`) before dispatch.
+- Daemon notify dispatch to Switchboard must call `deliver` with `{"source_butler": <local>, "notify_request": <envelope>}` so request lineage metadata is preserved.
+- `delivery.intent="reply"` validation is pre-dispatch and deterministic: require `request_context` plus `request_id` (UUID7), `source_channel`, `source_endpoint_identity`, and `source_sender_identity`; require `source_thread_identity` for thread-targeted channels (for example Telegram) to avoid blind fallback sends.
+
 ### Pipeline identity-routing contract
 - `src/butlers/modules/pipeline.py` should route inbound channel messages with identity-prefixed tool names (default `bot_switchboard_handle_message`) and include `source_metadata` (`channel`, `identity`, `tool_name`, optional `source_id`) in routed args.
 - `roster/switchboard/tools/routing/dispatch.py::dispatch_decomposed` should pass through identity-aware source metadata and the prefixed logical `tool_name` for each sub-route.
