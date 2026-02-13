@@ -264,7 +264,7 @@ class RouteInputV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     prompt: NonEmptyStr
-    context: NonEmptyStr | None = None
+    context: dict[str, Any] | NonEmptyStr | None = None
 
 
 class RouteSubrequestV1(BaseModel):

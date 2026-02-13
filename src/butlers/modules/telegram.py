@@ -256,6 +256,87 @@ class TelegramModule(Module):
             return self._db
         return None
 
+    async def _log_message_inbox(
+        self,
+        *,
+        message_text: str,
+        chat_id: str | None,
+        message_key: str | None,
+        update: dict[str, Any],
+    ) -> Any | None:
+        """Persist inbound message metadata and return message_inbox.id when possible."""
+        pool = self._get_db_pool()
+        if pool is None:
+            return None
+
+        source_endpoint_identity = "telegram:bot"
+        source_sender_identity = chat_id or "unknown"
+        source_thread_identity = chat_id
+        dedupe_strategy = "telegram_update_id_endpoint"
+        dedupe_key = (
+            f"telegram:{source_endpoint_identity}:update:{message_key}"
+            if message_key not in (None, "")
+            else None
+        )
+        received_at = datetime.now(UTC)
+        raw_metadata_payload = dict(update)
+        raw_metadata_payload.setdefault(
+            "source_metadata",
+            {
+                "channel": "telegram",
+                "identity": "bot",
+                "tool_name": "bot_telegram_get_updates",
+                "source_id": message_key,
+            },
+        )
+
+        try:
+            async with pool.acquire() as conn:
+                return await conn.fetchval(
+                    """
+                    INSERT INTO message_inbox (
+                        source_channel,
+                        sender_id,
+                        raw_content,
+                        raw_metadata,
+                        received_at,
+                        source_endpoint_identity,
+                        source_sender_identity,
+                        source_thread_identity,
+                        idempotency_key,
+                        dedupe_key,
+                        dedupe_strategy,
+                        dedupe_last_seen_at
+                    ) VALUES (
+                        $1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $5
+                    )
+                    ON CONFLICT (dedupe_key) DO UPDATE
+                    SET dedupe_last_seen_at = EXCLUDED.dedupe_last_seen_at
+                    RETURNING id
+                    """,
+                    "telegram",
+                    source_sender_identity,
+                    message_text,
+                    json.dumps(raw_metadata_payload),
+                    received_at,
+                    source_endpoint_identity,
+                    source_sender_identity,
+                    source_thread_identity,
+                    None,
+                    dedupe_key,
+                    dedupe_strategy,
+                )
+        except Exception:
+            logger.exception(
+                "Failed to log Telegram update to message_inbox",
+                extra={
+                    "source": "telegram",
+                    "chat_id": chat_id,
+                    "message_key": message_key,
+                },
+            )
+            return None
+
     @staticmethod
     def _result_has_failure(result: RoutingResult) -> bool:
         if result.classification_error or result.routing_error:
@@ -542,6 +623,12 @@ class TelegramModule(Module):
                 message_key=message_key,
                 reaction=REACTION_IN_PROGRESS,
             )
+            message_inbox_id = await self._log_message_inbox(
+                message_text=text,
+                chat_id=chat_id,
+                message_key=message_key,
+                update=update,
+            )
 
             result = await self._pipeline.process(
                 message_text=text,
@@ -551,14 +638,15 @@ class TelegramModule(Module):
                     "source_channel": "telegram",
                     "source_identity": "bot",
                     "source_endpoint_identity": "telegram:bot",
-                    "sender_identity": _extract_sender_identity(update, fallback=chat_id),
-                    "external_event_id": _extract_update_id(update),
+                    "sender_identity": chat_id,
+                    "external_event_id": message_key or chat_id,
                     "external_thread_id": chat_id,
                     "source_tool": "bot_telegram_get_updates",
                     "chat_id": chat_id,
                     "source_id": message_key,
                     "raw_metadata": update,
                 },
+                message_inbox_id=message_inbox_id,
             )
 
             if message_key is not None:
