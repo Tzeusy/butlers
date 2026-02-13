@@ -313,6 +313,7 @@ make test-qg
 - `docs/roles/base_butler.md` does not define channel-facing tool naming/ownership as a base requirement; that policy is role-specific.
 - `docs/roles/switchboard_butler.md` owns the channel-facing tool surface policy: outbound delivery send/reply tools are messenger-only, ingress connectors remain Switchboard-owned, and non-messenger butlers must use `notify.v1`.
 - `docs/roles/switchboard_butler.md` explicitly overrides base `notify` semantics so Switchboard is the notify control-plane termination point (not a self-routed notify caller).
+- `roster/switchboard/tools/routing/contracts.py` is the canonical parser surface for routed notify termination: `parse_notify_request()` validates `notify.v1`, and `RouteInputV1.context` must accept both string context and object context (for messenger `input.context.notify_request` payloads).
 
 ### Pipeline identity-routing contract
 - `src/butlers/modules/pipeline.py` should route inbound channel messages with identity-prefixed tool names (default `bot_switchboard_handle_message`) and include `source_metadata` (`channel`, `identity`, `tool_name`, optional `source_id`) in routed args.
