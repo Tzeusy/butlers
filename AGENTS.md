@@ -251,7 +251,8 @@ make test-qg
 - For PR-review worker scripts, keep a regex fallback for extracting `PR NUMBER` / `/pull/<n>` / `Original implementation bead` from raw command output when `jq` parsing fails.
 
 ### PR-review marker-thread guardrail
-- When `gh pr view <n> --json files` reports an empty `files` list, `addPullRequestReviewThread` marker creation may return `{"thread": null}` even with explicit `path`/`line`; treat this as non-mergeable for reviewer-worker flow, leave a timeline comment, and keep the review bead blocked.
+- When `gh pr view <n> --json files` reports an empty `files` list, `addPullRequestReviewThread` marker creation may return `{"thread": null}` even with explicit `path`/`line`.
+- If the PR is `OPEN` + `mergeStateStatus=CLEAN` + `changedFiles=0` (and `git diff origin/main...<head>` is empty), treat it as a no-op review stream: leave a timeline audit comment, close the PR (not merge), and normalize related review/merge-blocker beads to terminal closed states.
 
 ### Beads lint template contract
 - `bd lint` enforces section headers in issue descriptions, not only structured fields.
