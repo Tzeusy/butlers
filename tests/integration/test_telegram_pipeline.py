@@ -302,7 +302,7 @@ class TestProcessUpdate:
         mod.set_pipeline(pipeline)
 
         conn = AsyncMock()
-        conn.fetchval = AsyncMock(return_value=123)
+        conn.fetchrow = AsyncMock(return_value={"request_id": 123, "inserted": True})
         acquire_cm = AsyncMock()
         acquire_cm.__aenter__.return_value = conn
         acquire_cm.__aexit__.return_value = False
@@ -318,9 +318,49 @@ class TestProcessUpdate:
 
         assert result is not None
         pool.acquire.assert_called_once()
-        conn.fetchval.assert_awaited_once()
+        conn.fetchrow.assert_awaited_once()
         pipeline.process.assert_awaited_once()
         assert pipeline.process.await_args.kwargs["message_inbox_id"] == 123
+
+    async def test_deduped_update_skips_pipeline_processing(self):
+        """Duplicate updates are deduped before pipeline processing."""
+        mod = TelegramModule()
+
+        pipeline = MagicMock()
+        pipeline.process = AsyncMock(
+            return_value=RoutingResult(
+                target_butler="general",
+                route_result={"routed": True},
+            )
+        )
+        mod.set_pipeline(pipeline)
+
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                {"request_id": 321, "inserted": True},
+                {"request_id": 321, "inserted": False},
+            ]
+        )
+        acquire_cm = AsyncMock()
+        acquire_cm.__aenter__.return_value = conn
+        acquire_cm.__aexit__.return_value = False
+        pool = MagicMock()
+        pool.acquire.return_value = acquire_cm
+
+        db = MagicMock()
+        db.pool = pool
+        mod._db = db
+
+        update = {"update_id": 42, "message": {"text": "hello", "chat": {"id": 7}}}
+        first = await mod.process_update(update)
+        second = await mod.process_update(update)
+
+        assert first is not None
+        assert second is not None
+        assert second.target_butler == "deduped"
+        assert second.route_result["ingress_decision"] == "deduped"
+        assert pipeline.process.await_count == 1
 
 
 # ---------------------------------------------------------------------------
