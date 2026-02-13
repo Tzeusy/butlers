@@ -215,6 +215,10 @@ make test-qg
 ### Telegram DB contract
 - Module lifecycle receives the `Database` wrapper (not a raw pool). Telegram message-inbox logging should acquire connections via `db.pool.acquire()`, with optional backward compatibility for pool-like objects.
 
+### Telegram ingress dedupe contract
+- `src/butlers/modules/telegram.py::_store_message_inbox_entry` must persist inbound rows with deterministic Telegram dedupe keys and `ON CONFLICT (dedupe_key)` upsert semantics.
+- `TelegramModule.process_update()` should treat non-insert (`decision=deduped`) ingress persistence results as replayed updates and short-circuit before pipeline routing.
+
 ### HTTP client logging contract
 - CLI logging config (`src/butlers/cli.py::_configure_logging`) sets `httpx` and `httpcore` logger levels to `WARNING` to prevent request-URL token leakage (notably Telegram bot tokens in `/bot<token>/...` paths).
 
