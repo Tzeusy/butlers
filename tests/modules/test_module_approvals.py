@@ -49,6 +49,7 @@ class MockDB:
     def __init__(self) -> None:
         self.pending_actions: dict[uuid.UUID, dict[str, Any]] = {}
         self.approval_rules: dict[uuid.UUID, dict[str, Any]] = {}
+        self.approval_events: list[dict[str, Any]] = []
 
     def _insert_action(self, **kwargs: Any) -> None:
         """Helper to seed a pending action for testing."""
@@ -166,6 +167,18 @@ class MockDB:
                 "created_at": args[5],
                 "active": args[6],
             }
+        elif "INSERT INTO approval_events" in query:
+            self.approval_events.append(
+                {
+                    "event_type": args[0],
+                    "action_id": args[1],
+                    "rule_id": args[2],
+                    "actor": args[3],
+                    "reason": args[4],
+                    "event_metadata": args[5],
+                    "occurred_at": args[6],
+                }
+            )
 
 
 @pytest.fixture
@@ -573,6 +586,18 @@ class TestApproveAction:
         # Verify rule was stored in DB
         assert len(mock_db.approval_rules) == 1
 
+    async def test_approve_emits_decision_event(self, module: ApprovalsModule, mock_db: MockDB):
+        await module.on_startup(config=None, db=mock_db)
+
+        action_id = uuid.uuid4()
+        mock_db._insert_action(id=action_id, tool_name="email_send", status="pending")
+
+        await module._approve_action(str(action_id))
+
+        event = next(e for e in mock_db.approval_events if e["action_id"] == action_id)
+        assert event["event_type"] == "action_approved"
+        assert event["actor"] == "user:manual"
+
     async def test_approve_nonexistent_action(self, module: ApprovalsModule, mock_db: MockDB):
         await module.on_startup(config=None, db=mock_db)
         result = await module._approve_action(str(uuid.uuid4()))
@@ -663,6 +688,18 @@ class TestRejectAction:
         result = await module._reject_action(str(action_id), reason="Not appropriate")
         assert result["status"] == "rejected"
         assert "Not appropriate" in result["decided_by"]
+
+    async def test_reject_emits_decision_event(self, module: ApprovalsModule, mock_db: MockDB):
+        await module.on_startup(config=None, db=mock_db)
+
+        action_id = uuid.uuid4()
+        mock_db._insert_action(id=action_id, tool_name="email_send", status="pending")
+
+        await module._reject_action(str(action_id), reason="Denied by operator")
+
+        event = next(e for e in mock_db.approval_events if e["action_id"] == action_id)
+        assert event["event_type"] == "action_rejected"
+        assert event["reason"] == "Denied by operator"
 
     async def test_reject_records_timestamp(self, module: ApprovalsModule, mock_db: MockDB):
         await module.on_startup(config=None, db=mock_db)
@@ -827,6 +864,23 @@ class TestExpireStaleActions:
         assert result["expired_count"] == 3
         for aid in ids:
             assert str(aid) in result["expired_ids"]
+
+    async def test_expire_emits_expired_event(self, module: ApprovalsModule, mock_db: MockDB):
+        await module.on_startup(config=None, db=mock_db)
+
+        action_id = uuid.uuid4()
+        mock_db._insert_action(
+            id=action_id,
+            tool_name="test_tool",
+            status="pending",
+            expires_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+
+        await module._expire_stale_actions()
+
+        event = next(e for e in mock_db.approval_events if e["action_id"] == action_id)
+        assert event["event_type"] == "action_expired"
+        assert event["actor"] == "system:expiry"
 
 
 # ---------------------------------------------------------------------------
