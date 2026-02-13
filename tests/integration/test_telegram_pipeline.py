@@ -16,7 +16,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from butlers.modules.pipeline import MessagePipeline, RoutingResult
-from butlers.modules.telegram import TelegramModule, _extract_chat_id, _extract_text
+from butlers.modules.telegram import (
+    TelegramModule,
+    _extract_chat_id,
+    _extract_sender_identity,
+    _extract_text,
+    _extract_update_id,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -109,6 +115,38 @@ class TestExtractChatId:
     def test_empty_update(self):
         update = {"update_id": 3}
         assert _extract_chat_id(update) is None
+
+
+# ---------------------------------------------------------------------------
+# sender/update helper extraction
+# ---------------------------------------------------------------------------
+
+
+class TestExtractUpdateId:
+    """Test the _extract_update_id helper."""
+
+    def test_extract_update_id_as_string(self):
+        update = {"update_id": 77, "message": {"text": "hi", "chat": {"id": 1}}}
+        assert _extract_update_id(update) == "77"
+
+    def test_missing_update_id(self):
+        update = {"message": {"text": "hi", "chat": {"id": 1}}}
+        assert _extract_update_id(update) is None
+
+
+class TestExtractSenderIdentity:
+    """Test the _extract_sender_identity helper."""
+
+    def test_prefers_sender_from_id(self):
+        update = {
+            "update_id": 1,
+            "message": {"text": "hello", "chat": {"id": 99}, "from": {"id": 12345}},
+        }
+        assert _extract_sender_identity(update, fallback="99") == "12345"
+
+    def test_uses_fallback_when_sender_missing(self):
+        update = {"update_id": 2, "message": {"text": "hello", "chat": {"id": 99}}}
+        assert _extract_sender_identity(update, fallback="99") == "99"
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +261,8 @@ class TestProcessUpdate:
         assert captured_args["source"] == "telegram"
         assert captured_args["chat_id"] == "999"
         assert captured_args["message"] == "test"
+        assert captured_args["sender_identity"] == "999"
+        assert captured_args["external_event_id"] == "1"
 
     async def test_records_routed_messages(self):
         """process_update appends the result to _routed_messages."""

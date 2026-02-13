@@ -12,13 +12,11 @@ switchboard.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -753,6 +751,45 @@ def _extract_message_id(update: dict[str, Any]) -> int | None:
             except (TypeError, ValueError):
                 return None
     return None
+
+
+def _extract_update_id(update: dict[str, Any]) -> str | None:
+    """Extract Telegram update ID as a normalized string."""
+    update_id = update.get("update_id")
+    if update_id is None:
+        return None
+    text = str(update_id).strip()
+    return text or None
+
+
+def _extract_sender_identity(update: dict[str, Any], *, fallback: str | None = None) -> str:
+    """Extract sender identity from update payload with conservative fallback."""
+    for key in ("message", "edited_message", "channel_post"):
+        msg = update.get(key)
+        if not isinstance(msg, dict):
+            continue
+
+        sender = msg.get("from")
+        if isinstance(sender, dict):
+            sender_id = sender.get("id")
+            if sender_id is not None:
+                text = str(sender_id).strip()
+                if text:
+                    return text
+
+        sender_chat = msg.get("sender_chat")
+        if isinstance(sender_chat, dict):
+            sender_chat_id = sender_chat.get("id")
+            if sender_chat_id is not None:
+                text = str(sender_chat_id).strip()
+                if text:
+                    return text
+
+    if fallback not in (None, ""):
+        text = str(fallback).strip()
+        if text:
+            return text
+    return "unknown"
 
 
 def _message_tracking_key(
