@@ -335,9 +335,9 @@ make test-qg
 - `docs/roles/switchboard_butler.md` owns the channel-facing tool surface policy: outbound delivery send/reply tools are messenger-only, ingress connectors remain Switchboard-owned, and non-messenger butlers must use `notify.v1`.
 - `docs/roles/switchboard_butler.md` explicitly overrides base `notify` semantics so Switchboard is the notify control-plane termination point (not a self-routed notify caller).
 
-### Notify routing contract implementation note
-- `roster/switchboard/tools/routing/contracts.py` must expose `parse_notify_request()` with `notify.v1` validation models used by `src/butlers/daemon.py::route_execute`; removing it breaks daemon import and route.execute tests.
-- `RouteInputV1.context` must accept both `str` and `dict[str, Any]` because messenger `route.execute` receives structured `input.context.notify_request` envelopes.
+### Route/notify contract parsing alignment
+- `src/butlers/daemon.py` imports `parse_notify_request` from `butlers.tools.switchboard.routing.contracts` at module import time; keep that parser exported in `roster/switchboard/tools/routing/contracts.py`.
+- `RouteInputV1.context` must accept structured objects (`dict`) in addition to text so Messenger `route.execute` can receive `input.context.notify_request` payloads.
 
 ### Pipeline identity-routing contract
 - `src/butlers/modules/pipeline.py` should route inbound channel messages with identity-prefixed tool names (default `bot_switchboard_handle_message`) and include `source_metadata` (`channel`, `identity`, `tool_name`, optional `source_id`) in routed args.
