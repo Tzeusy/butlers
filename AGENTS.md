@@ -246,6 +246,10 @@ make test-qg
 - Repo push checks enforce a clean beads state; `git push` can fail with "Uncommitted changes detected" even after commits if `.beads/issues.jsonl` was re-synced/staged during pre-push checks.
 - If this happens, run `bd sync --status`, inspect staged `.beads/issues.jsonl`, commit the sync normalization (or intentionally restore it), then re-run `git push`.
 
+### Beads worktree database path contract
+- In linked git worktrees, `bd` may resolve to the main repo beads store (`/home/tze/GitHub/butlers/.beads`) instead of the worktree-local `.beads/`.
+- Before running write commands (`bd update/create/close/dep`), check `bd where`; if it points to the main repo path, avoid bulk-copying `.beads/issues.jsonl` from main into the worktree because that can pull unrelated concurrent bead edits.
+
 ### Beads lint template contract
 - `bd lint` enforces section headers in issue descriptions, not only structured fields.
 - For `task` issues include `## Acceptance Criteria` in `description`; for `epic` issues include `## Success Criteria`.
