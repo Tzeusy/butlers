@@ -285,6 +285,7 @@ make test-qg
 
 ### Beads merge-blocker dedupe guardrail
 - Before creating a new `Resolve merge blockers for PR #<n>` bead from a blocked `pr-review-task`, check for an existing open blocker bead tied to the same PR/original issue and reuse it by wiring dependencies instead of creating duplicates.
+- If the blocker is created as `--deps discovered-from:<review-bead>`, adding `original -> blocker` can fail with a dependency cycle (`original -> review -> original` path); keep the existing linkage and track the blocker via notes/labels instead of forcing the dep edge.
 
 ### Beads merge-blocker completion guardrail
 - Merge-blocker worker runs can leave the blocker bead `in_progress` after successfully unblocking/merging a PR; coordinator should normalize by closing the blocker bead and, when applicable, closing related `pr-review`/original beads for merged PRs.
