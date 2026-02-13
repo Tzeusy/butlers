@@ -26,6 +26,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from fastmcp.server.dependencies import AccessToken, get_access_token
 from pydantic import BaseModel
 
 from butlers.modules.approvals.executor import execute_approved_action
@@ -154,6 +155,32 @@ def _format_manual_decider(actor_id: str, reason: str | None = None) -> str:
     return decided_by
 
 
+def _actor_from_access_token(access_token: AccessToken | None) -> ActorContext | None:
+    """Build actor context from FastMCP access token, if present."""
+    if access_token is None:
+        return None
+
+    claims = access_token.claims if isinstance(access_token.claims, Mapping) else {}
+    resource_owner = _normalize_actor_field(access_token.resource_owner)
+    actor_id = (
+        resource_owner
+        or _normalize_actor_field(claims.get("sub"))
+        or _normalize_actor_field(access_token.client_id)
+    )
+    actor_type = _normalize_actor_field(
+        claims.get("actor_type") or claims.get("subject_type") or claims.get("type")
+    )
+
+    if actor_type is None and resource_owner is not None:
+        actor_type = "human"
+
+    return {
+        "type": actor_type,
+        "id": actor_id,
+        "authenticated": True,
+    }
+
+
 class ApprovalsModule(Module):
     """Approvals module providing human-in-the-loop tool approval MCP tools.
 
@@ -217,23 +244,25 @@ class ApprovalsModule(Module):
         async def approve_action(
             action_id: str,
             create_rule: bool = False,
-            _actor: dict[str, Any] | None = None,
         ) -> dict:
             """Approve a pending action and execute it."""
             return await module._approve_action(
                 action_id,
                 create_rule=create_rule,
-                actor=_actor,
+                actor=_actor_from_access_token(get_access_token()),
             )
 
         @mcp.tool()
         async def reject_action(
             action_id: str,
             reason: str | None = None,
-            _actor: dict[str, Any] | None = None,
         ) -> dict:
             """Reject a pending action with optional reason."""
-            return await module._reject_action(action_id, reason=reason, actor=_actor)
+            return await module._reject_action(
+                action_id,
+                reason=reason,
+                actor=_actor_from_access_token(get_access_token()),
+            )
 
         @mcp.tool()
         async def pending_action_count() -> dict:
@@ -266,7 +295,6 @@ class ApprovalsModule(Module):
             description: str,
             expires_at: str | None = None,
             max_uses: int | None = None,
-            _actor: dict[str, Any] | None = None,
         ) -> dict:
             """Create a new standing approval rule for auto-approving tool invocations."""
             return await module._create_approval_rule(
@@ -275,20 +303,19 @@ class ApprovalsModule(Module):
                 description=description,
                 expires_at=expires_at,
                 max_uses=max_uses,
-                actor=_actor,
+                actor=_actor_from_access_token(get_access_token()),
             )
 
         @mcp.tool()
         async def create_rule_from_action(
             action_id: str,
             constraint_overrides: dict | None = None,
-            _actor: dict[str, Any] | None = None,
         ) -> dict:
             """Create a standing rule from a pending action with smart constraint defaults."""
             return await module._create_rule_from_action(
                 action_id=action_id,
                 constraint_overrides=constraint_overrides,
-                actor=_actor,
+                actor=_actor_from_access_token(get_access_token()),
             )
 
         @mcp.tool()
@@ -308,12 +335,12 @@ class ApprovalsModule(Module):
             return await module._show_approval_rule(rule_id)
 
         @mcp.tool()
-        async def revoke_approval_rule(
-            rule_id: str,
-            _actor: dict[str, Any] | None = None,
-        ) -> dict:
+        async def revoke_approval_rule(rule_id: str) -> dict:
             """Revoke (deactivate) a standing approval rule."""
-            return await module._revoke_approval_rule(rule_id, actor=_actor)
+            return await module._revoke_approval_rule(
+                rule_id,
+                actor=_actor_from_access_token(get_access_token()),
+            )
 
         @mcp.tool()
         async def suggest_rule_constraints(action_id: str) -> dict:

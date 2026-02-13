@@ -13,6 +13,7 @@ Unit tests verify:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -20,7 +21,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from butlers.modules.approvals.models import ActionStatus
 from butlers.modules.approvals.module import (
@@ -351,6 +352,33 @@ class TestRegisterTools:
         for tool_name, tool_fn in registered_tools.items():
             assert asyncio.iscoroutinefunction(tool_fn), f"{tool_name} should be async"
 
+    async def test_decision_tools_do_not_expose_actor_kwarg(
+        self, module: ApprovalsModule, mock_db: MockDB
+    ):
+        mcp = MagicMock()
+        registered_tools: dict[str, Any] = {}
+
+        def capture_tool():
+            def decorator(fn):
+                registered_tools[fn.__name__] = fn
+                return fn
+
+            return decorator
+
+        mcp.tool.side_effect = capture_tool
+        await module.register_tools(mcp=mcp, config=None, db=mock_db)
+
+        decision_tools = {
+            "approve_action",
+            "reject_action",
+            "create_approval_rule",
+            "create_rule_from_action",
+            "revoke_approval_rule",
+        }
+        for tool_name in decision_tools:
+            params = inspect.signature(registered_tools[tool_name]).parameters
+            assert "_actor" not in params
+
 
 # ---------------------------------------------------------------------------
 # Status transition validation
@@ -511,6 +539,27 @@ class TestShowPendingAction:
 
 class TestApproveAction:
     """Test approve_action tool."""
+
+    async def test_approve_tool_rejects_spoofed_actor_kwarg(
+        self, module: ApprovalsModule, mock_db: MockDB
+    ):
+        from fastmcp import FastMCP
+
+        await module.on_startup(config=None, db=mock_db)
+        action_id = uuid.uuid4()
+        mock_db._insert_action(id=action_id, tool_name="test_tool", status="pending")
+
+        mcp = FastMCP("test-approvals")
+        await module.register_tools(mcp=mcp, config=None, db=mock_db)
+        tool = await mcp._tool_manager.get_tool("approve_action")
+
+        with pytest.raises(ValidationError, match="_actor"):
+            await tool.run(
+                {
+                    "action_id": str(action_id),
+                    "_actor": {"type": "human", "id": "attacker", "authenticated": True},
+                }
+            )
 
     async def test_approve_pending_action(
         self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
