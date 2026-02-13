@@ -198,6 +198,9 @@ make test-qg
 - `classify_message()` returns decomposition entries (`list[{"butler","prompt"}]`), not a bare butler string. Callers must normalize both legacy string and list formats before routing.
 - When `butler_registry` is empty, `classify_message()` auto-discovers butlers from `roster/` (see `roster/switchboard/tools/routing/classify.py`) before composing the "Available butlers" prompt.
 
+### Switchboard notify parser contract
+- `roster/switchboard/tools/routing/contracts.py` must export `parse_notify_request` and `NotifyRequestV1`; `src/butlers/daemon.py` imports this parser for messenger `route.execute` notify envelope validation.
+
 ### Notifications DB fallback contract
 - `src/butlers/api/routers/notifications.py` should degrade gracefully when the switchboard DB pool is unavailable: `GET /api/notifications` and `GET /api/butlers/{name}/notifications` return empty paginated payloads, and `GET /api/notifications/stats` returns zeroed stats instead of propagating a `KeyError`/404.
 
