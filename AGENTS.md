@@ -246,6 +246,10 @@ make test-qg
 - Repo push checks enforce a clean beads state; `git push` can fail with "Uncommitted changes detected" even after commits if `.beads/issues.jsonl` was re-synced/staged during pre-push checks.
 - If this happens, run `bd sync --status`, inspect staged `.beads/issues.jsonl`, commit the sync normalization (or intentionally restore it), then re-run `git push`.
 
+### Beads JSON output guardrail
+- `bd show <id> --json` can emit invalid JSON when issue notes contain a mix of escaped newline sequences (`\\n`) and newly appended raw newline text; do not assume strict JSON parsing always succeeds.
+- For PR-review worker scripts, keep a regex fallback for extracting `PR NUMBER` / `/pull/<n>` / `Original implementation bead` from raw command output when `jq` parsing fails.
+
 ### Beads lint template contract
 - `bd lint` enforces section headers in issue descriptions, not only structured fields.
 - For `task` issues include `## Acceptance Criteria` in `description`; for `epic` issues include `## Success Criteria`.
