@@ -309,6 +309,7 @@ make test-qg
 ### Route/notify envelope contract
 - `roster/switchboard/tools/routing/contracts.py` exports `NotifyDeliveryV1`, `NotifyRequestV1`, and `parse_notify_request`; daemon messenger `route.execute` validation depends on these for `notify.v1` payload parsing.
 - `RouteInputV1.context` must accept either string or mapping payloads (`str | dict | None`) because messenger `route.execute` carries structured `input.context.notify_request` objects.
+- Messenger `route.execute` must reject `notify_request.origin_butler` when it does not match routed `request_context.source_sender_identity` (deterministic `validation_error`) before any channel send/reply side effects.
 
 ### Base notify and module-tool naming contract
 - `docs/roles/base_butler.md` defines `notify` as a versioned envelope surface (`notify.v1` request, `notify_response.v1` response) with required `origin_butler`; reply intents require request-context targeting fields.
