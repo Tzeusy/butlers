@@ -350,3 +350,8 @@ make test-qg
 
 ### Core tool registration contract
 - `src/butlers/daemon.py` exports `CORE_TOOL_NAMES` as the canonical core-tool set (including `notify`); registration tests should assert against this set to prevent drift between `_register_core_tools()` behavior and expected tool coverage.
+
+### Messenger roster/startup contract
+- `roster/messenger/` is a required first-class butler config directory with identity files (`butler.toml`, `CLAUDE.md`, `MANIFESTO.md`) aligned to `docs/roles/messenger_butler.md`.
+- `src/butlers/config.py::load_config` enforces messenger runtime prerequisites: at least one delivery module (`[modules.telegram]` and/or `[modules.email]`) must be configured, and at least one bot scope must remain enabled (`modules.telegram.bot.enabled` or `modules.email.bot.enabled`).
+- README local/dev runbook includes explicit Switchboard+Messenger startup (`butlers up --only switchboard --only messenger`) and Messenger port `8104`.
