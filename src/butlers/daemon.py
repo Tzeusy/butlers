@@ -920,6 +920,24 @@ class ButlerDaemon:
                     ),
                 )
 
+            expected_origin = parsed_route.request_context.source_sender_identity
+            if notify_request.origin_butler != expected_origin:
+                message = (
+                    "notify_request.origin_butler must match "
+                    "request_context.source_sender_identity."
+                )
+                return _route_error_response(
+                    context_payload=route_context,
+                    error_class="validation_error",
+                    message=message,
+                    notify_response=_notify_error_response(
+                        request_id=route_request_id,
+                        channel=notify_request.delivery.channel,
+                        error_class="validation_error",
+                        message=message,
+                    ),
+                )
+
             channel = notify_request.delivery.channel
             intent = notify_request.delivery.intent
             message_text = notify_request.delivery.message
@@ -948,7 +966,10 @@ class ButlerDaemon:
                             raise ValueError(
                                 "notify_request.delivery.recipient is required for send intent."
                             )
-                        adapter_result = await telegram_module._send_message(recipient, rendered_text)
+                        adapter_result = await telegram_module._send_message(
+                            recipient,
+                            rendered_text,
+                        )
                     else:
                         thread_identity = (
                             notify_context.source_thread_identity if notify_context else None
