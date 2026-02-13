@@ -887,9 +887,7 @@ class TestRejectAction:
         action_id = uuid.uuid4()
         mock_db._insert_action(id=action_id, tool_name="email_send", status="pending")
 
-        await module._reject_action(
-            str(action_id), reason="Denied by operator", actor=human_actor
-        )
+        await module._reject_action(str(action_id), reason="Denied by operator", actor=human_actor)
 
         event = next(e for e in mock_db.approval_events if e["action_id"] == action_id)
         assert event["event_type"] == "action_rejected"
