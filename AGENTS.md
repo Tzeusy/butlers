@@ -292,6 +292,11 @@ make test-qg
 - `roster/switchboard/tools/routing/route.py::_call_butler_tool` calls butler endpoints via `fastmcp.Client` and should return `CallToolResult.data` when present.
 - If a target returns `Unknown tool` for an identity-prefixed routing tool name, routing retries `trigger` with mapped args (`prompt` from `prompt`/`message`, optional `context`).
 
+### Switchboard resilience policy contract
+- `roster/switchboard/tools/routing/route.py::route` resolves route resilience policy by source channel + policy tier (with optional per-call `args["resilience_policy"]` overrides), enforcing per-attempt timeout, bounded retry/backoff, and per-target circuit state (`closed`, `open`, `half-open`).
+- Retry attempts are emitted as structured `switchboard.retry_attempt` logs and `butlers.switchboard.retry_attempt` metric increments; circuit transitions emit structured `switchboard.circuit_transition` logs and `butlers.switchboard.circuit_transition` metric increments.
+- Circuit state is maintained per target in-memory and test resets should use `_reset_router_client_cache_for_tests()` to clear both router-client cache and circuit state.
+
 ### Base notify and module-tool naming contract
 - `docs/roles/base_butler.md` defines `notify` as a versioned envelope surface (`notify.v1` request, `notify_response.v1` response) with required `origin_butler`; reply intents require request-context targeting fields.
 - Messenger delivery transport is route-wrapped: Switchboard dispatches `route.v1` to Messenger `route.execute` with `notify.v1` in `input.context.notify_request`; Messenger returns `route_response.v1` and should place normalized delivery output in `result.notify_response`.

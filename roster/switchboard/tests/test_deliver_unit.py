@@ -7,6 +7,8 @@ integration tests in test_tools.py which use a real Postgres container.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import uuid
 from types import SimpleNamespace
 from typing import Any
@@ -1091,3 +1093,214 @@ class TestCallButlerTool:
         assert "Source metadata" in fallback_args["context"]
         assert "bot_telegram_get_updates" in fallback_args["context"]
         assert "msg-12" in fallback_args["context"]
+
+
+class TestRouteResiliencePolicies:
+    """Unit tests for route timeout/retry/circuit-breaker policy behavior."""
+
+    @pytest.fixture(autouse=True)
+    async def _reset_router_state(self):
+        from butlers.tools.switchboard.routing.route import _reset_router_client_cache_for_tests
+
+        await _reset_router_client_cache_for_tests()
+        yield
+        await _reset_router_client_cache_for_tests()
+
+    async def test_route_retries_retryable_timeout_and_emits_observability(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from butlers.tools.switchboard import route
+
+        pool = _make_mock_pool()
+        pool.fetchrow = AsyncMock(return_value=_registry_row("target", "http://localhost:8102/sse"))
+
+        retry_counter = SimpleNamespace(add=MagicMock())
+        sleep_mock = AsyncMock()
+        attempts = 0
+
+        async def flaky_call(endpoint_url, tool_name, args):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise TimeoutError("transient timeout")
+            return {"ok": True}
+
+        with (
+            patch(
+                "butlers.tools.switchboard.routing.route._RETRY_ATTEMPT_COUNTER",
+                retry_counter,
+            ),
+            patch("butlers.tools.switchboard.routing.route.asyncio.sleep", sleep_mock),
+        ):
+            with caplog.at_level(logging.INFO, logger="butlers.tools.switchboard.routing.route"):
+                result = await route(
+                    pool,
+                    "target",
+                    "ping",
+                    {"source_channel": "telegram"},
+                    call_fn=flaky_call,
+                )
+
+        assert result == {"result": {"ok": True}}
+        assert attempts == 2
+        assert sleep_mock.await_count == 1
+        retry_counter.add.assert_called_once()
+        assert any(record.msg == "switchboard.retry_attempt" for record in caplog.records)
+
+    async def test_route_does_not_retry_non_retryable_failure(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from butlers.tools.switchboard import route
+
+        pool = _make_mock_pool()
+        pool.fetchrow = AsyncMock(return_value=_registry_row("target", "http://localhost:8103/sse"))
+
+        retry_counter = SimpleNamespace(add=MagicMock())
+        sleep_mock = AsyncMock()
+        attempts = 0
+
+        async def validation_failure(endpoint_url, tool_name, args):
+            nonlocal attempts
+            attempts += 1
+            raise ValueError("invalid route payload")
+
+        with (
+            patch(
+                "butlers.tools.switchboard.routing.route._RETRY_ATTEMPT_COUNTER",
+                retry_counter,
+            ),
+            patch("butlers.tools.switchboard.routing.route.asyncio.sleep", sleep_mock),
+        ):
+            with caplog.at_level(logging.INFO, logger="butlers.tools.switchboard.routing.route"):
+                result = await route(
+                    pool,
+                    "target",
+                    "ping",
+                    {"source_channel": "telegram"},
+                    call_fn=validation_failure,
+                )
+
+        assert "ValueError" in result["error"]
+        assert attempts == 1
+        assert sleep_mock.await_count == 0
+        retry_counter.add.assert_not_called()
+        assert not any(record.msg == "switchboard.retry_attempt" for record in caplog.records)
+
+    async def test_route_opens_circuit_and_fast_fails_while_open(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from butlers.tools.switchboard import route
+
+        pool = _make_mock_pool()
+        pool.fetchrow = AsyncMock(return_value=_registry_row("target", "http://localhost:8104/sse"))
+
+        circuit_counter = SimpleNamespace(add=MagicMock())
+        call_count = 0
+        policy_args = {
+            "source_channel": "telegram",
+            "resilience_policy": {
+                "retry": {"max_attempts": 1},
+                "circuit_breaker": {"failure_threshold": 1, "open_duration_s": 60.0},
+            },
+        }
+
+        async def unavailable_target(endpoint_url, tool_name, args):
+            nonlocal call_count
+            call_count += 1
+            raise ConnectionError("target offline")
+
+        with patch(
+            "butlers.tools.switchboard.routing.route._CIRCUIT_TRANSITION_COUNTER",
+            circuit_counter,
+        ):
+            with caplog.at_level(logging.INFO, logger="butlers.tools.switchboard.routing.route"):
+                first = await route(
+                    pool,
+                    "target",
+                    "ping",
+                    dict(policy_args),
+                    call_fn=unavailable_target,
+                )
+                second = await route(
+                    pool,
+                    "target",
+                    "ping",
+                    dict(policy_args),
+                    call_fn=unavailable_target,
+                )
+
+        assert "ConnectionError" in first["error"]
+        assert "Circuit breaker open" in second["error"]
+        assert call_count == 1
+        circuit_counter.add.assert_called()
+        assert any(
+            record.msg == "switchboard.circuit_transition"
+            and getattr(record, "new_state", None) == "open"
+            for record in caplog.records
+        )
+
+    async def test_route_half_open_probe_recovers_after_cooldown(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from butlers.tools.switchboard import route
+
+        pool = _make_mock_pool()
+        pool.fetchrow = AsyncMock(return_value=_registry_row("target", "http://localhost:8105/sse"))
+
+        policy_args = {
+            "source_channel": "telegram",
+            "resilience_policy": {
+                "retry": {"max_attempts": 1},
+                "circuit_breaker": {"failure_threshold": 1, "open_duration_s": 0.01},
+            },
+        }
+        call_count = 0
+
+        async def fail_once_then_succeed(endpoint_url, tool_name, args):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ConnectionError("target offline")
+            return {"ok": True}
+
+        with caplog.at_level(logging.INFO, logger="butlers.tools.switchboard.routing.route"):
+            first = await route(
+                pool,
+                "target",
+                "ping",
+                dict(policy_args),
+                call_fn=fail_once_then_succeed,
+            )
+            second = await route(
+                pool,
+                "target",
+                "ping",
+                dict(policy_args),
+                call_fn=fail_once_then_succeed,
+            )
+            await asyncio.sleep(0.02)
+            third = await route(
+                pool,
+                "target",
+                "ping",
+                dict(policy_args),
+                call_fn=fail_once_then_succeed,
+            )
+
+        assert "ConnectionError" in first["error"]
+        assert "Circuit breaker open" in second["error"]
+        assert third == {"result": {"ok": True}}
+        assert call_count == 2
+
+        transitions = [
+            getattr(record, "new_state", None)
+            for record in caplog.records
+            if record.msg == "switchboard.circuit_transition"
+        ]
+        assert "open" in transitions
+        assert "half-open" in transitions
+        assert "closed" in transitions

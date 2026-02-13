@@ -7,18 +7,97 @@ import json
 import logging
 import re
 import time
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import asyncpg
 from fastmcp import Client as MCPClient
-from opentelemetry import trace
+from opentelemetry import metrics, trace
 
 from butlers.core.telemetry import inject_trace_context
 
 logger = logging.getLogger(__name__)
+meter = metrics.get_meter(__name__)
 _ROUTER_CLIENTS: dict[str, tuple[MCPClient, Any]] = {}
 _ROUTER_CLIENT_LOCKS: dict[str, asyncio.Lock] = {}
+_TARGET_CIRCUIT_STATES: dict[str, _CircuitState] = {}
+_TARGET_CIRCUIT_LOCKS: dict[str, asyncio.Lock] = {}
 _IDENTITY_TOOL_RE = re.compile(r"^(user|bot)_[a-z0-9_]+_[a-z0-9_]+$")
+_POLICY_TIERS = frozenset({"default", "interactive", "high_priority"})
+_SOURCE_DEFAULT_POLICY_TIER = {
+    "telegram": "interactive",
+    "email": "interactive",
+    "api": "default",
+    "mcp": "default",
+}
+_RETRY_ATTEMPT_COUNTER = meter.create_counter(
+    "butlers.switchboard.retry_attempt",
+    description="Number of route retry attempts by switchboard target dispatch.",
+)
+_CIRCUIT_TRANSITION_COUNTER = meter.create_counter(
+    "butlers.switchboard.circuit_transition",
+    description="Number of circuit-breaker state transitions by target.",
+)
+
+CircuitStateName = Literal["closed", "open", "half-open"]
+PolicyTier = Literal["default", "interactive", "high_priority"]
+
+
+@dataclass(frozen=True)
+class _RetryPolicy:
+    max_attempts: int = 2
+    backoff_initial_s: float = 0.1
+    backoff_multiplier: float = 2.0
+    backoff_max_s: float = 1.0
+
+
+@dataclass(frozen=True)
+class _CircuitBreakerPolicy:
+    failure_threshold: int = 3
+    open_duration_s: float = 30.0
+
+
+@dataclass(frozen=True)
+class _RouteResiliencePolicy:
+    timeout_s: float = 5.0
+    retry: _RetryPolicy = _RetryPolicy()
+    circuit_breaker: _CircuitBreakerPolicy = _CircuitBreakerPolicy()
+
+
+@dataclass
+class _CircuitState:
+    name: CircuitStateName = "closed"
+    consecutive_retryable_failures: int = 0
+    opened_until_monotonic: float | None = None
+
+
+_ROUTE_POLICIES_BY_SOURCE_AND_TIER: dict[tuple[str, PolicyTier], _RouteResiliencePolicy] = {
+    ("*", "default"): _RouteResiliencePolicy(
+        timeout_s=5.0,
+        retry=_RetryPolicy(max_attempts=2, backoff_initial_s=0.1, backoff_multiplier=2.0),
+        circuit_breaker=_CircuitBreakerPolicy(failure_threshold=3, open_duration_s=30.0),
+    ),
+    ("*", "interactive"): _RouteResiliencePolicy(
+        timeout_s=3.0,
+        retry=_RetryPolicy(max_attempts=3, backoff_initial_s=0.05, backoff_multiplier=2.0),
+        circuit_breaker=_CircuitBreakerPolicy(failure_threshold=2, open_duration_s=15.0),
+    ),
+    ("*", "high_priority"): _RouteResiliencePolicy(
+        timeout_s=6.0,
+        retry=_RetryPolicy(max_attempts=3, backoff_initial_s=0.1, backoff_multiplier=2.0),
+        circuit_breaker=_CircuitBreakerPolicy(failure_threshold=3, open_duration_s=20.0),
+    ),
+    ("telegram", "interactive"): _RouteResiliencePolicy(
+        timeout_s=2.5,
+        retry=_RetryPolicy(max_attempts=3, backoff_initial_s=0.05, backoff_multiplier=2.0),
+        circuit_breaker=_CircuitBreakerPolicy(failure_threshold=2, open_duration_s=12.0),
+    ),
+    ("email", "interactive"): _RouteResiliencePolicy(
+        timeout_s=4.0,
+        retry=_RetryPolicy(max_attempts=2, backoff_initial_s=0.1, backoff_multiplier=2.0),
+        circuit_breaker=_CircuitBreakerPolicy(failure_threshold=2, open_duration_s=20.0),
+    ),
+}
 
 
 def _router_lock(endpoint_url: str) -> asyncio.Lock:
@@ -27,6 +106,342 @@ def _router_lock(endpoint_url: str) -> asyncio.Lock:
         lock = asyncio.Lock()
         _ROUTER_CLIENT_LOCKS[endpoint_url] = lock
     return lock
+
+
+def _target_circuit_lock(target_butler: str) -> asyncio.Lock:
+    lock = _TARGET_CIRCUIT_LOCKS.get(target_butler)
+    if lock is None:
+        lock = asyncio.Lock()
+        _TARGET_CIRCUIT_LOCKS[target_butler] = lock
+    return lock
+
+
+def _get_target_circuit_state(target_butler: str) -> _CircuitState:
+    state = _TARGET_CIRCUIT_STATES.get(target_butler)
+    if state is None:
+        state = _CircuitState()
+        _TARGET_CIRCUIT_STATES[target_butler] = state
+    return state
+
+
+def _count_open_circuit_targets() -> int:
+    return sum(1 for state in _TARGET_CIRCUIT_STATES.values() if state.name == "open")
+
+
+def _coerce_positive_float(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return parsed
+
+
+def _coerce_positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return parsed
+
+
+def _extract_source_channel(args: dict[str, Any], source_metadata: dict[str, Any]) -> str:
+    return str(
+        source_metadata.get("channel")
+        or args.get("source_channel")
+        or args.get("source")
+        or "switchboard"
+    )
+
+
+def _extract_policy_tier(args: dict[str, Any], source_channel: str) -> PolicyTier:
+    raw_source_metadata = args.get("source_metadata")
+    source_metadata = raw_source_metadata if isinstance(raw_source_metadata, dict) else {}
+    raw_tier = (
+        args.get("policy_tier")
+        or args.get("source_policy_tier")
+        or source_metadata.get("policy_tier")
+    )
+    normalized = str(raw_tier).strip().lower() if raw_tier is not None else ""
+    if normalized in _POLICY_TIERS:
+        return normalized  # type: ignore[return-value]
+
+    inferred = _SOURCE_DEFAULT_POLICY_TIER.get(source_channel.lower(), "default")
+    if inferred in _POLICY_TIERS:
+        return inferred  # type: ignore[return-value]
+    return "default"
+
+
+def _build_override_policy(
+    args: dict[str, Any],
+    default_policy: _RouteResiliencePolicy,
+) -> _RouteResiliencePolicy | None:
+    override = args.get("resilience_policy")
+    if not isinstance(override, dict):
+        return None
+
+    retry_override = override.get("retry")
+    circuit_override = override.get("circuit_breaker")
+
+    retry_dict = retry_override if isinstance(retry_override, dict) else {}
+    circuit_dict = circuit_override if isinstance(circuit_override, dict) else {}
+
+    retry_policy = _RetryPolicy(
+        max_attempts=_coerce_positive_int(
+            retry_dict.get("max_attempts"),
+            default_policy.retry.max_attempts,
+        ),
+        backoff_initial_s=_coerce_positive_float(
+            retry_dict.get("backoff_initial_s"),
+            default_policy.retry.backoff_initial_s,
+        ),
+        backoff_multiplier=_coerce_positive_float(
+            retry_dict.get("backoff_multiplier"),
+            default_policy.retry.backoff_multiplier,
+        ),
+        backoff_max_s=_coerce_positive_float(
+            retry_dict.get("backoff_max_s"),
+            default_policy.retry.backoff_max_s,
+        ),
+    )
+    circuit_policy = _CircuitBreakerPolicy(
+        failure_threshold=_coerce_positive_int(
+            circuit_dict.get("failure_threshold"),
+            default_policy.circuit_breaker.failure_threshold,
+        ),
+        open_duration_s=_coerce_positive_float(
+            circuit_dict.get("open_duration_s"),
+            default_policy.circuit_breaker.open_duration_s,
+        ),
+    )
+    return _RouteResiliencePolicy(
+        timeout_s=_coerce_positive_float(override.get("timeout_s"), default_policy.timeout_s),
+        retry=retry_policy,
+        circuit_breaker=circuit_policy,
+    )
+
+
+def _resolve_route_resilience_policy(
+    args: dict[str, Any],
+) -> tuple[str, PolicyTier, _RouteResiliencePolicy]:
+    source_metadata = _extract_source_metadata(args)
+    source_channel = _extract_source_channel(args, source_metadata).lower()
+    policy_tier = _extract_policy_tier(args, source_channel)
+    base_policy = _ROUTE_POLICIES_BY_SOURCE_AND_TIER.get(
+        (source_channel, policy_tier)
+    ) or _ROUTE_POLICIES_BY_SOURCE_AND_TIER.get(("*", policy_tier))
+    if base_policy is None:
+        base_policy = _ROUTE_POLICIES_BY_SOURCE_AND_TIER[("*", "default")]
+
+    override_policy = _build_override_policy(args, base_policy)
+    return source_channel, policy_tier, override_policy or base_policy
+
+
+def _classify_route_error(exc: Exception) -> tuple[str, bool]:
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return "timeout", True
+    if isinstance(exc, (ConnectionError, OSError)):
+        return "target_unavailable", True
+    if isinstance(exc, (ValueError, TypeError)):
+        return "validation_error", False
+    return "internal_error", False
+
+
+def _emit_retry_attempt(
+    *,
+    target_butler: str,
+    source_channel: str,
+    policy_tier: PolicyTier,
+    error_class: str,
+    attempt: int,
+    max_attempts: int,
+    backoff_s: float,
+) -> None:
+    logger.info(
+        "switchboard.retry_attempt",
+        extra={
+            "event": "switchboard.retry_attempt",
+            "target_butler": target_butler,
+            "source_channel": source_channel,
+            "policy_tier": policy_tier,
+            "error_class": error_class,
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "backoff_s": backoff_s,
+        },
+    )
+    _RETRY_ATTEMPT_COUNTER.add(
+        1,
+        attributes={
+            "target_butler": target_butler,
+            "source_channel": source_channel,
+            "policy_tier": policy_tier,
+            "error_class": error_class,
+        },
+    )
+
+
+def _emit_circuit_transition(
+    *,
+    target_butler: str,
+    source_channel: str,
+    policy_tier: PolicyTier,
+    previous_state: CircuitStateName,
+    new_state: CircuitStateName,
+    reason: str,
+) -> None:
+    open_targets = _count_open_circuit_targets()
+    logger.info(
+        "switchboard.circuit_transition",
+        extra={
+            "event": "switchboard.circuit_transition",
+            "target_butler": target_butler,
+            "source_channel": source_channel,
+            "policy_tier": policy_tier,
+            "previous_state": previous_state,
+            "new_state": new_state,
+            "reason": reason,
+            "open_targets": open_targets,
+        },
+    )
+    _CIRCUIT_TRANSITION_COUNTER.add(
+        1,
+        attributes={
+            "target_butler": target_butler,
+            "source_channel": source_channel,
+            "policy_tier": policy_tier,
+            "from_state": previous_state,
+            "to_state": new_state,
+        },
+    )
+
+
+def _set_circuit_state(
+    *,
+    target_butler: str,
+    state: _CircuitState,
+    source_channel: str,
+    policy_tier: PolicyTier,
+    new_state: CircuitStateName,
+    reason: str,
+    open_until_monotonic: float | None = None,
+) -> None:
+    previous_state = state.name
+    if previous_state == new_state and state.opened_until_monotonic == open_until_monotonic:
+        return
+    state.name = new_state
+    state.opened_until_monotonic = open_until_monotonic
+    _emit_circuit_transition(
+        target_butler=target_butler,
+        source_channel=source_channel,
+        policy_tier=policy_tier,
+        previous_state=previous_state,
+        new_state=new_state,
+        reason=reason,
+    )
+
+
+async def _evaluate_circuit_guard(
+    *,
+    target_butler: str,
+    source_channel: str,
+    policy_tier: PolicyTier,
+) -> str | None:
+    async with _target_circuit_lock(target_butler):
+        state = _get_target_circuit_state(target_butler)
+        now = time.monotonic()
+
+        if state.name != "open":
+            return None
+
+        if state.opened_until_monotonic is not None and now >= state.opened_until_monotonic:
+            _set_circuit_state(
+                target_butler=target_butler,
+                state=state,
+                source_channel=source_channel,
+                policy_tier=policy_tier,
+                new_state="half-open",
+                reason="cooldown_expired",
+            )
+            return None
+
+        wait_s = 0.0
+        if state.opened_until_monotonic is not None:
+            wait_s = max(0.0, state.opened_until_monotonic - now)
+        return f"Circuit breaker open for target '{target_butler}' (retry after {wait_s:.2f}s)."
+
+
+async def _record_circuit_success(
+    *,
+    target_butler: str,
+    source_channel: str,
+    policy_tier: PolicyTier,
+) -> None:
+    async with _target_circuit_lock(target_butler):
+        state = _get_target_circuit_state(target_butler)
+        previous = state.name
+        state.consecutive_retryable_failures = 0
+        state.opened_until_monotonic = None
+        if previous != "closed":
+            _set_circuit_state(
+                target_butler=target_butler,
+                state=state,
+                source_channel=source_channel,
+                policy_tier=policy_tier,
+                new_state="closed",
+                reason="probe_success" if previous == "half-open" else "recovered",
+            )
+
+
+async def _record_circuit_failure(
+    *,
+    target_butler: str,
+    source_channel: str,
+    policy_tier: PolicyTier,
+    policy: _RouteResiliencePolicy,
+    retryable: bool,
+    error_class: str,
+) -> None:
+    async with _target_circuit_lock(target_butler):
+        state = _get_target_circuit_state(target_butler)
+
+        if not retryable:
+            if state.name == "half-open":
+                state.consecutive_retryable_failures = 0
+                _set_circuit_state(
+                    target_butler=target_butler,
+                    state=state,
+                    source_channel=source_channel,
+                    policy_tier=policy_tier,
+                    new_state="closed",
+                    reason=f"{error_class}_non_retryable",
+                )
+            return
+
+        state.consecutive_retryable_failures += 1
+
+        should_open = (
+            state.consecutive_retryable_failures >= policy.circuit_breaker.failure_threshold
+        )
+        if state.name == "half-open":
+            should_open = True
+
+        if not should_open:
+            return
+
+        open_until = time.monotonic() + policy.circuit_breaker.open_duration_s
+        _set_circuit_state(
+            target_butler=target_butler,
+            state=state,
+            source_channel=source_channel,
+            policy_tier=policy_tier,
+            new_state="open",
+            reason=f"{error_class}_failure_threshold",
+            open_until_monotonic=open_until,
+        )
 
 
 def _is_cached_router_client_healthy(client_ctx: MCPClient, client: Any) -> bool:
@@ -116,11 +531,13 @@ async def _call_tool_with_router_client(
 
 
 async def _reset_router_client_cache_for_tests() -> None:
-    """Test helper: close and clear cached router clients."""
+    """Test helper: close and clear cached router/circuit state."""
     endpoints = list(_ROUTER_CLIENTS.keys())
     for endpoint_url in endpoints:
         await _close_cached_router_client(endpoint_url)
     _ROUTER_CLIENT_LOCKS.clear()
+    _TARGET_CIRCUIT_STATES.clear()
+    _TARGET_CIRCUIT_LOCKS.clear()
 
 
 def _extract_mcp_error_text(result: Any) -> str:
@@ -246,29 +663,105 @@ async def route(
         if trace_context:
             args = {**args, "_trace_context": trace_context}
 
-        try:
-            if call_fn is not None:
-                result = await call_fn(endpoint_url, tool_name, args)
-            else:
-                result = await _call_butler_tool(endpoint_url, tool_name, args)
+        source_channel, policy_tier, policy = _resolve_route_resilience_policy(args)
+        span.set_attribute("source_channel", source_channel)
+        span.set_attribute("policy_tier", policy_tier)
+        span.set_attribute("route_timeout_s", policy.timeout_s)
+        span.set_attribute("retry_max_attempts", policy.retry.max_attempts)
+
+        circuit_error = await _evaluate_circuit_guard(
+            target_butler=target_butler,
+            source_channel=source_channel,
+            policy_tier=policy_tier,
+        )
+        if circuit_error is not None:
+            span.set_status(trace.StatusCode.ERROR, circuit_error)
             duration_ms = int((time.monotonic() - t0) * 1000)
-            await _log_routing(
-                pool, source_butler, target_butler, tool_name, True, duration_ms, None
-            )
-            # Update last_seen_at on successful route
-            await pool.execute(
-                "UPDATE butler_registry SET last_seen_at = now() WHERE name = $1",
-                target_butler,
-            )
-            return {"result": result}
-        except Exception as exc:
-            span.set_status(trace.StatusCode.ERROR, str(exc))
-            duration_ms = int((time.monotonic() - t0) * 1000)
-            error_msg = f"{type(exc).__name__}: {exc}"
+            error_msg = f"ConnectionError: {circuit_error}"
             await _log_routing(
                 pool, source_butler, target_butler, tool_name, False, duration_ms, error_msg
             )
             return {"error": error_msg}
+
+        backoff_s = policy.retry.backoff_initial_s
+        last_exc: Exception | None = None
+        last_error_class = "internal_error"
+        last_retryable = False
+
+        for attempt in range(1, policy.retry.max_attempts + 1):
+            try:
+                call_coro = (
+                    call_fn(endpoint_url, tool_name, args)
+                    if call_fn is not None
+                    else _call_butler_tool(endpoint_url, tool_name, args)
+                )
+                result = await asyncio.wait_for(call_coro, timeout=policy.timeout_s)
+                await _record_circuit_success(
+                    target_butler=target_butler,
+                    source_channel=source_channel,
+                    policy_tier=policy_tier,
+                )
+                duration_ms = int((time.monotonic() - t0) * 1000)
+                await _log_routing(
+                    pool, source_butler, target_butler, tool_name, True, duration_ms, None
+                )
+                await pool.execute(
+                    "UPDATE butler_registry SET last_seen_at = now() WHERE name = $1",
+                    target_butler,
+                )
+                return {"result": result}
+            except TimeoutError:
+                last_exc = TimeoutError(
+                    f"Route to '{target_butler}' timed out after {policy.timeout_s:.2f}s"
+                )
+            except Exception as exc:
+                last_exc = exc
+
+            assert last_exc is not None  # narrowed for mypy/pyright
+            error_class, retryable = _classify_route_error(last_exc)
+            last_error_class = error_class
+            last_retryable = retryable
+
+            if retryable and attempt < policy.retry.max_attempts:
+                _emit_retry_attempt(
+                    target_butler=target_butler,
+                    source_channel=source_channel,
+                    policy_tier=policy_tier,
+                    error_class=error_class,
+                    attempt=attempt,
+                    max_attempts=policy.retry.max_attempts,
+                    backoff_s=backoff_s,
+                )
+                await asyncio.sleep(backoff_s)
+                backoff_s = min(
+                    backoff_s * policy.retry.backoff_multiplier,
+                    policy.retry.backoff_max_s,
+                )
+                continue
+            break
+
+        assert last_exc is not None  # for static type narrowing
+        await _record_circuit_failure(
+            target_butler=target_butler,
+            source_channel=source_channel,
+            policy_tier=policy_tier,
+            policy=policy,
+            retryable=last_retryable,
+            error_class=last_error_class,
+        )
+        span.set_status(trace.StatusCode.ERROR, str(last_exc))
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        error_msg = f"{type(last_exc).__name__}: {last_exc}"
+        await _log_routing(
+            pool,
+            source_butler,
+            target_butler,
+            tool_name,
+            False,
+            duration_ms,
+            error_msg,
+        )
+        return {"error": error_msg}
 
 
 async def post_mail(
