@@ -269,84 +269,6 @@ class RouteInputV1(BaseModel):
     context: NonEmptyStr | dict[str, Any] | None = None
 
 
-class NotifyDeliveryV1(BaseModel):
-    """Delivery request payload for `notify.v1`."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    intent: NotifyIntent
-    channel: NotifyChannel
-    message: NonEmptyStr
-    recipient: NonEmptyStr | None = None
-    subject: NonEmptyStr | None = None
-
-
-class NotifyRequestContextV1(BaseModel):
-    """Targeting lineage for notify requests."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    request_id: UUID
-    source_channel: SourceChannel
-    source_endpoint_identity: NonEmptyStr
-    source_sender_identity: NonEmptyStr
-    source_thread_identity: NonEmptyStr | None = None
-    received_at: datetime | None = None
-
-    @field_validator("request_id")
-    @classmethod
-    def _request_id_must_be_uuid7(cls, value: UUID) -> UUID:
-        if value.version != 7:
-            raise PydanticCustomError(
-                "uuid7_required",
-                "request_context.request_id must be a valid UUID7.",
-                {},
-            )
-        return value
-
-    @field_validator("received_at", mode="before")
-    @classmethod
-    def _received_at_must_be_rfc3339_string(cls, value: Any) -> Any:
-        if value is None:
-            return value
-        return _validate_rfc3339_timestamp_input(value, field_name="request_context.received_at")
-
-    @field_validator("received_at")
-    @classmethod
-    def _received_at_must_be_tz_aware(cls, value: datetime | None) -> datetime | None:
-        if value is None:
-            return value
-        return _validate_tz_aware(value, field_name="request_context.received_at")
-
-
-class NotifyRequestV1(BaseModel):
-    """Canonical versioned notify envelope (`notify.v1`)."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    schema_version: str
-    origin_butler: NonEmptyStr
-    delivery: NotifyDeliveryV1
-    request_context: NotifyRequestContextV1 | None = None
-
-    @field_validator("schema_version")
-    @classmethod
-    def _validate_notify_schema_version(cls, value: str) -> str:
-        return _validate_schema_version(value, expected="notify.v1")
-
-    @model_validator(mode="after")
-    def _validate_reply_requirements(self) -> NotifyRequestV1:
-        if self.delivery.intent != "reply":
-            return self
-        if self.request_context is None:
-            raise PydanticCustomError(
-                "missing_reply_context",
-                "request_context is required for reply intent.",
-                {},
-            )
-        return self
-
-
 class RouteSubrequestV1(BaseModel):
     """Subrequest metadata for fanout routing."""
 
@@ -416,6 +338,93 @@ class RouteEnvelopeV1(BaseModel):
         return self
 
 
+class NotifyRequestContextV1(BaseModel):
+    """Optional request-context lineage for `notify.v1` requests."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_id: UUID
+    source_channel: SourceChannel
+    source_endpoint_identity: NonEmptyStr
+    source_sender_identity: NonEmptyStr
+    source_thread_identity: NonEmptyStr | None = None
+    received_at: datetime | None = None
+
+    @field_validator("request_id")
+    @classmethod
+    def _request_id_must_be_uuid7(cls, value: UUID) -> UUID:
+        if value.version != 7:
+            raise PydanticCustomError(
+                "uuid7_required",
+                "request_context.request_id must be a valid UUID7.",
+                {},
+            )
+        return value
+
+    @field_validator("received_at")
+    @classmethod
+    def _received_at_must_be_tz_aware(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        return _validate_tz_aware(value, field_name="request_context.received_at")
+
+    @field_validator("received_at", mode="before")
+    @classmethod
+    def _received_at_must_be_rfc3339_string(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        return _validate_rfc3339_timestamp_input(value, field_name="request_context.received_at")
+
+
+class NotifyDeliveryV1(BaseModel):
+    """Delivery payload for `notify.v1` requests."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    intent: NotifyIntent
+    channel: NotifyChannel
+    message: NonEmptyStr
+    recipient: NonEmptyStr | None = None
+    subject: NonEmptyStr | None = None
+
+
+class NotifyRequestV1(BaseModel):
+    """Canonical versioned notify envelope (`notify.v1`)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: str
+    origin_butler: NonEmptyStr
+    delivery: NotifyDeliveryV1
+    request_context: NotifyRequestContextV1 | None = None
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_notify_schema_version(cls, value: str) -> str:
+        return _validate_schema_version(value, expected="notify.v1")
+
+    @model_validator(mode="after")
+    def _validate_reply_context(self) -> NotifyRequestV1:
+        if self.delivery.intent != "reply":
+            return self
+
+        if self.request_context is None:
+            raise PydanticCustomError(
+                "reply_context_required",
+                "notify.v1 reply intent requires request_context.",
+                {},
+            )
+
+        if self.delivery.channel == "telegram" and not self.request_context.source_thread_identity:
+            raise PydanticCustomError(
+                "reply_thread_required",
+                "notify.v1 telegram reply intent requires request_context.source_thread_identity.",
+                {},
+            )
+
+        return self
+
+
 def parse_ingest_envelope(payload: Mapping[str, Any]) -> IngestEnvelopeV1:
     """Parse and validate an `ingest.v1` envelope."""
 
@@ -429,7 +438,7 @@ def parse_route_envelope(payload: Mapping[str, Any]) -> RouteEnvelopeV1:
 
 
 def parse_notify_request(payload: Mapping[str, Any]) -> NotifyRequestV1:
-    """Parse and validate a `notify.v1` request."""
+    """Parse and validate a `notify.v1` request envelope."""
 
     return NotifyRequestV1.model_validate(payload)
 
