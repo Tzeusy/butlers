@@ -38,6 +38,9 @@ class TestRoutingResult:
         assert result.route_result == {}
         assert result.classification_error is None
         assert result.routing_error is None
+        assert result.routed_targets == []
+        assert result.acked_targets == []
+        assert result.failed_targets == []
 
     def test_with_all_fields(self):
         """RoutingResult can be constructed with all fields."""
@@ -46,9 +49,15 @@ class TestRoutingResult:
             route_result={"result": "ok"},
             classification_error=None,
             routing_error=None,
+            routed_targets=["health"],
+            acked_targets=["health"],
+            failed_targets=[],
         )
         assert result.target_butler == "health"
         assert result.route_result == {"result": "ok"}
+        assert result.routed_targets == ["health"]
+        assert result.acked_targets == ["health"]
+        assert result.failed_targets == []
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +95,9 @@ class TestMessagePipelineProcess:
         assert result.route_result == {"result": "handled"}
         assert result.classification_error is None
         assert result.routing_error is None
+        assert result.routed_targets == ["health"]
+        assert result.acked_targets == ["health"]
+        assert result.failed_targets == []
 
     async def test_passes_message_as_tool_arg(self):
         """Pipeline includes message text in the tool_args sent to route."""
@@ -110,8 +122,182 @@ class TestMessagePipelineProcess:
         assert captured_args["message"] == "hello world"
         assert captured_args["extra"] == "data"
 
+    async def test_enriches_route_args_with_source_metadata(self):
+        """Pipeline routes include identity-aware source metadata."""
+        captured_args: dict[str, Any] = {}
+
+        async def mock_classify(pool, message, dispatch_fn):
+            return "general"
+
+        async def mock_route(pool, target, tool_name, args, source):
+            captured_args.update(args)
+            return {"result": "ok"}
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(),
+            dispatch_fn=AsyncMock(),
+            classify_fn=mock_classify,
+            route_fn=mock_route,
+        )
+
+        await pipeline.process(
+            "hello",
+            tool_name="bot_telegram_handle_message",
+            tool_args={
+                "source": "telegram",
+                "source_identity": "bot",
+                "source_tool": "bot_telegram_get_updates",
+                "source_id": "msg-7",
+            },
+        )
+
+        assert captured_args["source_channel"] == "telegram"
+        assert captured_args["source_identity"] == "bot"
+        assert captured_args["source_tool"] == "bot_telegram_get_updates"
+        assert captured_args["source_id"] == "msg-7"
+        assert captured_args["source_metadata"] == {
+            "channel": "telegram",
+            "identity": "bot",
+            "tool_name": "bot_telegram_get_updates",
+            "source_id": "msg-7",
+        }
+
+    async def test_classification_list_dispatches_multi_targets(self, monkeypatch):
+        """Pipeline dispatches decomposed classifier output to multiple targets."""
+        import importlib
+
+        captured: dict[str, Any] = {}
+
+        async def mock_classify(pool, message, dispatch_fn):
+            return [
+                {"butler": "health", "prompt": "Log my headache"},
+                {"butler": "relationship", "prompt": "Remind me to call Mom"},
+            ]
+
+        async def mock_dispatch_decomposed(
+            pool: Any,
+            targets: list[dict[str, str]],
+            source_channel: str = "switchboard",
+            source_id: str | None = None,
+            tool_name: str = "bot_switchboard_handle_message",
+            source_metadata: dict[str, Any] | None = None,
+            *,
+            call_fn: Any | None = None,
+        ) -> list[dict[str, Any]]:
+            captured["targets"] = targets
+            captured["source_channel"] = source_channel
+            captured["source_id"] = source_id
+            captured["tool_name"] = tool_name
+            captured["source_metadata"] = source_metadata
+            return [
+                {"butler": "health", "result": "logged", "error": None},
+                {"butler": "relationship", "result": "reminder set", "error": None},
+            ]
+
+        def mock_aggregate_responses(
+            results: list[dict[str, Any]],
+            *,
+            dispatch_fn: Any | None = None,
+        ) -> str:
+            captured["results"] = results
+            return "combined response"
+
+        switchboard = importlib.import_module("butlers.tools.switchboard")
+
+        monkeypatch.setattr(
+            switchboard,
+            "dispatch_decomposed",
+            mock_dispatch_decomposed,
+        )
+        monkeypatch.setattr(
+            switchboard,
+            "aggregate_responses",
+            mock_aggregate_responses,
+        )
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(),
+            dispatch_fn=AsyncMock(),
+            classify_fn=mock_classify,
+        )
+
+        result = await pipeline.process(
+            "I have a headache and call Mom tomorrow",
+            tool_args={"source": "telegram", "source_id": "msg-1"},
+        )
+
+        assert result.target_butler == "multi"
+        assert result.route_result == {"result": "combined response"}
+        assert result.routed_targets == ["health", "relationship"]
+        assert result.acked_targets == ["health", "relationship"]
+        assert result.failed_targets == []
+        assert captured["targets"][0] == {"butler": "health", "prompt": "Log my headache"}
+        assert captured["targets"][1] == {
+            "butler": "relationship",
+            "prompt": "Remind me to call Mom",
+        }
+        assert captured["source_channel"] == "telegram"
+        assert captured["source_id"] == "msg-1"
+        assert captured["tool_name"] == "bot_switchboard_handle_message"
+        assert captured["source_metadata"] == {
+            "channel": "telegram",
+            "identity": "bot",
+            "tool_name": "bot_switchboard_handle_message",
+            "source_id": "msg-1",
+        }
+
+    async def test_classification_list_tracks_failed_targets(self, monkeypatch):
+        """Multi-route failures are surfaced in failed target metadata."""
+        import importlib
+
+        async def mock_classify(pool, message, dispatch_fn):
+            return [
+                {"butler": "health", "prompt": "Log this"},
+                {"butler": "general", "prompt": "Fallback"},
+            ]
+
+        async def mock_dispatch_decomposed(
+            pool: Any,
+            targets: list[dict[str, str]],
+            source_channel: str = "switchboard",
+            source_id: str | None = None,
+            tool_name: str = "bot_switchboard_handle_message",
+            source_metadata: dict[str, Any] | None = None,
+            *,
+            call_fn: Any | None = None,
+        ) -> list[dict[str, Any]]:
+            return [
+                {"butler": "health", "result": "ok", "error": None},
+                {"butler": "general", "result": None, "error": "ConnectionError: timeout"},
+            ]
+
+        def mock_aggregate_responses(
+            results: list[dict[str, Any]],
+            *,
+            dispatch_fn: Any | None = None,
+        ) -> str:
+            return "partial response"
+
+        switchboard = importlib.import_module("butlers.tools.switchboard")
+        monkeypatch.setattr(switchboard, "dispatch_decomposed", mock_dispatch_decomposed)
+        monkeypatch.setattr(switchboard, "aggregate_responses", mock_aggregate_responses)
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(),
+            dispatch_fn=AsyncMock(),
+            classify_fn=mock_classify,
+        )
+
+        result = await pipeline.process("test fanout")
+
+        assert result.target_butler == "multi"
+        assert result.routed_targets == ["health", "general"]
+        assert result.acked_targets == ["health"]
+        assert result.failed_targets == ["general"]
+        assert "ConnectionError" in (result.routing_error or "")
+
     async def test_classification_list_uses_first_entry_and_sub_prompt(self):
-        """Pipeline supports decomposed classifier output and routes first sub-prompt."""
+        """Custom route_fn uses first decomposition entry for single-target routing."""
         captured: dict[str, Any] = {}
 
         async def mock_classify(pool, message, dispatch_fn):
@@ -123,7 +309,7 @@ class TestMessagePipelineProcess:
         async def mock_route(pool, target, tool_name, args, source):
             captured["target"] = target
             captured["args"] = dict(args)
-            return {"result": "ok"}
+            return {"result": "handled"}
 
         pipeline = MessagePipeline(
             switchboard_pool=MagicMock(),
@@ -135,7 +321,12 @@ class TestMessagePipelineProcess:
         result = await pipeline.process("I have a headache and call Mom tomorrow")
 
         assert result.target_butler == "health"
+        assert result.route_result == {"result": "handled"}
+        assert result.routed_targets == ["health"]
+        assert result.acked_targets == ["health"]
+        assert result.failed_targets == []
         assert captured["target"] == "health"
+        assert captured["args"]["prompt"] == "Log my headache"
         assert captured["args"]["message"] == "Log my headache"
 
     async def test_passes_tool_name_to_route(self):
@@ -297,9 +488,36 @@ class TestMessagePipelineProcess:
         assert result.target_butler == "health"
         assert result.routing_error is not None
         assert "ConnectionError" in result.routing_error
+        assert result.routed_targets == ["health"]
+        assert result.acked_targets == []
+        assert result.failed_targets == ["health"]
+
+    async def test_routing_returned_error_records_failure(self):
+        """route() error payloads are treated as failures."""
+
+        async def mock_classify(pool, message, dispatch_fn):
+            return "health"
+
+        async def route_with_error(pool, target, tool_name, args, source):
+            return {"error": "ConnectionError: target unavailable"}
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(),
+            dispatch_fn=AsyncMock(),
+            classify_fn=mock_classify,
+            route_fn=route_with_error,
+        )
+
+        result = await pipeline.process("help me")
+
+        assert result.target_butler == "health"
+        assert result.routing_error == "ConnectionError: target unavailable"
+        assert result.routed_targets == ["health"]
+        assert result.acked_targets == []
+        assert result.failed_targets == ["health"]
 
     async def test_default_tool_name(self):
-        """Default tool_name is 'handle_message'."""
+        """Default tool_name is identity-prefixed."""
         captured: list[str] = []
 
         async def mock_classify(pool, message, dispatch_fn):
@@ -318,7 +536,7 @@ class TestMessagePipelineProcess:
 
         await pipeline.process("test")
 
-        assert captured == ["handle_message"]
+        assert captured == ["bot_switchboard_handle_message"]
 
     async def test_default_source_butler(self):
         """Default source_butler is 'switchboard'."""

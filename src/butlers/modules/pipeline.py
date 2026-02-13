@@ -23,6 +23,9 @@ class RoutingResult:
     route_result: dict[str, Any] = field(default_factory=dict)
     classification_error: str | None = None
     routing_error: str | None = None
+    routed_targets: list[str] = field(default_factory=list)
+    acked_targets: list[str] = field(default_factory=list)
+    failed_targets: list[str] = field(default_factory=list)
 
 
 class MessagePipeline:
@@ -60,6 +63,34 @@ class MessagePipeline:
         self._source_butler = source_butler
         self._classify_fn = classify_fn
         self._route_fn = route_fn
+
+    @staticmethod
+    def _default_identity_for_tool(tool_name: str) -> str:
+        if tool_name.startswith("user_"):
+            return "user"
+        if tool_name.startswith("bot_"):
+            return "bot"
+        return "unknown"
+
+    @classmethod
+    def _build_source_metadata(
+        cls,
+        args: dict[str, Any],
+        *,
+        tool_name: str,
+    ) -> dict[str, str]:
+        channel = str(args.get("source_channel") or args.get("source") or "unknown")
+        identity = str(args.get("source_identity") or cls._default_identity_for_tool(tool_name))
+        source_tool = str(args.get("source_tool") or tool_name)
+
+        metadata: dict[str, str] = {
+            "channel": channel,
+            "identity": identity,
+            "tool_name": source_tool,
+        }
+        if args.get("source_id") not in (None, ""):
+            metadata["source_id"] = str(args["source_id"])
+        return metadata
 
     @staticmethod
     def _message_preview(text: str, max_chars: int = 80) -> str:
@@ -115,8 +146,9 @@ class MessagePipeline:
     async def process(
         self,
         message_text: str,
-        tool_name: str = "handle_message",
+        tool_name: str = "bot_switchboard_handle_message",
         tool_args: dict[str, Any] | None = None,
+        message_inbox_id: Any | None = None,
     ) -> RoutingResult:
         """Classify a message and route it to the appropriate butler.
 
@@ -132,12 +164,17 @@ class MessagePipeline:
         tool_args:
             Additional arguments to pass along with the message.
             The message text is always included as ``"message"``.
+        message_inbox_id:
+            The ID of the message in the message_inbox table.
 
         Returns
         -------
         RoutingResult
             Contains the target butler name, route result, and any errors.
         """
+        import json
+        from datetime import UTC, datetime
+
         # Lazy import to avoid circular dependencies
         from butlers.tools.switchboard import (
             aggregate_responses,
@@ -150,8 +187,9 @@ class MessagePipeline:
         route_to = self._route_fn or route
 
         args = dict(tool_args or {})
-
-        source = str(args.get("source") or "unknown")
+        source_metadata = self._build_source_metadata(args, tool_name=tool_name)
+        source = source_metadata["channel"]
+        source_id = source_metadata.get("source_id")
         raw_chat_id = args.get("chat_id")
         chat_id = str(raw_chat_id) if raw_chat_id not in (None, "") else None
         message_length = len(message_text)
@@ -172,15 +210,14 @@ class MessagePipeline:
 
         # Step 1: Classify
         classify_start = time.perf_counter()
+        classification = None
         try:
             classification = await classify(self._pool, message_text, self._dispatch_fn)
+            classification_latency_ms = (time.perf_counter() - classify_start) * 1000
 
-            # Handle decomposition (list of sub-tasks)
-            if isinstance(classification, list) and classification:
-                # We need source_id from args if available for tracing
-                source_id = str(args.get("source_id")) if args.get("source_id") else None
-
-                classification_latency_ms = (time.perf_counter() - classify_start) * 1000
+            # Handle decomposition (list of sub-tasks) only for default routing.
+            # Custom route_fn call sites expect single-target routing semantics.
+            if isinstance(classification, list) and classification and self._route_fn is None:
                 logger.info(
                     "Pipeline classified message as decomposition",
                     extra=self._log_fields(
@@ -198,7 +235,26 @@ class MessagePipeline:
                     targets=classification,
                     source_channel=source,
                     source_id=source_id,
+                    tool_name=tool_name,
+                    source_metadata=source_metadata,
                 )
+                routed_targets = [
+                    str(entry.get("butler", "")).strip()
+                    for entry in classification
+                    if isinstance(entry, dict) and str(entry.get("butler", "")).strip()
+                ]
+                acked_targets: list[str] = []
+                failed_targets: list[str] = []
+                failed_details: list[str] = []
+                for sub_result in sub_results:
+                    butler = str(sub_result.get("butler", "")).strip()
+                    if not butler:
+                        continue
+                    if sub_result.get("error"):
+                        failed_targets.append(butler)
+                        failed_details.append(f"{butler}: {sub_result['error']}")
+                    else:
+                        acked_targets.append(butler)
 
                 aggregated = aggregate_responses(sub_results, dispatch_fn=self._dispatch_fn)
                 if hasattr(aggregated, "__await__"):
@@ -219,9 +275,36 @@ class MessagePipeline:
                     ),
                 )
 
+                if message_inbox_id:
+                    async with self._pool.acquire() as conn:
+                        await conn.execute(
+                            """
+                            UPDATE message_inbox
+                            SET
+                                classification = $1,
+                                classified_at = $2,
+                                classification_duration_ms = $3,
+                                routing_results = $4,
+                                response_summary = $5,
+                                completed_at = $6
+                            WHERE id = $7
+                            """,
+                            json.dumps(classification),
+                            datetime.now(UTC),
+                            int(classification_latency_ms),
+                            json.dumps(sub_results),
+                            aggregated,
+                            datetime.now(UTC),
+                            message_inbox_id,
+                        )
+
                 return RoutingResult(
                     target_butler="multi",
                     route_result={"result": aggregated},
+                    routing_error="; ".join(failed_details) if failed_details else None,
+                    routed_targets=routed_targets,
+                    acked_targets=acked_targets,
+                    failed_targets=failed_targets,
                 )
 
             target, routed_message = self._normalize_classification(
@@ -241,12 +324,41 @@ class MessagePipeline:
                     classification_error=error_msg,
                 ),
             )
+
+            if message_inbox_id:
+                async with self._pool.acquire() as conn:
+                    await conn.execute(
+                        """
+                        UPDATE message_inbox
+                        SET
+                            classification = $1,
+                            classified_at = $2,
+                            classification_duration_ms = $3,
+                            response_summary = $4,
+                            completed_at = $5
+                        WHERE id = $6
+                        """,
+                        json.dumps({"error": error_msg}),
+                        datetime.now(UTC),
+                        int(classification_latency_ms),
+                        "Classification failed",
+                        datetime.now(UTC),
+                        message_inbox_id,
+                    )
+
             return RoutingResult(
                 target_butler="general",
                 classification_error=error_msg,
             )
         classification_latency_ms = (time.perf_counter() - classify_start) * 1000
+        args["prompt"] = routed_message
         args["message"] = routed_message
+        args["source_metadata"] = source_metadata
+        args["source_channel"] = source
+        args["source_identity"] = source_metadata["identity"]
+        args["source_tool"] = source_metadata["tool_name"]
+        if source_id is not None:
+            args["source_id"] = source_id
         logger.info(
             "Pipeline classified message",
             extra=self._log_fields(
@@ -259,6 +371,7 @@ class MessagePipeline:
 
         # Step 2: Route
         route_start = time.perf_counter()
+        result = None
         try:
             result = await route_to(
                 self._pool,
@@ -281,9 +394,80 @@ class MessagePipeline:
                     routing_error=error_msg,
                 ),
             )
+
+            if message_inbox_id:
+                async with self._pool.acquire() as conn:
+                    await conn.execute(
+                        """
+                        UPDATE message_inbox
+                        SET
+                            classification = $1,
+                            classified_at = $2,
+                            classification_duration_ms = $3,
+                            routing_results = $4,
+                            response_summary = $5,
+                            completed_at = $6
+                        WHERE id = $7
+                        """,
+                        json.dumps(classification),
+                        datetime.now(UTC),
+                        int(classification_latency_ms),
+                        json.dumps({"error": error_msg}),
+                        "Routing failed",
+                        datetime.now(UTC),
+                        message_inbox_id,
+                    )
+
             return RoutingResult(
                 target_butler=target,
                 routing_error=error_msg,
+                routed_targets=[target],
+                failed_targets=[target],
+            )
+        if isinstance(result, dict) and result.get("error"):
+            error_msg = str(result["error"])
+            routing_latency_ms = (time.perf_counter() - route_start) * 1000
+            logger.warning(
+                "Routing returned error for message to butler %s",
+                target,
+                extra=self._log_fields(
+                    source=source,
+                    chat_id=chat_id,
+                    target_butler=target,
+                    latency_ms=routing_latency_ms,
+                    routing_error=error_msg,
+                ),
+            )
+
+            if message_inbox_id:
+                async with self._pool.acquire() as conn:
+                    await conn.execute(
+                        """
+                        UPDATE message_inbox
+                        SET
+                            classification = $1,
+                            classified_at = $2,
+                            classification_duration_ms = $3,
+                            routing_results = $4,
+                            response_summary = $5,
+                            completed_at = $6
+                        WHERE id = $7
+                        """,
+                        json.dumps(classification),
+                        datetime.now(UTC),
+                        int(classification_latency_ms),
+                        json.dumps(result),
+                        "Routing failed",
+                        datetime.now(UTC),
+                        message_inbox_id,
+                    )
+
+            return RoutingResult(
+                target_butler=target,
+                route_result=result,
+                routing_error=error_msg,
+                routed_targets=[target],
+                failed_targets=[target],
             )
         routing_latency_ms = (time.perf_counter() - route_start) * 1000
         total_latency_ms = (time.perf_counter() - start) * 1000
@@ -299,7 +483,32 @@ class MessagePipeline:
             ),
         )
 
+        if message_inbox_id:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE message_inbox
+                    SET
+                        classification = $1,
+                        classified_at = $2,
+                        classification_duration_ms = $3,
+                        routing_results = $4,
+                        response_summary = $5,
+                        completed_at = $6
+                    WHERE id = $7
+                    """,
+                    json.dumps(classification),
+                    datetime.now(UTC),
+                    int(classification_latency_ms),
+                    json.dumps(result),
+                    "Success",
+                    datetime.now(UTC),
+                    message_inbox_id,
+                )
+
         return RoutingResult(
             target_butler=target,
             route_result=result,
+            routed_targets=[target],
+            acked_targets=[target],
         )

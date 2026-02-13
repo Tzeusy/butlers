@@ -4,29 +4,15 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 import asyncpg
 
+from butlers.tools.relationship._schema import table_columns
 from butlers.tools.relationship.feed import _log_activity
 
 _VALID_DIRECTIONS = ("incoming", "outgoing", "mutual")
-
-
-async def _interaction_optional_columns(pool: asyncpg.Pool) -> set[str]:
-    """Return optional interactions columns present in the current schema."""
-    rows = await pool.fetch(
-        """
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'interactions'
-          AND column_name = ANY($1::text[])
-        """,
-        ["direction", "duration_minutes", "metadata"],
-    )
-    return {row["column_name"] for row in rows}
 
 
 async def interaction_log(
@@ -39,46 +25,60 @@ async def interaction_log(
     duration_minutes: int | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Log an interaction with a contact. Skips duplicate contact+type+date."""
+    """Log an interaction with a contact."""
     if direction is not None and direction not in _VALID_DIRECTIONS:
         raise ValueError(f"Invalid direction '{direction}'. Must be one of {_VALID_DIRECTIONS}")
+    cols = await table_columns(pool, "interactions")
+    effective_occurred_at = occurred_at if occurred_at is not None else datetime.now()
 
-    # Idempotency guard: check for existing duplicate on same contact+type+date
-    effective_time = occurred_at or datetime.now(UTC)
-    existing = await pool.fetchrow(
-        """
-        SELECT id FROM interactions
-        WHERE contact_id = $1 AND type = $2 AND DATE(occurred_at) = DATE($3)
-        """,
-        contact_id,
-        type,
-        effective_time,
-    )
-    if existing is not None:
-        return {"skipped": "duplicate", "existing_id": str(existing["id"])}
+    # Idempotency guard: only explicit timestamps are treated as deterministic backfills.
+    if "occurred_at" in cols and occurred_at is not None:
+        existing = await pool.fetchrow(
+            """
+            SELECT id
+            FROM interactions
+            WHERE contact_id = $1
+              AND type = $2
+              AND occurred_at::date = $3::date
+            LIMIT 1
+            """,
+            contact_id,
+            type,
+            occurred_at,
+        )
+        if existing is not None:
+            return {
+                "skipped": "duplicate",
+                "existing_id": str(existing["id"]),
+            }
 
-    optional_columns = await _interaction_optional_columns(pool)
-    columns = ["contact_id", "type", "summary", "occurred_at"]
-    values: list[Any] = [contact_id, type, summary, occurred_at]
-    value_exprs = ["$1", "$2", "$3", "COALESCE($4, now())"]
+    insert_cols: list[str] = []
+    values: list[Any] = []
 
-    if "direction" in optional_columns:
-        values.append(direction)
-        columns.append("direction")
-        value_exprs.append(f"${len(values)}")
-    if "duration_minutes" in optional_columns:
-        values.append(duration_minutes)
-        columns.append("duration_minutes")
-        value_exprs.append(f"${len(values)}")
-    if "metadata" in optional_columns:
-        values.append(json.dumps(metadata) if metadata is not None else None)
-        columns.append("metadata")
-        value_exprs.append(f"${len(values)}::jsonb")
+    def add(col: str, val: Any) -> None:
+        if col in cols:
+            insert_cols.append(col)
+            values.append(val)
+
+    add("contact_id", contact_id)
+    add("type", type)
+    add("summary", summary)
+    add("occurred_at", effective_occurred_at)
+    add("direction", direction)
+    add("duration_minutes", duration_minutes)
+    add("metadata", json.dumps(metadata) if metadata is not None else None)
+
+    placeholders: list[str] = []
+    for idx, col in enumerate(insert_cols, start=1):
+        if col == "metadata":
+            placeholders.append(f"${idx}::jsonb")
+        else:
+            placeholders.append(f"${idx}")
 
     row = await pool.fetchrow(
         f"""
-        INSERT INTO interactions ({", ".join(columns)})
-        VALUES ({", ".join(value_exprs)})
+        INSERT INTO interactions ({", ".join(insert_cols)})
+        VALUES ({", ".join(placeholders)})
         RETURNING *
         """,
         *values,
@@ -104,11 +104,12 @@ async def interaction_list(
 
     Optionally filter by direction and/or type.
     """
+    cols = await table_columns(pool, "interactions")
     conditions = ["contact_id = $1"]
     params: list[Any] = [contact_id]
     idx = 2
 
-    if direction is not None:
+    if direction is not None and "direction" in cols:
         conditions.append(f"direction = ${idx}")
         params.append(direction)
         idx += 1

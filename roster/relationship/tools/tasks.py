@@ -54,7 +54,12 @@ async def task_list(
 
     rows = await pool.fetch(
         f"""
-        SELECT t.*, c.name as contact_name
+        SELECT t.*,
+               COALESCE(
+                   NULLIF(TRIM(CONCAT_WS(' ', c.first_name, c.last_name)), ''),
+                   c.nickname,
+                   'Unknown'
+               ) AS contact_name
         FROM tasks t
         JOIN contacts c ON t.contact_id = c.id
         {where}

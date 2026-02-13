@@ -8,7 +8,9 @@ Issue: butlers-26h.10.3
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -30,6 +32,8 @@ def _app_with_mock_db(
     fetch_rows: list | None = None,
     fetchval_result: int = 0,
     fetchrow_result: dict | None = None,
+    fetchrow_side_effect: list | None = None,
+    include_mock_pool: bool = False,
 ):
     """Create a FastAPI app with a mocked DatabaseManager.
 
@@ -41,13 +45,20 @@ def _app_with_mock_db(
     mock_pool = AsyncMock()
     mock_pool.fetch = AsyncMock(return_value=fetch_rows or [])
     mock_pool.fetchval = AsyncMock(return_value=fetchval_result)
-    mock_pool.fetchrow = AsyncMock(return_value=fetchrow_result)
+    if fetchrow_side_effect is not None:
+        mock_pool.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
+    else:
+        mock_pool.fetchrow = AsyncMock(return_value=fetchrow_result)
 
     mock_db = MagicMock(spec=DatabaseManager)
     mock_db.pool.return_value = mock_pool
 
     app = create_app()
     app.dependency_overrides[_get_db_manager] = lambda: mock_db
+    app.state.mock_pool = mock_pool
+
+    if include_mock_pool:
+        return app, mock_pool
 
     return app
 
@@ -111,6 +122,52 @@ class TestGetContact:
             )
 
         assert resp.status_code == 404
+
+    async def test_birthday_lookup_uses_label_column(self):
+        """Birthday lookup should filter important_dates by label, not date_type."""
+        contact_id = uuid4()
+        now = datetime.now(UTC)
+        app, mock_pool = _app_with_mock_db(
+            fetchrow_side_effect=[
+                {
+                    "id": contact_id,
+                    "full_name": "Alice Example",
+                    "nickname": None,
+                    "notes": None,
+                    "company": None,
+                    "job_title": None,
+                    "metadata": {},
+                    "created_at": now,
+                    "updated_at": now,
+                    "email": None,
+                    "phone": None,
+                    "last_interaction_at": None,
+                },
+                {"month": 3, "day": 15, "year": 1990},
+                None,
+            ],
+            include_mock_pool=True,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(f"/api/relationship/contacts/{contact_id}")
+
+        assert resp.status_code == 200
+        assert resp.json()["birthday"] == "1990-03-15"
+
+        important_dates_sql = [
+            call.args[0]
+            for call in mock_pool.fetchrow.await_args_list
+            if "FROM important_dates" in call.args[0]
+        ]
+        assert len(important_dates_sql) == 1, (
+            "Expected exactly one fetchrow call to important_dates"
+        )
+        birthday_sql = important_dates_sql[0]
+        assert "label = 'birthday'" in birthday_sql
+        assert "ORDER BY created_at DESC" in birthday_sql
+        assert "date_type" not in birthday_sql
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +238,37 @@ class TestListUpcomingDates:
             resp = await client.get("/api/relationship/upcoming-dates", params={"days": 30})
 
         assert resp.status_code == 200
+
+    async def test_uses_label_column_for_upcoming_dates(self):
+        """Upcoming-date query should read date kind from important_dates.label."""
+        today = date.today()
+        app, mock_pool = _app_with_mock_db(
+            fetch_rows=[
+                {
+                    "contact_id": uuid4(),
+                    "contact_name": "Alice",
+                    "label": "birthday",
+                    "month": today.month,
+                    "day": today.day,
+                    "year": None,
+                }
+            ],
+            include_mock_pool=True,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/relationship/upcoming-dates")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body) == 1
+        assert body[0]["date_type"] == "birthday"
+
+        upcoming_sql = mock_pool.fetch.await_args.args[0]
+        assert "id.label" in upcoming_sql
+        assert "id.label AS date_type" not in upcoming_sql
+        assert "id.date_type" not in upcoming_sql
 
 
 # ---------------------------------------------------------------------------

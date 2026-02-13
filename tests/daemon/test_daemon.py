@@ -14,9 +14,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
+from starlette.requests import ClientDisconnect
 
 from butlers.credentials import CredentialError
-from butlers.daemon import ButlerDaemon, RuntimeBinaryNotFoundError
+from butlers.daemon import (
+    CORE_TOOL_NAMES,
+    ButlerDaemon,
+    RuntimeBinaryNotFoundError,
+    _McpSseDisconnectGuard,
+)
 from butlers.modules.base import Module
 from butlers.modules.email import EmailModule
 from butlers.modules.pipeline import MessagePipeline
@@ -242,7 +248,7 @@ class TestStartupSequence:
     """Verify the startup sequence executes in the documented order."""
 
     async def test_startup_calls_in_order(self, butler_dir: Path) -> None:
-        """Steps 1-13 should execute in documented order."""
+        """Key startup stages should execute in documented order."""
         patches = _patch_infra()
         call_order: list[str] = []
 
@@ -358,25 +364,10 @@ class TestStartupSequence:
 class TestCoreToolRegistration:
     """Verify all expected core MCP tools are registered."""
 
-    EXPECTED_TOOLS = {
-        "status",
-        "trigger",
-        "tick",
-        "state_get",
-        "state_set",
-        "state_delete",
-        "state_list",
-        "schedule_list",
-        "schedule_create",
-        "schedule_update",
-        "schedule_delete",
-        "sessions_list",
-        "sessions_get",
-        "notify",
-    }
+    EXPECTED_TOOLS = CORE_TOOL_NAMES
 
     async def test_all_core_tools_registered(self, butler_dir: Path) -> None:
-        """All 14 core tools should be registered on FastMCP via @mcp.tool()."""
+        """All core tools should be registered on FastMCP via @mcp.tool()."""
         patches = _patch_infra()
         registered_tools: list[str] = []
 
@@ -409,6 +400,58 @@ class TestCoreToolRegistration:
             await daemon.start()
 
         assert set(registered_tools) == self.EXPECTED_TOOLS
+
+
+class TestTriggerToolDispatch:
+    """Verify trigger MCP tool dispatch uses canonical trigger_source values."""
+
+    async def test_trigger_tool_uses_trigger_source_contract(self, butler_dir: Path) -> None:
+        """trigger() should call spawner.trigger with trigger_source='trigger'."""
+        patches = _patch_infra()
+        trigger_fn = None
+
+        patches["mock_spawner"].trigger = AsyncMock(
+            return_value=MagicMock(output="ok", success=True, error=None, duration_ms=12)
+        )
+
+        mock_mcp = MagicMock()
+
+        def tool_decorator():
+            def decorator(fn):
+                nonlocal trigger_fn
+                if fn.__name__ == "trigger":
+                    trigger_fn = fn
+                return fn
+
+            return decorator
+
+        mock_mcp.tool = tool_decorator
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"],
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patch("butlers.daemon.FastMCP", return_value=mock_mcp),
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["start_mcp_server"],
+            patches["connect_switchboard"],
+        ):
+            daemon = ButlerDaemon(butler_dir)
+            await daemon.start()
+
+        assert trigger_fn is not None
+        result = await trigger_fn("hello", "extra context")
+        patches["mock_spawner"].trigger.assert_awaited_once_with(
+            prompt="hello",
+            context="extra context",
+            trigger_source="trigger",
+        )
+        assert result["success"] is True
+        assert result["duration_ms"] == 12
 
 
 class TestModuleToolRegistration:
@@ -702,14 +745,20 @@ class TestMCPServerStartup:
             # Verify http_app was called with SSE transport
             mock_mcp.http_app.assert_called_once_with(transport="sse")
 
-            # Verify uvicorn.Config was created with correct parameters
-            mock_config_cls.assert_called_once_with(
-                mock_app,
-                host="0.0.0.0",
-                port=9100,
-                log_level="info",
-                timeout_graceful_shutdown=0,
-            )
+            # Verify uvicorn.Config was created with wrapped app and expected parameters
+            mock_config_cls.assert_called_once()
+            args, kwargs = mock_config_cls.call_args
+            assert len(args) == 1
+            wrapped_app = args[0]
+            assert isinstance(wrapped_app, _McpSseDisconnectGuard)
+            assert wrapped_app._app is mock_app
+            assert wrapped_app._butler_name == "test-butler"
+            assert kwargs == {
+                "host": "0.0.0.0",
+                "port": 9100,
+                "log_level": "info",
+                "timeout_graceful_shutdown": 0,
+            }
 
         # Verify server instance was stored
         assert daemon._server is mock_uvicorn_server
@@ -771,6 +820,77 @@ class TestMCPServerStartup:
             await daemon._server_task
         except asyncio.CancelledError:
             pass
+
+
+class TestSseDisconnectGuard:
+    async def test_messages_post_client_disconnect_is_suppressed(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        sent_messages: list[dict[str, Any]] = []
+
+        async def inner_app(scope: dict[str, Any], receive: Any, send: Any) -> None:
+            raise ClientDisconnect()
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            sent_messages.append(message)
+
+        guard = _McpSseDisconnectGuard(inner_app, butler_name="test-butler")
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/messages/",
+            "query_string": b"session_id=abc123",
+        }
+
+        with caplog.at_level(logging.DEBUG, logger="butlers.daemon"):
+            await guard(scope, receive, send)
+
+        assert any(
+            "Suppressed expected MCP SSE POST disconnect" in rec.message for rec in caplog.records
+        )
+        assert sent_messages == [
+            {
+                "type": "http.response.start",
+                "status": 202,
+                "headers": [(b"content-length", b"0")],
+            },
+            {"type": "http.response.body", "body": b""},
+        ]
+
+    async def test_non_disconnect_exception_bubbles(self) -> None:
+        async def inner_app(scope: dict[str, Any], receive: Any, send: Any) -> None:
+            raise RuntimeError("boom")
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message: dict[str, Any]) -> None:
+            return None
+
+        guard = _McpSseDisconnectGuard(inner_app, butler_name="test-butler")
+        scope = {"type": "http", "method": "POST", "path": "/messages/", "query_string": b""}
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await guard(scope, receive, send)
+
+    async def test_non_messages_path_client_disconnect_bubbles(self) -> None:
+        async def inner_app(scope: dict[str, Any], receive: Any, send: Any) -> None:
+            raise ClientDisconnect()
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            return None
+
+        guard = _McpSseDisconnectGuard(inner_app, butler_name="test-butler")
+        scope = {"type": "http", "method": "POST", "path": "/health", "query_string": b""}
+
+        with pytest.raises(ClientDisconnect):
+            await guard(scope, receive, send)
 
 
 class TestStatusTool:
@@ -1346,6 +1466,71 @@ class TestModuleCredentialsTomlSource:
         assert "stub_a" in module_creds
         assert module_creds["stub_a"] == []
 
+    async def test_toml_invalid_credentials_type_no_crash(self, tmp_path: Path) -> None:
+        """Invalid TOML credentials_env types are ignored without crashing startup."""
+        butler_dir = _make_butler_toml(
+            tmp_path,
+            modules={"stub_a": {"credentials_env": 123}},
+        )
+        registry = _make_registry(StubModuleA)
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"] as mock_validate,
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["connect_switchboard"],
+        ):
+            daemon = ButlerDaemon(butler_dir, registry=registry)
+            await daemon.start()
+
+        mock_validate.assert_called_once()
+        call_kwargs = mock_validate.call_args
+        module_creds = call_kwargs.kwargs.get(
+            "module_credentials", call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None
+        )
+        assert module_creds is not None
+        # Invalid TOML type should be treated as explicitly empty (no class fallback).
+        assert module_creds["stub_a"] == []
+
+    async def test_toml_credentials_filter_empty_and_non_strings(self, tmp_path: Path) -> None:
+        """Only non-empty string entries are kept from TOML credentials_env lists."""
+        butler_dir = _make_butler_toml(
+            tmp_path,
+            modules={"stub_a": {"credentials_env": ["TOKEN_A", "", 123, "TOKEN_B"]}},
+        )
+        registry = _make_registry(StubModuleA)
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"] as mock_validate,
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"],
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["connect_switchboard"],
+        ):
+            daemon = ButlerDaemon(butler_dir, registry=registry)
+            await daemon.start()
+
+        mock_validate.assert_called_once()
+        call_kwargs = mock_validate.call_args
+        module_creds = call_kwargs.kwargs.get(
+            "module_credentials", call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None
+        )
+        assert module_creds is not None
+        assert module_creds["stub_a"] == ["TOKEN_A", "TOKEN_B"]
+
     async def test_mixed_toml_and_class_credentials(self, tmp_path: Path) -> None:
         """One module uses TOML creds, another falls back to class property."""
         # stub_a: TOML overrides, stub_b: no class credentials_env, no TOML
@@ -1412,6 +1597,71 @@ class TestModuleCredentialsTomlSource:
         mock_spawner_cls.assert_called_once()
         spawner_kwargs = mock_spawner_cls.call_args.kwargs
         assert spawner_kwargs["module_credentials_env"] == {"stub_a": ["TOML_KEY"]}
+
+    async def test_identity_scoped_credentials_are_collected(self, tmp_path: Path) -> None:
+        """Identity-scoped user/bot env vars are collected with scope-qualified sources."""
+        (tmp_path / "butler.toml").write_text(
+            """
+[butler]
+name = "switchboard"
+port = 9100
+description = "A test butler"
+
+[butler.db]
+name = "butler_test"
+
+[modules.telegram]
+mode = "polling"
+
+[modules.telegram.user]
+enabled = false
+
+[modules.telegram.bot]
+token_env = "TG_BOT_TOKEN"
+
+[modules.email]
+
+[modules.email.user]
+enabled = false
+
+[modules.email.bot]
+address_env = "BOT_EMAIL_ADDRESS"
+password_env = "BOT_EMAIL_PASSWORD"
+"""
+        )
+        registry = _make_registry(TelegramModule, EmailModule)
+        patches = _patch_infra()
+
+        with (
+            patches["db_from_env"],
+            patches["run_migrations"],
+            patches["validate_credentials"] as mock_validate,
+            patches["init_telemetry"],
+            patches["sync_schedules"],
+            patches["FastMCP"],
+            patches["Spawner"] as mock_spawner_cls,
+            patches["get_adapter"],
+            patches["shutil_which"],
+            patches["connect_switchboard"],
+            patches["start_mcp_server"],
+        ):
+            daemon = ButlerDaemon(tmp_path, registry=registry)
+            await daemon.start()
+
+        mock_validate.assert_called_once()
+        call_kwargs = mock_validate.call_args
+        module_creds = call_kwargs.kwargs.get(
+            "module_credentials", call_kwargs[0][2] if len(call_kwargs[0]) > 2 else None
+        )
+        assert module_creds is not None
+        assert module_creds["telegram.bot"] == ["TG_BOT_TOKEN"]
+        assert module_creds["email.bot"] == ["BOT_EMAIL_ADDRESS", "BOT_EMAIL_PASSWORD"]
+        assert "telegram.user" not in module_creds
+        assert "email.user" not in module_creds
+
+        mock_spawner_cls.assert_called_once()
+        spawner_kwargs = mock_spawner_cls.call_args.kwargs
+        assert spawner_kwargs["module_credentials_env"] == module_creds
 
     async def test_multiple_secrets_detected(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

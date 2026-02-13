@@ -230,7 +230,8 @@ async def get_contact(
         """
         SELECT month, day, year
         FROM important_dates
-        WHERE contact_id = $1 AND date_type = 'birthday'
+        WHERE contact_id = $1 AND label = 'birthday'
+        ORDER BY created_at DESC
         LIMIT 1
         """,
         contact_id,
@@ -594,7 +595,7 @@ async def list_upcoming_dates(
         SELECT
             id.contact_id,
             c.name AS contact_name,
-            id.date_type,
+            id.label,
             id.month,
             id.day,
             id.year
@@ -633,7 +634,7 @@ async def list_upcoming_dates(
                 UpcomingDate(
                     contact_id=r["contact_id"],
                     contact_name=r["contact_name"],
-                    date_type=r["date_type"],
+                    date_type=r["label"],
                     date=occurrence,
                     days_until=days_until,
                 )

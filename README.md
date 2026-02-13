@@ -356,9 +356,40 @@ Module credentials are only required when the module is enabled in `butler.toml`
 uv sync --dev       # Install dependencies
 make check           # Lint + test
 make test            # Run tests
+make test-qg         # Quality-gate pytest scope (default parallel, -n auto)
+make test-qg-serial  # Quality-gate pytest scope (serial fallback/debug)
+make test-qg-parallel # Alias for explicit parallel quality-gate runs
 make lint            # Lint
 make format          # Format
 ```
+
+### Marker-Based Test Runs
+
+Tests are split by cost profile using pytest markers:
+
+- `unit`: fast tests with no Docker/testcontainers dependency
+- `integration`: Docker-backed tests (testcontainers/PostgreSQL)
+
+```bash
+uv run pytest -m unit -q          # unit-only
+uv run pytest -m integration -q   # integration-only
+
+# Or use Makefile shortcuts:
+make test-unit
+make test-integration
+```
+
+Recommended quality gates:
+
+- Local dev loop: run `-m unit` for fast feedback.
+- Default full quality-gate run: `make test-qg` (parallel, fastest full-scope path).
+- Serial fallback/debug path: `make test-qg-serial` (use for order-dependent triage).
+- CI or pre-merge (Docker available): run both `-m unit` and `-m integration`.
+
+Quality-gate default rationale and scope contract:
+
+- Benchmark outcome: `make test-qg` (`-n auto`) measured `126.42s` wall time vs `216.58s` serial baseline (~41.6% faster). See `docs/PYTEST_QG_ALTERNATIVES_QKX5.md`.
+- Coverage expectation is unchanged: `make test-qg`, `make test-qg-serial`, and `make test-qg-parallel` all run the same `QG_PYTEST_ARGS` test selection (`tests/` excluding `tests/test_db.py` and `tests/test_migrations.py`). Only execution mode changes.
 
 ## Tech Stack
 

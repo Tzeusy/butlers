@@ -10,11 +10,21 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
+from butlers.modules import telegram as telegram_module_impl
 from butlers.modules.base import Module
 from butlers.modules.pipeline import RoutingResult
 from butlers.modules.telegram import TelegramConfig, TelegramModule
 
 pytestmark = pytest.mark.unit
+
+EXPECTED_TELEGRAM_TOOLS = {
+    "user_telegram_get_updates",
+    "user_telegram_send_message",
+    "user_telegram_reply_to_message",
+    "bot_telegram_get_updates",
+    "bot_telegram_send_message",
+    "bot_telegram_reply_to_message",
+}
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -81,6 +91,37 @@ class TestModuleABCCompliance:
         """Module declares BUTLER_TELEGRAM_TOKEN as required credential."""
         assert telegram_module.credentials_env == ["BUTLER_TELEGRAM_TOKEN"]
 
+    def test_io_descriptors_expose_identity_prefixed_tools(
+        self, telegram_module: TelegramModule
+    ) -> None:
+        """Module I/O descriptors expose the expected prefixed Telegram tools."""
+        assert tuple(d.name for d in telegram_module.user_inputs()) == (
+            "user_telegram_get_updates",
+        )
+        assert tuple(d.name for d in telegram_module.user_outputs()) == (
+            "user_telegram_send_message",
+            "user_telegram_reply_to_message",
+        )
+        assert tuple(d.name for d in telegram_module.bot_inputs()) == ("bot_telegram_get_updates",)
+        assert tuple(d.name for d in telegram_module.bot_outputs()) == (
+            "bot_telegram_send_message",
+            "bot_telegram_reply_to_message",
+        )
+
+    def test_user_output_descriptors_mark_approval_required_default(
+        self, telegram_module: TelegramModule
+    ) -> None:
+        """User send/reply descriptors are marked as approval-required defaults."""
+        defaults = {d.approval_default for d in telegram_module.user_outputs()}
+        assert defaults == {"always"}
+
+    def test_bot_output_descriptors_mark_conditional_default(
+        self, telegram_module: TelegramModule
+    ) -> None:
+        """Bot send/reply descriptors default to conditional approvals."""
+        defaults = {d.approval_default for d in telegram_module.bot_outputs()}
+        assert defaults == {"conditional"}
+
 
 # ---------------------------------------------------------------------------
 # TelegramConfig
@@ -96,6 +137,10 @@ class TestTelegramConfig:
         assert config.mode == "polling"
         assert config.webhook_url is None
         assert config.poll_interval == 1.0
+        assert config.user.enabled is False
+        assert config.user.token_env == "USER_TELEGRAM_TOKEN"
+        assert config.bot.enabled is True
+        assert config.bot.token_env == "BUTLER_TELEGRAM_TOKEN"
 
     def test_polling_mode(self):
         """Polling mode can be set explicitly."""
@@ -119,6 +164,14 @@ class TestTelegramConfig:
         config = TelegramConfig(**{})
         assert config.mode == "polling"
 
+    def test_invalid_bot_token_env_rejected(self):
+        with pytest.raises(ValueError, match="modules.telegram.bot.token_env"):
+            TelegramConfig(**{"bot": {"token_env": "1INVALID"}})
+
+    def test_invalid_user_token_env_rejected(self):
+        with pytest.raises(ValueError, match="modules.telegram.user.token_env"):
+            TelegramConfig(**{"user": {"token_env": "bad-value"}})
+
 
 # ---------------------------------------------------------------------------
 # Tool registration
@@ -128,33 +181,30 @@ class TestTelegramConfig:
 class TestToolRegistration:
     """Verify register_tools creates the expected MCP tools."""
 
-    async def test_registers_send_message(
+    async def test_registers_prefixed_tools(
         self, telegram_module: TelegramModule, mock_mcp: MagicMock
     ):
-        """register_tools creates a send_message tool."""
+        """register_tools creates only identity-prefixed Telegram tools."""
         await telegram_module.register_tools(mcp=mock_mcp, config={}, db=None)
-        assert "send_message" in mock_mcp._registered_tools
+        assert set(mock_mcp._registered_tools.keys()) == EXPECTED_TELEGRAM_TOOLS
 
-    async def test_registers_get_updates(
+    async def test_registered_tool_names_stay_identity_prefixed(
         self, telegram_module: TelegramModule, mock_mcp: MagicMock
     ):
-        """register_tools creates a get_updates tool."""
+        """Registered Telegram tools stay within user_/bot_ namespaces."""
         await telegram_module.register_tools(mcp=mock_mcp, config={}, db=None)
-        assert "get_updates" in mock_mcp._registered_tools
+        assert all(
+            name.startswith(("user_telegram_", "bot_telegram_"))
+            for name in mock_mcp._registered_tools.keys()
+        )
 
-    async def test_send_message_is_callable(
+    async def test_all_registered_tools_are_callable(
         self, telegram_module: TelegramModule, mock_mcp: MagicMock
     ):
-        """The registered send_message tool is callable."""
+        """Every prefixed Telegram tool registration is callable."""
         await telegram_module.register_tools(mcp=mock_mcp, config={}, db=None)
-        assert callable(mock_mcp._registered_tools["send_message"])
-
-    async def test_get_updates_is_callable(
-        self, telegram_module: TelegramModule, mock_mcp: MagicMock
-    ):
-        """The registered get_updates tool is callable."""
-        await telegram_module.register_tools(mcp=mock_mcp, config={}, db=None)
-        assert callable(mock_mcp._registered_tools["get_updates"])
+        for name in EXPECTED_TELEGRAM_TOOLS:
+            assert callable(mock_mcp._registered_tools[name])
 
 
 # ---------------------------------------------------------------------------
@@ -172,10 +222,10 @@ def _mock_response(json_data: dict[str, Any], status_code: int = 200) -> httpx.R
 
 
 class TestSendMessage:
-    """Test send_message API interaction."""
+    """Test _send_message API interaction."""
 
     async def test_calls_correct_endpoint(self, telegram_module: TelegramModule, monkeypatch):
-        """send_message POSTs to the sendMessage endpoint."""
+        """_send_message POSTs to the sendMessage endpoint."""
         monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token-123")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
@@ -191,10 +241,10 @@ class TestSendMessage:
         assert result["ok"] is True
         assert result["result"]["message_id"] == 42
 
-    async def test_send_message_via_tool(
+    async def test_user_send_message_via_tool(
         self, telegram_module: TelegramModule, mock_mcp: MagicMock, monkeypatch
     ):
-        """send_message tool delegates to _send_message."""
+        """user_telegram_send_message delegates to _send_message."""
         monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
@@ -202,18 +252,60 @@ class TestSendMessage:
         telegram_module._client = mock_client
 
         await telegram_module.register_tools(mcp=mock_mcp, config={}, db=None)
-        tool_fn = mock_mcp._registered_tools["send_message"]
+        tool_fn = mock_mcp._registered_tools["user_telegram_send_message"]
         result = await tool_fn(chat_id="999", text="Test msg")
 
         assert result["ok"] is True
         mock_client.post.assert_called_once()
 
 
+class TestReplyToMessage:
+    """Test _reply_to_message API interaction."""
+
+    async def test_reply_to_message_sets_reply_to_message_id(
+        self, telegram_module: TelegramModule, monkeypatch
+    ):
+        """_reply_to_message includes reply_to_message_id payload."""
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post.return_value = _mock_response({"ok": True, "result": {}})
+        telegram_module._client = mock_client
+
+        result = await telegram_module._reply_to_message("12345", 77, "Reply text")
+
+        assert result["ok"] is True
+        mock_client.post.assert_called_once_with(
+            "https://api.telegram.org/bottest-token/sendMessage",
+            json={"chat_id": "12345", "text": "Reply text", "reply_to_message_id": 77},
+        )
+
+    async def test_user_reply_tool_via_registration(
+        self, telegram_module: TelegramModule, mock_mcp: MagicMock, monkeypatch
+    ):
+        """user_telegram_reply_to_message delegates to reply helper."""
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.post.return_value = _mock_response({"ok": True, "result": {}})
+        telegram_module._client = mock_client
+
+        await telegram_module.register_tools(mcp=mock_mcp, config={}, db=None)
+        tool_fn = mock_mcp._registered_tools["user_telegram_reply_to_message"]
+        result = await tool_fn(chat_id="999", message_id=12, text="Thread reply")
+
+        assert result["ok"] is True
+        mock_client.post.assert_called_once_with(
+            "https://api.telegram.org/bottest-token/sendMessage",
+            json={"chat_id": "999", "text": "Thread reply", "reply_to_message_id": 12},
+        )
+
+
 class TestGetUpdates:
-    """Test get_updates API interaction."""
+    """Test _get_updates API interaction."""
 
     async def test_calls_correct_endpoint(self, telegram_module: TelegramModule, monkeypatch):
-        """get_updates GETs the getUpdates endpoint."""
+        """_get_updates GETs the getUpdates endpoint."""
         monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token-123")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
@@ -237,7 +329,7 @@ class TestGetUpdates:
         assert updates[0]["message"]["text"] == "hi"
 
     async def test_updates_last_update_id(self, telegram_module: TelegramModule, monkeypatch):
-        """get_updates advances _last_update_id to the latest."""
+        """_get_updates advances _last_update_id to the latest."""
         monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
@@ -271,7 +363,7 @@ class TestGetUpdates:
         assert second_call[1]["params"]["offset"] == 51
 
     async def test_empty_updates(self, telegram_module: TelegramModule, monkeypatch):
-        """get_updates returns empty list when no new messages."""
+        """_get_updates returns empty list when no new messages."""
         monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
@@ -282,10 +374,15 @@ class TestGetUpdates:
         assert updates == []
         assert telegram_module._last_update_id == 0
 
-    async def test_get_updates_via_tool(
-        self, telegram_module: TelegramModule, mock_mcp: MagicMock, monkeypatch
+    @pytest.mark.parametrize("tool_name", ["user_telegram_get_updates", "bot_telegram_get_updates"])
+    async def test_get_updates_via_tools(
+        self,
+        telegram_module: TelegramModule,
+        mock_mcp: MagicMock,
+        monkeypatch,
+        tool_name: str,
     ):
-        """get_updates tool delegates to _get_updates."""
+        """Identity-prefixed get-updates tools delegate to _get_updates."""
         monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
@@ -293,7 +390,7 @@ class TestGetUpdates:
         telegram_module._client = mock_client
 
         await telegram_module.register_tools(mcp=mock_mcp, config={}, db=None)
-        tool_fn = mock_mcp._registered_tools["get_updates"]
+        tool_fn = mock_mcp._registered_tools[tool_name]
         result = await tool_fn()
 
         assert result == []
@@ -396,10 +493,284 @@ class TestPipelineIntegration:
         assert result is mock_result
         mock_pipeline.process.assert_awaited_once_with(
             message_text="Need help",
-            tool_name="handle_message",
-            tool_args={"source": "telegram", "chat_id": "12345"},
+            tool_name="bot_telegram_handle_message",
+            tool_args={
+                "source": "telegram",
+                "source_channel": "telegram",
+                "source_identity": "bot",
+                "source_tool": "bot_telegram_get_updates",
+                "chat_id": "12345",
+                "source_id": None,
+            },
+            message_inbox_id=None,
         )
         assert telegram_module._routed_messages == [mock_result]
+
+    async def test_reaction_lifecycle_single_route_success(
+        self, telegram_module: TelegramModule, monkeypatch
+    ):
+        """Single-route success transitions :eye -> :done."""
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+        telegram_module._set_message_reaction = AsyncMock(  # type: ignore[method-assign]
+            return_value={"ok": True}
+        )
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.process = AsyncMock(
+            return_value=RoutingResult(
+                target_butler="general",
+                route_result={"result": "ok"},
+                routed_targets=["general"],
+                acked_targets=["general"],
+            )
+        )
+        telegram_module.set_pipeline(mock_pipeline)
+
+        update = {
+            "update_id": 101,
+            "message": {
+                "message_id": 77,
+                "text": "Need help",
+                "chat": {"id": 12345},
+            },
+        }
+
+        await telegram_module.process_update(update)
+
+        assert telegram_module._set_message_reaction.await_count == 2
+        calls = telegram_module._set_message_reaction.await_args_list
+        assert calls[0].kwargs["reaction"] == ":eye"
+        assert calls[1].kwargs["reaction"] == ":done"
+
+    async def test_reaction_lifecycle_multi_route_waits_for_all_acks(
+        self, telegram_module: TelegramModule, monkeypatch
+    ):
+        """Fan-out keeps :eye until all routed targets are acknowledged."""
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+        telegram_module._set_message_reaction = AsyncMock(  # type: ignore[method-assign]
+            return_value={"ok": True}
+        )
+
+        first = RoutingResult(
+            target_butler="multi",
+            route_result={"result": "partial"},
+            routed_targets=["health", "general"],
+            acked_targets=["health"],
+            failed_targets=[],
+        )
+        second = RoutingResult(
+            target_butler="multi",
+            route_result={"result": "done"},
+            routed_targets=["general"],
+            acked_targets=["general"],
+            failed_targets=[],
+        )
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.process = AsyncMock(side_effect=[first, second])
+        telegram_module.set_pipeline(mock_pipeline)
+
+        update = {
+            "update_id": 202,
+            "message": {
+                "message_id": 88,
+                "text": "Split this message",
+                "chat": {"id": 222},
+            },
+        }
+
+        await telegram_module.process_update(update)
+        await telegram_module.process_update(update)
+
+        calls = telegram_module._set_message_reaction.await_args_list
+        reactions = [call.kwargs["reaction"] for call in calls]
+        assert reactions == [":eye", ":eye", ":done"]
+
+    async def test_reaction_lifecycle_any_failed_route_sets_failure(
+        self, telegram_module: TelegramModule, monkeypatch
+    ):
+        """Any sub-route failure transitions to :space invader."""
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+        telegram_module._set_message_reaction = AsyncMock(  # type: ignore[method-assign]
+            return_value={"ok": True}
+        )
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.process = AsyncMock(
+            return_value=RoutingResult(
+                target_butler="multi",
+                route_result={"result": "partial"},
+                routing_error="general: ConnectionError: timeout",
+                routed_targets=["health", "general"],
+                acked_targets=["health"],
+                failed_targets=["general"],
+            )
+        )
+        telegram_module.set_pipeline(mock_pipeline)
+
+        update = {
+            "update_id": 303,
+            "message": {
+                "message_id": 99,
+                "text": "Fanout with error",
+                "chat": {"id": 333},
+            },
+        }
+
+        await telegram_module.process_update(update)
+
+        calls = telegram_module._set_message_reaction.await_args_list
+        reactions = [call.kwargs["reaction"] for call in calls]
+        assert reactions == [":eye", ":space invader"]
+
+    async def test_failure_reaction_400_logs_warning_and_skips_stack_trace(
+        self, telegram_module: TelegramModule, monkeypatch
+    ) -> None:
+        """Terminal failure reaction 400 is treated as expected and non-fatal."""
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+
+        response = _mock_response(
+            {
+                "ok": False,
+                "error_code": 400,
+                "description": "Bad Request: message reactions are disabled in this chat",
+            },
+            status_code=400,
+        )
+        status_error = httpx.HTTPStatusError(
+            "400 Client Error",
+            request=response.request,
+            response=response,
+        )
+
+        async def mock_set_message_reaction(**kwargs: Any) -> dict[str, Any]:
+            if kwargs["reaction"] == ":space invader":
+                raise status_error
+            return {"ok": True}
+
+        telegram_module._set_message_reaction = mock_set_message_reaction  # type: ignore[method-assign]
+
+        warning_mock = MagicMock()
+        exception_mock = MagicMock()
+        monkeypatch.setattr(telegram_module_impl.logger, "warning", warning_mock)
+        monkeypatch.setattr(telegram_module_impl.logger, "exception", exception_mock)
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.process = AsyncMock(
+            return_value=RoutingResult(
+                target_butler="multi",
+                route_result={"result": "partial"},
+                routing_error="general: ConnectionError: timeout",
+                routed_targets=["health", "general"],
+                acked_targets=["health"],
+                failed_targets=["general"],
+            )
+        )
+        telegram_module.set_pipeline(mock_pipeline)
+
+        update = {
+            "update_id": 304,
+            "message": {
+                "message_id": 100,
+                "text": "Fanout with reaction-disabled error",
+                "chat": {"id": 334},
+            },
+        }
+
+        result = await telegram_module.process_update(update)
+
+        assert result is not None
+        exception_mock.assert_not_called()
+        warning_mock.assert_called_once()
+        warning_extra = warning_mock.call_args.kwargs["extra"]
+        assert warning_extra["reaction"] == ":space invader"
+        assert warning_extra["telegram_status_code"] == 400
+        assert warning_extra["telegram_error_description"] == (
+            "Bad Request: message reactions are disabled in this chat"
+        )
+        assert telegram_module._terminal_reactions["334:100"] == ":space invader"
+
+    async def test_terminal_reaction_does_not_regress_to_in_progress(
+        self, telegram_module: TelegramModule, monkeypatch
+    ):
+        """Terminal reaction is idempotent and never regresses back to :eye."""
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+        telegram_module._set_message_reaction = AsyncMock(  # type: ignore[method-assign]
+            return_value={"ok": True}
+        )
+
+        done = RoutingResult(
+            target_butler="general",
+            route_result={"result": "ok"},
+            routed_targets=["general"],
+            acked_targets=["general"],
+        )
+        mock_pipeline = MagicMock()
+        mock_pipeline.process = AsyncMock(side_effect=[done, done])
+        telegram_module.set_pipeline(mock_pipeline)
+
+        update = {
+            "update_id": 404,
+            "message": {
+                "message_id": 1001,
+                "text": "Finalize once",
+                "chat": {"id": 444},
+            },
+        }
+
+        await telegram_module.process_update(update)
+        first_count = telegram_module._set_message_reaction.await_count
+        assert first_count == 2
+
+        await telegram_module.process_update(update)
+
+        assert telegram_module._set_message_reaction.await_count == first_count
+
+    async def test_terminal_cleanup_prunes_per_message_tracking(
+        self, telegram_module: TelegramModule, monkeypatch
+    ):
+        """Terminal transitions clear per-message lock/lifecycle tracking."""
+        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+        telegram_module._set_message_reaction = AsyncMock(  # type: ignore[method-assign]
+            return_value={"ok": True}
+        )
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.process = AsyncMock(
+            return_value=RoutingResult(
+                target_butler="general",
+                route_result={"result": "ok"},
+                routed_targets=["general"],
+                acked_targets=["general"],
+            )
+        )
+        telegram_module.set_pipeline(mock_pipeline)
+
+        update = {
+            "update_id": 505,
+            "message": {
+                "message_id": 111,
+                "text": "cleanup tracking",
+                "chat": {"id": 555},
+            },
+        }
+
+        await telegram_module.process_update(update)
+
+        message_key = "555:111"
+        assert message_key not in telegram_module._processing_lifecycle
+        assert message_key not in telegram_module._reaction_locks
+        assert telegram_module._terminal_reactions[message_key] == ":done"
+
+    def test_terminal_reaction_cache_is_bounded(self, telegram_module: TelegramModule, monkeypatch):
+        """Terminal cache evicts oldest keys to avoid unbounded growth."""
+        monkeypatch.setattr(telegram_module_impl, "TERMINAL_REACTION_CACHE_SIZE", 2)
+
+        telegram_module._record_terminal_reaction("one", ":done")
+        telegram_module._record_terminal_reaction("two", ":done")
+        telegram_module._record_terminal_reaction("three", ":done")
+
+        assert list(telegram_module._terminal_reactions.keys()) == ["two", "three"]
 
 
 # ---------------------------------------------------------------------------

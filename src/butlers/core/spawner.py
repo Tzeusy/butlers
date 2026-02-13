@@ -32,6 +32,8 @@ from butlers.core.skills import read_system_prompt
 from butlers.core.telemetry import get_traceparent_env
 
 logger = logging.getLogger(__name__)
+_MEMORY_CLIENTS: dict[str, tuple[MCPClient, Any]] = {}
+_MEMORY_CLIENT_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 @dataclass
@@ -86,6 +88,100 @@ def _build_env(
     return env
 
 
+def _memory_client_lock(url: str) -> asyncio.Lock:
+    lock = _MEMORY_CLIENT_LOCKS.get(url)
+    if lock is None:
+        lock = asyncio.Lock()
+        _MEMORY_CLIENT_LOCKS[url] = lock
+    return lock
+
+
+def _is_cached_memory_client_healthy(client_ctx: MCPClient, client: Any) -> bool:
+    probe = client_ctx if hasattr(client_ctx, "is_connected") else client
+    checker = getattr(probe, "is_connected", None)
+    if callable(checker):
+        try:
+            return bool(checker())
+        except Exception:
+            return False
+    return True
+
+
+async def _close_cached_memory_client(url: str) -> None:
+    cached = _MEMORY_CLIENTS.pop(url, None)
+    if cached is None:
+        return
+
+    client_ctx, _client = cached
+    try:
+        await client_ctx.__aexit__(None, None, None)
+    except asyncio.CancelledError:
+        logger.debug("Cancelled while closing cached memory client for %s", url, exc_info=True)
+    except Exception:
+        logger.debug("Failed to close cached memory client for %s", url, exc_info=True)
+
+
+async def _get_cached_memory_client(
+    url: str,
+    *,
+    reconnect: bool = False,
+) -> Any:
+    async with _memory_client_lock(url):
+        if reconnect:
+            await _close_cached_memory_client(url)
+
+        cached = _MEMORY_CLIENTS.get(url)
+        if cached is not None:
+            client_ctx, client = cached
+            if _is_cached_memory_client_healthy(client_ctx, client):
+                return client
+            await _close_cached_memory_client(url)
+
+        client_ctx = MCPClient(url, name="spawner-memory")
+        entered_client = await client_ctx.__aenter__()
+        client = entered_client if entered_client is not None else client_ctx
+        _MEMORY_CLIENTS[url] = (client_ctx, client)
+        return client
+
+
+async def _call_memory_tool_with_reconnect(
+    url: str,
+    tool_name: str,
+    arguments: dict[str, str],
+    timeout: float,
+) -> Any:
+    first_exc: Exception | None = None
+
+    for reconnect in (False, True):
+        try:
+            client = await _get_cached_memory_client(url, reconnect=reconnect)
+            return await asyncio.wait_for(client.call_tool(tool_name, arguments), timeout=timeout)
+        except TimeoutError:
+            await _close_cached_memory_client(url)
+            raise
+        except Exception as exc:
+            if reconnect:
+                if first_exc is None:
+                    message = f"Failed to call {tool_name} on Memory Butler at {url}: {exc}"
+                else:
+                    message = (
+                        f"Failed to call {tool_name} on Memory Butler at {url}: "
+                        f"{first_exc} (reconnect failed: {exc})"
+                    )
+                raise ConnectionError(message) from exc
+
+            first_exc = exc
+            logger.info("Memory tool call failed (%s); reconnecting once", tool_name)
+
+
+async def _reset_memory_client_cache_for_tests() -> None:
+    """Test helper: close and clear cached Memory Butler clients."""
+    urls = list(_MEMORY_CLIENTS.keys())
+    for url in urls:
+        await _close_cached_memory_client(url)
+    _MEMORY_CLIENT_LOCKS.clear()
+
+
 async def fetch_memory_context(
     butler_name: str,
     prompt: str,
@@ -116,31 +212,29 @@ async def fetch_memory_context(
     """
     url = f"http://localhost:{memory_butler_port}/sse"
     try:
-        async with MCPClient(url, name="spawner-memory") as client:
-            result = await asyncio.wait_for(
-                client.call_tool(
-                    "memory_context",
-                    {"trigger_prompt": prompt, "butler": butler_name},
-                ),
-                timeout=timeout,
-            )
-            if result.is_error:
-                logger.warning(
-                    "Memory Butler returned error for butler %s: %s",
-                    butler_name,
-                    result.content,
-                )
-                return None
-            # Extract text from first content block
-            if result.content:
-                text = getattr(result.content[0], "text", None)
-                if isinstance(text, str) and text:
-                    return text
+        result = await _call_memory_tool_with_reconnect(
+            url,
+            "memory_context",
+            {"trigger_prompt": prompt, "butler": butler_name},
+            timeout,
+        )
+        if result.is_error:
             logger.warning(
-                "Memory Butler returned empty response for butler %s",
+                "Memory Butler returned error for butler %s: %s",
                 butler_name,
+                result.content,
             )
             return None
+        # Extract text from first content block
+        if result.content:
+            text = getattr(result.content[0], "text", None)
+            if isinstance(text, str) and text:
+                return text
+        logger.warning(
+            "Memory Butler returned empty response for butler %s",
+            butler_name,
+        )
+        return None
     except Exception:
         logger.warning(
             "Failed to fetch memory context for butler %s",
@@ -189,19 +283,20 @@ async def store_session_episode(
     if session_id is not None:
         arguments["session_id"] = str(session_id)
     try:
-        async with MCPClient(url, name="spawner-memory") as client:
-            result = await asyncio.wait_for(
-                client.call_tool("memory_store_episode", arguments),
-                timeout=timeout,
+        result = await _call_memory_tool_with_reconnect(
+            url,
+            "memory_store_episode",
+            arguments,
+            timeout,
+        )
+        if result.is_error:
+            logger.warning(
+                "Memory Butler returned error storing episode for butler %s: %s",
+                butler_name,
+                result.content,
             )
-            if result.is_error:
-                logger.warning(
-                    "Memory Butler returned error storing episode for butler %s: %s",
-                    butler_name,
-                    result.content,
-                )
-                return False
-            return True
+            return False
+        return True
     except Exception:
         logger.warning(
             "Failed to store session episode for butler %s",
@@ -285,7 +380,8 @@ class Spawner:
         prompt:
             The prompt to send to the runtime instance.
         trigger_source:
-            What caused this invocation (schedule, trigger_tool, tick, heartbeat).
+            What caused this invocation. Expected values are ``tick``,
+            ``external``, ``trigger``, or ``schedule:<task-name>``.
         context:
             Optional text to prepend to the prompt. If provided and non-empty,
             this will be prepended to the prompt with two newlines separating them.
@@ -304,6 +400,21 @@ class Spawner:
         """
         if not self._accepting:
             raise RuntimeError("Spawner is shutting down; not accepting new triggers")
+
+        # Prevent self-trigger deadlocks: an in-flight trigger-sourced session can
+        # invoke the trigger tool again via MCP. Waiting on the same lock here
+        # would deadlock the runtime call graph.
+        if trigger_source == "trigger" and self._lock.locked():
+            error_msg = (
+                "Runtime invocation rejected: trigger tool cannot be called while "
+                "another session is in flight"
+            )
+            logger.warning(error_msg)
+            return SpawnerResult(
+                success=False,
+                error=error_msg,
+                model=self._config.runtime.model,
+            )
 
         self._in_flight_event.clear()
         task = asyncio.current_task()
@@ -395,6 +506,7 @@ class Spawner:
 
         # Attach span to context
         token = trace.context_api.attach(trace.set_span_in_context(span))
+        t0 = time.monotonic()
 
         try:
             # Extract trace_id from active span
@@ -409,8 +521,6 @@ class Spawner:
                 )
                 # Set session_id on span
                 span.set_attribute("session_id", str(session_id))
-
-            t0 = time.monotonic()
 
             # Read system prompt
             system_prompt = read_system_prompt(self._config_dir, self._config.name)

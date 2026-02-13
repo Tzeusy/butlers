@@ -15,87 +15,69 @@ pytestmark = [
 ]
 
 
-def _unique_db_name() -> str:
-    return f"test_{uuid.uuid4().hex[:12]}"
-
-
-@pytest.fixture(scope="module")
-def postgres_container():
-    """Start a PostgreSQL container for the test module."""
-    from testcontainers.postgres import PostgresContainer
-
-    with PostgresContainer("postgres:16") as pg:
-        yield pg
-
-
 @pytest.fixture
-async def pool(postgres_container):
+async def pool(provisioned_postgres_pool):
     """Provision a fresh database with relationship + contact_info tables."""
-    from butlers.db import Database
+    async with provisioned_postgres_pool() as p:
+        # Create base relationship tables (from 001 migration)
+        await p.execute("""
+            CREATE TABLE IF NOT EXISTS contacts (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                first_name TEXT,
+                last_name TEXT,
+                nickname TEXT,
+                company TEXT,
+                job_title TEXT,
+                gender TEXT,
+                pronouns TEXT,
+                avatar_url TEXT,
+                listed BOOLEAN NOT NULL DEFAULT true,
+                metadata JSONB NOT NULL DEFAULT '{}',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        await p.execute("""
+            CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts (first_name, last_name)
+        """)
+        await p.execute("""
+            CREATE TABLE IF NOT EXISTS activity_feed (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+                action TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                entity_type TEXT,
+                entity_id UUID,
+                created_at TIMESTAMPTZ DEFAULT now()
+            )
+        """)
+        await p.execute("""
+            CREATE INDEX IF NOT EXISTS idx_activity_feed_contact_created
+                ON activity_feed (contact_id, created_at)
+        """)
 
-    db = Database(
-        db_name=_unique_db_name(),
-        host=postgres_container.get_container_host_ip(),
-        port=int(postgres_container.get_exposed_port(5432)),
-        user=postgres_container.username,
-        password=postgres_container.password,
-        min_pool_size=1,
-        max_pool_size=3,
-    )
-    await db.provision()
-    p = await db.connect()
+        # Create contact_info table (from 002 migration)
+        await p.execute("""
+            CREATE TABLE IF NOT EXISTS contact_info (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+                type VARCHAR NOT NULL,
+                value TEXT NOT NULL,
+                label VARCHAR,
+                is_primary BOOLEAN DEFAULT false,
+                created_at TIMESTAMPTZ DEFAULT now()
+            )
+        """)
+        await p.execute("""
+            CREATE INDEX IF NOT EXISTS idx_contact_info_type_value
+                ON contact_info (type, value)
+        """)
+        await p.execute("""
+            CREATE INDEX IF NOT EXISTS idx_contact_info_contact_id
+                ON contact_info (contact_id)
+        """)
 
-    # Create base relationship tables (from 001 migration)
-    await p.execute("""
-        CREATE TABLE IF NOT EXISTS contacts (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            name TEXT NOT NULL,
-            details JSONB DEFAULT '{}',
-            archived_at TIMESTAMPTZ,
-            created_at TIMESTAMPTZ DEFAULT now(),
-            updated_at TIMESTAMPTZ DEFAULT now()
-        )
-    """)
-    await p.execute("""
-        CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts (name)
-    """)
-    await p.execute("""
-        CREATE TABLE IF NOT EXISTS activity_feed (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-            type TEXT NOT NULL,
-            description TEXT NOT NULL,
-            created_at TIMESTAMPTZ DEFAULT now()
-        )
-    """)
-    await p.execute("""
-        CREATE INDEX IF NOT EXISTS idx_activity_feed_contact_created
-            ON activity_feed (contact_id, created_at)
-    """)
-
-    # Create contact_info table (from 002 migration)
-    await p.execute("""
-        CREATE TABLE IF NOT EXISTS contact_info (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-            type VARCHAR NOT NULL,
-            value TEXT NOT NULL,
-            label VARCHAR,
-            is_primary BOOLEAN DEFAULT false,
-            created_at TIMESTAMPTZ DEFAULT now()
-        )
-    """)
-    await p.execute("""
-        CREATE INDEX IF NOT EXISTS idx_contact_info_type_value
-            ON contact_info (type, value)
-    """)
-    await p.execute("""
-        CREATE INDEX IF NOT EXISTS idx_contact_info_contact_id
-            ON contact_info (contact_id)
-    """)
-
-    yield p
-    await db.close()
+        yield p
 
 
 # ------------------------------------------------------------------
@@ -479,14 +461,14 @@ async def test_contact_info_add_logs_activity(pool):
     await contact_info_add(pool, c["id"], "email", "feed@example.com", label="Work")
 
     feed = await feed_get(pool, contact_id=c["id"])
-    types = [f["type"] for f in feed]
-    assert "contact_info_added" in types
+    actions = [f["action"] for f in feed]
+    assert "contact_info_added" in actions
 
-    info_entries = [f for f in feed if f["type"] == "contact_info_added"]
+    info_entries = [f for f in feed if f["action"] == "contact_info_added"]
     assert len(info_entries) == 1
-    assert "email" in info_entries[0]["description"]
-    assert "feed@example.com" in info_entries[0]["description"]
-    assert "Work" in info_entries[0]["description"]
+    assert "email" in info_entries[0]["summary"]
+    assert "feed@example.com" in info_entries[0]["summary"]
+    assert "Work" in info_entries[0]["summary"]
 
 
 async def test_contact_info_remove_logs_activity(pool):
@@ -503,13 +485,13 @@ async def test_contact_info_remove_logs_activity(pool):
     await contact_info_remove(pool, info["id"])
 
     feed = await feed_get(pool, contact_id=c["id"])
-    types = [f["type"] for f in feed]
-    assert "contact_info_removed" in types
+    actions = [f["action"] for f in feed]
+    assert "contact_info_removed" in actions
 
-    remove_entries = [f for f in feed if f["type"] == "contact_info_removed"]
+    remove_entries = [f for f in feed if f["action"] == "contact_info_removed"]
     assert len(remove_entries) == 1
-    assert "phone" in remove_entries[0]["description"]
-    assert "+1-555-0500" in remove_entries[0]["description"]
+    assert "phone" in remove_entries[0]["summary"]
+    assert "+1-555-0500" in remove_entries[0]["summary"]
 
 
 # ------------------------------------------------------------------

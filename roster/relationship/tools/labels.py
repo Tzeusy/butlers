@@ -42,8 +42,8 @@ async def contact_search_by_label(pool: asyncpg.Pool, label_name: str) -> list[d
         FROM contacts c
         JOIN contact_labels cl ON c.id = cl.contact_id
         JOIN labels l ON cl.label_id = l.id
-        WHERE l.name = $1 AND c.archived_at IS NULL
-        ORDER BY c.name
+        WHERE l.name = $1 AND c.listed = true
+        ORDER BY c.first_name, c.last_name, c.nickname
         """,
         label_name,
     )

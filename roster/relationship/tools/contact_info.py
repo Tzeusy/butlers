@@ -28,7 +28,7 @@ async def contact_info_add(
         )
 
     # Verify contact exists
-    existing = await pool.fetchrow("SELECT id, name FROM contacts WHERE id = $1", contact_id)
+    existing = await pool.fetchrow("SELECT id FROM contacts WHERE id = $1", contact_id)
     if existing is None:
         raise ValueError(f"Contact {contact_id} not found")
 
@@ -131,8 +131,8 @@ async def contact_search_by_info(
             JOIN contact_info ci ON c.id = ci.contact_id
             WHERE ci.type = $1
               AND ci.value ILIKE '%' || $2 || '%'
-              AND c.archived_at IS NULL
-            ORDER BY c.name
+              AND c.listed = true
+            ORDER BY c.first_name, c.last_name, c.nickname
             """,
             type,
             value,
@@ -144,8 +144,8 @@ async def contact_search_by_info(
             FROM contacts c
             JOIN contact_info ci ON c.id = ci.contact_id
             WHERE ci.value ILIKE '%' || $1 || '%'
-              AND c.archived_at IS NULL
-            ORDER BY c.name
+              AND c.listed = true
+            ORDER BY c.first_name, c.last_name, c.nickname
             """,
             value,
         )

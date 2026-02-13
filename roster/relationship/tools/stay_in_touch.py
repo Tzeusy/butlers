@@ -65,11 +65,11 @@ async def contacts_overdue(pool: asyncpg.Pool) -> list[dict[str, Any]]:
         FROM contacts c
         LEFT JOIN interactions i ON c.id = i.contact_id
         WHERE c.stay_in_touch_days IS NOT NULL
-          AND c.archived_at IS NULL
+          AND c.listed = true
         GROUP BY c.id
         HAVING MAX(i.occurred_at) IS NULL
             OR MAX(i.occurred_at) < now() - make_interval(days => c.stay_in_touch_days)
-        ORDER BY c.name
+        ORDER BY c.first_name, c.last_name, c.nickname
         """
     )
     return [_parse_contact(row) for row in rows]
