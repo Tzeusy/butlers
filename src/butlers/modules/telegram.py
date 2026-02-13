@@ -502,16 +502,143 @@ class TelegramModule(Module):
     # Classification pipeline integration
     # ------------------------------------------------------------------
 
-    async def process_update(self, update: dict[str, Any]) -> RoutingResult | None:
-        """Process a single Telegram update through the classification pipeline.
+    @staticmethod
+    def _supports_canonical_ingest(pipeline: Any) -> bool:
+        return isinstance(pipeline, MessagePipeline)
 
-        Extracts the message text from the update, classifies it via
-        ``classify_message()``, and routes it to the target butler via
-        ``route()``.
+    async def _handle_routing_result(
+        self,
+        *,
+        result: RoutingResult,
+        chat_id: str | None,
+        message_id: int | None,
+        message_key: str | None,
+        acquire_lock: bool = True,
+        cleanup_state: bool = True,
+    ) -> None:
+        lock = self._message_lock(message_key) if acquire_lock and message_key is not None else None
+        if lock is not None:
+            await lock.acquire()
 
-        Returns ``None`` if no pipeline is configured or the update has
-        no extractable text.
-        """
+        try:
+            if message_key is not None:
+                lifecycle = self._lifecycle(message_key)
+                self._track_routing_progress(lifecycle, result)
+                pending_targets = (
+                    lifecycle.routed_targets - lifecycle.acked_targets - lifecycle.failed_targets
+                )
+                if self._result_has_failure(result) or lifecycle.failed_targets:
+                    await self._update_reaction(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        message_key=message_key,
+                        reaction=REACTION_FAILURE,
+                    )
+                elif lifecycle.routed_targets and not pending_targets:
+                    await self._update_reaction(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        message_key=message_key,
+                        reaction=REACTION_SUCCESS,
+                    )
+
+            self._routed_messages.append(result)
+            logger.info(
+                "Telegram message routed",
+                extra={
+                    "source": "telegram",
+                    "chat_id": chat_id,
+                    "target_butler": result.target_butler,
+                    "latency_ms": None,
+                },
+            )
+        finally:
+            if cleanup_state and message_key is not None:
+                self._cleanup_message_state(message_key)
+            if lock is not None and lock.locked():
+                lock.release()
+
+    async def _process_update_via_canonical(
+        self,
+        update: dict[str, Any],
+        *,
+        wait_for_completion: bool,
+    ) -> RoutingResult | dict[str, Any] | None:
+        chat_id = _extract_chat_id(update)
+        message_id = _extract_message_id(update)
+        message_key = _message_tracking_key(update, chat_id=chat_id, message_id=message_id)
+        if self._pipeline is None:
+            logger.warning(
+                "Skipping Telegram update because no classification pipeline is configured",
+                extra={
+                    "source": "telegram",
+                    "chat_id": chat_id,
+                    "target_butler": None,
+                    "latency_ms": None,
+                    "update_id": update.get("update_id"),
+                },
+            )
+            return None
+
+        text = _extract_text(update)
+        if not text:
+            return None
+
+        lock = self._message_lock(message_key) if message_key is not None else None
+        if lock is not None:
+            await lock.acquire()
+
+        completion_future: asyncio.Future[RoutingResult] | None = None
+        if wait_for_completion:
+            completion_future = asyncio.get_running_loop().create_future()
+
+        async def _on_complete(result: RoutingResult) -> None:
+            try:
+                await self._handle_routing_result(
+                    result=result,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    message_key=message_key,
+                )
+            finally:
+                if completion_future is not None and not completion_future.done():
+                    completion_future.set_result(result)
+
+        try:
+            await self._update_reaction(
+                chat_id=chat_id,
+                message_id=message_id,
+                message_key=message_key,
+                reaction=REACTION_IN_PROGRESS,
+            )
+            receipt = await self._pipeline.ingest_telegram_update(
+                update=update,
+                text=text,
+                chat_id=chat_id,
+                source_id=message_key,
+                completion_callback=_on_complete,
+            )
+        except Exception as exc:
+            await self._update_reaction(
+                chat_id=chat_id,
+                message_id=message_id,
+                message_key=message_key,
+                reaction=REACTION_FAILURE,
+            )
+            if completion_future is not None and not completion_future.done():
+                completion_future.set_exception(exc)
+            raise
+        finally:
+            if lock is not None and lock.locked():
+                lock.release()
+
+        if wait_for_completion:
+            assert completion_future is not None
+            return await completion_future
+        return receipt.to_dict()
+
+    async def _process_update_legacy(self, update: dict[str, Any]) -> RoutingResult | None:
+        """Legacy synchronous path used by tests/mocks without ingest adapter methods."""
         chat_id = _extract_chat_id(update)
         message_id = _extract_message_id(update)
         message_key = _message_tracking_key(update, chat_id=chat_id, message_id=message_id)
@@ -543,7 +670,6 @@ class TelegramModule(Module):
                 reaction=REACTION_IN_PROGRESS,
             )
 
-            # Phase 1: Log receipt
             message_inbox_id = None
             db_pool = self._get_db_pool()
             if db_pool is not None:
@@ -576,27 +702,15 @@ class TelegramModule(Module):
                 },
                 message_inbox_id=message_inbox_id,
             )
-
-            if message_key is not None:
-                lifecycle = self._lifecycle(message_key)
-                self._track_routing_progress(lifecycle, result)
-                pending_targets = (
-                    lifecycle.routed_targets - lifecycle.acked_targets - lifecycle.failed_targets
-                )
-                if self._result_has_failure(result) or lifecycle.failed_targets:
-                    await self._update_reaction(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        message_key=message_key,
-                        reaction=REACTION_FAILURE,
-                    )
-                elif lifecycle.routed_targets and not pending_targets:
-                    await self._update_reaction(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        message_key=message_key,
-                        reaction=REACTION_SUCCESS,
-                    )
+            await self._handle_routing_result(
+                result=result,
+                chat_id=chat_id,
+                message_id=message_id,
+                message_key=message_key,
+                acquire_lock=False,
+                cleanup_state=False,
+            )
+            return result
         except Exception:
             await self._update_reaction(
                 chat_id=chat_id,
@@ -611,17 +725,41 @@ class TelegramModule(Module):
             if message_key is not None:
                 self._cleanup_message_state(message_key)
 
-        self._routed_messages.append(result)
-        logger.info(
-            "Telegram message routed",
-            extra={
-                "source": "telegram",
-                "chat_id": chat_id,
-                "target_butler": result.target_butler,
-                "latency_ms": None,
-            },
-        )
-        return result
+    async def accept_update(self, update: dict[str, Any]) -> dict[str, Any] | None:
+        """Accept update for async processing and return canonical ingest receipt."""
+        if self._pipeline is None:
+            logger.warning(
+                "Skipping Telegram update because no classification pipeline is configured",
+                extra={
+                    "source": "telegram",
+                    "chat_id": _extract_chat_id(update),
+                    "target_butler": None,
+                    "latency_ms": None,
+                    "update_id": update.get("update_id"),
+                },
+            )
+            return None
+
+        if self._supports_canonical_ingest(self._pipeline):
+            result = await self._process_update_via_canonical(update, wait_for_completion=False)
+            return result if isinstance(result, dict) else None
+
+        routing_result = await self._process_update_legacy(update)
+        if routing_result is None:
+            return None
+        return {
+            "status_code": 200,
+            "request_id": None,
+            "accepted": True,
+            "message_inbox_id": None,
+        }
+
+    async def process_update(self, update: dict[str, Any]) -> RoutingResult | None:
+        """Process a Telegram update through the routing pipeline."""
+        if self._pipeline is not None and self._supports_canonical_ingest(self._pipeline):
+            result = await self._process_update_via_canonical(update, wait_for_completion=True)
+            return result if isinstance(result, RoutingResult) else None
+        return await self._process_update_legacy(update)
 
     # ------------------------------------------------------------------
     # Telegram API helpers
@@ -719,9 +857,9 @@ class TelegramModule(Module):
                         },
                     )
 
-                    # Route through classification pipeline if available
+                    # Submit through canonical ingest boundary if available.
                     for update in updates:
-                        await self.process_update(update)
+                        await self.accept_update(update)
 
             except asyncio.CancelledError:
                 raise

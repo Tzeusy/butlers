@@ -247,7 +247,7 @@ class TestCheckAndRouteInbox:
         assert result["status"] == "no_pipeline"
 
     async def test_routes_unseen_emails(self):
-        """Fetches unseen emails and routes each through the pipeline."""
+        """Fetches unseen emails and accepts each through canonical ingest."""
         mod = EmailModule()
         mod.set_pipeline(_make_pipeline(classify_result="health"))
 
@@ -274,10 +274,11 @@ class TestCheckAndRouteInbox:
 
         assert result["status"] == "ok"
         assert result["total"] == 2
+        assert result["accepted"] == 2
         assert result["routed"] == 2
         assert len(result["results"]) == 2
-        assert all(r["status"] == "routed" for r in result["results"])
-        assert all(r["target_butler"] == "health" for r in result["results"])
+        assert all(r["status"] == "accepted" for r in result["results"])
+        assert all(r["request_id"] for r in result["results"])
 
     async def test_handles_search_error(self):
         """Returns error status when inbox search fails."""
@@ -325,10 +326,11 @@ class TestCheckAndRouteInbox:
 
         assert result["status"] == "ok"
         assert result["total"] == 2
+        assert result["accepted"] == 1
         assert result["routed"] == 1
-        # First email errored, second was routed
+        # First email errored, second was accepted
         assert result["results"][0]["status"] == "error"
-        assert result["results"][1]["status"] == "routed"
+        assert result["results"][1]["status"] == "accepted"
 
     async def test_empty_inbox(self):
         """Empty inbox returns ok with zero counts."""
@@ -343,6 +345,7 @@ class TestCheckAndRouteInbox:
         result = await mod._check_and_route_inbox()
         assert result["status"] == "ok"
         assert result["total"] == 0
+        assert result["accepted"] == 0
         assert result["routed"] == 0
         assert result["results"] == []
 

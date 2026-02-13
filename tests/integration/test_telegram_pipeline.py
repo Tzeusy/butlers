@@ -332,19 +332,19 @@ class TestPollLoopPipeline:
     """Verify that the poll loop routes updates through the pipeline."""
 
     async def test_poll_loop_routes_updates(self):
-        """Poll loop calls process_update for each received update."""
+        """Poll loop calls accept_update for each received update."""
         mod = TelegramModule()
         mod.set_pipeline(_make_pipeline(classify_result="health"))
 
         call_count = 0
-        original_process = mod.process_update
+        original_accept = mod.accept_update
 
-        async def counting_process(update):
+        async def counting_accept(update):
             nonlocal call_count
             call_count += 1
-            return await original_process(update)
+            return await original_accept(update)
 
-        mod.process_update = counting_process  # type: ignore[method-assign]
+        mod.accept_update = counting_accept  # type: ignore[method-assign]
 
         # Mock _get_updates to return 2 updates then cancel
         iteration = 0

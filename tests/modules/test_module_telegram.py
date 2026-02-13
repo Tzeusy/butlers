@@ -441,10 +441,10 @@ class TestPollingMode:
 
         assert call_count >= 2
 
-    async def test_poll_loop_calls_process_update_for_each_update(
+    async def test_poll_loop_calls_accept_update_for_each_update(
         self, telegram_module: TelegramModule, monkeypatch
     ):
-        """Polling forwards each update into process_update()."""
+        """Polling forwards each update into accept_update()."""
         monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
 
         updates = [
@@ -462,7 +462,7 @@ class TestPollingMode:
             raise asyncio.CancelledError
 
         telegram_module._get_updates = mock_get_updates  # type: ignore[method-assign]
-        telegram_module.process_update = AsyncMock()  # type: ignore[method-assign]
+        telegram_module.accept_update = AsyncMock()  # type: ignore[method-assign]
         telegram_module._config = TelegramConfig(poll_interval=0.01)
         telegram_module._client = AsyncMock(spec=httpx.AsyncClient)
 
@@ -470,7 +470,7 @@ class TestPollingMode:
             await telegram_module._poll_loop()
 
         assert telegram_module._updates_buffer == updates
-        assert telegram_module.process_update.await_count == len(updates)
+        assert telegram_module.accept_update.await_count == len(updates)
 
 
 class TestPipelineIntegration:

@@ -302,18 +302,65 @@ class EmailModule(Module):
     # Classification pipeline integration
     # ------------------------------------------------------------------
 
-    async def process_incoming(
+    @staticmethod
+    def _supports_canonical_ingest(pipeline: Any) -> bool:
+        return isinstance(pipeline, MessagePipeline)
+
+    async def _handle_routing_result(
+        self,
+        *,
+        result: RoutingResult,
+        sender: str,
+        subject: str,
+    ) -> None:
+        self._routed_messages.append(result)
+        logger.info(
+            "Email routed to %s (from=%s, subject=%s)",
+            result.target_butler,
+            sender,
+            subject,
+        )
+
+    async def _process_incoming_via_canonical(
         self,
         email_data: dict[str, str],
-    ) -> RoutingResult | None:
-        """Process a single email through the classification pipeline.
+        *,
+        wait_for_completion: bool,
+    ) -> RoutingResult | dict[str, Any] | None:
+        if self._pipeline is None:
+            return None
 
-        Builds a message string from the email subject and body, then
-        classifies and routes it via the pipeline.
+        subject = email_data.get("subject", "")
+        body = email_data.get("body", "")
+        sender = email_data.get("from", "")
 
-        Returns ``None`` if no pipeline is configured or the email has
-        no usable content.
-        """
+        text = _build_classification_text(subject, body)
+        if not text:
+            return None
+
+        completion_future: asyncio.Future[RoutingResult] | None = None
+        if wait_for_completion:
+            completion_future = asyncio.get_running_loop().create_future()
+
+        async def _on_complete(result: RoutingResult) -> None:
+            try:
+                await self._handle_routing_result(result=result, sender=sender, subject=subject)
+            finally:
+                if completion_future is not None and not completion_future.done():
+                    completion_future.set_result(result)
+
+        receipt = await self._pipeline.ingest_email_message(
+            email_data=email_data,
+            text=text,
+            completion_callback=_on_complete,
+        )
+        if wait_for_completion:
+            assert completion_future is not None
+            return await completion_future
+        return receipt.to_dict()
+
+    async def _process_incoming_legacy(self, email_data: dict[str, str]) -> RoutingResult | None:
+        """Legacy synchronous path used by tests/mocks without ingest adapter methods."""
         if self._pipeline is None:
             return None
 
@@ -322,7 +369,6 @@ class EmailModule(Module):
         sender = email_data.get("from", "")
         message_id = email_data.get("message_id", "")
 
-        # Build a text representation for classification
         text = _build_classification_text(subject, body)
         if not text:
             return None
@@ -341,15 +387,43 @@ class EmailModule(Module):
                 "source_id": message_id,
             },
         )
-
-        self._routed_messages.append(result)
-        logger.info(
-            "Email routed to %s (from=%s, subject=%s)",
-            result.target_butler,
-            sender,
-            subject,
-        )
+        await self._handle_routing_result(result=result, sender=sender, subject=subject)
         return result
+
+    async def accept_incoming(self, email_data: dict[str, str]) -> dict[str, Any] | None:
+        """Accept an email for async processing and return canonical ingest receipt."""
+        if self._pipeline is None:
+            return None
+
+        if self._supports_canonical_ingest(self._pipeline):
+            result = await self._process_incoming_via_canonical(
+                email_data,
+                wait_for_completion=False,
+            )
+            return result if isinstance(result, dict) else None
+
+        routing_result = await self._process_incoming_legacy(email_data)
+        if routing_result is None:
+            return None
+        return {
+            "status_code": 200,
+            "request_id": None,
+            "accepted": True,
+            "message_inbox_id": None,
+        }
+
+    async def process_incoming(
+        self,
+        email_data: dict[str, str],
+    ) -> RoutingResult | None:
+        """Process a single email through the classification pipeline."""
+        if self._pipeline is not None and self._supports_canonical_ingest(self._pipeline):
+            result = await self._process_incoming_via_canonical(
+                email_data,
+                wait_for_completion=True,
+            )
+            return result if isinstance(result, RoutingResult) else None
+        return await self._process_incoming_legacy(email_data)
 
     async def _check_and_route_inbox(self) -> dict:
         """Check for unseen emails and route each through the pipeline.
@@ -389,15 +463,15 @@ class EmailModule(Module):
                 )
                 continue
 
-            # Route through the pipeline
-            routing_result = await self.process_incoming(full_email)
-            if routing_result:
+            # Submit through canonical ingest boundary.
+            ingest_receipt = await self.accept_incoming(full_email)
+            if ingest_receipt:
                 results.append(
                     {
                         "message_id": email_header.get("message_id"),
                         "subject": full_email.get("subject"),
-                        "target_butler": routing_result.target_butler,
-                        "status": "routed",
+                        "status": "accepted",
+                        "request_id": ingest_receipt.get("request_id"),
                     }
                 )
             else:
@@ -412,7 +486,9 @@ class EmailModule(Module):
         return {
             "status": "ok",
             "total": len(unseen),
-            "routed": sum(1 for r in results if r.get("status") == "routed"),
+            "accepted": sum(1 for r in results if r.get("status") == "accepted"),
+            # Compatibility alias kept for existing dashboards/tests.
+            "routed": sum(1 for r in results if r.get("status") == "accepted"),
             "results": results,
         }
 

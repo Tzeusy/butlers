@@ -6,13 +6,22 @@ to the switchboard's ``classify_message()`` and ``route()`` functions.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
+import json
 import logging
+import secrets
 import time
-from collections.abc import Callable, Coroutine
+import uuid
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+IngestCompletionCallback = Callable[["RoutingResult"], Awaitable[None] | None]
 
 
 @dataclass
@@ -26,6 +35,24 @@ class RoutingResult:
     routed_targets: list[str] = field(default_factory=list)
     acked_targets: list[str] = field(default_factory=list)
     failed_targets: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class IngestReceipt:
+    """Acceptance receipt returned by canonical ingestion adapters."""
+
+    status_code: int
+    request_id: str
+    accepted: bool = True
+    message_inbox_id: Any | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status_code": self.status_code,
+            "request_id": self.request_id,
+            "accepted": self.accepted,
+            "message_inbox_id": self.message_inbox_id,
+        }
 
 
 class MessagePipeline:
@@ -63,6 +90,406 @@ class MessagePipeline:
         self._source_butler = source_butler
         self._classify_fn = classify_fn
         self._route_fn = route_fn
+        self._ingest_tasks: set[asyncio.Task[Any]] = set()
+
+    def _track_ingest_task(self, task: asyncio.Task[Any]) -> None:
+        self._ingest_tasks.add(task)
+        task.add_done_callback(self._ingest_tasks.discard)
+
+    @staticmethod
+    def _new_external_event_id(prefix: str) -> str:
+        return f"{prefix}-{uuid.uuid4()}"
+
+    @staticmethod
+    def _new_request_id() -> str:
+        """Generate an RFC4122 UUIDv7-compatible identifier."""
+        timestamp_ms = int(time.time() * 1000) & ((1 << 48) - 1)
+        rand_a = secrets.randbits(12)
+        rand_b = secrets.randbits(62)
+
+        value = 0
+        value |= timestamp_ms << 80
+        value |= 0x7 << 76  # version
+        value |= rand_a << 64
+        value |= 0b10 << 62  # RFC4122 variant
+        value |= rand_b
+        return str(uuid.UUID(int=value))
+
+    @staticmethod
+    def _request_received_at() -> datetime:
+        return datetime.now(UTC)
+
+    async def _persist_ingest_acceptance(
+        self,
+        *,
+        source_channel: str,
+        sender_id: str,
+        normalized_text: str,
+        metadata: dict[str, Any],
+        received_at: datetime,
+    ) -> Any | None:
+        try:
+            async with self._pool.acquire() as conn:
+                return await conn.fetchval(
+                    """
+                    INSERT INTO message_inbox
+                        (source_channel, sender_id, raw_content, raw_metadata, received_at)
+                    VALUES
+                        ($1, $2, $3, $4, $5)
+                    RETURNING id
+                    """,
+                    source_channel,
+                    sender_id,
+                    normalized_text,
+                    json.dumps(metadata),
+                    received_at,
+                )
+        except Exception:
+            logger.exception(
+                "Canonical ingest persistence failed",
+                extra={
+                    "source": source_channel,
+                    "target_butler": None,
+                    "latency_ms": None,
+                },
+            )
+            return None
+
+    @staticmethod
+    async def _invoke_completion_callback(
+        callback: IngestCompletionCallback | None,
+        result: RoutingResult,
+    ) -> None:
+        if callback is None:
+            return
+        maybe_awaitable = callback(result)
+        if inspect.isawaitable(maybe_awaitable):
+            await maybe_awaitable
+
+    async def _process_accepted_ingest(
+        self,
+        *,
+        request_id: str,
+        message_text: str,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        message_inbox_id: Any | None,
+        completion_callback: IngestCompletionCallback | None,
+    ) -> None:
+        try:
+            result = await self.process(
+                message_text=message_text,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                message_inbox_id=message_inbox_id,
+            )
+        except Exception as exc:
+            error_msg = f"{type(exc).__name__}: {exc}"
+            logger.exception(
+                "Asynchronous ingest processing failed",
+                extra={
+                    "source": str(tool_args.get("source_channel", "unknown")),
+                    "target_butler": None,
+                    "latency_ms": None,
+                    "request_id": request_id,
+                },
+            )
+            if message_inbox_id is not None:
+                try:
+                    async with self._pool.acquire() as conn:
+                        await conn.execute(
+                            """
+                            UPDATE message_inbox
+                            SET
+                                routing_results = $1,
+                                response_summary = $2,
+                                completed_at = $3
+                            WHERE id = $4
+                            """,
+                            json.dumps({"error": error_msg}),
+                            "Routing failed",
+                            datetime.now(UTC),
+                            message_inbox_id,
+                        )
+                except Exception:
+                    logger.exception(
+                        "Failed to persist asynchronous ingest failure",
+                        extra={
+                            "source": str(tool_args.get("source_channel", "unknown")),
+                            "target_butler": None,
+                            "latency_ms": None,
+                            "request_id": request_id,
+                        },
+                    )
+            await self._invoke_completion_callback(
+                completion_callback,
+                RoutingResult(target_butler="general", routing_error=error_msg),
+            )
+            return
+
+        await self._invoke_completion_callback(completion_callback, result)
+
+    async def ingest_envelope(
+        self,
+        envelope_payload: Mapping[str, Any],
+        *,
+        tool_name: str = "bot_switchboard_handle_message",
+        tool_args: dict[str, Any] | None = None,
+        completion_callback: IngestCompletionCallback | None = None,
+    ) -> IngestReceipt:
+        """Accept canonical ingest payloads and route asynchronously."""
+        from butlers.tools.switchboard import parse_ingest_envelope
+
+        envelope = parse_ingest_envelope(dict(envelope_payload))
+        received_at = self._request_received_at()
+        request_context = {
+            "request_id": self._new_request_id(),
+            "received_at": received_at.isoformat(),
+            "source_channel": envelope.source.channel,
+            "source_endpoint_identity": envelope.source.endpoint_identity,
+            "source_sender_identity": envelope.sender.identity,
+            "source_thread_identity": envelope.event.external_thread_id,
+            "trace_context": envelope.control.trace_context,
+        }
+
+        args = dict(tool_args or {})
+        args.setdefault("source", envelope.source.channel)
+        args.setdefault("source_channel", envelope.source.channel)
+        args.setdefault("source_id", envelope.event.external_event_id)
+        args.setdefault("source_tool", tool_name)
+        args.setdefault("source_identity", self._default_identity_for_tool(tool_name))
+        args["request_context"] = request_context
+
+        metadata = {
+            "schema_version": "ingest.v1",
+            "ingest": envelope.model_dump(mode="json"),
+            "request_context": request_context,
+            "lifecycle": {
+                "state": "accepted",
+                "accepted_at": received_at.isoformat(),
+                "admission": "accepted",
+                "status_code": 202,
+            },
+        }
+        message_inbox_id = await self._persist_ingest_acceptance(
+            source_channel=envelope.source.channel,
+            sender_id=envelope.sender.identity,
+            normalized_text=envelope.payload.normalized_text,
+            metadata=metadata,
+            received_at=received_at,
+        )
+
+        task = asyncio.create_task(
+            self._process_accepted_ingest(
+                request_id=request_context["request_id"],
+                message_text=envelope.payload.normalized_text,
+                tool_name=tool_name,
+                tool_args=args,
+                message_inbox_id=message_inbox_id,
+                completion_callback=completion_callback,
+            ),
+            name=f"switchboard-ingest-{request_context['request_id']}",
+        )
+        self._track_ingest_task(task)
+
+        return IngestReceipt(
+            status_code=202,
+            request_id=request_context["request_id"],
+            message_inbox_id=message_inbox_id,
+        )
+
+    async def ingest_telegram_update(
+        self,
+        *,
+        update: dict[str, Any],
+        text: str,
+        chat_id: str | None,
+        source_id: str | None,
+        completion_callback: IngestCompletionCallback | None = None,
+    ) -> IngestReceipt:
+        """Telegram source adapter -> canonical ingest boundary."""
+        event_id = (
+            str(update.get("update_id", "")).strip()
+            or source_id
+            or self._new_external_event_id("telegram")
+        )
+        observed_at = self._request_received_at().isoformat().replace("+00:00", "Z")
+        sender_identity = str(chat_id).strip() if chat_id not in (None, "") else "telegram:unknown"
+
+        envelope_payload = {
+            "schema_version": "ingest.v1",
+            "source": {
+                "channel": "telegram",
+                "provider": "telegram",
+                "endpoint_identity": "bot_telegram_get_updates",
+            },
+            "event": {
+                "external_event_id": event_id,
+                "external_thread_id": str(chat_id) if chat_id not in (None, "") else None,
+                "observed_at": observed_at,
+            },
+            "sender": {"identity": sender_identity},
+            "payload": {"raw": update, "normalized_text": text},
+            "control": {"policy_tier": "interactive"},
+        }
+        return await self.ingest_envelope(
+            envelope_payload,
+            tool_name="bot_telegram_handle_message",
+            tool_args={
+                "source": "telegram",
+                "source_channel": "telegram",
+                "source_identity": "bot",
+                "source_tool": "bot_telegram_get_updates",
+                "chat_id": chat_id,
+                "source_id": source_id,
+            },
+            completion_callback=completion_callback,
+        )
+
+    async def ingest_email_message(
+        self,
+        *,
+        email_data: dict[str, Any],
+        text: str,
+        completion_callback: IngestCompletionCallback | None = None,
+    ) -> IngestReceipt:
+        """Email source adapter -> canonical ingest boundary."""
+        message_id = str(email_data.get("message_id", "")).strip()
+        event_id = message_id or self._new_external_event_id("email")
+        sender_identity = str(email_data.get("from", "")).strip() or "email:unknown"
+        observed_at = self._request_received_at().isoformat().replace("+00:00", "Z")
+
+        envelope_payload = {
+            "schema_version": "ingest.v1",
+            "source": {
+                "channel": "email",
+                "provider": "imap",
+                "endpoint_identity": "bot_email_check_and_route_inbox",
+            },
+            "event": {
+                "external_event_id": event_id,
+                "external_thread_id": None,
+                "observed_at": observed_at,
+            },
+            "sender": {"identity": sender_identity},
+            "payload": {"raw": email_data, "normalized_text": text},
+            "control": {"policy_tier": "default"},
+        }
+        return await self.ingest_envelope(
+            envelope_payload,
+            tool_name="bot_email_handle_message",
+            tool_args={
+                "source": "email",
+                "source_channel": "email",
+                "source_identity": "bot",
+                "source_tool": "bot_email_check_and_route_inbox",
+                "from": email_data.get("from", ""),
+                "subject": email_data.get("subject", ""),
+                "message_id": message_id,
+                "source_id": message_id or event_id,
+            },
+            completion_callback=completion_callback,
+        )
+
+    async def ingest_api_message(
+        self,
+        *,
+        message_text: str,
+        sender_identity: str,
+        endpoint_identity: str = "switchboard-api",
+        external_event_id: str | None = None,
+        external_thread_id: str | None = None,
+        raw_payload: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+        completion_callback: IngestCompletionCallback | None = None,
+    ) -> IngestReceipt:
+        """API source adapter -> canonical ingest boundary."""
+        event_id = external_event_id or self._new_external_event_id("api")
+        observed_at = self._request_received_at().isoformat().replace("+00:00", "Z")
+        envelope_payload = {
+            "schema_version": "ingest.v1",
+            "source": {
+                "channel": "api",
+                "provider": "internal",
+                "endpoint_identity": endpoint_identity,
+            },
+            "event": {
+                "external_event_id": event_id,
+                "external_thread_id": external_thread_id,
+                "observed_at": observed_at,
+            },
+            "sender": {"identity": sender_identity},
+            "payload": {
+                "raw": raw_payload or {"message": message_text},
+                "normalized_text": message_text,
+            },
+            "control": {
+                "idempotency_key": idempotency_key,
+                "policy_tier": "default",
+            },
+        }
+        return await self.ingest_envelope(
+            envelope_payload,
+            tool_name="bot_switchboard_handle_message",
+            tool_args={
+                "source": "api",
+                "source_channel": "api",
+                "source_identity": "service",
+                "source_tool": "api_switchboard_ingest",
+                "source_id": event_id,
+            },
+            completion_callback=completion_callback,
+        )
+
+    async def ingest_mcp_message(
+        self,
+        *,
+        message_text: str,
+        sender_identity: str,
+        endpoint_identity: str = "switchboard-mcp",
+        external_event_id: str | None = None,
+        external_thread_id: str | None = None,
+        raw_payload: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+        completion_callback: IngestCompletionCallback | None = None,
+    ) -> IngestReceipt:
+        """MCP source adapter -> canonical ingest boundary."""
+        event_id = external_event_id or self._new_external_event_id("mcp")
+        observed_at = self._request_received_at().isoformat().replace("+00:00", "Z")
+        envelope_payload = {
+            "schema_version": "ingest.v1",
+            "source": {
+                "channel": "mcp",
+                "provider": "internal",
+                "endpoint_identity": endpoint_identity,
+            },
+            "event": {
+                "external_event_id": event_id,
+                "external_thread_id": external_thread_id,
+                "observed_at": observed_at,
+            },
+            "sender": {"identity": sender_identity},
+            "payload": {
+                "raw": raw_payload or {"message": message_text},
+                "normalized_text": message_text,
+            },
+            "control": {
+                "idempotency_key": idempotency_key,
+                "policy_tier": "default",
+            },
+        }
+        return await self.ingest_envelope(
+            envelope_payload,
+            tool_name="bot_switchboard_handle_message",
+            tool_args={
+                "source": "mcp",
+                "source_channel": "mcp",
+                "source_identity": "bot",
+                "source_tool": "mcp_switchboard_ingest",
+                "source_id": event_id,
+            },
+            completion_callback=completion_callback,
+        )
 
     @staticmethod
     def _default_identity_for_tool(tool_name: str) -> str:

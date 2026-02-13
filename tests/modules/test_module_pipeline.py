@@ -8,13 +8,15 @@ Tests cover:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from butlers.modules.pipeline import MessagePipeline, RoutingResult
+from butlers.modules.pipeline import IngestReceipt, MessagePipeline, RoutingResult
 
 pytestmark = pytest.mark.unit
 
@@ -559,3 +561,121 @@ class TestMessagePipelineProcess:
         await pipeline.process("test")
 
         assert captured == ["switchboard"]
+
+
+class TestCanonicalIngest:
+    """Verify canonical ingest acceptance and adapter convergence."""
+
+    @staticmethod
+    def _mock_pool(fetchval_result: Any = "msg-1") -> tuple[MagicMock, AsyncMock]:
+        conn = AsyncMock()
+        conn.fetchval = AsyncMock(return_value=fetchval_result)
+        acquire_cm = AsyncMock()
+        acquire_cm.__aenter__.return_value = conn
+        acquire_cm.__aexit__.return_value = False
+        pool = MagicMock()
+        pool.acquire.return_value = acquire_cm
+        return pool, conn
+
+    async def test_ingest_api_message_returns_202_and_persists_context(self):
+        """Accepted ingest returns canonical request_id and persists metadata first."""
+        pool, conn = self._mock_pool(fetchval_result="inbox-77")
+        pipeline = MessagePipeline(switchboard_pool=pool, dispatch_fn=AsyncMock())
+
+        completed = asyncio.Event()
+
+        async def fake_process(*args: Any, **kwargs: Any) -> RoutingResult:
+            completed.set()
+            return RoutingResult(target_butler="general", route_result={"result": "ok"})
+
+        pipeline.process = AsyncMock(side_effect=fake_process)  # type: ignore[method-assign]
+
+        receipt = await pipeline.ingest_api_message(
+            message_text="hello from api",
+            sender_identity="api:user-1",
+        )
+
+        assert receipt.status_code == 202
+        assert receipt.accepted is True
+        assert receipt.request_id
+        assert receipt.message_inbox_id == "inbox-77"
+
+        await asyncio.wait_for(completed.wait(), timeout=1.0)
+
+        metadata_blob = conn.fetchval.await_args.args[4]
+        metadata = json.loads(metadata_blob)
+        assert metadata["schema_version"] == "ingest.v1"
+        assert metadata["lifecycle"]["state"] == "accepted"
+        assert metadata["request_context"]["request_id"] == receipt.request_id
+
+        routed_args = pipeline.process.await_args.kwargs["tool_args"]
+        assert routed_args["request_context"]["request_id"] == receipt.request_id
+        assert routed_args["source_channel"] == "api"
+
+    async def test_ingest_acceptance_is_non_blocking_for_route_execution(self):
+        """ingest_* returns acceptance before routing work completes."""
+        pool, _conn = self._mock_pool(fetchval_result="inbox-55")
+        pipeline = MessagePipeline(switchboard_pool=pool, dispatch_fn=AsyncMock())
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_process(*args: Any, **kwargs: Any) -> RoutingResult:
+            started.set()
+            await release.wait()
+            return RoutingResult(target_butler="general", route_result={"result": "ok"})
+
+        pipeline.process = AsyncMock(side_effect=blocking_process)  # type: ignore[method-assign]
+
+        receipt = await pipeline.ingest_mcp_message(
+            message_text="hello from mcp",
+            sender_identity="mcp:caller-1",
+        )
+
+        assert receipt.status_code == 202
+        assert receipt.request_id
+
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        assert not release.is_set()
+        release.set()
+
+        if pipeline._ingest_tasks:
+            await asyncio.wait_for(asyncio.gather(*list(pipeline._ingest_tasks)), timeout=1.0)
+
+    async def test_all_source_adapters_share_canonical_ingest_handler(self):
+        """Telegram/Email/API/MCP adapters all delegate to ingest_envelope()."""
+        pipeline = MessagePipeline(switchboard_pool=MagicMock(), dispatch_fn=AsyncMock())
+        ingest_envelope = AsyncMock(
+            return_value=IngestReceipt(
+                status_code=202, request_id="018f0000-0000-7000-8000-000000000001"
+            )
+        )
+        pipeline.ingest_envelope = ingest_envelope  # type: ignore[method-assign]
+
+        telegram_receipt = await pipeline.ingest_telegram_update(
+            update={"update_id": 1, "message": {"text": "hello"}},
+            text="hello",
+            chat_id="42",
+            source_id="42:7",
+        )
+        email_receipt = await pipeline.ingest_email_message(
+            email_data={"message_id": "m-1", "from": "sender@example.com", "subject": "S"},
+            text="Subject: S",
+        )
+        api_receipt = await pipeline.ingest_api_message(
+            message_text="api hello",
+            sender_identity="api:user-2",
+        )
+        mcp_receipt = await pipeline.ingest_mcp_message(
+            message_text="mcp hello",
+            sender_identity="mcp:user-2",
+        )
+
+        assert ingest_envelope.await_count == 4
+        assert telegram_receipt.status_code == 202
+        assert email_receipt.status_code == 202
+        assert api_receipt.status_code == 202
+        assert mcp_receipt.status_code == 202
+
+        channels = [call.args[0]["source"]["channel"] for call in ingest_envelope.await_args_list]
+        assert channels == ["telegram", "email", "api", "mcp"]
