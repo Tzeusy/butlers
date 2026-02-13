@@ -18,7 +18,6 @@ import os
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -255,6 +254,44 @@ class TelegramModule(Module):
         if hasattr(self._db, "acquire"):
             return self._db
         return None
+
+    async def _store_message_inbox_entry(
+        self, *, sender_id: str, message_text: str, update: dict[str, Any]
+    ) -> Any | None:
+        """Persist raw inbound Telegram payload for downstream routing/audit linkage."""
+        pool = self._get_db_pool()
+        if pool is None:
+            return None
+
+        try:
+            async with pool.acquire() as conn:
+                return await conn.fetchval(
+                    """
+                    INSERT INTO message_inbox (
+                        source_channel,
+                        sender_id,
+                        raw_content,
+                        raw_metadata,
+                        source_endpoint_identity,
+                        source_sender_identity,
+                        dedupe_strategy,
+                        dedupe_last_seen_at
+                    ) VALUES (
+                        $1, $2, $3, $4::jsonb, $5, $6, $7, now()
+                    )
+                    RETURNING id
+                    """,
+                    "telegram",
+                    sender_id,
+                    message_text,
+                    json.dumps(update),
+                    "telegram:bot",
+                    sender_id,
+                    "legacy",
+                )
+        except Exception:
+            logger.exception("Failed to insert Telegram message_inbox row")
+            return None
 
     @staticmethod
     def _result_has_failure(result: RoutingResult) -> bool:
@@ -531,6 +568,12 @@ class TelegramModule(Module):
         text = _extract_text(update)
         if not text:
             return None
+        sender_identity = chat_id if chat_id not in (None, "") else "unknown"
+        message_inbox_id = await self._store_message_inbox_entry(
+            sender_id=sender_identity,
+            message_text=text,
+            update=update,
+        )
 
         lock = self._message_lock(message_key) if message_key is not None else None
         if lock is not None:
@@ -550,15 +593,11 @@ class TelegramModule(Module):
                     "source": "telegram",
                     "source_channel": "telegram",
                     "source_identity": "bot",
-                    "source_endpoint_identity": "telegram:bot",
-                    "sender_identity": _extract_sender_identity(update, fallback=chat_id),
-                    "external_event_id": _extract_update_id(update),
-                    "external_thread_id": chat_id,
                     "source_tool": "bot_telegram_get_updates",
                     "chat_id": chat_id,
                     "source_id": message_key,
-                    "raw_metadata": update,
                 },
+                message_inbox_id=message_inbox_id,
             )
 
             if message_key is not None:

@@ -23,6 +23,8 @@ NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length
 
 SourceChannel = Literal["telegram", "slack", "email", "api", "mcp"]
 SourceProvider = Literal["telegram", "slack", "imap", "internal"]
+NotifyChannel = Literal["telegram", "email"]
+NotifyIntent = Literal["send", "reply"]
 PolicyTier = Literal["default", "interactive", "high_priority"]
 FanoutMode = Literal["parallel", "ordered", "conditional"]
 _ALLOWED_PROVIDERS_BY_CHANNEL: dict[SourceChannel, frozenset[SourceProvider]] = {
@@ -264,7 +266,7 @@ class RouteInputV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     prompt: NonEmptyStr
-    context: NonEmptyStr | None = None
+    context: NonEmptyStr | dict[str, Any] | None = None
 
 
 class RouteSubrequestV1(BaseModel):
@@ -336,10 +338,54 @@ class RouteEnvelopeV1(BaseModel):
         return self
 
 
+class NotifyRequestContextV1(BaseModel):
+    """Optional notify context for request lineage and reply targeting."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_id: UUID
+    source_sender_identity: NonEmptyStr | None = None
+    source_thread_identity: NonEmptyStr | None = None
+
+
+class NotifyDeliveryV1(BaseModel):
+    """Notify delivery payload."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    intent: NotifyIntent
+    channel: NotifyChannel
+    message: NonEmptyStr
+    recipient: NonEmptyStr | None = None
+    subject: NonEmptyStr | None = None
+
+
+class NotifyRequestV1(BaseModel):
+    """Canonical versioned notify request envelope (`notify.v1`)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: str
+    origin_butler: NonEmptyStr
+    delivery: NotifyDeliveryV1
+    request_context: NotifyRequestContextV1 | None = None
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_notify_schema_version(cls, value: str) -> str:
+        return _validate_schema_version(value, expected="notify.v1")
+
+
 def parse_ingest_envelope(payload: Mapping[str, Any]) -> IngestEnvelopeV1:
     """Parse and validate an `ingest.v1` envelope."""
 
     return IngestEnvelopeV1.model_validate(payload)
+
+
+def parse_notify_request(payload: Mapping[str, Any]) -> NotifyRequestV1:
+    """Parse and validate a `notify.v1` request."""
+
+    return NotifyRequestV1.model_validate(payload)
 
 
 def parse_route_envelope(payload: Mapping[str, Any]) -> RouteEnvelopeV1:
@@ -355,6 +401,9 @@ __all__ = [
     "IngestPayloadV1",
     "IngestSenderV1",
     "IngestSourceV1",
+    "NotifyDeliveryV1",
+    "NotifyRequestContextV1",
+    "NotifyRequestV1",
     "RouteEnvelopeV1",
     "RouteInputV1",
     "RouteRequestContextV1",
@@ -362,5 +411,6 @@ __all__ = [
     "RouteSubrequestV1",
     "RouteTargetV1",
     "parse_ingest_envelope",
+    "parse_notify_request",
     "parse_route_envelope",
 ]
