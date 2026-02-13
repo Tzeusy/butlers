@@ -47,8 +47,14 @@ address = "me@example.com"
 
 [modules.calendar]
 provider = "google"
-calendar_id = "primary"
+calendar_id = "butler-assistant@group.calendar.google.com"
+default_conflict_policy = "suggest"
 ```
+
+Calendar setup requires Google OAuth credentials in
+`BUTLER_GOOGLE_CALENDAR_CREDENTIALS_JSON` and a dedicated subcalendar per
+calendar-enabled butler. See `docs/CALENDAR_SETUP_RUNBOOK.md` for the full
+provisioning and validation workflow.
 
 ## Architecture
 
