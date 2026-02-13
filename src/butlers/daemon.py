@@ -38,6 +38,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -81,9 +82,71 @@ from butlers.modules.approvals.gate import apply_approval_gates
 from butlers.modules.base import Module, ToolIODescriptor
 from butlers.modules.pipeline import MessagePipeline
 from butlers.modules.registry import ModuleRegistry, default_registry
-from butlers.tools.switchboard.routing.contracts import parse_notify_request, parse_route_envelope
+from butlers.tools.switchboard.routing.contracts import parse_route_envelope
 
 logger = logging.getLogger(__name__)
+
+
+def parse_notify_request(payload: dict[str, Any]) -> Any:
+    """Parse and validate a notify.v1 request payload."""
+
+    if not isinstance(payload, dict):
+        raise ValueError("notify request payload must be an object.")
+    if payload.get("schema_version") != "notify.v1":
+        raise ValueError("notify request schema_version must be 'notify.v1'.")
+
+    origin_butler = payload.get("origin_butler")
+    if not isinstance(origin_butler, str) or not origin_butler.strip():
+        raise ValueError("notify_request.origin_butler is required.")
+
+    delivery = payload.get("delivery")
+    if not isinstance(delivery, dict):
+        raise ValueError("notify_request.delivery is required.")
+
+    intent = delivery.get("intent")
+    if intent not in {"send", "reply"}:
+        raise ValueError("notify_request.delivery.intent must be 'send' or 'reply'.")
+
+    channel = delivery.get("channel")
+    if channel not in {"telegram", "email"}:
+        raise ValueError("notify_request.delivery.channel must be 'telegram' or 'email'.")
+
+    message = delivery.get("message")
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError("notify_request.delivery.message is required.")
+
+    recipient = delivery.get("recipient")
+    if recipient is not None:
+        recipient = str(recipient).strip() or None
+
+    subject = delivery.get("subject")
+    if subject is not None:
+        subject = str(subject)
+
+    request_context_payload = payload.get("request_context")
+    if request_context_payload is not None and not isinstance(request_context_payload, dict):
+        raise ValueError("notify_request.request_context must be an object when provided.")
+
+    request_context = None
+    if isinstance(request_context_payload, dict):
+        source_thread_identity = request_context_payload.get("source_thread_identity")
+        if source_thread_identity is not None:
+            source_thread_identity = str(source_thread_identity).strip() or None
+        request_context = SimpleNamespace(source_thread_identity=source_thread_identity)
+
+    return SimpleNamespace(
+        schema_version="notify.v1",
+        origin_butler=origin_butler.strip(),
+        delivery=SimpleNamespace(
+            intent=intent,
+            channel=channel,
+            message=message.strip(),
+            recipient=recipient,
+            subject=subject,
+        ),
+        request_context=request_context,
+    )
+
 
 CORE_TOOL_NAMES: frozenset[str] = frozenset(
     {
