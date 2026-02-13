@@ -265,6 +265,10 @@ make test-qg
 - `gh pr merge --delete-branch` can return non-zero even after a successful remote merge when local branch deletion fails because that branch is checked out in another worktree (common in `.worktrees/parallel-agents/*`).
 - Always verify merge via `gh pr view --json state,mergedAt` before deciding blocked vs merged, then remove the checked-out worktree and delete the local branch separately.
 
+### PR superseded auto-close guardrail
+- Rebase/update merge-blocker runs can reveal that the PR change already landed via another branch; forcing the PR head to that already-merged commit can auto-close the PR as unmerged/redundant.
+- After such auto-closure, create or update a follow-up bead to reconcile stale `pr-review`/blocked issue states that still reference the old PR workflow.
+
 ### Beads lint template contract
 - `bd lint` enforces section headers in issue descriptions, not only structured fields.
 - For `task` issues include `## Acceptance Criteria` in `description`; for `epic` issues include `## Success Criteria`.
