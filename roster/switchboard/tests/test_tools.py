@@ -2035,9 +2035,9 @@ async def test_deliver_telegram_success(deliver_pool):
     await deliver_pool.execute("DELETE FROM butler_registry")
     await deliver_pool.execute("DELETE FROM notifications")
 
-    # Register a butler with telegram module
+    # Register the messenger butler endpoint.
     await register_butler(
-        deliver_pool, "switchboard", "http://localhost:8100/sse", "Router", ["telegram", "email"]
+        deliver_pool, "messenger_butler", "http://localhost:8100/sse", "Messenger", []
     )
 
     async def mock_call(endpoint_url, tool_name, args):
@@ -2076,7 +2076,7 @@ async def test_deliver_email_success(deliver_pool):
     await deliver_pool.execute("DELETE FROM notifications")
 
     await register_butler(
-        deliver_pool, "switchboard", "http://localhost:8100/sse", "Router", ["telegram", "email"]
+        deliver_pool, "messenger_butler", "http://localhost:8100/sse", "Messenger", []
     )
 
     captured_args: list[dict] = []
@@ -2098,14 +2098,16 @@ async def test_deliver_email_success(deliver_pool):
     assert result["status"] == "sent"
     assert "notification_id" in result
 
-    # Verify correct tool was called with right args
+    # Verify notify.v1 dispatch to messenger route.execute.
     assert len(captured_args) == 1
-    assert captured_args[0]["tool_name"] == "bot_email_send_message"
-    # Args include trace context, so check the relevant keys
+    assert captured_args[0]["tool_name"] == "route.execute"
     call_args = captured_args[0]["args"]
-    assert call_args["to"] == "user@example.com"
-    assert call_args["subject"] == "Health Report"
-    assert call_args["body"] == "Your health report is ready."
+    notify_request = call_args["input"]["context"]["notify_request"]
+    assert notify_request["origin_butler"] == "health"
+    assert notify_request["delivery"]["channel"] == "email"
+    assert notify_request["delivery"]["message"] == "Your health report is ready."
+    assert notify_request["delivery"]["recipient"] == "user@example.com"
+    assert notify_request["delivery"]["subject"] == "Health Report"
 
 
 async def test_deliver_unsupported_channel(deliver_pool):
@@ -2191,9 +2193,7 @@ async def test_deliver_route_failure_logs_error(deliver_pool):
     await deliver_pool.execute("DELETE FROM butler_registry")
     await deliver_pool.execute("DELETE FROM notifications")
 
-    await register_butler(
-        deliver_pool, "switchboard", "http://localhost:8100/sse", "Router", ["telegram"]
-    )
+    await register_butler(deliver_pool, "messenger_butler", "http://localhost:8100/sse")
 
     async def failing_call(endpoint_url, tool_name, args):
         raise ConnectionError("Telegram API unavailable")
@@ -2226,9 +2226,7 @@ async def test_deliver_logs_to_routing_log(deliver_pool):
     await deliver_pool.execute("DELETE FROM butler_registry")
     await deliver_pool.execute("DELETE FROM routing_log")
 
-    await register_butler(
-        deliver_pool, "switchboard", "http://localhost:8100/sse", "Router", ["telegram"]
-    )
+    await register_butler(deliver_pool, "messenger_butler", "http://localhost:8100/sse")
 
     async def mock_call(endpoint_url, tool_name, args):
         return {"ok": True}
@@ -2246,8 +2244,8 @@ async def test_deliver_logs_to_routing_log(deliver_pool):
     rows = await deliver_pool.fetch("SELECT * FROM routing_log")
     assert len(rows) == 1
     assert rows[0]["source_butler"] == "health"
-    assert rows[0]["target_butler"] == "switchboard"
-    assert rows[0]["tool_name"] == "bot_telegram_send_message"
+    assert rows[0]["target_butler"] == "messenger_butler"
+    assert rows[0]["tool_name"] == "route.execute"
     assert rows[0]["success"] is True
 
 
@@ -2364,9 +2362,7 @@ async def test_deliver_creates_span_with_attributes(deliver_pool, otel_provider)
     from butlers.tools.switchboard import deliver, register_butler
 
     await deliver_pool.execute("DELETE FROM butler_registry")
-    await register_butler(
-        deliver_pool, "switchboard", "http://localhost:8100/sse", "Router", ["telegram"]
-    )
+    await register_butler(deliver_pool, "messenger_butler", "http://localhost:8100/sse")
 
     async def mock_call(endpoint_url, tool_name, args):
         return {"ok": True}
@@ -2386,7 +2382,7 @@ async def test_deliver_creates_span_with_attributes(deliver_pool, otel_provider)
     span = deliver_spans[0]
     assert span.attributes["channel"] == "telegram"
     assert span.attributes["source_butler"] == "health"
-    assert span.attributes["target_butler"] == "switchboard"
+    assert span.attributes["target_butler"] == "messenger_butler"
 
 
 async def test_deliver_span_error_on_unsupported_channel(deliver_pool, otel_provider):
