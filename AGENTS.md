@@ -355,3 +355,6 @@ make test-qg
 - `roster/messenger/` is a required first-class butler config directory with identity files (`butler.toml`, `CLAUDE.md`, `MANIFESTO.md`) aligned to `docs/roles/messenger_butler.md`.
 - `src/butlers/config.py::load_config` enforces messenger runtime prerequisites: at least one delivery module (`[modules.telegram]` and/or `[modules.email]`) must be configured, and at least one bot scope must remain enabled (`modules.telegram.bot.enabled` or `modules.email.bot.enabled`).
 - README local/dev runbook includes explicit Switchboard+Messenger startup (`butlers up --only switchboard --only messenger`) and Messenger port `8104`.
+
+### Core route.execute registration test contract
+- Core `route.execute` is registered with `@mcp.tool(name="route.execute")`; tests/mocks that intercept `mcp.tool` must accept decorator kwargs and use the declared `name` when present instead of assuming `fn.__name__` only.
