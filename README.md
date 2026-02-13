@@ -219,9 +219,16 @@ butlers up
 
 # Or start a specific butler
 butlers up --only switchboard --only general
+butlers up --only switchboard --only messenger
 
 # List discovered butlers
 butlers list
+```
+
+For outbound delivery-path work (Switchboard -> Messenger):
+
+```bash
+butlers up --only switchboard --only messenger
 ```
 
 Access points:
@@ -280,6 +287,7 @@ Each butler service mounts its config directory read-only from `butlers/<name>/`
 | General       | 8101 | Catch-all assistant with collections/entities          |
 | Relationship  | 8102 | Contacts, interactions, gifts, activity feed           |
 | Health        | 8103 | Measurements, medications, conditions, symptoms        |
+| Messenger     | 8104 | Outbound delivery execution for Telegram/Email         |
 | Heartbeat     | 8199 | System monitor — ticks all butlers every 10 min        |
 | Dashboard API | 8200 | Web UI backend for monitoring and managing butlers     |
 | Frontend      | 5173 | Vite dev server (development only)                     |
@@ -342,11 +350,14 @@ These are validated at startup by the credential checker and passed through to s
 
 Each module declares its own required credentials via `credentials_env`. These are validated at startup alongside global and butler-specific vars.
 
-| Module     | Variable                | Description                                |
-| ---------- | ----------------------- | ------------------------------------------ |
-| `email`    | `SOURCE_EMAIL`          | Email address for IMAP/SMTP authentication |
-| `email`    | `SOURCE_EMAIL_PASSWORD` | Email password or app-specific password    |
-| `telegram` | `BUTLER_TELEGRAM_TOKEN` | Telegram Bot API token from @BotFather     |
+| Module              | Variable                | Description                                            |
+| ------------------- | ----------------------- | ------------------------------------------------------ |
+| `telegram` (bot)    | `BUTLER_TELEGRAM_TOKEN` | Telegram Bot API token for bot-scoped delivery tools   |
+| `telegram` (user)   | `USER_TELEGRAM_TOKEN`   | Optional user-scoped Telegram token                    |
+| `email` (bot)       | `BUTLER_EMAIL_ADDRESS`  | Bot-scoped email address for IMAP/SMTP authentication  |
+| `email` (bot)       | `BUTLER_EMAIL_PASSWORD` | Bot-scoped email password or app-specific password     |
+| `email` (user)      | `USER_EMAIL_ADDRESS`    | Optional user-scoped email address                     |
+| `email` (user)      | `USER_EMAIL_PASSWORD`   | Optional user-scoped email password                    |
 
 Module credentials are only required when the module is enabled in `butler.toml`. They are scoped to the CC spawner — only declared credentials are forwarded to ephemeral Claude Code instances.
 
