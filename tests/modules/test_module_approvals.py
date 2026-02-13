@@ -739,6 +739,7 @@ class TestApproveAction:
         event = next(e for e in mock_db.approval_events if e["action_id"] == action_id)
         assert event["event_type"] == "action_approved"
         assert event["actor"] == "user:manual"
+
     async def test_approve_already_rejected(
         self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
     ):
@@ -933,6 +934,7 @@ class TestRejectAction:
         event = next(e for e in mock_db.approval_events if e["action_id"] == action_id)
         assert event["event_type"] == "action_rejected"
         assert event["reason"] == "Denied by operator"
+
     async def test_reject_records_timestamp(
         self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
     ):

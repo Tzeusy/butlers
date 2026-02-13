@@ -1235,6 +1235,7 @@ class TestRevokeApprovalRule:
         assert event["event_type"] == "rule_revoked"
         assert event["actor"] == "user:manual"
 
+
 class TestSuggestRuleConstraints:
     """Test suggest_rule_constraints tool."""
 
