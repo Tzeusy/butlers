@@ -337,20 +337,6 @@ async def _persist_fanout_execution_record(
     results: list[dict[str, Any]],
 ) -> None:
     try:
-        await pool.execute("""
-            CREATE TABLE IF NOT EXISTS fanout_execution_log (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                source_channel TEXT NOT NULL,
-                source_id TEXT,
-                tool_name TEXT NOT NULL,
-                fanout_mode TEXT NOT NULL,
-                join_policy TEXT NOT NULL,
-                abort_policy TEXT NOT NULL,
-                plan_payload JSONB NOT NULL,
-                execution_payload JSONB NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )
-        """)
         await pool.execute(
             """
             INSERT INTO fanout_execution_log

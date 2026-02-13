@@ -56,6 +56,20 @@ async def pool(provisioned_postgres_pool):
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
         """)
+        await p.execute("""
+            CREATE TABLE IF NOT EXISTS fanout_execution_log (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                source_channel TEXT NOT NULL,
+                source_id TEXT,
+                tool_name TEXT NOT NULL,
+                fanout_mode TEXT NOT NULL,
+                join_policy TEXT NOT NULL,
+                abort_policy TEXT NOT NULL,
+                plan_payload JSONB NOT NULL,
+                execution_payload JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
 
         yield p
 
