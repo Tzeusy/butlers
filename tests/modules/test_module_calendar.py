@@ -216,6 +216,7 @@ class _ProviderDouble(CalendarProvider):
         event: CalendarEvent | None = None,
         create_event_result: CalendarEvent | None = None,
         update_event_result: CalendarEvent | None = None,
+        conflicts: list[CalendarEvent] | None = None,
     ) -> None:
         self._events = events or []
         self._event = event
@@ -225,10 +226,12 @@ class _ProviderDouble(CalendarProvider):
         self._update_event_result = (
             update_event_result if update_event_result is not None else event
         )
+        self._conflicts = conflicts or []
         self.list_calls: list[dict[str, object]] = []
         self.get_calls: list[dict[str, object]] = []
         self.create_calls: list[dict[str, object]] = []
         self.update_calls: list[dict[str, object]] = []
+        self.find_conflict_calls: list[dict[str, object]] = []
 
     @property
     def name(self) -> str:
@@ -271,8 +274,9 @@ class _ProviderDouble(CalendarProvider):
     async def delete_event(self, *, calendar_id: str, event_id: str) -> None:  # pragma: no cover
         raise NotImplementedError
 
-    async def find_conflicts(self, *, calendar_id: str, candidate):  # pragma: no cover
-        raise NotImplementedError
+    async def find_conflicts(self, *, calendar_id: str, candidate):
+        self.find_conflict_calls.append({"calendar_id": calendar_id, "candidate": candidate})
+        return list(self._conflicts)
 
     async def shutdown(self) -> None:
         return None
