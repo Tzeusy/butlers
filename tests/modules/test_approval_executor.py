@@ -120,7 +120,7 @@ class MockPool:
                     "rule_id": args[2],
                     "actor": args[3],
                     "reason": args[4],
-                    "event_metadata": args[5],
+                    "event_metadata": json.loads(args[5]),
                     "occurred_at": args[6],
                 }
             )
