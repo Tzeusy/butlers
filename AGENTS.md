@@ -306,6 +306,10 @@ make test-qg
 - `roster/switchboard/tools/routing/route.py::_call_butler_tool` calls butler endpoints via `fastmcp.Client` and should return `CallToolResult.data` when present.
 - If a target returns `Unknown tool` for an identity-prefixed routing tool name, routing retries `trigger` with mapped args (`prompt` from `prompt`/`message`, optional `context`).
 
+### Switchboard notify-route contract
+- `roster/switchboard/tools/routing/contracts.py` must export `NotifyRequestV1` + `parse_notify_request`; `src/butlers/daemon.py` imports this parser for messenger `route.execute` notify termination.
+- `RouteInputV1.context` must accept structured objects (`dict`) in addition to strings so `route.v1` payloads can carry `input.context.notify_request` envelopes.
+
 ### Base notify and module-tool naming contract
 - `docs/roles/base_butler.md` defines `notify` as a versioned envelope surface (`notify.v1` request, `notify_response.v1` response) with required `origin_butler`; reply intents require request-context targeting fields.
 - Messenger delivery transport is route-wrapped: Switchboard dispatches `route.v1` to Messenger `route.execute` with `notify.v1` in `input.context.notify_request`; Messenger returns `route_response.v1` and should place normalized delivery output in `result.notify_response`.
