@@ -11,8 +11,10 @@ from pydantic import ValidationError
 
 from butlers.tools.switchboard.routing.contracts import (
     IngestEnvelopeV1,
+    NotifyRequestV1,
     RouteEnvelopeV1,
     RouteRequestContextV1,
+    parse_notify_request,
 )
 
 pytestmark = pytest.mark.unit
@@ -67,6 +69,19 @@ def _valid_route_payload() -> dict[str, Any]:
     }
 
 
+def _valid_notify_payload() -> dict[str, Any]:
+    return {
+        "schema_version": "notify.v1",
+        "origin_butler": "health",
+        "delivery": {
+            "intent": "send",
+            "channel": "telegram",
+            "message": "Take your medication.",
+            "recipient": "12345",
+        },
+    }
+
+
 def test_ingest_v1_valid_envelope() -> None:
     envelope = IngestEnvelopeV1.model_validate(_valid_ingest_payload())
     assert envelope.schema_version == "ingest.v1"
@@ -79,6 +94,37 @@ def test_route_v1_valid_envelope() -> None:
     assert envelope.schema_version == "route.v1"
     assert envelope.request_context.request_id.version == 7
     assert envelope.subrequest.fanout_mode == "parallel"
+
+
+def test_route_v1_allows_structured_context_payload() -> None:
+    payload = _valid_route_payload()
+    payload["input"]["context"] = {"notify_request": {"schema_version": "notify.v1"}}
+
+    envelope = RouteEnvelopeV1.model_validate(payload)
+
+    assert isinstance(envelope.input.context, dict)
+    assert envelope.input.context["notify_request"]["schema_version"] == "notify.v1"
+
+
+def test_notify_v1_valid_request() -> None:
+    request = parse_notify_request(_valid_notify_payload())
+
+    assert request.schema_version == "notify.v1"
+    assert request.origin_butler == "health"
+    assert request.delivery.intent == "send"
+    assert request.delivery.channel == "telegram"
+
+
+def test_notify_v1_reply_requires_request_context() -> None:
+    payload = _valid_notify_payload()
+    payload["delivery"]["intent"] = "reply"
+
+    with pytest.raises(ValidationError) as exc_info:
+        parse_notify_request(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["loc"] == ()
+    assert error["type"] == "missing_reply_context"
 
 
 def test_route_v1_missing_request_context_required_field() -> None:
@@ -135,18 +181,27 @@ def test_ingest_v1_rejects_inconsistent_source_channel_provider_pair() -> None:
     ("model_cls", "schema_version"),
     [
         (IngestEnvelopeV1, "ingest.v99"),
+        (NotifyRequestV1, "notify.v2"),
         (RouteEnvelopeV1, "route.v2"),
     ],
 )
 def test_unknown_or_newer_schema_version_fails_deterministically(
-    model_cls: type[IngestEnvelopeV1 | RouteEnvelopeV1],
+    model_cls: type[IngestEnvelopeV1 | NotifyRequestV1 | RouteEnvelopeV1],
     schema_version: str,
 ) -> None:
-    payload = _valid_ingest_payload() if model_cls is IngestEnvelopeV1 else _valid_route_payload()
+    if model_cls is IngestEnvelopeV1:
+        payload = _valid_ingest_payload()
+    elif model_cls is NotifyRequestV1:
+        payload = _valid_notify_payload()
+    else:
+        payload = _valid_route_payload()
     payload["schema_version"] = schema_version
 
     with pytest.raises(ValidationError) as exc_info:
-        model_cls.model_validate(payload)
+        if model_cls is NotifyRequestV1:
+            parse_notify_request(payload)
+        else:
+            model_cls.model_validate(payload)
 
     error = exc_info.value.errors()[0]
     assert error["loc"] == ("schema_version",)
