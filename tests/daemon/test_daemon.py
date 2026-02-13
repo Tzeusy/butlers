@@ -2754,6 +2754,40 @@ class TestRouteExecuteTool:
         assert result["result"]["notify_response"]["error"]["retryable"] is True
 
 
+async def test_route_execute_rejects_unknown_notify_schema_version(tmp_path: Path) -> None:
+    tester = TestRouteExecuteTool()
+    patches = _patch_infra()
+    butler_dir = tester._messenger_butler_dir(tmp_path)
+    _, route_execute_fn = await tester._start_daemon_with_route_execute(butler_dir, patches)
+    assert route_execute_fn is not None
+
+    result = await route_execute_fn(
+        schema_version="route.v1",
+        request_context=tester._route_request_context(),
+        input={
+            "prompt": "Deliver.",
+            "context": {
+                "notify_request": {
+                    "schema_version": "notify.v2",
+                    "origin_butler": "health",
+                    "delivery": {
+                        "intent": "send",
+                        "channel": "telegram",
+                        "message": "Hello",
+                        "recipient": "12345",
+                    },
+                }
+            },
+        },
+    )
+
+    assert result["schema_version"] == "route_response.v1"
+    assert result["status"] == "error"
+    assert result["error"]["class"] == "validation_error"
+    assert result["result"]["notify_response"]["status"] == "error"
+    assert result["result"]["notify_response"]["error"]["class"] == "validation_error"
+
+
 class TestRouteExecuteTool:
     """Verify route.execute core MCP behavior, including messenger notify termination."""
 
