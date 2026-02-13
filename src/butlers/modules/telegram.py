@@ -12,13 +12,11 @@ switchboard.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -543,26 +541,6 @@ class TelegramModule(Module):
                 reaction=REACTION_IN_PROGRESS,
             )
 
-            # Phase 1: Log receipt
-            message_inbox_id = None
-            db_pool = self._get_db_pool()
-            if db_pool is not None:
-                async with db_pool.acquire() as conn:
-                    message_inbox_id = await conn.fetchval(
-                        """
-                        INSERT INTO message_inbox
-                            (source_channel, sender_id, raw_content, raw_metadata, received_at)
-                        VALUES
-                            ($1, $2, $3, $4, $5)
-                        RETURNING id
-                        """,
-                        "telegram",
-                        chat_id,
-                        text,
-                        json.dumps(update),
-                        datetime.now(UTC),
-                    )
-
             result = await self._pipeline.process(
                 message_text=text,
                 tool_name="bot_telegram_handle_message",
@@ -570,11 +548,15 @@ class TelegramModule(Module):
                     "source": "telegram",
                     "source_channel": "telegram",
                     "source_identity": "bot",
+                    "source_endpoint_identity": "telegram:bot",
+                    "sender_identity": _extract_sender_identity(update, fallback=chat_id),
+                    "external_event_id": _extract_update_id(update),
+                    "external_thread_id": chat_id,
                     "source_tool": "bot_telegram_get_updates",
                     "chat_id": chat_id,
                     "source_id": message_key,
+                    "raw_metadata": update,
                 },
-                message_inbox_id=message_inbox_id,
             )
 
             if message_key is not None:
@@ -769,6 +751,30 @@ def _extract_message_id(update: dict[str, Any]) -> int | None:
             except (TypeError, ValueError):
                 return None
     return None
+
+
+def _extract_update_id(update: dict[str, Any]) -> str | None:
+    """Extract update_id as a normalized string when present."""
+    update_id = update.get("update_id")
+    if update_id in (None, ""):
+        return None
+    return str(update_id)
+
+
+def _extract_sender_identity(update: dict[str, Any], *, fallback: str | None = None) -> str:
+    """Extract sender identity from Telegram update payload."""
+    for key in ("message", "edited_message", "channel_post"):
+        msg = update.get(key)
+        if not isinstance(msg, dict):
+            continue
+
+        sender = msg.get("from")
+        if isinstance(sender, dict) and sender.get("id") not in (None, ""):
+            return str(sender["id"])
+
+    if fallback not in (None, ""):
+        return str(fallback)
+    return "unknown"
 
 
 def _message_tracking_key(

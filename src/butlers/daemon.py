@@ -486,6 +486,7 @@ class ButlerDaemon:
             switchboard_pool=pool,
             dispatch_fn=self.spawner.trigger,
             source_butler="switchboard",
+            enable_ingress_dedupe=True,
         )
 
         wired_modules: list[str] = []
