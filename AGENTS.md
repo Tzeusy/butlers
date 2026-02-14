@@ -309,6 +309,10 @@ make test-qg
 - `gh pr merge --delete-branch` can return non-zero even after a successful remote merge when local branch deletion fails because that branch is checked out in another worktree (common in `.worktrees/parallel-agents/*`).
 - Always verify merge via `gh pr view --json state,mergedAt` before deciding blocked vs merged, then remove the checked-out worktree and delete the local branch separately.
 
+### Merge-blocker push-policy guardrail
+- Some worker environments block forced ref updates (`git push --force-with-lease` and `git push +HEAD:...`) by policy.
+- For stale merge-blocker remediation, update the PR head branch with a non-rewrite merge of `origin/main` into `origin/agent/<issue-branch>`, resolve conflicts, and push fast-forward.
+
 ### Beads lint template contract
 - `bd lint` enforces section headers in issue descriptions, not only structured fields.
 - For `task` issues include `## Acceptance Criteria` in `description`; for `epic` issues include `## Success Criteria`.
