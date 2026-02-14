@@ -71,30 +71,29 @@ def _make_mock_pool(
     return pool
 
 
-def _notif_id_row() -> MagicMock:
-    """Return a mock row for ``INSERT INTO notifications ... RETURNING id``."""
-    notif_id = str(uuid.uuid4())
-    m = MagicMock()
-    m.__getitem__ = lambda self, key, nid=notif_id: nid if key == "id" else None
-    return m
+def _notif_id_row() -> dict[str, Any]:
+    """Return a dict row for ``INSERT INTO notifications ... RETURNING id``."""
+    return {"id": str(uuid.uuid4())}
 
 
-def _registry_row(name: str, endpoint: str = "http://localhost:9100/sse") -> MagicMock:
-    """Return a mock row for butler_registry lookups."""
-    data = {
+def _registry_row(name: str, endpoint: str = "http://localhost:9100/sse") -> dict[str, Any]:
+    """Return a dict row for butler_registry lookups."""
+    return {
         "name": name,
         "endpoint_url": endpoint,
+        "description": None,
+        "modules": [],
         "last_seen_at": datetime.now(UTC),
+        "registered_at": datetime.now(UTC),
         "eligibility_state": "active",
         "liveness_ttl_seconds": 300,
+        "quarantined_at": None,
+        "quarantine_reason": None,
         "route_contract_min": 1,
         "route_contract_max": 1,
         "capabilities": ["trigger", "telegram", "email"],
+        "eligibility_updated_at": datetime.now(UTC),
     }
-    m = MagicMock()
-    m.__getitem__ = lambda self, key, d=data: d[key]
-    m.get = lambda key, default=None, d=data: d.get(key, default)
-    return m
 
 
 # ---------------------------------------------------------------------------
