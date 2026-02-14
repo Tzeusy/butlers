@@ -96,11 +96,34 @@ def _app_with_mock_db(
     fetch_rows: list | None = None,
     fetchval_return=None,
     fetchrow_return=None,
+    fetchval_side_effect=None,
 ):
     """Create a FastAPI app with a mocked DatabaseManager."""
     mock_conn = AsyncMock()
     mock_conn.fetch = AsyncMock(return_value=fetch_rows or [])
-    mock_conn.fetchval = AsyncMock(return_value=fetchval_return)
+
+    # Set up fetchval with side_effect or return value
+    if fetchval_side_effect is not None:
+        # For table existence check + other queries
+        if has_approvals_tables:
+            # Prepend True for table existence check
+            full_side_effect = [True] + list(fetchval_side_effect)
+            mock_conn.fetchval = AsyncMock(side_effect=full_side_effect)
+        else:
+            mock_conn.fetchval = AsyncMock(side_effect=fetchval_side_effect)
+    else:
+        if has_approvals_tables:
+            # Return True for table existence check, then fetchval_return for others
+            def fetchval_mock(*args, **kwargs):
+                # First call is table check
+                if "information_schema.tables" in args[0]:
+                    return True
+                return fetchval_return
+
+            mock_conn.fetchval = AsyncMock(side_effect=fetchval_mock)
+        else:
+            mock_conn.fetchval = AsyncMock(return_value=fetchval_return)
+
     mock_conn.fetchrow = AsyncMock(return_value=fetchrow_return)
 
     mock_pool = AsyncMock()
@@ -142,7 +165,9 @@ async def test_list_actions_empty():
     """GET /api/approvals/actions returns empty list when no actions exist."""
     app, mock_conn = _app_with_mock_db(fetch_rows=[], fetchval_return=0)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/api/approvals/actions")
 
     assert response.status_code == 200
@@ -156,12 +181,18 @@ async def test_list_actions_empty():
 @pytest.mark.asyncio
 async def test_list_actions_with_results():
     """GET /api/approvals/actions returns paginated pending actions."""
-    action1 = _make_pending_action_record(action_id=uuid4(), tool_name="user_telegram_send_message", status="pending")
-    action2 = _make_pending_action_record(action_id=uuid4(), tool_name="user_email_send", status="approved")
+    action1 = _make_pending_action_record(
+        action_id=uuid4(), tool_name="user_telegram_send_message", status="pending"
+    )
+    action2 = _make_pending_action_record(
+        action_id=uuid4(), tool_name="user_email_send", status="approved"
+    )
 
     app, mock_conn = _app_with_mock_db(fetch_rows=[action1, action2], fetchval_return=2)
 
-    async with httpx.AsyncClient(transport=httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")) as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/api/approvals/actions?limit=10&offset=0")
 
     assert response.status_code == 200
@@ -179,7 +210,9 @@ async def test_list_actions_with_status_filter():
     action = _make_pending_action_record(status="pending")
     app, mock_conn = _app_with_mock_db(fetch_rows=[action], fetchval_return=1)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/api/approvals/actions?status=pending")
 
     assert response.status_code == 200
@@ -193,7 +226,9 @@ async def test_list_actions_no_approvals_tables():
     """GET /api/approvals/actions returns empty when no butler has approvals."""
     app, _ = _app_with_mock_db(has_approvals_tables=False)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/api/approvals/actions")
 
     assert response.status_code == 200
@@ -208,7 +243,9 @@ async def test_get_action_by_id():
     action = _make_pending_action_record(action_id=_ACTION_ID)
     app, mock_conn = _app_with_mock_db(fetchrow_return=action)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get(f"/api/approvals/actions/{_ACTION_ID}")
 
     assert response.status_code == 200
@@ -222,7 +259,9 @@ async def test_get_action_not_found():
     """GET /api/approvals/actions/{action_id} returns 404 when action not found."""
     app, mock_conn = _app_with_mock_db(fetchrow_return=None)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get(f"/api/approvals/actions/{uuid4()}")
 
     assert response.status_code == 404
@@ -233,7 +272,9 @@ async def test_get_action_invalid_id():
     """GET /api/approvals/actions/{action_id} returns 400 for invalid UUID."""
     app, _ = _app_with_mock_db()
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/api/approvals/actions/not-a-uuid")
 
     assert response.status_code == 400
@@ -241,10 +282,12 @@ async def test_get_action_invalid_id():
 
 @pytest.mark.asyncio
 async def test_approve_action_not_implemented():
-    """POST /api/approvals/actions/{action_id}/approve returns 501 (not yet implemented)."""
+    """POST /api/approvals/actions/{action_id}/approve returns 501 (not implemented)."""
     app, _ = _app_with_mock_db()
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post(f"/api/approvals/actions/{uuid4()}/approve")
 
     assert response.status_code == 501
@@ -252,10 +295,12 @@ async def test_approve_action_not_implemented():
 
 @pytest.mark.asyncio
 async def test_reject_action_not_implemented():
-    """POST /api/approvals/actions/{action_id}/reject returns 501 (not yet implemented)."""
+    """POST /api/approvals/actions/{action_id}/reject returns 501 (not implemented)."""
     app, _ = _app_with_mock_db()
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post(
             f"/api/approvals/actions/{uuid4()}/reject",
             json={"reason": "Not needed"},
@@ -272,11 +317,12 @@ async def test_expire_stale_actions():
 
     app, mock_conn = _app_with_mock_db(
         fetch_rows=[{"id": expired_id1}, {"id": expired_id2}],
+        fetchval_side_effect=[expired_id1, expired_id2],
     )
-    # Mock fetchval to return the updated ID for each CAS update
-    mock_conn.fetchval = AsyncMock(side_effect=[expired_id1, expired_id2])
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post("/api/approvals/actions/expire-stale")
 
     assert response.status_code == 200
@@ -298,7 +344,9 @@ async def test_list_executed_actions():
 
     app, mock_conn = _app_with_mock_db(fetch_rows=[executed_action], fetchval_return=1)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/api/approvals/actions/executed")
 
     assert response.status_code == 200
@@ -317,7 +365,9 @@ async def test_list_rules_empty():
     """GET /api/approvals/rules returns empty list when no rules exist."""
     app, mock_conn = _app_with_mock_db(fetch_rows=[], fetchval_return=0)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/api/approvals/rules")
 
     assert response.status_code == 200
@@ -334,7 +384,9 @@ async def test_list_rules_with_results():
 
     app, mock_conn = _app_with_mock_db(fetch_rows=[rule1], fetchval_return=1)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/api/approvals/rules?active_only=true")
 
     assert response.status_code == 200
@@ -349,7 +401,9 @@ async def test_get_rule_by_id():
     rule = _make_approval_rule_record(rule_id=_RULE_ID)
     app, mock_conn = _app_with_mock_db(fetchrow_return=rule)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get(f"/api/approvals/rules/{_RULE_ID}")
 
     assert response.status_code == 200
@@ -363,7 +417,9 @@ async def test_get_rule_not_found():
     """GET /api/approvals/rules/{rule_id} returns 404 when rule not found."""
     app, mock_conn = _app_with_mock_db(fetchrow_return=None)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get(f"/api/approvals/rules/{uuid4()}")
 
     assert response.status_code == 404
@@ -374,7 +430,9 @@ async def test_create_rule_not_implemented():
     """POST /api/approvals/rules returns 501 (not yet implemented)."""
     app, _ = _app_with_mock_db()
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post(
             "/api/approvals/rules",
             json={
@@ -392,7 +450,9 @@ async def test_create_rule_from_action_not_implemented():
     """POST /api/approvals/rules/from-action returns 501 (not yet implemented)."""
     app, _ = _app_with_mock_db()
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post(
             "/api/approvals/rules/from-action",
             json={"action_id": str(uuid4())},
@@ -406,7 +466,9 @@ async def test_revoke_rule_not_implemented():
     """POST /api/approvals/rules/{rule_id}/revoke returns 501 (not yet implemented)."""
     app, _ = _app_with_mock_db()
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post(f"/api/approvals/rules/{uuid4()}/revoke")
 
     assert response.status_code == 501
@@ -414,14 +476,16 @@ async def test_revoke_rule_not_implemented():
 
 @pytest.mark.asyncio
 async def test_get_rule_suggestions():
-    """GET /api/approvals/rules/suggestions/{action_id} returns constraint suggestions."""
+    """GET /api/approvals/rules/suggestions/{action_id} returns suggestions."""
     action = _make_pending_action_record(
         action_id=_ACTION_ID,
         tool_args={"chat_id": "12345", "text": "Hello"},
     )
     app, mock_conn = _app_with_mock_db(fetchrow_return=action)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get(f"/api/approvals/rules/suggestions/{_ACTION_ID}")
 
     assert response.status_code == 200
@@ -439,11 +503,8 @@ async def test_get_rule_suggestions():
 @pytest.mark.asyncio
 async def test_get_metrics():
     """GET /api/approvals/metrics returns aggregate metrics."""
-    app, mock_conn = _app_with_mock_db()
-
-    # Mock the various count queries
-    mock_conn.fetchval = AsyncMock(
-        side_effect=[
+    app, mock_conn = _app_with_mock_db(
+        fetchval_side_effect=[
             5,  # total_pending
             10,  # total_approved_today
             2,  # total_rejected_today
@@ -465,7 +526,9 @@ async def test_get_metrics():
         ]
     )
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/api/approvals/metrics")
 
     assert response.status_code == 200
@@ -487,7 +550,9 @@ async def test_get_metrics_no_approvals_subsystem():
     """GET /api/approvals/metrics returns zeroed metrics when no approvals subsystem."""
     app, _ = _app_with_mock_db(has_approvals_tables=False)
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/api/approvals/metrics")
 
     assert response.status_code == 200
