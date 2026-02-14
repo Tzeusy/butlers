@@ -681,47 +681,15 @@ class TestConflictPolicyHandling:
 
 
 # ============================================================================
-# Approval Required Flow Tests
+# Approval Required Flow
 # ============================================================================
-
-
-class TestApprovalRequiredFlow:
-    """Test allow_overlap with approval_required behavior.
-
-    Note: These behaviors are tested in integration tests in test_module_calendar.py,
-    specifically:
-    - test_create_conflict_allow_overlap_requires_approval_when_enqueuer_set
-    - test_create_conflict_allow_overlap_returns_fallback_when_approvals_disabled
-
-    The unit tests here document the expected behavior for completeness.
-    """
-
-    def test_allow_overlap_with_approval_enqueuer_gates_write(self):
-        """When approval enqueuer is set, allow_overlap should return approval_required.
-
-        Expected: status="approval_required", action_id returned.
-        Actual write should NOT happen until approval is granted.
-        """
-        # Integration test coverage in test_module_calendar.py
-        pass
-
-    def test_allow_overlap_without_approval_enqueuer_writes_through(self):
-        """When approval enqueuer is NOT set and require_approval_for_overlap=False,
-        allow_overlap should write immediately.
-
-        Expected: Event is created immediately with status="success".
-        """
-        # Integration test coverage in test_module_calendar.py
-        pass
-
-    def test_allow_overlap_approval_disabled_returns_fallback_message(self):
-        """When require_approval_for_overlap=True but approvals disabled, return guidance.
-
-        This is the case tested in test_module_calendar.py:
-        test_create_conflict_allow_overlap_returns_fallback_when_approvals_disabled
-        """
-        # Integration test coverage in test_module_calendar.py
-        pass
+# Note: Approval-required flows for allow_overlap are tested in integration
+# tests in test_module_calendar.py, specifically:
+# - test_create_conflict_allow_overlap_requires_approval_when_enqueuer_set
+# - test_create_conflict_allow_overlap_returns_fallback_when_approvals_disabled
+#
+# These behaviors require full module + approval-enqueuer integration and are
+# not suitable for unit testing in isolation.
 
 
 if __name__ == "__main__":
