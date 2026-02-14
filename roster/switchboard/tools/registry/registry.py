@@ -255,40 +255,14 @@ def _normalized_registry_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _record_to_dict(row: Any) -> dict[str, Any]:
+    """Convert an asyncpg.Record (or dict) to a plain dict."""
     if isinstance(row, dict):
         return dict(row)
 
     try:
-        converted = dict(row)
-    except Exception:
-        converted = {}
-    if converted:
-        return converted
-
-    getter = getattr(row, "get", None)
-    if not callable(getter):
+        return dict(row)
+    except (TypeError, ValueError):
         return {}
-
-    known_keys = (
-        "name",
-        "endpoint_url",
-        "description",
-        "modules",
-        "last_seen_at",
-        "registered_at",
-        "eligibility_state",
-        "liveness_ttl_seconds",
-        "quarantined_at",
-        "quarantine_reason",
-        "route_contract_min",
-        "route_contract_max",
-        "capabilities",
-        "eligibility_updated_at",
-    )
-    mapped: dict[str, Any] = {}
-    for key in known_keys:
-        mapped[key] = getter(key)
-    return mapped
 
 
 async def register_butler(
@@ -367,10 +341,22 @@ async def register_butler(
             description = EXCLUDED.description,
             modules = EXCLUDED.modules,
             last_seen_at = EXCLUDED.last_seen_at,
-            eligibility_state = EXCLUDED.eligibility_state,
+            eligibility_state = CASE
+                WHEN butler_registry.eligibility_state = 'quarantined'
+                    THEN butler_registry.eligibility_state
+                ELSE EXCLUDED.eligibility_state
+            END,
             liveness_ttl_seconds = EXCLUDED.liveness_ttl_seconds,
-            quarantined_at = EXCLUDED.quarantined_at,
-            quarantine_reason = EXCLUDED.quarantine_reason,
+            quarantined_at = CASE
+                WHEN butler_registry.eligibility_state = 'quarantined'
+                    THEN butler_registry.quarantined_at
+                ELSE EXCLUDED.quarantined_at
+            END,
+            quarantine_reason = CASE
+                WHEN butler_registry.eligibility_state = 'quarantined'
+                    THEN butler_registry.quarantine_reason
+                ELSE EXCLUDED.quarantine_reason
+            END,
             route_contract_min = EXCLUDED.route_contract_min,
             route_contract_max = EXCLUDED.route_contract_max,
             capabilities = EXCLUDED.capabilities,
@@ -389,7 +375,11 @@ async def register_butler(
         now,
     )
 
-    if previous_state is not None and previous_state != ELIGIBILITY_ACTIVE:
+    if (
+        previous_state is not None
+        and previous_state != ELIGIBILITY_ACTIVE
+        and previous_state != ELIGIBILITY_QUARANTINED
+    ):
         await _audit_eligibility_transition(
             pool,
             name=name,

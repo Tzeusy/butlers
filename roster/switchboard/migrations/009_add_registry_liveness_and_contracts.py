@@ -1,7 +1,7 @@
 """Add registry liveness/contract metadata and eligibility transition audit log.
 
-Revision ID: sw_008
-Revises: sw_007
+Revision ID: sw_009
+Revises: sw_008
 Create Date: 2026-02-14 00:00:00.000000
 
 """
@@ -11,8 +11,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "sw_008"
-down_revision = "sw_007"
+revision = "sw_009"
+down_revision = "sw_008"
 branch_labels = None
 depends_on = None
 
@@ -20,34 +20,13 @@ depends_on = None
 def upgrade() -> None:
     op.execute("""
         ALTER TABLE butler_registry
-        ADD COLUMN IF NOT EXISTS eligibility_state TEXT NOT NULL DEFAULT 'active'
-    """)
-    op.execute("""
-        ALTER TABLE butler_registry
-        ADD COLUMN IF NOT EXISTS liveness_ttl_seconds INTEGER NOT NULL DEFAULT 300
-    """)
-    op.execute("""
-        ALTER TABLE butler_registry
-        ADD COLUMN IF NOT EXISTS quarantined_at TIMESTAMPTZ
-    """)
-    op.execute("""
-        ALTER TABLE butler_registry
-        ADD COLUMN IF NOT EXISTS quarantine_reason TEXT
-    """)
-    op.execute("""
-        ALTER TABLE butler_registry
-        ADD COLUMN IF NOT EXISTS route_contract_min INTEGER NOT NULL DEFAULT 1
-    """)
-    op.execute("""
-        ALTER TABLE butler_registry
-        ADD COLUMN IF NOT EXISTS route_contract_max INTEGER NOT NULL DEFAULT 1
-    """)
-    op.execute("""
-        ALTER TABLE butler_registry
-        ADD COLUMN IF NOT EXISTS capabilities JSONB NOT NULL DEFAULT '[]'
-    """)
-    op.execute("""
-        ALTER TABLE butler_registry
+        ADD COLUMN IF NOT EXISTS eligibility_state TEXT NOT NULL DEFAULT 'active',
+        ADD COLUMN IF NOT EXISTS liveness_ttl_seconds INTEGER NOT NULL DEFAULT 300,
+        ADD COLUMN IF NOT EXISTS quarantined_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS quarantine_reason TEXT,
+        ADD COLUMN IF NOT EXISTS route_contract_min INTEGER NOT NULL DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS route_contract_max INTEGER NOT NULL DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS capabilities JSONB NOT NULL DEFAULT '[]',
         ADD COLUMN IF NOT EXISTS eligibility_updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     """)
 
@@ -134,11 +113,14 @@ def downgrade() -> None:
         DROP CONSTRAINT IF EXISTS ck_butler_registry_eligibility_state
     """)
 
-    op.execute("ALTER TABLE butler_registry DROP COLUMN IF EXISTS eligibility_updated_at")
-    op.execute("ALTER TABLE butler_registry DROP COLUMN IF EXISTS capabilities")
-    op.execute("ALTER TABLE butler_registry DROP COLUMN IF EXISTS route_contract_max")
-    op.execute("ALTER TABLE butler_registry DROP COLUMN IF EXISTS route_contract_min")
-    op.execute("ALTER TABLE butler_registry DROP COLUMN IF EXISTS quarantine_reason")
-    op.execute("ALTER TABLE butler_registry DROP COLUMN IF EXISTS quarantined_at")
-    op.execute("ALTER TABLE butler_registry DROP COLUMN IF EXISTS liveness_ttl_seconds")
-    op.execute("ALTER TABLE butler_registry DROP COLUMN IF EXISTS eligibility_state")
+    op.execute("""
+        ALTER TABLE butler_registry
+        DROP COLUMN IF EXISTS eligibility_updated_at,
+        DROP COLUMN IF EXISTS capabilities,
+        DROP COLUMN IF EXISTS route_contract_max,
+        DROP COLUMN IF EXISTS route_contract_min,
+        DROP COLUMN IF EXISTS quarantine_reason,
+        DROP COLUMN IF EXISTS quarantined_at,
+        DROP COLUMN IF EXISTS liveness_ttl_seconds,
+        DROP COLUMN IF EXISTS eligibility_state
+    """)
