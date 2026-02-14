@@ -18,15 +18,19 @@ Provides thirteen tools:
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import uuid
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from fastmcp.server.dependencies import AccessToken, get_access_token
 from pydantic import BaseModel
 
+from butlers.config import ApprovalConfig, ApprovalRiskTier
+from butlers.modules.approvals.events import ApprovalEventType, record_approval_event
 from butlers.modules.approvals.executor import execute_approved_action
 from butlers.modules.approvals.executor import (
     list_executed_actions as _list_executed_actions_query,
@@ -36,6 +40,9 @@ from butlers.modules.approvals.sensitivity import suggest_constraints
 from butlers.modules.base import Module
 
 logger = logging.getLogger(__name__)
+_HIGH_RISK_TIERS: frozenset[ApprovalRiskTier] = frozenset(
+    {ApprovalRiskTier.HIGH, ApprovalRiskTier.CRITICAL}
+)
 
 # Valid status transitions: source -> set of valid targets
 _VALID_TRANSITIONS: dict[ActionStatus, set[ActionStatus]] = {
@@ -71,6 +78,112 @@ class ApprovalsConfig(BaseModel):
 
 # Type alias for tool executor callbacks
 ToolExecutor = Callable[[str, dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]]
+ActorContext = Mapping[str, Any]
+
+_HUMAN_ACTOR_ERROR_CODE = "human_actor_required"
+_HUMAN_ACTOR_TYPES = frozenset({"human", "user"})
+
+
+def _normalize_actor_field(value: Any) -> str | None:
+    """Normalize actor field values into stripped strings when present."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _human_actor_error(
+    operation: str,
+    actor: ActorContext | None,
+    reason: str,
+) -> dict[str, Any]:
+    """Return a stable structured error for denied decision operations."""
+    actor_type_raw = actor.get("type") if actor is not None else None
+    actor_id_raw = actor.get("id") if actor is not None else None
+    authenticated = bool(actor.get("authenticated")) if actor is not None else False
+
+    return {
+        "error": reason,
+        "error_code": _HUMAN_ACTOR_ERROR_CODE,
+        "operation": operation,
+        "actor_type": _normalize_actor_field(actor_type_raw),
+        "actor_id": _normalize_actor_field(actor_id_raw),
+        "authenticated": authenticated,
+    }
+
+
+def _require_authenticated_human_actor(
+    operation: str,
+    actor: ActorContext | None,
+) -> str | dict[str, Any]:
+    """Validate a decision actor context and return actor_id when allowed."""
+    if actor is None:
+        return _human_actor_error(
+            operation=operation,
+            actor=actor,
+            reason="Authenticated human actor context is required.",
+        )
+
+    actor_type = _normalize_actor_field(actor.get("type"))
+    actor_id = _normalize_actor_field(actor.get("id"))
+    authenticated = actor.get("authenticated") is True
+
+    if actor_type not in _HUMAN_ACTOR_TYPES:
+        return _human_actor_error(
+            operation=operation,
+            actor=actor,
+            reason="Decision action denied: actor must be human.",
+        )
+
+    if not authenticated:
+        return _human_actor_error(
+            operation=operation,
+            actor=actor,
+            reason="Decision action denied: actor must be authenticated.",
+        )
+
+    if actor_id is None:
+        return _human_actor_error(
+            operation=operation,
+            actor=actor,
+            reason="Decision action denied: actor id is required.",
+        )
+
+    return actor_id
+
+
+def _format_manual_decider(actor_id: str, reason: str | None = None) -> str:
+    """Build decided_by audit text for manual human decisions."""
+    decided_by = f"human:{actor_id}"
+    if reason:
+        decided_by = f"{decided_by} (reason: {reason})"
+    return decided_by
+
+
+def _actor_from_access_token(access_token: AccessToken | None) -> ActorContext | None:
+    """Build actor context from FastMCP access token, if present."""
+    if access_token is None:
+        return None
+
+    claims = access_token.claims if isinstance(access_token.claims, Mapping) else {}
+    resource_owner = _normalize_actor_field(access_token.resource_owner)
+    actor_id = (
+        resource_owner
+        or _normalize_actor_field(claims.get("sub"))
+        or _normalize_actor_field(access_token.client_id)
+    )
+    actor_type = _normalize_actor_field(
+        claims.get("actor_type") or claims.get("subject_type") or claims.get("type")
+    )
+
+    if actor_type is None and resource_owner is not None:
+        actor_type = "human"
+
+    return {
+        "type": actor_type,
+        "id": actor_id,
+        "authenticated": True,
+    }
 
 
 class ApprovalsModule(Module):
@@ -84,6 +197,7 @@ class ApprovalsModule(Module):
         self._config: ApprovalsConfig = ApprovalsConfig()
         self._db: Any = None
         self._tool_executor: ToolExecutor | None = None
+        self._approval_policy: ApprovalConfig | None = None
 
     @property
     def name(self) -> str:
@@ -110,6 +224,58 @@ class ApprovalsModule(Module):
         """
         self._tool_executor = executor
 
+    def set_approval_policy(self, policy: ApprovalConfig | None) -> None:
+        """Set parsed approval policy metadata used for rule safety enforcement."""
+        self._approval_policy = policy
+
+    def _risk_tier_for_tool(self, tool_name: str) -> ApprovalRiskTier:
+        """Resolve effective risk tier for a tool."""
+        if self._approval_policy is None:
+            return ApprovalRiskTier.MEDIUM
+        return self._approval_policy.get_effective_risk_tier(tool_name)
+
+    @staticmethod
+    def _has_narrow_constraints(arg_constraints: dict[str, Any]) -> bool:
+        """Return whether any constraint is exact/pattern (or legacy exact)."""
+        if not arg_constraints:
+            return False
+
+        for constraint in arg_constraints.values():
+            if isinstance(constraint, dict):
+                ctype = str(constraint.get("type", "")).lower()
+                if ctype in {"exact", "pattern"}:
+                    return True
+                continue
+            if constraint != "*":
+                return True
+        return False
+
+    def _validate_rule_constraints(
+        self,
+        *,
+        tool_name: str,
+        arg_constraints: dict[str, Any],
+        expires_at: datetime | None,
+        max_uses: int | None,
+    ) -> str | None:
+        """Validate rule safety constraints against configured risk tier."""
+        if max_uses is not None and max_uses <= 0:
+            return "max_uses must be greater than 0"
+
+        risk_tier = self._risk_tier_for_tool(tool_name)
+        if risk_tier in _HIGH_RISK_TIERS:
+            if not self._has_narrow_constraints(arg_constraints):
+                return (
+                    f"High-risk tool '{tool_name}' requires at least one exact or pattern "
+                    "arg constraint"
+                )
+            if expires_at is None and max_uses is None:
+                return (
+                    f"High-risk tool '{tool_name}' requires bounded scope via "
+                    "'expires_at' or 'max_uses'"
+                )
+        return None
+
     async def register_tools(self, mcp: Any, config: Any, db: Any) -> None:
         """Register all 13 approval MCP tools (7 queue + 6 rules CRUD)."""
         self._config = (
@@ -133,14 +299,28 @@ class ApprovalsModule(Module):
             return await module._show_pending_action(action_id)
 
         @mcp.tool()
-        async def approve_action(action_id: str, create_rule: bool = False) -> dict:
+        async def approve_action(
+            action_id: str,
+            create_rule: bool = False,
+        ) -> dict:
             """Approve a pending action and execute it."""
-            return await module._approve_action(action_id, create_rule=create_rule)
+            return await module._approve_action(
+                action_id,
+                create_rule=create_rule,
+                actor=_actor_from_access_token(get_access_token()),
+            )
 
         @mcp.tool()
-        async def reject_action(action_id: str, reason: str | None = None) -> dict:
+        async def reject_action(
+            action_id: str,
+            reason: str | None = None,
+        ) -> dict:
             """Reject a pending action with optional reason."""
-            return await module._reject_action(action_id, reason=reason)
+            return await module._reject_action(
+                action_id,
+                reason=reason,
+                actor=_actor_from_access_token(get_access_token()),
+            )
 
         @mcp.tool()
         async def pending_action_count() -> dict:
@@ -181,6 +361,7 @@ class ApprovalsModule(Module):
                 description=description,
                 expires_at=expires_at,
                 max_uses=max_uses,
+                actor=_actor_from_access_token(get_access_token()),
             )
 
         @mcp.tool()
@@ -192,6 +373,7 @@ class ApprovalsModule(Module):
             return await module._create_rule_from_action(
                 action_id=action_id,
                 constraint_overrides=constraint_overrides,
+                actor=_actor_from_access_token(get_access_token()),
             )
 
         @mcp.tool()
@@ -213,7 +395,10 @@ class ApprovalsModule(Module):
         @mcp.tool()
         async def revoke_approval_rule(rule_id: str) -> dict:
             """Revoke (deactivate) a standing approval rule."""
-            return await module._revoke_approval_rule(rule_id)
+            return await module._revoke_approval_rule(
+                rule_id,
+                actor=_actor_from_access_token(get_access_token()),
+            )
 
         @mcp.tool()
         async def suggest_rule_constraints(action_id: str) -> dict:
@@ -272,8 +457,18 @@ class ApprovalsModule(Module):
 
         return PendingAction.from_row(row).to_dict()
 
-    async def _approve_action(self, action_id: str, create_rule: bool = False) -> dict:
+    async def _approve_action(
+        self,
+        action_id: str,
+        create_rule: bool = False,
+        actor: ActorContext | None = None,
+    ) -> dict:
         """Approve a pending action, execute it, and optionally create a rule."""
+        actor_result = _require_authenticated_human_actor("approve_action", actor)
+        if isinstance(actor_result, dict):
+            return actor_result
+        actor_id = actor_result
+
         try:
             parsed_id = uuid.UUID(action_id)
         except ValueError:
@@ -293,14 +488,39 @@ class ApprovalsModule(Module):
 
         now = datetime.now(UTC)
 
-        # Transition to approved
-        await self._db.execute(
+        # Transition to approved with compare-and-set on pending state.
+        approved_row = await self._db.fetchrow(
             "UPDATE pending_actions SET status = $1, decided_by = $2, decided_at = $3 "
-            "WHERE id = $4",
+            "WHERE id = $4 AND status = $5 "
+            "RETURNING *",
             ActionStatus.APPROVED.value,
-            "user:manual",
+            _format_manual_decider(actor_id),
             now,
             parsed_id,
+            ActionStatus.PENDING.value,
+        )
+        if approved_row is None:
+            latest_row = await self._db.fetchrow(
+                "SELECT * FROM pending_actions WHERE id = $1", parsed_id
+            )
+            if latest_row is None:
+                return {"error": f"Action not found: {action_id}"}
+            latest_action = PendingAction.from_row(latest_row)
+            return {
+                "error": (
+                    f"Cannot transition from '{latest_action.status.value}' "
+                    f"to '{ActionStatus.APPROVED.value}'"
+                )
+            }
+        action = PendingAction.from_row(approved_row)
+        await record_approval_event(
+            self._db,
+            ApprovalEventType.ACTION_APPROVED,
+            actor="user:manual",
+            action_id=parsed_id,
+            reason="approved by operator",
+            metadata={"tool_name": action.tool_name},
+            occurred_at=now,
         )
 
         # Execute the original tool via the executor
@@ -321,18 +541,47 @@ class ApprovalsModule(Module):
             )
         else:
             # No executor — still mark as executed (with no execution result)
-            await self._db.execute(
+            executed_row = await self._db.fetchrow(
                 "UPDATE pending_actions SET status = $1, execution_result = $2, "
-                "decided_at = $3 WHERE id = $4",
+                "decided_at = $3 WHERE id = $4 AND status = $5 RETURNING *",
                 ActionStatus.EXECUTED.value,
                 None,
                 now,
                 parsed_id,
+                ActionStatus.APPROVED.value,
             )
+            if executed_row is None:
+                latest_row = await self._db.fetchrow(
+                    "SELECT * FROM pending_actions WHERE id = $1", parsed_id
+                )
+                if latest_row is None:
+                    return {"error": f"Action not found: {action_id}"}
+                latest_action = PendingAction.from_row(latest_row)
+                return {
+                    "error": (
+                        f"Cannot transition from '{latest_action.status.value}' "
+                        f"to '{ActionStatus.EXECUTED.value}'"
+                    )
+                }
 
         # Optionally create an approval rule from this action
         rule_dict: dict[str, Any] | None = None
         if create_rule:
+            max_uses = 1 if self._risk_tier_for_tool(action.tool_name) in _HIGH_RISK_TIERS else None
+            constraint_error = self._validate_rule_constraints(
+                tool_name=action.tool_name,
+                arg_constraints=action.tool_args,
+                expires_at=None,
+                max_uses=max_uses,
+            )
+            if constraint_error is not None:
+                final_row = await self._db.fetchrow(
+                    "SELECT * FROM pending_actions WHERE id = $1", parsed_id
+                )
+                result = PendingAction.from_row(final_row).to_dict()
+                result["created_rule_error"] = constraint_error
+                return result
+
             rule_id = uuid.uuid4()
             rule = ApprovalRule(
                 id=rule_id,
@@ -341,19 +590,31 @@ class ApprovalsModule(Module):
                 description=f"Auto-created from approved action {action_id}",
                 created_from=parsed_id,
                 created_at=now,
+                max_uses=max_uses,
             )
             await self._db.execute(
                 "INSERT INTO approval_rules "
                 "(id, tool_name, arg_constraints, description, created_from, created_at, "
-                "active) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                "max_uses, active) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
                 rule.id,
                 rule.tool_name,
                 json.dumps(rule.arg_constraints),
                 rule.description,
                 rule.created_from,
                 rule.created_at,
+                rule.max_uses,
                 rule.active,
+            )
+            await record_approval_event(
+                self._db,
+                ApprovalEventType.RULE_CREATED,
+                actor="user:manual",
+                action_id=parsed_id,
+                rule_id=rule.id,
+                reason="create_rule=true during approve_action",
+                metadata={"tool_name": rule.tool_name},
+                occurred_at=now,
             )
             rule_dict = rule.to_dict()
 
@@ -367,8 +628,18 @@ class ApprovalsModule(Module):
 
         return result
 
-    async def _reject_action(self, action_id: str, reason: str | None = None) -> dict:
+    async def _reject_action(
+        self,
+        action_id: str,
+        reason: str | None = None,
+        actor: ActorContext | None = None,
+    ) -> dict:
         """Reject a pending action with optional reason."""
+        actor_result = _require_authenticated_human_actor("reject_action", actor)
+        if isinstance(actor_result, dict):
+            return actor_result
+        actor_id = actor_result
+
         try:
             parsed_id = uuid.UUID(action_id)
         except ValueError:
@@ -389,17 +660,40 @@ class ApprovalsModule(Module):
         now = datetime.now(UTC)
 
         # Build decided_by with optional reason
-        decided_by = "user:manual"
-        if reason:
-            decided_by = f"user:manual (reason: {reason})"
+        escaped_reason = html.escape(reason, quote=True) if reason else None
+        decided_by = _format_manual_decider(actor_id, reason=escaped_reason)
 
-        await self._db.execute(
+        rejected_row = await self._db.fetchrow(
             "UPDATE pending_actions SET status = $1, decided_by = $2, decided_at = $3 "
-            "WHERE id = $4",
+            "WHERE id = $4 AND status = $5 "
+            "RETURNING *",
             ActionStatus.REJECTED.value,
             decided_by,
             now,
             parsed_id,
+            ActionStatus.PENDING.value,
+        )
+        if rejected_row is None:
+            latest_row = await self._db.fetchrow(
+                "SELECT * FROM pending_actions WHERE id = $1", parsed_id
+            )
+            if latest_row is None:
+                return {"error": f"Action not found: {action_id}"}
+            latest_action = PendingAction.from_row(latest_row)
+            return {
+                "error": (
+                    f"Cannot transition from '{latest_action.status.value}' "
+                    f"to '{ActionStatus.REJECTED.value}'"
+                )
+            }
+        await record_approval_event(
+            self._db,
+            ApprovalEventType.ACTION_REJECTED,
+            actor="user:manual",
+            action_id=parsed_id,
+            reason=reason or "rejected by operator",
+            metadata={"tool_name": action.tool_name},
+            occurred_at=now,
         )
 
         final_row = await self._db.fetchrow(
@@ -434,20 +728,28 @@ class ApprovalsModule(Module):
         expired_ids: list[str] = []
         for row in rows:
             action = PendingAction.from_row(row)
-            try:
-                validate_transition(action.status, ActionStatus.EXPIRED)
-            except InvalidTransitionError:
-                continue
 
-            await self._db.execute(
+            expired_row = await self._db.fetchrow(
                 "UPDATE pending_actions SET status = $1, decided_by = $2, decided_at = $3 "
-                "WHERE id = $4",
+                "WHERE id = $4 AND status = $5 "
+                "RETURNING id",
                 ActionStatus.EXPIRED.value,
                 "system:expiry",
                 now,
                 action.id,
+                ActionStatus.PENDING.value,
             )
-            expired_ids.append(str(action.id))
+            if expired_row is not None:
+                await record_approval_event(
+                    self._db,
+                    ApprovalEventType.ACTION_EXPIRED,
+                    actor="system:expiry",
+                    action_id=action.id,
+                    reason="approval window elapsed",
+                    metadata={"tool_name": action.tool_name},
+                    occurred_at=now,
+                )
+                expired_ids.append(str(action.id))
 
         return {
             "expired_count": len(expired_ids),
@@ -465,8 +767,13 @@ class ApprovalsModule(Module):
         description: str,
         expires_at: str | None = None,
         max_uses: int | None = None,
+        actor: ActorContext | None = None,
     ) -> dict:
         """Create a new standing approval rule."""
+        actor_result = _require_authenticated_human_actor("create_approval_rule", actor)
+        if isinstance(actor_result, dict):
+            return actor_result
+
         rule_id = uuid.uuid4()
         now = datetime.now(UTC)
 
@@ -477,6 +784,15 @@ class ApprovalsModule(Module):
                 parsed_expires = datetime.fromisoformat(expires_at)
             except ValueError:
                 return {"error": f"Invalid expires_at format: {expires_at}"}
+
+        constraint_error = self._validate_rule_constraints(
+            tool_name=tool_name,
+            arg_constraints=arg_constraints,
+            expires_at=parsed_expires,
+            max_uses=max_uses,
+        )
+        if constraint_error is not None:
+            return {"error": constraint_error}
 
         rule = ApprovalRule(
             id=rule_id,
@@ -502,6 +818,15 @@ class ApprovalsModule(Module):
             rule.max_uses,
             rule.active,
         )
+        await record_approval_event(
+            self._db,
+            ApprovalEventType.RULE_CREATED,
+            actor="user:manual",
+            rule_id=rule.id,
+            reason="create_approval_rule",
+            metadata={"tool_name": rule.tool_name},
+            occurred_at=now,
+        )
 
         return rule.to_dict()
 
@@ -509,12 +834,17 @@ class ApprovalsModule(Module):
         self,
         action_id: str,
         constraint_overrides: dict | None = None,
+        actor: ActorContext | None = None,
     ) -> dict:
         """Create a standing rule from a pending action with smart constraint defaults.
 
         Uses suggest_constraints to generate default arg constraints based on
         sensitivity classification, then applies any user-provided overrides.
         """
+        actor_result = _require_authenticated_human_actor("create_rule_from_action", actor)
+        if isinstance(actor_result, dict):
+            return actor_result
+
         try:
             parsed_id = uuid.UUID(action_id)
         except ValueError:
@@ -534,6 +864,17 @@ class ApprovalsModule(Module):
             for key, override in constraint_overrides.items():
                 suggested[key] = override
 
+        risk_tier = self._risk_tier_for_tool(action.tool_name)
+        max_uses = 1 if risk_tier in _HIGH_RISK_TIERS else None
+        constraint_error = self._validate_rule_constraints(
+            tool_name=action.tool_name,
+            arg_constraints=suggested,
+            expires_at=None,
+            max_uses=max_uses,
+        )
+        if constraint_error is not None:
+            return {"error": constraint_error}
+
         rule_id = uuid.uuid4()
         now = datetime.now(UTC)
 
@@ -544,19 +885,32 @@ class ApprovalsModule(Module):
             description=f"Rule created from action {action_id}",
             created_from=parsed_id,
             created_at=now,
+            max_uses=max_uses,
         )
 
         await self._db.execute(
             "INSERT INTO approval_rules "
-            "(id, tool_name, arg_constraints, description, created_from, created_at, active) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "(id, tool_name, arg_constraints, description, created_from, created_at, "
+            "max_uses, active) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
             rule.id,
             rule.tool_name,
             json.dumps(rule.arg_constraints),
             rule.description,
             rule.created_from,
             rule.created_at,
+            rule.max_uses,
             rule.active,
+        )
+        await record_approval_event(
+            self._db,
+            ApprovalEventType.RULE_CREATED,
+            actor="user:manual",
+            action_id=parsed_id,
+            rule_id=rule.id,
+            reason="create_rule_from_action",
+            metadata={"tool_name": rule.tool_name},
+            occurred_at=now,
         )
 
         return rule.to_dict()
@@ -598,8 +952,16 @@ class ApprovalsModule(Module):
 
         return ApprovalRule.from_row(row).to_dict()
 
-    async def _revoke_approval_rule(self, rule_id: str) -> dict:
+    async def _revoke_approval_rule(
+        self,
+        rule_id: str,
+        actor: ActorContext | None = None,
+    ) -> dict:
         """Revoke (deactivate) a standing approval rule."""
+        actor_result = _require_authenticated_human_actor("revoke_approval_rule", actor)
+        if isinstance(actor_result, dict):
+            return actor_result
+
         try:
             parsed_id = uuid.UUID(rule_id)
         except ValueError:
@@ -617,6 +979,14 @@ class ApprovalsModule(Module):
             "UPDATE approval_rules SET active = $1 WHERE id = $2",
             False,
             parsed_id,
+        )
+        await record_approval_event(
+            self._db,
+            ApprovalEventType.RULE_REVOKED,
+            actor="user:manual",
+            rule_id=parsed_id,
+            reason="rule revoked by operator",
+            metadata={"tool_name": rule.tool_name},
         )
 
         # Re-read to return updated state

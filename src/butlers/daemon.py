@@ -85,6 +85,7 @@ from butlers.tools.switchboard.routing.contracts import parse_notify_request, pa
 
 logger = logging.getLogger(__name__)
 
+
 CORE_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "status",
@@ -535,6 +536,7 @@ class ButlerDaemon:
             switchboard_pool=pool,
             dispatch_fn=self.spawner.trigger,
             source_butler="switchboard",
+            enable_ingress_dedupe=True,
         )
 
         wired_modules: list[str] = []
@@ -919,6 +921,23 @@ class ButlerDaemon:
                     ),
                 )
 
+            expected_origin = parsed_route.request_context.source_sender_identity
+            if notify_request.origin_butler != expected_origin:
+                message = (
+                    "notify_request.origin_butler must match "
+                    "request_context.source_sender_identity."
+                )
+                return _route_error_response(
+                    context_payload=route_context,
+                    error_class="validation_error",
+                    message=message,
+                    notify_response=_notify_error_response(
+                        request_id=route_request_id,
+                        channel=notify_request.delivery.channel,
+                        error_class="validation_error",
+                        message=message,
+                    ),
+                )
             channel = notify_request.delivery.channel
             intent = notify_request.delivery.intent
             message_text = notify_request.delivery.message
@@ -1509,6 +1528,11 @@ class ButlerDaemon:
         pool = self.db.pool
         originals = apply_approval_gates(self.mcp, approval_config, pool)
 
+        for mod in self._modules:
+            if mod.name == "approvals" and hasattr(mod, "set_approval_policy"):
+                mod.set_approval_policy(approval_config)
+                break
+
         # Wire the originals into the ApprovalsModule if it's loaded,
         # so the post-approval executor can invoke them directly
         if originals:
@@ -1558,6 +1582,8 @@ class ButlerDaemon:
         return ApprovalConfig(
             enabled=config.enabled,
             default_expiry_hours=config.default_expiry_hours,
+            default_risk_tier=config.default_risk_tier,
+            rule_precedence=config.rule_precedence,
             gated_tools=merged,
         )
 

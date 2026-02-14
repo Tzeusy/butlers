@@ -18,7 +18,6 @@ import os
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -104,6 +103,15 @@ class ProcessingLifecycle:
     acked_targets: set[str] = field(default_factory=set)
     failed_targets: set[str] = field(default_factory=set)
     terminal_reaction: str | None = None
+
+
+@dataclass(frozen=True)
+class IngressPersistenceResult:
+    """Outcome of persisting an inbound Telegram payload."""
+
+    request_id: Any
+    decision: str
+    dedupe_key: str | None = None
 
 
 class TelegramConfig(BaseModel):
@@ -256,6 +264,75 @@ class TelegramModule(Module):
             return self._db
         return None
 
+    async def _store_message_inbox_entry(
+        self,
+        *,
+        sender_id: str,
+        message_text: str,
+        update: dict[str, Any],
+        chat_id: str | None,
+        message_key: str | None,
+    ) -> IngressPersistenceResult | None:
+        """Persist raw inbound Telegram payload for downstream routing/audit linkage."""
+        pool = self._get_db_pool()
+        if pool is None:
+            return None
+
+        dedupe_key = f"telegram:telegram:bot:update:{message_key}" if message_key else None
+        raw_metadata_payload = {
+            "source_metadata": {
+                "channel": "telegram",
+                "identity": "bot",
+                "tool_name": "bot_telegram_get_updates",
+            },
+            "telegram_update": update,
+        }
+
+        try:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO message_inbox (
+                        source_channel,
+                        sender_id,
+                        raw_content,
+                        raw_metadata,
+                        source_thread_identity,
+                        source_endpoint_identity,
+                        source_sender_identity,
+                        dedupe_key,
+                        dedupe_strategy,
+                        dedupe_last_seen_at
+                    ) VALUES (
+                        $1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, now()
+                    )
+                    ON CONFLICT (dedupe_key) DO UPDATE
+                    SET dedupe_last_seen_at = EXCLUDED.dedupe_last_seen_at
+                    RETURNING id AS request_id, (xmax = 0) AS inserted
+                    """,
+                    "telegram",
+                    sender_id,
+                    message_text,
+                    json.dumps(raw_metadata_payload),
+                    chat_id,
+                    "telegram:bot",
+                    sender_id,
+                    dedupe_key,
+                    "telegram_update_id_endpoint",
+                )
+        except Exception:
+            logger.exception("Failed to insert Telegram message_inbox row")
+            return None
+
+        if row is None:
+            return None
+
+        decision = "accepted" if bool(row["inserted"]) else "deduped"
+        return IngressPersistenceResult(
+            request_id=row["request_id"],
+            decision=decision,
+            dedupe_key=dedupe_key,
+        )
     @staticmethod
     def _result_has_failure(result: RoutingResult) -> bool:
         if result.classification_error or result.routing_error:
@@ -531,6 +608,27 @@ class TelegramModule(Module):
         text = _extract_text(update)
         if not text:
             return None
+        sender_identity = chat_id if chat_id not in (None, "") else "unknown"
+        ingress = await self._store_message_inbox_entry(
+            sender_id=sender_identity,
+            message_text=text,
+            update=update,
+            chat_id=chat_id,
+            message_key=message_key,
+        )
+        if ingress is not None and ingress.decision == "deduped":
+            deduped = RoutingResult(
+                target_butler="deduped",
+                route_result={
+                    "request_id": str(ingress.request_id),
+                    "ingress_decision": "deduped",
+                    "dedupe_key": ingress.dedupe_key,
+                    "dedupe_strategy": "telegram_update_id_endpoint",
+                },
+            )
+            self._routed_messages.append(deduped)
+            return deduped
+        message_inbox_id = ingress.request_id if ingress is not None else None
 
         lock = self._message_lock(message_key) if message_key is not None else None
         if lock is not None:
@@ -542,26 +640,12 @@ class TelegramModule(Module):
                 message_key=message_key,
                 reaction=REACTION_IN_PROGRESS,
             )
-
-            # Phase 1: Log receipt
-            message_inbox_id = None
-            db_pool = self._get_db_pool()
-            if db_pool is not None:
-                async with db_pool.acquire() as conn:
-                    message_inbox_id = await conn.fetchval(
-                        """
-                        INSERT INTO message_inbox
-                            (source_channel, sender_id, raw_content, raw_metadata, received_at)
-                        VALUES
-                            ($1, $2, $3, $4, $5)
-                        RETURNING id
-                        """,
-                        "telegram",
-                        chat_id,
-                        text,
-                        json.dumps(update),
-                        datetime.now(UTC),
-                    )
+            message_inbox_id = await self._log_message_inbox(
+                message_text=text,
+                chat_id=chat_id,
+                message_key=message_key,
+                update=update,
+            )
 
             result = await self._pipeline.process(
                 message_text=text,
@@ -570,9 +654,14 @@ class TelegramModule(Module):
                     "source": "telegram",
                     "source_channel": "telegram",
                     "source_identity": "bot",
+                    "source_endpoint_identity": "telegram:bot",
+                    "sender_identity": chat_id,
+                    "external_event_id": message_key or chat_id,
+                    "external_thread_id": chat_id,
                     "source_tool": "bot_telegram_get_updates",
                     "chat_id": chat_id,
                     "source_id": message_key,
+                    "raw_metadata": update,
                 },
                 message_inbox_id=message_inbox_id,
             )
@@ -781,3 +870,42 @@ def _message_tracking_key(
     if update_id is None:
         return None
     return f"update:{update_id}"
+
+
+def _extract_sender_identity(update: dict[str, Any], *, fallback: str | None = None) -> str:
+    """Extract sender identity from an update, falling back to chat identity."""
+    for key in ("message", "edited_message", "channel_post"):
+        msg = update.get(key)
+        if not isinstance(msg, dict):
+            continue
+
+        sender = msg.get("from")
+        if isinstance(sender, dict):
+            sender_id = sender.get("id")
+            if sender_id not in (None, ""):
+                return str(sender_id)
+            username = sender.get("username")
+            if username not in (None, ""):
+                return str(username)
+
+        sender_chat = msg.get("sender_chat")
+        if isinstance(sender_chat, dict):
+            sender_chat_id = sender_chat.get("id")
+            if sender_chat_id not in (None, ""):
+                return str(sender_chat_id)
+
+    if fallback not in (None, ""):
+        return str(fallback)
+    return "unknown"
+
+
+def _extract_update_id(update: dict[str, Any]) -> str | None:
+    """Extract a stable external event ID for pipeline dedupe metadata."""
+    update_id = update.get("update_id")
+    if update_id not in (None, ""):
+        return str(update_id)
+
+    message_id = _extract_message_id(update)
+    if message_id is None:
+        return None
+    return str(message_id)

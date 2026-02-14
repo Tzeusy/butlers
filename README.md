@@ -42,8 +42,13 @@ cron = "*/30 * * * *"
 prompt = "Check for new emails. Flag anything urgent and draft replies for routine items."
 
 [modules.email]
-provider = "gmail"
-address = "me@example.com"
+
+[modules.email.user]
+enabled = false
+
+[modules.email.bot]
+address_env = "BUTLER_EMAIL_ADDRESS"
+password_env = "BUTLER_EMAIL_PASSWORD"
 
 [modules.calendar]
 provider = "google"
@@ -178,7 +183,7 @@ graph TB
 
 | Source            | How it fires                                     | `trigger_source` value |
 | ----------------- | ------------------------------------------------ | ---------------------- |
-| External MCP call | Client calls `trigger(prompt)` tool              | `trigger_tool`         |
+| External MCP call | Client calls `trigger(prompt)` tool              | `trigger`              |
 | Scheduler         | Cron expression fires, dispatched by `tick()`    | `schedule`             |
 | Heartbeat         | Heartbeat butler calls `tick_now()` every 10 min | `tick`                 |
 
@@ -197,6 +202,29 @@ Module ABC
 ├── on_startup()      → post-migration initialization
 └── on_shutdown()     → cleanup (reverse topological order)
 ```
+
+### Identity-Scoped I/O and Approvals
+
+Channel modules (Telegram/Email) use identity-scoped tool surfaces:
+
+- `user_*` tools act through user-scoped credentials and represent user-identity I/O.
+- `bot_*` tools act through butler/bot-scoped credentials and represent bot-identity I/O.
+
+Naming contract:
+
+- `user_<channel>_<verb>`
+- `bot_<channel>_<verb>`
+
+Telegram and Email examples:
+
+- Telegram outputs: `user_telegram_send_message`, `user_telegram_reply_to_message`, `bot_telegram_send_message`, `bot_telegram_reply_to_message`
+- Email outputs: `user_email_send_message`, `user_email_reply_to_thread`, `bot_email_send_message`, `bot_email_reply_to_thread`
+- Identity-scoped inputs follow the same prefix convention (for example `user_telegram_get_updates`, `bot_email_search_inbox`).
+
+Approval defaults:
+
+- User-scoped send/reply outputs are default-gated (`approval_default="always"`).
+- Bot-scoped outputs are policy-driven and only gated when configured (or when descriptor defaults require it).
 
 ## Getting Started
 
@@ -219,16 +247,9 @@ butlers up
 
 # Or start a specific butler
 butlers up --only switchboard --only general
-butlers up --only switchboard --only messenger
 
 # List discovered butlers
 butlers list
-```
-
-For outbound delivery-path work (Switchboard -> Messenger):
-
-```bash
-butlers up --only switchboard --only messenger
 ```
 
 Access points:
@@ -287,7 +308,6 @@ Each butler service mounts its config directory read-only from `butlers/<name>/`
 | General       | 8101 | Catch-all assistant with collections/entities          |
 | Relationship  | 8102 | Contacts, interactions, gifts, activity feed           |
 | Health        | 8103 | Measurements, medications, conditions, symptoms        |
-| Messenger     | 8104 | Outbound delivery execution for Telegram/Email         |
 | Heartbeat     | 8199 | System monitor — ticks all butlers every 10 min        |
 | Dashboard API | 8200 | Web UI backend for monitoring and managing butlers     |
 | Frontend      | 5173 | Vite dev server (development only)                     |
@@ -348,18 +368,16 @@ These are validated at startup by the credential checker and passed through to s
 
 ### Module Variables
 
-Each module declares its own required credentials via `credentials_env`. These are validated at startup alongside global and butler-specific vars.
+Telegram and Email credentials are identity-scoped via `[modules.<channel>.user]` and `[modules.<channel>.bot]` sections. Each enabled scope declares env-var names via `*_env` fields.
 
-| Module              | Variable                | Description                                            |
-| ------------------- | ----------------------- | ------------------------------------------------------ |
-| `telegram` (bot)    | `BUTLER_TELEGRAM_TOKEN` | Telegram Bot API token for bot-scoped delivery tools   |
-| `telegram` (user)   | `USER_TELEGRAM_TOKEN`   | Optional user-scoped Telegram token                    |
-| `email` (bot)       | `BUTLER_EMAIL_ADDRESS`  | Bot-scoped email address for IMAP/SMTP authentication  |
-| `email` (bot)       | `BUTLER_EMAIL_PASSWORD` | Bot-scoped email password or app-specific password     |
-| `email` (user)      | `USER_EMAIL_ADDRESS`    | Optional user-scoped email address                     |
-| `email` (user)      | `USER_EMAIL_PASSWORD`   | Optional user-scoped email password                    |
+| Scope              | Config keys                      | Typical env var names                                  | Description                                    |
+| ------------------ | -------------------------------- | ------------------------------------------------------ | ---------------------------------------------- |
+| `modules.telegram.bot`  | `token_env`                      | `BUTLER_TELEGRAM_TOKEN`                                | Butler-owned Telegram bot token                |
+| `modules.telegram.user` | `token_env`                      | `USER_TELEGRAM_TOKEN`                                  | Optional user Telegram credential              |
+| `modules.email.bot`     | `address_env`, `password_env`    | `BUTLER_EMAIL_ADDRESS`, `BUTLER_EMAIL_PASSWORD`        | Butler-owned mailbox credentials               |
+| `modules.email.user`    | `address_env`, `password_env`    | `USER_EMAIL_ADDRESS`, `USER_EMAIL_PASSWORD`            | Optional user mailbox credentials              |
 
-Module credentials are only required when the module is enabled in `butler.toml`. They are scoped to the CC spawner — only declared credentials are forwarded to ephemeral Claude Code instances.
+Enabled scopes with missing env vars are startup-blocking. Disabled scopes are not required. Declared credentials are forwarded to ephemeral Claude Code instances.
 
 ## Development
 
