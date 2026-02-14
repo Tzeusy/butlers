@@ -38,10 +38,14 @@ from butlers.modules.approvals.models import (
 from butlers.modules.approvals.models import (
     PendingAction,
 )
+from butlers.modules.approvals.sensitivity import redact_constraints, redact_tool_args
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/approvals", tags=["approvals"])
+
+# Cache mapping (butler_name, table_name) -> has_table to avoid repeated system catalog queries
+_TABLE_CACHE: dict[tuple[str, str], bool] = {}
 
 
 def _get_db_manager() -> DatabaseManager:
@@ -49,19 +53,41 @@ def _get_db_manager() -> DatabaseManager:
     raise RuntimeError("DatabaseManager not initialized")
 
 
+def _clear_table_cache():
+    """Clear the table discovery cache. Used in tests to avoid cross-test pollution."""
+    _TABLE_CACHE.clear()
+
+
 async def _find_approvals_pool(db_mgr: DatabaseManager, table_name: str = "pending_actions"):
     """Find a butler pool that has the specified approvals table.
 
     Returns the first pool that has the table, or None if no butler has it.
+    Uses a cache to avoid repeated system catalog queries on hot paths.
     """
     for butler_name in db_mgr.butler_names:
+        cache_key = (butler_name, table_name)
+
+        # Check cache first
+        if cache_key in _TABLE_CACHE:
+            if _TABLE_CACHE[cache_key]:
+                try:
+                    return db_mgr.pool(butler_name)
+                except KeyError:
+                    # Pool no longer exists, invalidate cache
+                    del _TABLE_CACHE[cache_key]
+                    continue
+            else:
+                continue
+
+        # Not in cache, query the database
         try:
             pool = db_mgr.pool(butler_name)
             async with pool.acquire() as conn:
                 table_check = await conn.fetchval(
-                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
-                    f"WHERE table_name = '{table_name}')"
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)",
+                    table_name,
                 )
+                _TABLE_CACHE[cache_key] = table_check
                 if table_check:
                     return pool
         except KeyError:
@@ -70,11 +96,11 @@ async def _find_approvals_pool(db_mgr: DatabaseManager, table_name: str = "pendi
 
 
 def _pending_action_to_api(action: PendingAction) -> ApprovalAction:
-    """Convert a PendingAction to API representation."""
+    """Convert a PendingAction to API representation with redacted sensitive data."""
     return ApprovalAction(
         id=str(action.id),
         tool_name=action.tool_name,
-        tool_args=action.tool_args,
+        tool_args=redact_tool_args(action.tool_name, action.tool_args),
         status=action.status.value,
         requested_at=action.requested_at,
         agent_summary=action.agent_summary,
@@ -88,11 +114,11 @@ def _pending_action_to_api(action: PendingAction) -> ApprovalAction:
 
 
 def _approval_rule_to_api(rule: ApprovalRuleModel) -> ApprovalRule:
-    """Convert an ApprovalRule to API representation."""
+    """Convert an ApprovalRule to API representation with redacted sensitive data."""
     return ApprovalRule(
         id=str(rule.id),
         tool_name=rule.tool_name,
-        arg_constraints=rule.arg_constraints,
+        arg_constraints=redact_constraints(rule.tool_name, rule.arg_constraints),
         description=rule.description,
         created_from=str(rule.created_from) if rule.created_from else None,
         created_at=rule.created_at,
@@ -132,7 +158,7 @@ async def list_actions(
     args = []
     idx = 1
 
-    if status is not None:
+    if status not in (None, ""):
         conditions.append(f"status = ${idx}")
         args.append(status)
         idx += 1
@@ -325,25 +351,12 @@ async def expire_stale_actions(
 
     async with target_pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id FROM pending_actions WHERE status = $1 AND expires_at IS NOT NULL "
-            "AND expires_at < $2",
-            "pending",
+            "UPDATE pending_actions SET status = 'expired', decided_by = 'system:expiry', "
+            "decided_at = $1 WHERE status = 'pending' AND expires_at IS NOT NULL "
+            "AND expires_at < $1 RETURNING id",
             now,
         )
-
-        expired_ids = []
-        for row in rows:
-            updated = await conn.fetchval(
-                "UPDATE pending_actions SET status = $1, decided_by = $2, decided_at = $3 "
-                "WHERE id = $4 AND status = $5 RETURNING id",
-                "expired",
-                "system:expiry",
-                now,
-                row["id"],
-                "pending",
-            )
-            if updated is not None:
-                expired_ids.append(str(row["id"]))
+        expired_ids = [str(row["id"]) for row in rows]
 
     response = ExpireStaleActionsResponse(
         expired_count=len(expired_ids),
@@ -496,8 +509,8 @@ async def get_rule_suggestions(
     suggestion = RuleConstraintSuggestion(
         action_id=str(action.id),
         tool_name=action.tool_name,
-        tool_args=action.tool_args,
-        suggested_constraints=suggested,
+        tool_args=redact_tool_args(action.tool_name, action.tool_args),
+        suggested_constraints=redact_constraints(action.tool_name, suggested),
     )
 
     return ApiResponse(data=suggestion)
@@ -573,15 +586,11 @@ async def get_metrics(
             (total_rejected_today / total_decisions_today) if total_decisions_today > 0 else 0.0
         )
 
-        failure_rows = await conn.fetch(
-            "SELECT execution_result FROM pending_actions "
-            "WHERE status = 'executed' AND decided_at >= $1",
+        failure_count_today = await conn.fetchval(
+            "SELECT COUNT(*) FROM pending_actions "
+            "WHERE status = 'executed' AND decided_at >= $1 "
+            "AND execution_result->>'error' IS NOT NULL",
             today_start,
-        )
-        failure_count_today = sum(
-            1
-            for row in failure_rows
-            if row["execution_result"] and row["execution_result"].get("error")
         )
 
         active_rules_count = await conn.fetchval(

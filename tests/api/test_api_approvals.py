@@ -17,9 +17,18 @@ import pytest
 
 from butlers.api.app import create_app
 from butlers.api.db import DatabaseManager
-from butlers.api.routers.approvals import _get_db_manager
+from butlers.api.routers.approvals import _clear_table_cache, _get_db_manager
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def clear_approvals_cache():
+    """Clear the table discovery cache before each test to prevent cross-test pollution."""
+    _clear_table_cache()
+    yield
+    _clear_table_cache()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -511,20 +520,13 @@ async def test_get_metrics():
             3,  # total_auto_approved_today
             1,  # total_expired_today
             12,  # total_decisions_today
+            2,  # failure_count_today (changed from fetch to fetchval)
             7,  # active_rules_count
         ]
     )
 
     # Mock avg_latency query
     mock_conn.fetchrow = AsyncMock(return_value={"avg_latency": 120.5})
-
-    # Mock execution failures query
-    mock_conn.fetch = AsyncMock(
-        return_value=[
-            {"execution_result": {"error": "Failed to send"}},
-            {"execution_result": {"success": True}},
-        ]
-    )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -541,7 +543,7 @@ async def test_get_metrics():
     assert data["data"]["avg_decision_latency_seconds"] == 120.5
     assert data["data"]["auto_approval_rate"] > 0
     assert data["data"]["rejection_rate"] > 0
-    assert data["data"]["failure_count_today"] == 1
+    assert data["data"]["failure_count_today"] == 2
     assert data["data"]["active_rules_count"] == 7
 
 
