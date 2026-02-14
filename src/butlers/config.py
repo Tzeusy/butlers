@@ -424,9 +424,7 @@ def load_config(config_dir: Path) -> ButlerConfig:
                 str(c).strip() for c in raw_trusted if isinstance(c, str) and c.strip()
             )
         else:
-            raise ConfigError(
-                "butler.security.trusted_route_callers must be a list of strings"
-            )
+            raise ConfigError("butler.security.trusted_route_callers must be a list of strings")
     else:
         trusted_route_callers = ("switchboard",)
 

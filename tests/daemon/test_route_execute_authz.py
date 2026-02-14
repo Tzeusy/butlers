@@ -102,9 +102,7 @@ def _patch_infra():
         "sync_schedules": patch("butlers.daemon.sync_schedules", new_callable=AsyncMock),
         "FastMCP": patch("butlers.daemon.FastMCP"),
         "Spawner": patch("butlers.daemon.Spawner", return_value=mock_spawner),
-        "start_mcp_server": patch.object(
-            ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock
-        ),
+        "start_mcp_server": patch.object(ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock),
         "connect_switchboard": patch.object(
             ButlerDaemon, "_connect_switchboard", new_callable=AsyncMock
         ),
@@ -189,9 +187,7 @@ def _valid_notify_request(*, origin_butler: str = "health") -> dict[str, Any]:
 class TestRouteExecuteAuthzRejectsUntrustedCallers:
     """Verify that route.execute rejects callers not in trusted_route_callers."""
 
-    async def test_unauthenticated_caller_rejected_on_messenger(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_unauthenticated_caller_rejected_on_messenger(self, tmp_path: Path) -> None:
         """Messenger butler rejects route.execute from unknown endpoint identity."""
         patches = _patch_infra()
         butler_dir = _make_butler_toml(
@@ -225,9 +221,7 @@ class TestRouteExecuteAuthzRejectsUntrustedCallers:
         assert "rogue-caller" in result["error"]["message"]
         assert "trusted_route_callers" in result["error"]["message"]
 
-    async def test_unauthenticated_caller_rejected_on_non_messenger(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_unauthenticated_caller_rejected_on_non_messenger(self, tmp_path: Path) -> None:
         """Non-messenger butler also rejects untrusted callers."""
         patches = _patch_infra()
         butler_dir = _make_butler_toml(tmp_path, butler_name="health")
@@ -246,9 +240,7 @@ class TestRouteExecuteAuthzRejectsUntrustedCallers:
         assert result["error"]["class"] == "validation_error"
         assert "unknown-origin" in result["error"]["message"]
 
-    async def test_empty_string_endpoint_identity_rejected(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_empty_string_endpoint_identity_rejected(self, tmp_path: Path) -> None:
         """Empty endpoint identity fails envelope validation before authz."""
         patches = _patch_infra()
         butler_dir = _make_butler_toml(tmp_path, butler_name="health")
@@ -277,9 +269,7 @@ class TestRouteExecuteAuthzRejectsUntrustedCallers:
 class TestRouteExecuteAuthzAllowsTrustedCallers:
     """Verify that trusted callers are allowed through."""
 
-    async def test_switchboard_caller_allowed_by_default(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_switchboard_caller_allowed_by_default(self, tmp_path: Path) -> None:
         """Default trusted_route_callers includes switchboard."""
         patches = _patch_infra()
         butler_dir = _make_butler_toml(
@@ -307,9 +297,7 @@ class TestRouteExecuteAuthzAllowsTrustedCallers:
         telegram_module._send_message.assert_awaited_once()
         assert result["status"] == "ok"
 
-    async def test_non_messenger_trigger_with_switchboard_succeeds(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_non_messenger_trigger_with_switchboard_succeeds(self, tmp_path: Path) -> None:
         """Non-messenger butler routes via trigger when switchboard calls."""
         patches = _patch_infra()
         butler_dir = _make_butler_toml(tmp_path, butler_name="health")
@@ -371,9 +359,7 @@ class TestRouteExecuteCustomTrustedCallers:
 
         assert result["status"] == "ok"
 
-    async def test_switchboard_rejected_when_not_in_custom_list(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_switchboard_rejected_when_not_in_custom_list(self, tmp_path: Path) -> None:
         """Even switchboard is rejected if excluded from custom config."""
         patches = _patch_infra()
         butler_dir = _make_butler_toml(
@@ -396,9 +382,7 @@ class TestRouteExecuteCustomTrustedCallers:
         assert result["error"]["class"] == "validation_error"
         assert "switchboard" in result["error"]["message"]
 
-    async def test_empty_trusted_callers_rejects_everyone(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_empty_trusted_callers_rejects_everyone(self, tmp_path: Path) -> None:
         """An empty trusted_route_callers list rejects all callers."""
         patches = _patch_infra()
         butler_dir = _make_butler_toml(
