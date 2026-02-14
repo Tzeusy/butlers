@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
+from butlers.config import ApprovalConfig, ApprovalRiskTier, GatedToolConfig
 from butlers.modules.approvals.models import ApprovalRule
 from butlers.modules.approvals.module import ApprovalsModule
 from butlers.modules.approvals.rules import (
@@ -50,6 +51,7 @@ class MockDB:
     def __init__(self) -> None:
         self.pending_actions: dict[uuid.UUID, dict[str, Any]] = {}
         self.approval_rules: dict[uuid.UUID, dict[str, Any]] = {}
+        self.approval_events: list[dict[str, Any]] = []
 
     def _insert_action(self, **kwargs: Any) -> uuid.UUID:
         """Helper to seed a pending action for testing."""
@@ -177,8 +179,8 @@ class MockDB:
                 "arg_constraints": args[2],
                 "description": args[3],
             }
-            # Different INSERT signatures have different arg counts
-            if len(args) == 8:
+            # Different INSERT signatures have different column layouts.
+            if "expires_at" in query:
                 # create_approval_rule: id, tool_name, arg_constraints, description,
                 #   created_at, expires_at, max_uses, active
                 row["created_from"] = None
@@ -187,9 +189,18 @@ class MockDB:
                 row["max_uses"] = args[6]
                 row["active"] = args[7]
                 row["use_count"] = 0
+            elif len(args) == 8:
+                # create_rule_from_action / approve_action(create_rule):
+                #   id, tool_name, arg_constraints, description,
+                #   created_from, created_at, max_uses, active
+                row["created_from"] = args[4]
+                row["created_at"] = args[5]
+                row["max_uses"] = args[6]
+                row["active"] = args[7]
+                row["expires_at"] = None
+                row["use_count"] = 0
             elif len(args) == 7:
-                # create_rule_from_action: id, tool_name, arg_constraints, description,
-                #   created_from, created_at, active
+                # Legacy layout without max_uses.
                 row["created_from"] = args[4]
                 row["created_at"] = args[5]
                 row["active"] = args[6]
@@ -235,6 +246,18 @@ class MockDB:
                 "decided_at": None,
                 "execution_result": None,
             }
+        elif "INSERT INTO approval_events" in query:
+            self.approval_events.append(
+                {
+                    "event_type": args[0],
+                    "action_id": args[1],
+                    "rule_id": args[2],
+                    "actor": args[3],
+                    "reason": args[4],
+                    "event_metadata": json.loads(args[5]),
+                    "occurred_at": args[6],
+                }
+            )
 
 
 @pytest.fixture
@@ -555,6 +578,78 @@ class TestMatchRulesFromList:
         assert result is not None
         assert result.id == two_exact["id"]
 
+    def test_tie_breaker_prefers_bounded_scope(self):
+        """With equal specificity, bounded rules win over unbounded rules."""
+        unbounded = _make_rule(
+            "email_send",
+            {"to": {"type": "exact", "value": "alice@example.com"}},
+            max_uses=None,
+            expires_at=None,
+        )
+        bounded = _make_rule(
+            "email_send",
+            {"to": {"type": "exact", "value": "alice@example.com"}},
+            max_uses=5,
+            expires_at=None,
+        )
+
+        result = match_rules_from_list(
+            "email_send",
+            {"to": "alice@example.com"},
+            [unbounded, bounded],
+        )
+        assert result is not None
+        assert result.id == bounded["id"]
+
+    def test_tie_breaker_prefers_newer_rule(self):
+        """With equal specificity and bounds, newer rules win."""
+        older = _make_rule(
+            "email_send",
+            {"to": {"type": "exact", "value": "alice@example.com"}},
+            max_uses=5,
+        )
+        newer = _make_rule(
+            "email_send",
+            {"to": {"type": "exact", "value": "alice@example.com"}},
+            max_uses=5,
+        )
+        older["created_at"] = datetime.now(UTC) - timedelta(hours=1)
+        newer["created_at"] = datetime.now(UTC)
+
+        result = match_rules_from_list(
+            "email_send",
+            {"to": "alice@example.com"},
+            [older, newer],
+        )
+        assert result is not None
+        assert result.id == newer["id"]
+
+    def test_tie_breaker_uses_rule_id_for_full_tie(self):
+        """Rule id is a deterministic final tie-breaker."""
+        created_at = datetime.now(UTC)
+        first = _make_rule(
+            "email_send",
+            {"to": {"type": "exact", "value": "alice@example.com"}},
+            max_uses=5,
+        )
+        second = _make_rule(
+            "email_send",
+            {"to": {"type": "exact", "value": "alice@example.com"}},
+            max_uses=5,
+        )
+        first["created_at"] = created_at
+        second["created_at"] = created_at
+        first["id"] = uuid.UUID("00000000-0000-0000-0000-000000000010")
+        second["id"] = uuid.UUID("00000000-0000-0000-0000-000000000099")
+
+        result = match_rules_from_list(
+            "email_send",
+            {"to": "alice@example.com"},
+            [second, first],
+        )
+        assert result is not None
+        assert result.id == first["id"]
+
     def test_constraint_mismatch_no_match(self):
         rule = _make_rule("email_send", {"to": {"type": "exact", "value": "alice@example.com"}})
         result = match_rules_from_list("email_send", {"to": "bob@example.com"}, [rule])
@@ -792,6 +887,66 @@ class TestCreateApprovalRule:
         )
         assert result["error_code"] == "human_actor_required"
 
+    async def test_high_risk_rule_requires_bounded_scope(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
+        await module.on_startup(config=None, db=mock_db)
+        module.set_approval_policy(
+            ApprovalConfig(
+                enabled=True,
+                gated_tools={"wire_transfer": GatedToolConfig(risk_tier=ApprovalRiskTier.HIGH)},
+            )
+        )
+
+        result = await module._create_approval_rule(
+            tool_name="wire_transfer",
+            arg_constraints={"to_account": {"type": "exact", "value": "acct_123"}},
+            description="unbounded high-risk rule",
+            actor=human_actor,
+        )
+
+        assert "error" in result
+        assert "bounded scope" in result["error"]
+
+    async def test_high_risk_rule_requires_narrow_constraints(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
+        await module.on_startup(config=None, db=mock_db)
+        module.set_approval_policy(
+            ApprovalConfig(
+                enabled=True,
+                gated_tools={"wire_transfer": GatedToolConfig(risk_tier=ApprovalRiskTier.HIGH)},
+            )
+        )
+
+        result = await module._create_approval_rule(
+            tool_name="wire_transfer",
+            arg_constraints={"note": {"type": "any"}},
+            description="too broad",
+            max_uses=1,
+            actor=human_actor,
+        )
+
+        assert "error" in result
+        assert "exact or pattern" in result["error"]
+
+    async def test_create_rule_emits_rule_created_event(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
+        await module.on_startup(config=None, db=mock_db)
+
+        result = await module._create_approval_rule(
+            tool_name="email_send",
+            arg_constraints={"to": "alice"},
+            description="test",
+            actor=human_actor,
+        )
+
+        rule_id = uuid.UUID(result["id"])
+        event = next(e for e in mock_db.approval_events if e["rule_id"] == rule_id)
+        assert event["event_type"] == "rule_created"
+        assert event["actor"] == "user:manual"
+
 
 class TestCreateRuleFromAction:
     """Test create_rule_from_action tool."""
@@ -876,6 +1031,54 @@ class TestCreateRuleFromAction:
 
         rule_id = uuid.UUID(result["id"])
         assert rule_id in mock_db.approval_rules
+
+    async def test_create_from_action_high_risk_defaults_to_bounded_rule(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
+        await module.on_startup(config=None, db=mock_db)
+        module.set_approval_policy(
+            ApprovalConfig(
+                enabled=True,
+                gated_tools={"wire_transfer": GatedToolConfig(risk_tier=ApprovalRiskTier.HIGH)},
+            )
+        )
+
+        action_id = mock_db._insert_action(
+            tool_name="wire_transfer",
+            tool_args={"to_account": "acct_123", "amount": 10.0},
+        )
+
+        result = await module._create_rule_from_action(str(action_id), actor=human_actor)
+        assert "error" not in result
+        assert result["max_uses"] == 1
+
+    async def test_create_from_action_high_risk_rejects_broad_overrides(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
+        await module.on_startup(config=None, db=mock_db)
+        module.set_approval_policy(
+            ApprovalConfig(
+                enabled=True,
+                gated_tools={"wire_transfer": GatedToolConfig(risk_tier=ApprovalRiskTier.HIGH)},
+            )
+        )
+
+        action_id = mock_db._insert_action(
+            tool_name="wire_transfer",
+            tool_args={"to_account": "acct_123", "amount": 10.0},
+        )
+
+        result = await module._create_rule_from_action(
+            str(action_id),
+            constraint_overrides={
+                "to_account": {"type": "any"},
+                "amount": {"type": "any"},
+            },
+            actor=human_actor,
+        )
+
+        assert "error" in result
+        assert "exact or pattern" in result["error"]
 
 
 class TestListApprovalRules:
@@ -1015,6 +1218,22 @@ class TestRevokeApprovalRule:
         rule_id = mock_db._insert_rule(tool_name="email_send", active=True)
         result = await module._revoke_approval_rule(str(rule_id))
         assert result["error_code"] == "human_actor_required"
+
+    async def test_revoke_emits_rule_revoked_event(
+        self, module: ApprovalsModule, mock_db: MockDB, human_actor: dict[str, Any]
+    ):
+        await module.on_startup(config=None, db=mock_db)
+
+        rule_id = mock_db._insert_rule(
+            tool_name="email_send",
+            description="Active rule",
+            active=True,
+        )
+        await module._revoke_approval_rule(str(rule_id), actor=human_actor)
+
+        event = next(e for e in mock_db.approval_events if e["rule_id"] == rule_id)
+        assert event["event_type"] == "rule_revoked"
+        assert event["actor"] == "user:manual"
 
 
 class TestSuggestRuleConstraints:
