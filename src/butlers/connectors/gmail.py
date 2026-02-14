@@ -31,10 +31,12 @@ Environment variables (see `docs/connectors/gmail.md` section 4):
 from __future__ import annotations
 
 import asyncio
+import base64
+import html
 import json
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -142,9 +144,12 @@ class GmailConnectorRuntime:
         self._http_client = httpx.AsyncClient(timeout=30.0)
 
         logger.info(
-            "Gmail connector starting: endpoint=%s, cursor=%s",
-            self._config.connector_endpoint_identity,
+            "Gmail connector starting: cursor=%s",
             self._config.connector_cursor_path,
+        )
+        logger.debug(
+            "Gmail connector endpoint: %s",
+            self._config.connector_endpoint_identity,
         )
 
         # Ensure cursor file exists
@@ -267,7 +272,7 @@ class GmailConnectorRuntime:
 
         self._access_token = token_data["access_token"]
         expires_in = token_data.get("expires_in", 3600)
-        self._token_expires_at = datetime.now(UTC).timestamp() + expires_in
+        self._token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
 
         logger.debug("Refreshed OAuth access token (expires in %ds)", expires_in)
         return self._access_token
@@ -386,7 +391,7 @@ class GmailConnectorRuntime:
         body = self._extract_body_from_payload(message_data.get("payload", {}))
 
         # Build normalized text
-        normalized_text = f"Subject: {subject}\n\n{body}"
+        normalized_text = f"Subject: {html.escape(subject)}\n\n{html.escape(body)}"
 
         # Observed timestamp
         try:
@@ -419,22 +424,24 @@ class GmailConnectorRuntime:
             },
         }
 
-    def _extract_body_from_payload(self, payload: dict[str, Any]) -> str:
+    def _extract_body_from_payload(self, payload: dict[str, Any], depth: int = 0) -> str:
         """Recursively extract body text from Gmail message payload."""
+        # Prevent stack overflow from malicious deeply nested messages
+        if depth > 20:
+            logger.warning("Maximum recursion depth reached in email parsing")
+            return "(body too deeply nested)"
         # Try to extract text/plain part
         mime_type = payload.get("mimeType", "")
         if mime_type == "text/plain":
             body_data = payload.get("body", {}).get("data", "")
             if body_data:
-                import base64
-
                 return base64.urlsafe_b64decode(body_data).decode("utf-8", errors="replace")
 
         # If multipart, recurse into parts
         parts = payload.get("parts", [])
         if parts:
             for part in parts:
-                body = self._extract_body_from_payload(part)
+                body = self._extract_body_from_payload(part, depth + 1)
                 if body and body != "(no body)":
                     return body
 
