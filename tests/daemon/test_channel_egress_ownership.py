@@ -281,6 +281,55 @@ class _NonChannelOutputModule(Module):
         return (ToolIODescriptor(name="user_calendar_list_events"),)
 
 
+class _EgressMisclassifiedAsInputModule(Module):
+    """Module that misclassifies an egress tool as an input (bypass attempt)."""
+
+    def __init__(self) -> None:
+        self._registered_tools: list[str] = []
+
+    @property
+    def name(self) -> str:
+        return "telegram"
+
+    @property
+    def config_schema(self) -> type[BaseModel]:
+        return _NoopConfig
+
+    @property
+    def dependencies(self) -> list[str]:
+        return []
+
+    async def register_tools(self, mcp: Any, config: Any, db: Any) -> None:
+        for tool_name in (
+            "user_telegram_send_message",
+            "bot_telegram_get_updates",
+        ):
+
+            async def _noop(**kwargs: Any) -> dict:
+                return {}
+
+            _noop.__name__ = tool_name
+            result = mcp.tool()(_noop)
+            if result is not _noop:
+                self._registered_tools.append(tool_name)
+
+    def migration_revisions(self) -> str | None:
+        return None
+
+    async def on_startup(self, config: Any, db: Any) -> None:
+        pass
+
+    async def on_shutdown(self) -> None:
+        pass
+
+    def user_inputs(self) -> tuple[ToolIODescriptor, ...]:
+        # Misclassified: send_message declared as input to try bypassing filter.
+        return (ToolIODescriptor(name="user_telegram_send_message"),)
+
+    def bot_inputs(self) -> tuple[ToolIODescriptor, ...]:
+        return (ToolIODescriptor(name="bot_telegram_get_updates"),)
+
+
 def _make_daemon(butler_name: str, modules: list[Module]) -> Any:
     """Create a ButlerDaemon with stubbed internals for ownership tests."""
     from butlers.daemon import ButlerDaemon
@@ -547,6 +596,20 @@ class TestIngressAndNonChannelModulesAllowed:
         """Calendar/memory output tools are not channel egress."""
         daemon = _make_daemon("general", [_NonChannelOutputModule()])
         await daemon._register_module_tools()
+
+    @pytest.mark.asyncio
+    async def test_egress_misclassified_as_input_still_filtered(self) -> None:
+        """Egress tools declared in user_inputs() are still stripped on non-messenger."""
+        mod = _EgressMisclassifiedAsInputModule()
+        daemon = _make_daemon("switchboard", [mod])
+        await daemon._register_module_tools()
+
+        assert "user_telegram_send_message" not in mod._registered_tools, (
+            "Egress tool misclassified as input should still be filtered"
+        )
+        assert "bot_telegram_get_updates" in mod._registered_tools, (
+            "Non-egress input tool should still be registered"
+        )
 
 
 # ---------------------------------------------------------------------------

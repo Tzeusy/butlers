@@ -1495,16 +1495,21 @@ class ButlerDaemon:
             declared_tool_names = self._validate_module_io_descriptors(mod)
 
             # Enforce channel egress ownership before registration.
-            # Non-messenger butlers must not expose channel send/reply output
-            # tools. Egress outputs are stripped from the declared set and
+            # Non-messenger butlers must not expose channel send/reply tools.
+            # Scan ALL descriptors (inputs + outputs) defensively — a module
+            # that misclassifies an egress tool as an input should still be
+            # caught.  Egress names are stripped from the declared set and
             # silently filtered during registration, so modules can still be
             # loaded for their ingress (input) capabilities.
             filtered_egress: set[str] = set()
             if not is_messenger:
-                output_names = {d.name for d in mod.user_outputs()} | {
-                    d.name for d in mod.bot_outputs()
-                }
-                filtered_egress = {n for n in output_names if _is_channel_egress_tool(n)}
+                all_names = (
+                    {d.name for d in mod.user_inputs()}
+                    | {d.name for d in mod.user_outputs()}
+                    | {d.name for d in mod.bot_inputs()}
+                    | {d.name for d in mod.bot_outputs()}
+                )
+                filtered_egress = {n for n in all_names if _is_channel_egress_tool(n)}
                 if filtered_egress:
                     logger.info(
                         "Stripping channel egress tools from non-messenger butler '%s' "
