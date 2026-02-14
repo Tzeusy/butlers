@@ -870,7 +870,7 @@ class TestDeliverNotifyRouting:
 
         pool = _make_mock_pool(
             fetchrow_side_effect=[
-                _registry_row("messenger_butler", "http://localhost:9200/sse"),
+                _registry_row("messenger", "http://localhost:9200/sse"),
                 _notif_id_row(),
             ],
         )
@@ -909,7 +909,7 @@ class TestDeliverNotifyRouting:
         assert len(captured) == 1
         assert captured[0]["tool_name"] == "route.execute"
         routed_payload = captured[0]["args"]
-        assert routed_payload["target"]["butler"] == "messenger_butler"
+        assert routed_payload["target"]["butler"] == "messenger"
         assert routed_payload["input"]["context"]["notify_request"]["origin_butler"] == "health"
         assert (
             routed_payload["input"]["context"]["notify_request"]["request_context"]["request_id"]
@@ -939,7 +939,7 @@ class TestDeliverNotifyRouting:
 
         pool = _make_mock_pool(
             fetchrow_side_effect=[
-                _registry_row("messenger_butler", "http://localhost:9200/sse"),
+                _registry_row("messenger", "http://localhost:9200/sse"),
                 _notif_id_row(),
             ],
         )

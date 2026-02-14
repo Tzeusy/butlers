@@ -23,7 +23,7 @@ from butlers.tools.switchboard.routing.contracts import (
 from butlers.tools.switchboard.routing.route import route
 
 logger = logging.getLogger(__name__)
-MESSENGER_BUTLER_NAME = "messenger_butler"
+MESSENGER_BUTLER_NAME = "messenger"
 _NOTIFY_ROUTE_PROMPT = "Execute outbound delivery request through Messenger."
 _DEFAULT_NOTIFY_SOURCE_CHANNEL = "mcp"
 
@@ -260,7 +260,7 @@ async def deliver(
     notify_request:
         Versioned `notify.v1` request envelope. When provided, Switchboard
         terminates the notify control-plane request and dispatches through
-        ``messenger_butler`` via ``route.execute``.
+        ``messenger`` via ``route.execute``.
     call_fn:
         Optional callable for testing; forwarded to :func:`route`.
 
