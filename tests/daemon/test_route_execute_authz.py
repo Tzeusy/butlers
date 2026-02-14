@@ -467,5 +467,8 @@ cron = "0 9 * * *"
 prompt = "Do the daily check"
 """
         (tmp_path / "butler.toml").write_text(toml_content)
-        with pytest.raises(ConfigError, match="trusted_route_callers must be a list"):
+        with pytest.raises(
+            ConfigError,
+            match=r"butler\.security\.trusted_route_callers must be a list of strings",
+        ):
             load_config(tmp_path)
