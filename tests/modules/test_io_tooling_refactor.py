@@ -526,6 +526,7 @@ class TestTelegramIngestIdentityRouting:
         """Inbound Telegram messages route via bot_telegram_handle_message."""
         monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
         mod = TelegramModule()
+        mod._log_message_inbox = AsyncMock(return_value=None)
 
         mock_pipeline = MagicMock()
         mock_pipeline.process = AsyncMock(
@@ -543,6 +544,7 @@ class TestTelegramIngestIdentityRouting:
         """Inbound Telegram metadata includes bot identity and source tool."""
         monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
         mod = TelegramModule()
+        mod._log_message_inbox = AsyncMock(return_value=None)
 
         mock_pipeline = MagicMock()
         mock_pipeline.process = AsyncMock(
