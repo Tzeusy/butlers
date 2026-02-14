@@ -432,7 +432,7 @@ make test-qg
 - Canonical approval event types are `action_queued`, `action_auto_approved`, `action_approved`, `action_rejected`, `action_expired`, `action_execution_succeeded`, `action_execution_failed`, `rule_created`, and `rule_revoked`.
 
 ### Channel egress ownership enforcement contract
-- `src/butlers/daemon.py::_register_module_tools` enforces Messenger-only channel egress ownership at startup: for non-messenger butlers, output tools matching channel send/reply egress patterns (for example `user_telegram_send_message`, `bot_email_reply_to_thread`) are silently stripped from declared tool sets and filtered during registration.
+- `src/butlers/daemon.py::_register_module_tools` enforces Messenger-only channel egress ownership at startup: for non-messenger butlers, tools matching channel send/reply egress patterns (for example `user_telegram_send_message`, `bot_email_reply_to_thread`) are silently stripped from declared tool sets and filtered during registration. All I/O descriptors (inputs + outputs) are scanned defensively to catch misclassified egress tools.
 - Switchboard and other butlers can still load channel modules (telegram, email) for ingress; only egress output tools are filtered.
 - `_SpanWrappingMCP` accepts `filtered_tool_names` to suppress registration of stripped tools without raising errors.
 - `_CHANNEL_EGRESS_ACTIONS` uses string concatenation (`"send" + "_message"`) to avoid triggering the tool-name compliance scanner.

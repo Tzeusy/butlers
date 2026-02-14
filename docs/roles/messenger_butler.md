@@ -419,8 +419,8 @@ The daemon module loader (`ButlerDaemon._register_module_tools`) enforces
 Messenger-only channel egress ownership at startup. For any butler whose
 `config.name` is not `"messenger"`, the loader:
 
-1. Inspects each module's declared output tools (`user_outputs()` and
-   `bot_outputs()`).
+1. Inspects each module's declared I/O tools (`user_inputs()`,
+   `user_outputs()`, `bot_inputs()`, and `bot_outputs()`) defensively.
 2. Identifies tools matching the channel egress pattern:
    `^(?:user|bot)_<channel>_<action>$` where `<action>` is a channel
    send or reply verb (for example `user_telegram_send_message`,
