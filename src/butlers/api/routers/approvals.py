@@ -13,7 +13,7 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from butlers.api.db import DatabaseManager
 from butlers.api.models import (
@@ -116,9 +116,9 @@ async def list_actions(
     tool_name: str | None = Query(default=None),
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
+    db_mgr: DatabaseManager = Depends(_get_db_manager),
 ) -> PaginatedResponse[ApprovalAction]:
     """List pending actions with filtering and pagination."""
-    db_mgr = _get_db_manager()
     target_pool = await _find_approvals_pool(db_mgr, "pending_actions")
 
     if target_pool is None:
@@ -172,7 +172,7 @@ async def list_actions(
         # Get paginated results
         query = (
             f"SELECT * FROM pending_actions{where_clause} "
-            f"ORDER BY requested_at DESC LIMIT ${idx} OFFSET ${idx+1}"
+            f"ORDER BY requested_at DESC LIMIT ${idx} OFFSET ${idx + 1}"
         )
         rows = await conn.fetch(query, *args, limit, offset)
 
@@ -184,94 +184,6 @@ async def list_actions(
     )
 
 
-@router.get("/actions/{action_id}")
-async def get_action(action_id: str) -> ApiResponse[ApprovalAction]:
-    """Get details for a single pending action."""
-    db_mgr = _get_db_manager()
-
-    try:
-        parsed_id = UUID(action_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid action_id: {action_id}")
-
-    target_pool = await _find_approvals_pool(db_mgr, "pending_actions")
-    if target_pool is None:
-        raise HTTPException(status_code=503, detail="Approvals subsystem unavailable")
-
-    async with target_pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM pending_actions WHERE id = $1", parsed_id)
-
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Action not found: {action_id}")
-
-    action = _pending_action_to_api(PendingAction.from_row(row))
-    return ApiResponse(data=action)
-
-
-@router.post("/actions/{action_id}/approve")
-async def approve_action(
-    action_id: str,
-    request: ApprovalActionApproveRequest = Body(default=ApprovalActionApproveRequest()),
-) -> ApiResponse[ApprovalAction]:
-    """Approve a pending action and execute it."""
-    raise HTTPException(
-        status_code=501,
-        detail="Approval execution via REST API not yet implemented. Use MCP tool for now.",
-    )
-
-
-@router.post("/actions/{action_id}/reject")
-async def reject_action(
-    action_id: str,
-    request: ApprovalActionRejectRequest = Body(default=ApprovalActionRejectRequest()),
-) -> ApiResponse[ApprovalAction]:
-    """Reject a pending action with optional reason."""
-    raise HTTPException(
-        status_code=501,
-        detail="Approval rejection via REST API not yet implemented. Use MCP tool for now.",
-    )
-
-
-@router.post("/actions/expire-stale")
-async def expire_stale_actions() -> ApiResponse[ExpireStaleActionsResponse]:
-    """Mark expired actions that are past their expires_at timestamp."""
-    db_mgr = _get_db_manager()
-    target_pool = await _find_approvals_pool(db_mgr, "pending_actions")
-
-    if target_pool is None:
-        raise HTTPException(status_code=503, detail="Approvals subsystem unavailable")
-
-    now = datetime.now(UTC)
-
-    async with target_pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id FROM pending_actions WHERE status = $1 AND expires_at IS NOT NULL "
-            "AND expires_at < $2",
-            "pending",
-            now,
-        )
-
-        expired_ids = []
-        for row in rows:
-            updated = await conn.fetchval(
-                "UPDATE pending_actions SET status = $1, decided_by = $2, decided_at = $3 "
-                "WHERE id = $4 AND status = $5 RETURNING id",
-                "expired",
-                "system:expiry",
-                now,
-                row["id"],
-                "pending",
-            )
-            if updated is not None:
-                expired_ids.append(str(row["id"]))
-
-    response = ExpireStaleActionsResponse(
-        expired_count=len(expired_ids),
-        expired_ids=expired_ids,
-    )
-    return ApiResponse(data=response)
-
-
 @router.get("/actions/executed")
 async def list_executed_actions(
     offset: int = Query(default=0, ge=0),
@@ -280,9 +192,9 @@ async def list_executed_actions(
     rule_id: str | None = Query(default=None),
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
+    db_mgr: DatabaseManager = Depends(_get_db_manager),
 ) -> PaginatedResponse[ApprovalAction]:
     """List executed actions for audit review."""
-    db_mgr = _get_db_manager()
     target_pool = await _find_approvals_pool(db_mgr, "pending_actions")
 
     if target_pool is None:
@@ -337,7 +249,7 @@ async def list_executed_actions(
 
         query = (
             f"SELECT * FROM pending_actions{where_clause} "
-            f"ORDER BY decided_at DESC LIMIT ${idx} OFFSET ${idx+1}"
+            f"ORDER BY decided_at DESC LIMIT ${idx} OFFSET ${idx + 1}"
         )
         rows = await conn.fetch(query, *args, limit, offset)
 
@@ -347,6 +259,97 @@ async def list_executed_actions(
         data=actions,
         meta=PaginationMeta(total=total, offset=offset, limit=limit),
     )
+
+
+@router.get("/actions/{action_id}")
+async def get_action(
+    action_id: str,
+    db_mgr: DatabaseManager = Depends(_get_db_manager),
+) -> ApiResponse[ApprovalAction]:
+    """Get details for a single pending action."""
+
+    try:
+        parsed_id = UUID(action_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid action_id: {action_id}")
+
+    target_pool = await _find_approvals_pool(db_mgr, "pending_actions")
+    if target_pool is None:
+        raise HTTPException(status_code=503, detail="Approvals subsystem unavailable")
+
+    async with target_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM pending_actions WHERE id = $1", parsed_id)
+
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Action not found: {action_id}")
+
+    action = _pending_action_to_api(PendingAction.from_row(row))
+    return ApiResponse(data=action)
+
+
+@router.post("/actions/{action_id}/approve")
+async def approve_action(
+    action_id: str,
+    request: ApprovalActionApproveRequest = Body(default=ApprovalActionApproveRequest()),
+) -> ApiResponse[ApprovalAction]:
+    """Approve a pending action and execute it."""
+    raise HTTPException(
+        status_code=501,
+        detail="Approval execution via REST API not yet implemented. Use MCP tool for now.",
+    )
+
+
+@router.post("/actions/{action_id}/reject")
+async def reject_action(
+    action_id: str,
+    request: ApprovalActionRejectRequest = Body(default=ApprovalActionRejectRequest()),
+) -> ApiResponse[ApprovalAction]:
+    """Reject a pending action with optional reason."""
+    raise HTTPException(
+        status_code=501,
+        detail="Approval rejection via REST API not yet implemented. Use MCP tool for now.",
+    )
+
+
+@router.post("/actions/expire-stale")
+async def expire_stale_actions(
+    db_mgr: DatabaseManager = Depends(_get_db_manager),
+) -> ApiResponse[ExpireStaleActionsResponse]:
+    """Mark expired actions that are past their expires_at timestamp."""
+    target_pool = await _find_approvals_pool(db_mgr, "pending_actions")
+
+    if target_pool is None:
+        raise HTTPException(status_code=503, detail="Approvals subsystem unavailable")
+
+    now = datetime.now(UTC)
+
+    async with target_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id FROM pending_actions WHERE status = $1 AND expires_at IS NOT NULL "
+            "AND expires_at < $2",
+            "pending",
+            now,
+        )
+
+        expired_ids = []
+        for row in rows:
+            updated = await conn.fetchval(
+                "UPDATE pending_actions SET status = $1, decided_by = $2, decided_at = $3 "
+                "WHERE id = $4 AND status = $5 RETURNING id",
+                "expired",
+                "system:expiry",
+                now,
+                row["id"],
+                "pending",
+            )
+            if updated is not None:
+                expired_ids.append(str(row["id"]))
+
+    response = ExpireStaleActionsResponse(
+        expired_count=len(expired_ids),
+        expired_ids=expired_ids,
+    )
+    return ApiResponse(data=response)
 
 
 # ---------------------------------------------------------------------------
@@ -382,9 +385,9 @@ async def list_rules(
     limit: int = Query(default=50, ge=1, le=500),
     tool_name: str | None = Query(default=None),
     active_only: bool = Query(default=True),
+    db_mgr: DatabaseManager = Depends(_get_db_manager),
 ) -> PaginatedResponse[ApprovalRule]:
     """List standing approval rules with filtering and pagination."""
-    db_mgr = _get_db_manager()
     target_pool = await _find_approvals_pool(db_mgr, "approval_rules")
 
     if target_pool is None:
@@ -415,7 +418,7 @@ async def list_rules(
 
         query = (
             f"SELECT * FROM approval_rules{where_clause} "
-            f"ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx+1}"
+            f"ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}"
         )
         rows = await conn.fetch(query, *args, limit, offset)
 
@@ -428,9 +431,11 @@ async def list_rules(
 
 
 @router.get("/rules/{rule_id}")
-async def get_rule(rule_id: str) -> ApiResponse[ApprovalRule]:
+async def get_rule(
+    rule_id: str,
+    db_mgr: DatabaseManager = Depends(_get_db_manager),
+) -> ApiResponse[ApprovalRule]:
     """Get details for a single standing approval rule."""
-    db_mgr = _get_db_manager()
 
     try:
         parsed_id = UUID(rule_id)
@@ -461,9 +466,11 @@ async def revoke_rule(rule_id: str) -> ApiResponse[ApprovalRule]:
 
 
 @router.get("/rules/suggestions/{action_id}")
-async def get_rule_suggestions(action_id: str) -> ApiResponse[RuleConstraintSuggestion]:
+async def get_rule_suggestions(
+    action_id: str,
+    db_mgr: DatabaseManager = Depends(_get_db_manager),
+) -> ApiResponse[RuleConstraintSuggestion]:
     """Preview suggested constraints for creating a rule from a pending action."""
-    db_mgr = _get_db_manager()
 
     try:
         parsed_id = UUID(action_id)
@@ -502,9 +509,10 @@ async def get_rule_suggestions(action_id: str) -> ApiResponse[RuleConstraintSugg
 
 
 @router.get("/metrics")
-async def get_metrics() -> ApiResponse[ApprovalMetrics]:
+async def get_metrics(
+    db_mgr: DatabaseManager = Depends(_get_db_manager),
+) -> ApiResponse[ApprovalMetrics]:
     """Get aggregate metrics for the approvals dashboard."""
-    db_mgr = _get_db_manager()
     target_pool = await _find_approvals_pool(db_mgr, "pending_actions")
 
     if target_pool is None:
@@ -524,8 +532,7 @@ async def get_metrics() -> ApiResponse[ApprovalMetrics]:
         )
 
         total_rejected_today = await conn.fetchval(
-            "SELECT COUNT(*) FROM pending_actions "
-            "WHERE status = 'rejected' AND decided_at >= $1",
+            "SELECT COUNT(*) FROM pending_actions WHERE status = 'rejected' AND decided_at >= $1",
             today_start,
         )
 
@@ -537,8 +544,7 @@ async def get_metrics() -> ApiResponse[ApprovalMetrics]:
         )
 
         total_expired_today = await conn.fetchval(
-            "SELECT COUNT(*) FROM pending_actions "
-            "WHERE status = 'expired' AND decided_at >= $1",
+            "SELECT COUNT(*) FROM pending_actions WHERE status = 'expired' AND decided_at >= $1",
             today_start,
         )
 
