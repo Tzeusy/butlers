@@ -656,7 +656,8 @@ class TelegramModule(Module):
                         ")",
                         received_at,
                     )
-                    await conn.execute("SELECT switchboard_message_inbox_drop_expired_partitions()")
+                    # NOTE: expired partition cleanup is deferred to periodic background
+                    # jobs (e.g. scheduler tick) to avoid catalog queries on the hot path.
                     message_inbox_id = await conn.fetchval(
                         """
                         INSERT INTO message_inbox

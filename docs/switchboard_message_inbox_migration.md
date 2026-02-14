@@ -29,11 +29,11 @@ New lifecycle payload columns:
 - Write paths should call partition maintenance before inserts.
 
 ## Rollback (Downgrade to `sw_007`)
-Run:
+
+To downgrade back to the pre-partition schema:
 
 ```bash
-uv run python -c "import asyncio; from butlers.migrations import run_migrations; asyncio.run(run_migrations('<DB_URL>', chain='switchboard'))"
-# Then downgrade with Alembic target switchboard@sw_007 if needed.
+uv run alembic downgrade switchboard@sw_007
 ```
 
 Downgrade reconstructs the legacy `sw_007` schema from `sw_008` records by:
