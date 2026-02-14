@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
 from butlers.modules.approvals.events import ApprovalEventType, record_approval_event
-from butlers.modules.approvals.models import ActionStatus
 
 
 class MockPool:

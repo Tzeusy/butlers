@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from asyncpg import Pool
+    pass
 
 
 @pytest.fixture
