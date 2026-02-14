@@ -17,12 +17,12 @@ def _migration_file() -> Path:
 
     chain_dir = _resolve_chain_dir("switchboard")
     assert chain_dir is not None, "Switchboard chain should exist"
-    return chain_dir / "006_partition_message_inbox_lifecycle.py"
+    return chain_dir / "008_partition_message_inbox_lifecycle.py"
 
 
 def _load_migration():
     migration_file = _migration_file()
-    spec = importlib.util.spec_from_file_location("migration_006", migration_file)
+    spec = importlib.util.spec_from_file_location("migration_008", migration_file)
     assert spec is not None, "Should be able to load migration spec"
     assert spec.loader is not None, "Should have a loader"
     module = importlib.util.module_from_spec(spec)
@@ -38,8 +38,8 @@ def test_partition_migration_file_exists():
 def test_partition_migration_has_correct_metadata():
     module = _load_migration()
 
-    assert module.revision == "sw_006"
-    assert module.down_revision == "sw_005"
+    assert module.revision == "sw_008"
+    assert module.down_revision == "sw_007"
     assert module.branch_labels is None
     assert module.depends_on is None
 
@@ -86,7 +86,7 @@ def test_upgrade_defines_recent_and_source_indexes():
     assert "ix_message_inbox_ctx_source_sender_received_at" in source
 
 
-def test_downgrade_reconstructs_legacy_sw005_shape():
+def test_downgrade_reconstructs_legacy_sw007_shape():
     module = _load_migration()
     source = inspect.getsource(module.downgrade)
 
@@ -95,6 +95,10 @@ def test_downgrade_reconstructs_legacy_sw005_shape():
     assert "sender_id TEXT NOT NULL" in source
     assert "raw_content TEXT NOT NULL" in source
     assert "routing_results JSONB" in source
+    assert "source_endpoint_identity TEXT NOT NULL" in source
+    assert "source_sender_identity TEXT NOT NULL" in source
+    assert "dedupe_key TEXT" in source
+    assert "dedupe_strategy TEXT NOT NULL" in source
     assert "DROP FUNCTION IF EXISTS switchboard_message_inbox_drop_expired_partitions" in source
 
 
@@ -107,4 +111,4 @@ def test_switchboard_chain_includes_partition_migration():
     migration_files = list(chain_dir.glob("*.py"))
     migration_names = [f.name for f in migration_files if f.name != "__init__.py"]
 
-    assert "006_partition_message_inbox_lifecycle.py" in migration_names
+    assert "008_partition_message_inbox_lifecycle.py" in migration_names

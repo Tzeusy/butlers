@@ -18,6 +18,7 @@ import os
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -333,6 +334,7 @@ class TelegramModule(Module):
             decision=decision,
             dedupe_key=dedupe_key,
         )
+
     @staticmethod
     def _result_has_failure(result: RoutingResult) -> bool:
         if result.classification_error or result.routing_error:
@@ -608,28 +610,6 @@ class TelegramModule(Module):
         text = _extract_text(update)
         if not text:
             return None
-        sender_identity = chat_id if chat_id not in (None, "") else "unknown"
-        ingress = await self._store_message_inbox_entry(
-            sender_id=sender_identity,
-            message_text=text,
-            update=update,
-            chat_id=chat_id,
-            message_key=message_key,
-        )
-        if ingress is not None and ingress.decision == "deduped":
-            deduped = RoutingResult(
-                target_butler="deduped",
-                route_result={
-                    "request_id": str(ingress.request_id),
-                    "ingress_decision": "deduped",
-                    "dedupe_key": ingress.dedupe_key,
-                    "dedupe_strategy": "telegram_update_id_endpoint",
-                },
-            )
-            self._routed_messages.append(deduped)
-            return deduped
-        message_inbox_id = ingress.request_id if ingress is not None else None
-
         lock = self._message_lock(message_key) if message_key is not None else None
         if lock is not None:
             await lock.acquire()

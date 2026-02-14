@@ -388,7 +388,7 @@ class MessagePipeline:
             dedupe_strategy=dedupe_strategy,
         )
 
-
+    @staticmethod
     def _json_param(payload: Any) -> str | None:
         import json
 

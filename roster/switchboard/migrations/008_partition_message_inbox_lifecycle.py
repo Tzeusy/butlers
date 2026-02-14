@@ -1,12 +1,12 @@
 """Partition message_inbox lifecycle store and add canonical payload schema.
 
-Revision ID: sw_006
-Revises: sw_005
+Revision ID: sw_008
+Revises: sw_007
 Create Date: 2026-02-14 00:00:00.000000
 
 Migration notes:
 - Upgrade rewrites message_inbox into a month-partitioned lifecycle store.
-- Downgrade reconstructs the legacy sw_005 table shape from sw_006 data.
+- Downgrade reconstructs the legacy sw_007 table shape from sw_008 data.
 """
 
 from __future__ import annotations
@@ -14,15 +14,15 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "sw_006"
-down_revision = "sw_005"
+revision = "sw_008"
+down_revision = "sw_007"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
     # Preserve legacy data during table rewrite.
-    op.execute("ALTER TABLE message_inbox RENAME TO message_inbox_sw005_backup")
+    op.execute("ALTER TABLE message_inbox RENAME TO message_inbox_sw007_backup")
 
     op.execute(
         """
@@ -153,7 +153,7 @@ def upgrade() -> None:
         BEGIN
             FOR month_start IN
                 SELECT DISTINCT date_trunc('month', received_at)
-                FROM message_inbox_sw005_backup
+                FROM message_inbox_sw007_backup
             LOOP
                 PERFORM switchboard_message_inbox_ensure_partition(month_start);
             END LOOP;
@@ -190,9 +190,13 @@ def upgrade() -> None:
                     'request_id', id::text,
                     'received_at', to_jsonb(received_at),
                     'source_channel', source_channel,
-                    'source_endpoint_identity', source_channel || '.legacy',
-                    'source_sender_identity', sender_id,
-                    'source_thread_identity', sender_id,
+                    'source_endpoint_identity',
+                    COALESCE(source_endpoint_identity, source_channel || '.legacy'),
+                    'source_sender_identity', COALESCE(source_sender_identity, sender_id),
+                    'source_thread_identity', source_thread_identity,
+                    'idempotency_key', idempotency_key,
+                    'dedupe_key', dedupe_key,
+                    'dedupe_strategy', dedupe_strategy,
                     'trace_context', jsonb_strip_nulls(
                         jsonb_build_object(
                             'trace_id', trace_id
@@ -225,18 +229,18 @@ def upgrade() -> None:
             session_id,
             received_at,
             COALESCE(completed_at, received_at)
-        FROM message_inbox_sw005_backup
+        FROM message_inbox_sw007_backup
         """
     )
 
     # Enforce one-month default retention after data migration.
     op.execute("SELECT switchboard_message_inbox_drop_expired_partitions()")
-    op.execute("DROP TABLE IF EXISTS message_inbox_sw005_backup")
+    op.execute("DROP TABLE IF EXISTS message_inbox_sw007_backup")
 
 
 def downgrade() -> None:
-    # Rollback guidance: reconstruct sw_005 schema from sw_006 canonical records.
-    op.execute("ALTER TABLE message_inbox RENAME TO message_inbox_sw006_backup")
+    # Rollback guidance: reconstruct sw_007 schema from sw_008 canonical records.
+    op.execute("ALTER TABLE message_inbox RENAME TO message_inbox_sw008_backup")
 
     op.execute(
         """
@@ -254,7 +258,14 @@ def downgrade() -> None:
             response_summary TEXT,
             completed_at TIMESTAMPTZ,
             trace_id TEXT,
-            session_id UUID
+            session_id UUID,
+            source_endpoint_identity TEXT NOT NULL,
+            source_sender_identity TEXT NOT NULL,
+            source_thread_identity TEXT,
+            idempotency_key TEXT,
+            dedupe_key TEXT,
+            dedupe_strategy TEXT NOT NULL,
+            dedupe_last_seen_at TIMESTAMPTZ NOT NULL
         )
         """
     )
@@ -269,6 +280,20 @@ def downgrade() -> None:
         """
         CREATE INDEX ix_message_inbox_sender_id_received_at
         ON message_inbox (sender_id, received_at DESC)
+        """
+    )
+    op.execute(
+        """
+        CREATE UNIQUE INDEX uq_message_inbox_dedupe_key
+        ON message_inbox (dedupe_key)
+        WHERE dedupe_key IS NOT NULL
+        """
+    )
+    op.execute(
+        """
+        CREATE INDEX ix_message_inbox_idempotency_key
+        ON message_inbox (idempotency_key)
+        WHERE idempotency_key IS NOT NULL
         """
     )
 
@@ -288,7 +313,14 @@ def downgrade() -> None:
             response_summary,
             completed_at,
             trace_id,
-            session_id
+            session_id,
+            source_endpoint_identity,
+            source_sender_identity,
+            source_thread_identity,
+            idempotency_key,
+            dedupe_key,
+            dedupe_strategy,
+            dedupe_last_seen_at
         )
         SELECT
             id,
@@ -308,12 +340,19 @@ def downgrade() -> None:
             response_summary,
             final_state_at,
             trace_id,
-            session_id
-        FROM message_inbox_sw006_backup
+            session_id,
+            COALESCE(request_context ->> 'source_endpoint_identity', 'unknown'),
+            COALESCE(request_context ->> 'source_sender_identity', 'unknown'),
+            request_context ->> 'source_thread_identity',
+            request_context ->> 'idempotency_key',
+            request_context ->> 'dedupe_key',
+            COALESCE(request_context ->> 'dedupe_strategy', 'legacy'),
+            received_at
+        FROM message_inbox_sw008_backup
         """
     )
 
-    op.execute("DROP TABLE IF EXISTS message_inbox_sw006_backup CASCADE")
+    op.execute("DROP TABLE IF EXISTS message_inbox_sw008_backup CASCADE")
     op.execute(
         "DROP FUNCTION IF EXISTS switchboard_message_inbox_drop_expired_partitions("
         "INTERVAL, TIMESTAMPTZ)"
