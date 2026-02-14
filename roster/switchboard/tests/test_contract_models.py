@@ -11,8 +11,10 @@ from pydantic import ValidationError
 
 from butlers.tools.switchboard.routing.contracts import (
     IngestEnvelopeV1,
+    NotifyRequestV1,
     RouteEnvelopeV1,
     RouteRequestContextV1,
+    parse_notify_request,
 )
 
 pytestmark = pytest.mark.unit
@@ -67,6 +69,19 @@ def _valid_route_payload() -> dict[str, Any]:
     }
 
 
+def _valid_notify_payload() -> dict[str, Any]:
+    return {
+        "schema_version": "notify.v1",
+        "origin_butler": "health",
+        "delivery": {
+            "intent": "send",
+            "channel": "telegram",
+            "message": "Take your medication.",
+            "recipient": "12345",
+        },
+    }
+
+
 def test_ingest_v1_valid_envelope() -> None:
     envelope = IngestEnvelopeV1.model_validate(_valid_ingest_payload())
     assert envelope.schema_version == "ingest.v1"
@@ -74,11 +89,66 @@ def test_ingest_v1_valid_envelope() -> None:
     assert envelope.payload.normalized_text == "ping"
 
 
+def test_ingest_v1_accepts_email_channel_with_gmail_provider() -> None:
+    payload = _valid_ingest_payload()
+    payload["source"]["channel"] = "email"
+    payload["source"]["provider"] = "gmail"
+    payload["source"]["endpoint_identity"] = "gmail:user:alice@gmail.com"
+
+    envelope = IngestEnvelopeV1.model_validate(payload)
+
+    assert envelope.source.channel == "email"
+    assert envelope.source.provider == "gmail"
+
+
 def test_route_v1_valid_envelope() -> None:
     envelope = RouteEnvelopeV1.model_validate(_valid_route_payload())
     assert envelope.schema_version == "route.v1"
     assert envelope.request_context.request_id.version == 7
     assert envelope.subrequest.fanout_mode == "parallel"
+
+
+def test_route_v1_context_accepts_mapping_payload() -> None:
+    payload = _valid_route_payload()
+    payload["input"]["context"] = {"notify_request": {"schema_version": "notify.v1"}}
+
+    envelope = RouteEnvelopeV1.model_validate(payload)
+    assert isinstance(envelope.input.context, dict)
+
+
+def test_notify_v1_valid_request() -> None:
+    request = parse_notify_request(_valid_notify_payload())
+    assert request.schema_version == "notify.v1"
+    assert request.delivery.intent == "send"
+    assert request.delivery.channel == "telegram"
+
+
+def test_notify_reply_requires_request_context() -> None:
+    payload = _valid_notify_payload()
+    payload["delivery"]["intent"] = "reply"
+
+    with pytest.raises(ValidationError) as exc_info:
+        NotifyRequestV1.model_validate(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["type"] == "reply_context_required"
+
+
+def test_notify_telegram_reply_requires_source_thread_identity() -> None:
+    payload = _valid_notify_payload()
+    payload["delivery"]["intent"] = "reply"
+    payload["request_context"] = {
+        "request_id": _VALID_UUID7,
+        "source_channel": "telegram",
+        "source_endpoint_identity": "switchboard-bot",
+        "source_sender_identity": "user-123",
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        NotifyRequestV1.model_validate(payload)
+
+    error = exc_info.value.errors()[0]
+    assert error["type"] == "reply_thread_required"
 
 
 def test_route_v1_missing_request_context_required_field() -> None:
