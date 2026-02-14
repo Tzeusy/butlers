@@ -12,7 +12,6 @@ import pytest
 
 from butlers.modules.approvals.redaction import (
     REDACTION_MARKER,
-    redact_agent_summary,
     redact_execution_result,
     redact_tool_args,
     should_redact_for_presentation,
@@ -106,6 +105,21 @@ class TestRedactToolArgs:
         redacted = redact_tool_args("no_args_tool", {})
         assert redacted == {}
 
+    def test_redacts_credential_patterns(self):
+        """Common credential argument names are redacted."""
+        credential_args = {
+            "password": "super-secret",
+            "token": "abc123",
+            "secret": "xyz789",
+            "key": "my-api-key",
+            "api_key": "sk-proj-123",
+        }
+
+        redacted = redact_tool_args("auth_tool", credential_args)
+
+        for arg_name in credential_args:
+            assert redacted[arg_name] == REDACTION_MARKER
+
 
 class TestRedactExecutionResult:
     """Test redaction of execution results."""
@@ -164,23 +178,21 @@ class TestRedactExecutionResult:
 
         assert redacted["error"] == REDACTION_MARKER
 
+    def test_deep_copy_prevents_mutation_leaks(self):
+        """Deep copy prevents mutations from leaking to original."""
+        result = {
+            "success": False,
+            "error": "Original error",
+            "metadata": {"nested": {"value": "original"}},
+        }
 
-class TestRedactAgentSummary:
-    """Test redaction of agent-generated summaries."""
+        redacted = redact_execution_result(result)
 
-    def test_none_summary_returns_none(self):
-        """None summary returns None."""
-        assert redact_agent_summary(None) is None
+        # Mutate the redacted copy
+        redacted["metadata"]["nested"]["value"] = "modified"
 
-    def test_preserves_summary_for_now(self):
-        """Summaries are preserved (user-controlled, future enhancement)."""
-        summary = "Send email to alice@example.com regarding invoice #12345"
-        redacted = redact_agent_summary(summary)
-        assert redacted == summary
-
-    def test_empty_summary(self):
-        """Empty summary is preserved."""
-        assert redact_agent_summary("") == ""
+        # Original should be unchanged
+        assert result["metadata"]["nested"]["value"] == "original"
 
 
 class TestShouldRedactForPresentation:

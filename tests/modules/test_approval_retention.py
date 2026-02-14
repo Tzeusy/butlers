@@ -304,8 +304,16 @@ class TestCleanupOldRules:
 class TestCleanupOldEvents:
     """Test approval events cleanup."""
 
-    async def test_deletes_old_events(self):
-        """Events past retention window are deleted."""
+    async def test_requires_privileged_flag(self):
+        """cleanup_old_events requires privileged=True flag."""
+        pool = MockPool()
+        policy = RetentionPolicy()
+
+        with pytest.raises(PermissionError, match="privileged database connection"):
+            await cleanup_old_events(pool, policy, dry_run=False, privileged=False)
+
+    async def test_deletes_old_events_with_privilege(self):
+        """Events past retention window are deleted with privileged connection."""
         pool = MockPool()
         now = datetime.now(UTC)
         old_date = now - timedelta(days=400)
@@ -318,7 +326,7 @@ class TestCleanupOldEvents:
         ]
 
         policy = RetentionPolicy(approval_events_retention_days=365)
-        count = await cleanup_old_events(pool, policy, dry_run=False)
+        count = await cleanup_old_events(pool, policy, dry_run=False, privileged=True)
 
         assert count == 1
         assert len(pool.events) == 0
@@ -337,7 +345,7 @@ class TestCleanupOldEvents:
         ]
 
         policy = RetentionPolicy(approval_events_retention_days=365)
-        count = await cleanup_old_events(pool, policy, dry_run=False)
+        count = await cleanup_old_events(pool, policy, dry_run=False, privileged=True)
 
         assert count == 0
         assert len(pool.events) == 1
@@ -346,8 +354,8 @@ class TestCleanupOldEvents:
 class TestRunRetentionCleanup:
     """Test full retention cleanup workflow."""
 
-    async def test_runs_all_cleanup_tasks(self):
-        """All cleanup tasks are executed."""
+    async def test_runs_all_cleanup_tasks_with_privilege(self):
+        """All cleanup tasks are executed with privileged flag."""
         pool = MockPool()
         now = datetime.now(UTC)
         old_date = now - timedelta(days=400)
@@ -379,7 +387,7 @@ class TestRunRetentionCleanup:
             approval_events_retention_days=365,
         )
 
-        stats = await run_retention_cleanup(pool, policy, dry_run=False)
+        stats = await run_retention_cleanup(pool, policy, dry_run=False, privileged=True)
 
         assert stats["rules"] == 1
         assert stats["events"] == 1
@@ -389,10 +397,28 @@ class TestRunRetentionCleanup:
         assert len(pool.rules) == 0
         assert len(pool.events) == 0
 
+    async def test_skips_events_without_privilege(self):
+        """Events cleanup is skipped without privileged flag."""
+        pool = MockPool()
+        now = datetime.now(UTC)
+        old_date = now - timedelta(days=400)
+
+        pool.events = [
+            {
+                "event_id": uuid.uuid4(),
+                "occurred_at": old_date,
+            },
+        ]
+
+        stats = await run_retention_cleanup(pool, dry_run=False, privileged=False)
+
+        assert stats["events"] == 0
+        assert len(pool.events) == 1  # Not deleted
+
     async def test_uses_default_policy(self):
         """Default policy is used when none provided."""
         pool = MockPool()
-        stats = await run_retention_cleanup(pool, policy=None, dry_run=True)
+        stats = await run_retention_cleanup(pool, policy=None, dry_run=True, privileged=False)
 
         assert stats["policy"]["pending_actions_retention_days"] == 90
         assert stats["policy"]["approval_rules_retention_days"] == 180
@@ -412,7 +438,7 @@ class TestRunRetentionCleanup:
             },
         ]
 
-        stats = await run_retention_cleanup(pool, dry_run=True)
+        stats = await run_retention_cleanup(pool, dry_run=True, privileged=False)
 
         assert stats["total_items"] >= 1
         assert len(pool.actions) == 1  # Not deleted

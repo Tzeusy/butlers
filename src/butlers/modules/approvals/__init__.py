@@ -15,7 +15,6 @@ from butlers.modules.approvals.module import (
 )
 from butlers.modules.approvals.redaction import (
     REDACTION_MARKER,
-    redact_agent_summary,
     redact_execution_result,
     redact_tool_args,
     should_redact_for_presentation,
@@ -48,7 +47,6 @@ __all__ = [
     "match_rules_from_list",
     "match_standing_rule",
     "record_approval_event",
-    "redact_agent_summary",
     "redact_execution_result",
     "redact_tool_args",
     "run_retention_cleanup",

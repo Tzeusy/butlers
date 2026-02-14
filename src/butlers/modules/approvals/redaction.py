@@ -12,6 +12,7 @@ Redaction strategy:
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from butlers.modules.approvals.sensitivity import resolve_arg_sensitivity
@@ -44,13 +45,12 @@ def redact_tool_args(
     dict[str, Any]
         A copy of tool_args with sensitive values redacted.
     """
-    redacted = {}
-    for arg_name, arg_value in tool_args.items():
-        if resolve_arg_sensitivity(tool_name, arg_name, module):
-            redacted[arg_name] = REDACTION_MARKER
-        else:
-            redacted[arg_name] = arg_value
-    return redacted
+    return {
+        arg_name: REDACTION_MARKER
+        if resolve_arg_sensitivity(tool_name, arg_name, module)
+        else arg_value
+        for arg_name, arg_value in tool_args.items()
+    }
 
 
 def redact_execution_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -71,9 +71,10 @@ def redact_execution_result(result: dict[str, Any]) -> dict[str, Any]:
     Returns
     -------
     dict[str, Any]
-        A copy of the result with sensitive fields redacted.
+        A deep copy of the result with sensitive fields redacted.
     """
-    redacted = result.copy()
+    # Use deep copy to prevent mutations from leaking to nested structures
+    redacted = copy.deepcopy(result)
 
     # Redact error messages (may contain secrets in exceptions/stack traces)
     if "error" in redacted and redacted["error"] is not None:
@@ -83,36 +84,6 @@ def redact_execution_result(result: dict[str, Any]) -> dict[str, Any]:
     # Future: add pluggable redaction hooks for specific tool return types
 
     return redacted
-
-
-def redact_agent_summary(summary: str | None) -> str | None:
-    """Redact sensitive patterns from agent-generated summaries.
-
-    Agent summaries may inadvertently include sensitive data from tool args
-    or context. This function applies heuristic pattern matching to redact
-    common secret formats.
-
-    Current patterns:
-    - Email addresses
-    - URLs with credentials
-    - Common token patterns (API keys, passwords)
-
-    Parameters
-    ----------
-    summary:
-        The agent-generated summary text.
-
-    Returns
-    -------
-    str | None
-        The summary with sensitive patterns redacted, or None if input is None.
-    """
-    if summary is None:
-        return None
-
-    # For now, return as-is (summaries are user-controlled prompts)
-    # Future: add pattern-based redaction for leaked secrets
-    return summary
 
 
 def should_redact_for_presentation(viewer: str, owner: str | None) -> bool:

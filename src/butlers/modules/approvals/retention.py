@@ -13,6 +13,12 @@ Default policies:
 - Pending actions: 90 days after decision
 - Approval rules: 180 days after deactivation
 - Approval events: 365 days (1 year audit window)
+
+SECURITY NOTE - cleanup_old_events():
+This function deletes approval_events which are protected by an immutability
+trigger. It MUST be called with a database connection that has sufficient
+privileges (SUPERUSER or a role with trigger bypass permissions). Calling
+this function with a normal user connection will raise a PermissionError.
 """
 
 from __future__ import annotations
@@ -25,6 +31,14 @@ from typing import Any
 from butlers.modules.approvals.models import ActionStatus
 
 logger = logging.getLogger(__name__)
+
+# Terminal action statuses eligible for cleanup after retention period
+TERMINAL_ACTION_STATUSES = [
+    ActionStatus.APPROVED.value,
+    ActionStatus.REJECTED.value,
+    ActionStatus.EXPIRED.value,
+    ActionStatus.EXECUTED.value,
+]
 
 
 @dataclass
@@ -75,17 +89,14 @@ async def cleanup_old_actions(
     count_query = """
         SELECT status, COUNT(*) as count
         FROM pending_actions
-        WHERE status IN ($1, $2, $3, $4)
+        WHERE status = ANY($1::text[])
           AND decided_at IS NOT NULL
-          AND decided_at < $5
+          AND decided_at < $2
         GROUP BY status
     """
     rows = await pool.fetch(
         count_query,
-        ActionStatus.APPROVED.value,
-        ActionStatus.REJECTED.value,
-        ActionStatus.EXPIRED.value,
-        ActionStatus.EXECUTED.value,
+        TERMINAL_ACTION_STATUSES,
         cutoff,
     )
 
@@ -113,16 +124,13 @@ async def cleanup_old_actions(
     # Delete old actions
     delete_query = """
         DELETE FROM pending_actions
-        WHERE status IN ($1, $2, $3, $4)
+        WHERE status = ANY($1::text[])
           AND decided_at IS NOT NULL
-          AND decided_at < $5
+          AND decided_at < $2
     """
     await pool.execute(
         delete_query,
-        ActionStatus.APPROVED.value,
-        ActionStatus.REJECTED.value,
-        ActionStatus.EXPIRED.value,
-        ActionStatus.EXECUTED.value,
+        TERMINAL_ACTION_STATUSES,
         cutoff,
     )
 
@@ -203,26 +211,52 @@ async def cleanup_old_events(
     pool: Any,
     policy: RetentionPolicy,
     dry_run: bool = False,
+    *,
+    privileged: bool = False,
 ) -> int:
     """Archive or delete approval events older than the retention window.
 
-    Events are immutable audit records. This function provides controlled
-    cleanup after the compliance retention window expires.
+    Events are immutable audit records protected by a database trigger.
+    This function provides controlled cleanup after the compliance retention
+    window expires.
+
+    CRITICAL SECURITY REQUIREMENT:
+    The approval_events table has an immutability trigger that prevents
+    DELETE operations by normal users. This function MUST be called with
+    a privileged database connection (SUPERUSER or role with trigger bypass
+    permissions).
 
     Parameters
     ----------
     pool:
-        asyncpg connection pool.
+        asyncpg connection pool with SUPERUSER or privileged role.
     policy:
         Retention policy configuration.
     dry_run:
         If True, return count without deleting.
+    privileged:
+        Safety flag that MUST be set to True to acknowledge the caller
+        has verified the connection pool has sufficient permissions.
+        This prevents accidental calls with unprivileged connections.
 
     Returns
     -------
     int
         Number of events deleted.
+
+    Raises
+    ------
+    PermissionError
+        If privileged flag is False, preventing execution with potentially
+        insufficient database permissions.
     """
+    if not privileged:
+        raise PermissionError(
+            "cleanup_old_events() requires a privileged database connection. "
+            "Set privileged=True only after verifying the pool has SUPERUSER "
+            "or trigger bypass permissions."
+        )
+
     cutoff = datetime.now(UTC) - timedelta(days=policy.approval_events_retention_days)
 
     # Count eligible events
@@ -254,9 +288,7 @@ async def cleanup_old_events(
         logger.info("DRY RUN: would delete %d events", count)
         return count
 
-    # Delete old events
-    # Note: This bypasses the immutability trigger (requires SUPERUSER or trigger disable)
-    # In production, this should use a maintenance role with appropriate permissions
+    # Delete old events (requires SUPERUSER to bypass immutability trigger)
     await pool.execute(
         """
         DELETE FROM approval_events
@@ -273,11 +305,17 @@ async def run_retention_cleanup(
     pool: Any,
     policy: RetentionPolicy | None = None,
     dry_run: bool = False,
+    *,
+    privileged: bool = False,
 ) -> dict[str, Any]:
     """Execute all retention cleanup tasks.
 
     Convenience function that runs all cleanup operations in sequence
     and returns aggregate statistics.
+
+    Note: Event cleanup requires a privileged database connection. Set
+    privileged=True only after verifying the connection pool has SUPERUSER
+    or trigger bypass permissions.
 
     Parameters
     ----------
@@ -287,6 +325,9 @@ async def run_retention_cleanup(
         Retention policy configuration (uses defaults if None).
     dry_run:
         If True, report what would be deleted without actually deleting.
+    privileged:
+        If True, also run event cleanup (requires SUPERUSER connection).
+        If False, skip event cleanup to avoid permission errors.
 
     Returns
     -------
@@ -296,11 +337,21 @@ async def run_retention_cleanup(
     if policy is None:
         policy = RetentionPolicy()
 
-    logger.info("Starting retention cleanup (dry_run=%s)", dry_run)
+    logger.info(
+        "Starting retention cleanup (dry_run=%s, privileged=%s)",
+        dry_run,
+        privileged,
+    )
 
     actions_counts = await cleanup_old_actions(pool, policy, dry_run)
     rules_count = await cleanup_old_rules(pool, policy, dry_run)
-    events_count = await cleanup_old_events(pool, policy, dry_run)
+
+    # Only cleanup events if caller has privileged connection
+    events_count = 0
+    if privileged:
+        events_count = await cleanup_old_events(pool, policy, dry_run, privileged=True)
+    else:
+        logger.info("Skipping event cleanup (requires privileged connection)")
 
     stats = {
         "actions": actions_counts,
