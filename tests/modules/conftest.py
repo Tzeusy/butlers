@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import pytest
-
-if TYPE_CHECKING:
-    pass
 
 
 @pytest.fixture
 async def approvals_pool(provisioned_postgres_pool):
-    """Provision a fresh database with approvals tables and return a pool."""
+    """Provision a fresh database with approvals tables and return a pool.
+
+    WARNING: Schema defined here must be kept in sync with the actual Alembic
+    migrations in src/butlers/modules/approvals/migrations/. If you modify the
+    migration SQL, update this fixture accordingly to prevent schema drift.
+    """
     async with provisioned_postgres_pool() as pool:
         # Run the approvals migrations to create the tables
         # Migration 001: Create pending_actions and approval_rules tables

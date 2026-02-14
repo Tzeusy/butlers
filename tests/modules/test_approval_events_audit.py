@@ -18,6 +18,8 @@ import pytest
 
 from butlers.modules.approvals.events import ApprovalEventType, record_approval_event
 
+pytestmark = pytest.mark.unit
+
 
 class MockPool:
     """In-memory mock for database pool."""

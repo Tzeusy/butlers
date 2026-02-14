@@ -12,6 +12,8 @@ import pytest
 
 from butlers.modules.approvals.events import ApprovalEventType, record_approval_event
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.asyncio
 class TestApprovalEventsDatabaseImmutability:
