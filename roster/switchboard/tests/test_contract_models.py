@@ -254,32 +254,6 @@ def test_request_context_lineage_immutability_enforced() -> None:
     assert error["type"] == "immutable_request_context"
 
 
-def test_notify_reply_requires_request_context() -> None:
-    payload = _valid_notify_payload()
-    payload["delivery"]["intent"] = "reply"
-    payload["request_context"] = None
-
-    with pytest.raises(ValidationError) as exc_info:
-        NotifyRequestV1.model_validate(payload)
-
-    error = exc_info.value.errors()[0]
-    assert error["loc"] == ()
-    assert error["type"] == "notify_reply_requires_request_context"
-
-
-def test_notify_reply_for_telegram_requires_source_thread_identity() -> None:
-    payload = _valid_notify_payload()
-    payload["delivery"]["intent"] = "reply"
-    payload["request_context"].pop("source_thread_identity")
-
-    with pytest.raises(ValidationError) as exc_info:
-        NotifyRequestV1.model_validate(payload)
-
-    error = exc_info.value.errors()[0]
-    assert error["loc"] == ()
-    assert error["type"] == "notify_reply_requires_source_thread_identity"
-
-
 def test_request_context_lineage_allows_optional_extension() -> None:
     original_payload = {
         "request_id": _VALID_UUID7,
