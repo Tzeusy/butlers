@@ -41,7 +41,12 @@ pytestmark = [
 
 @pytest.fixture
 async def pool(provisioned_postgres_pool):
-    """Provision a fresh database with message_inbox table and return a pool."""
+    """Provision a fresh database with message_inbox table and return a pool.
+
+    WARNING: This fixture duplicates the database schema from the `sw_008`
+    migration. If you update the `message_inbox` table schema, you must
+    manually update this fixture to keep it synchronized.
+    """
     async with provisioned_postgres_pool() as p:
         # Create message_inbox table (partitioned, from sw_008 migration)
         await p.execute(
@@ -90,6 +95,13 @@ async def pool(provisioned_postgres_pool):
             """
             CREATE INDEX ix_message_inbox_lifecycle_received_at
             ON message_inbox (lifecycle_state, received_at DESC)
+            """
+        )
+        await p.execute(
+            """
+            CREATE UNIQUE INDEX uq_message_inbox_dedupe_key_received_at
+            ON message_inbox ((request_context ->> 'dedupe_key'), received_at)
+            WHERE request_context ->> 'dedupe_key' IS NOT NULL
             """
         )
 
@@ -445,7 +457,7 @@ class TestIngestV1DedupeKeyComputation:
                 endpoint_identity="webhook_receiver",
             ),
             event=IngestEventV1(
-                external_event_id="placeholder",
+                external_event_id="placeholder",  # Placeholder triggers content hash fallback
                 observed_at=now_iso,
             ),
             sender=IngestSenderV1(identity="api_caller"),
@@ -454,9 +466,9 @@ class TestIngestV1DedupeKeyComputation:
         )
 
         dedupe_key = _compute_dedupe_key(envelope)
-        # Will use event ID since it's non-empty
-        assert dedupe_key.startswith("event:")
-        assert dedupe_key.startswith("event:")
+        # Placeholder values should fall through to content hash
+        assert dedupe_key.startswith("hash:")
+        assert "api_caller" in dedupe_key
 
 
 class TestIngestV1RequestContext:

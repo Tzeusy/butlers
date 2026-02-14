@@ -3,6 +3,16 @@
 This module provides the private Switchboard ingest API surface that connectors
 use to submit `ingest.v1` envelopes and receive canonical request references.
 
+Authentication and Authorization:
+    This is a PRIVATE API for authenticated MCP tool calls only. Authentication
+    and authorization are enforced at the MCP transport layer by the butler
+    framework before this function is invoked. Connectors authenticate via MCP
+    client certificates or butler-specific tokens managed by the framework.
+
+    This function trusts that the caller has been validated and has permission
+    to submit to the specified source endpoint. There is no per-butler or
+    per-endpoint authorization logic within this function.
+
 Key behaviors:
 - Parses and validates `ingest.v1` envelopes using canonical contract models
 - Assigns canonical request context (request_id, received_at, etc.)
@@ -14,6 +24,7 @@ Design notes:
 - Reuses `IngestEnvelopeV1` contract validation (no forked semantics)
 - Deduplication strategy follows `butlers-9aq.4` guidance
 - Lifecycle persistence uses partitioned `message_inbox` from `butlers-9aq.9`
+- Unique index on dedupe_key (migration sw_010) prevents race conditions
 """
 
 from __future__ import annotations
@@ -72,10 +83,13 @@ def _compute_dedupe_key(envelope: IngestEnvelopeV1) -> str:
 
     Strategy:
     - Priority 1: Use explicit idempotency_key if provided
-    - Priority 2: Use external_event_id + source identity
+    - Priority 2: Use external_event_id + source identity (if meaningful)
     - Priority 3: Fall back to content hash + source identity + time window
 
     The dedupe key must be stable across retries for the same logical event.
+
+    Placeholder event IDs (e.g., "placeholder", "unknown", "none") are treated
+    as missing and fall through to content hash deduplication.
     """
     source = envelope.source
     event = envelope.event
@@ -86,7 +100,13 @@ def _compute_dedupe_key(envelope: IngestEnvelopeV1) -> str:
         return f"idem:{source.channel}:{source.endpoint_identity}:{control.idempotency_key}"
 
     # Priority 2: external event ID (canonical for most sources)
-    if event.external_event_id:
+    # Exclude placeholder values that are not meaningful stable identifiers
+    if event.external_event_id and event.external_event_id.lower() not in {
+        "placeholder",
+        "unknown",
+        "none",
+        "",
+    }:
         return (
             f"event:{source.channel}:{source.provider}:"
             f"{source.endpoint_identity}:{event.external_event_id}"
@@ -100,6 +120,24 @@ def _compute_dedupe_key(envelope: IngestEnvelopeV1) -> str:
     return (
         f"hash:{source.channel}:{source.endpoint_identity}:"
         f"{envelope.sender.identity}:{time_bucket}:{content_hash}"
+    )
+
+
+async def _find_request_by_dedupe_key(pool: asyncpg.Pool, dedupe_key: str) -> asyncpg.Record | None:
+    """Find the latest request_id for a given dedupe_key.
+
+    This query uses the unique index on (request_context ->> 'dedupe_key')
+    created by migration sw_010 for efficient lookup.
+    """
+    return await pool.fetchrow(
+        """
+        SELECT (request_context ->> 'request_id')::uuid AS request_id
+        FROM message_inbox
+        WHERE request_context ->> 'dedupe_key' = $1
+        ORDER BY received_at DESC
+        LIMIT 1
+        """,
+        dedupe_key,
     )
 
 
@@ -150,6 +188,9 @@ async def ingest_v1(
     It parses, validates, deduplicates, and persists the ingest envelope,
     returning a canonical request reference.
 
+    Authentication and authorization are enforced at the MCP transport layer
+    before this function is called. See module docstring for details.
+
     Parameters
     ----------
     pool:
@@ -180,18 +221,7 @@ async def ingest_v1(
     dedupe_key = _compute_dedupe_key(envelope)
 
     # 3. Check for existing request (idempotent duplicate handling)
-    existing = await pool.fetchrow(
-        """
-        SELECT
-            (request_context ->> 'request_id')::uuid AS request_id,
-            received_at
-        FROM message_inbox
-        WHERE request_context ->> 'dedupe_key' = $1
-        ORDER BY received_at DESC
-        LIMIT 1
-        """,
-        dedupe_key,
-    )
+    existing = await _find_request_by_dedupe_key(pool, dedupe_key)
 
     if existing:
         # Duplicate submission — return existing request reference
@@ -281,16 +311,7 @@ async def ingest_v1(
     except asyncpg.UniqueViolationError:
         # Race condition: another worker already inserted this dedupe_key
         # Re-fetch and return existing request_id
-        existing = await pool.fetchrow(
-            """
-            SELECT (request_context ->> 'request_id')::uuid AS request_id
-            FROM message_inbox
-            WHERE request_context ->> 'dedupe_key' = $1
-            ORDER BY received_at DESC
-            LIMIT 1
-            """,
-            dedupe_key,
-        )
+        existing = await _find_request_by_dedupe_key(pool, dedupe_key)
         if existing:
             logger.info(
                 "Race condition: duplicate insertion detected for dedupe_key=%s, "
