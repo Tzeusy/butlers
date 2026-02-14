@@ -139,6 +139,7 @@ class ButlerConfig:
     env_optional: list[str] = field(default_factory=list)
     shutdown_timeout_s: float = 30.0
     switchboard_url: str | None = None
+    trusted_route_callers: tuple[str, ...] = ("switchboard",)
 
 
 def resolve_env_vars(value: Any) -> Any:
@@ -414,6 +415,21 @@ def load_config(config_dir: Path) -> ButlerConfig:
     if switchboard_url is None and name != "switchboard":
         switchboard_url = "http://localhost:8100/sse"
 
+    # --- [butler.security] sub-section ---
+    security_section = butler_section.get("security", {})
+    raw_trusted = security_section.get("trusted_route_callers")
+    if raw_trusted is not None:
+        if isinstance(raw_trusted, list):
+            trusted_route_callers = tuple(
+                str(c).strip() for c in raw_trusted if isinstance(c, str) and c.strip()
+            )
+        else:
+            raise ConfigError(
+                "butler.security.trusted_route_callers must be a list of strings"
+            )
+    else:
+        trusted_route_callers = ("switchboard",)
+
     # --- [[butler.schedule]] array ---
     raw_schedules = butler_section.get("schedule", [])
     schedules: list[ScheduleConfig] = []
@@ -459,4 +475,5 @@ def load_config(config_dir: Path) -> ButlerConfig:
         env_optional=env_optional,
         shutdown_timeout_s=shutdown_timeout_s,
         switchboard_url=switchboard_url,
+        trusted_route_callers=trusted_route_callers,
     )
