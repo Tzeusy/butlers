@@ -399,6 +399,7 @@ async def test_sessions_get_returns_full_record(pool):
         "error",
         "input_tokens",
         "output_tokens",
+        "request_id",
         "started_at",
         "completed_at",
     }
