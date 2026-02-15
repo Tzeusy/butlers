@@ -431,9 +431,7 @@ class GmailConnectorRuntime:
 
             if response.status_code == 404:
                 # History ID too old, reset to current
-                logger.warning(
-                    "History ID %s is too old, resetting to current", start_history_id
-                )
+                logger.warning("History ID %s is too old, resetting to current", start_history_id)
                 profile = await self._gmail_get_profile()
                 new_history_id = profile.get("historyId", start_history_id)
                 await self._save_cursor(

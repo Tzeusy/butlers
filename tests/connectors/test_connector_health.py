@@ -4,15 +4,10 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 
 from butlers.connectors.gmail import GmailConnectorConfig, GmailConnectorRuntime, HealthStatus
-from butlers.connectors.telegram_bot import (
-    HealthStatus as TelegramHealthStatus,
-)
 from butlers.connectors.telegram_bot import (
     TelegramBotConnector,
     TelegramBotConnectorConfig,
@@ -46,9 +41,7 @@ class TestTelegramBotConnectorHealth:
         """Create Telegram connector instance."""
         return TelegramBotConnector(telegram_config)
 
-    async def test_initial_health_status(
-        self, telegram_connector: TelegramBotConnector
-    ) -> None:
+    async def test_initial_health_status(self, telegram_connector: TelegramBotConnector) -> None:
         """Test health status immediately after initialization."""
         health = await telegram_connector.get_health_status()
 
@@ -107,9 +100,7 @@ class TestTelegramBotConnectorHealth:
         assert health.status == "unhealthy"
         assert health.source_api_connectivity == "disconnected"
 
-    async def test_health_uptime_increases(
-        self, telegram_connector: TelegramBotConnector
-    ) -> None:
+    async def test_health_uptime_increases(self, telegram_connector: TelegramBotConnector) -> None:
         """Test that uptime increases over time."""
         health1 = await telegram_connector.get_health_status()
         uptime1 = health1.uptime_seconds
@@ -162,9 +153,7 @@ class TestGmailConnectorHealth:
         assert health.source_api_connectivity == "unknown"
         assert health.timestamp
 
-    async def test_health_after_checkpoint_save(
-        self, gmail_runtime: GmailConnectorRuntime
-    ) -> None:
+    async def test_health_after_checkpoint_save(self, gmail_runtime: GmailConnectorRuntime) -> None:
         """Test health status reflects checkpoint save timestamp."""
         # Simulate checkpoint save
         gmail_runtime._last_checkpoint_save = time.time()
@@ -175,9 +164,7 @@ class TestGmailConnectorHealth:
         assert health.last_checkpoint_save_at is not None
         assert health.last_ingest_submit_at is None
 
-    async def test_health_after_ingest_submit(
-        self, gmail_runtime: GmailConnectorRuntime
-    ) -> None:
+    async def test_health_after_ingest_submit(self, gmail_runtime: GmailConnectorRuntime) -> None:
         """Test health status reflects ingest submission timestamp."""
         # Simulate successful ingest submission
         gmail_runtime._last_ingest_submit = time.time()
