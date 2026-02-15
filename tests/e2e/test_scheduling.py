@@ -147,10 +147,10 @@ async def test_tick_idempotency(health_pool: Pool) -> None:
 
     # Get health butler's spawner for tick dispatch
     health_daemon = None
-    from tests.e2e.conftest import butler_ecosystem  # noqa: F401
-
     # Import ecosystem dynamically to access spawner
     import inspect
+
+    from tests.e2e.conftest import butler_ecosystem  # noqa: F401
 
     frame = inspect.currentframe()
     while frame:
@@ -226,8 +226,7 @@ async def test_toml_schedule_sync(butler_ecosystem: ButlerEcosystem) -> None:
 
         # All TOML schedules should be present in DB
         assert toml_names.issubset(db_names), (
-            f"Butler {butler_name}: TOML schedules not synced. "
-            f"Missing: {toml_names - db_names}"
+            f"Butler {butler_name}: TOML schedules not synced. Missing: {toml_names - db_names}"
         )
 
         # Verify each TOML schedule matches DB row
@@ -251,9 +250,7 @@ async def test_toml_sync_idempotency(health_pool: Pool) -> None:
     from butlers.core.scheduler import sync_schedules
 
     # Create a test schedule as if from TOML
-    schedules = [
-        {"name": "test-sync-idempotent", "cron": "0 9 * * *", "prompt": "Daily summary"}
-    ]
+    schedules = [{"name": "test-sync-idempotent", "cron": "0 9 * * *", "prompt": "Daily summary"}]
 
     # First sync
     await sync_schedules(health_pool, schedules)
@@ -280,9 +277,7 @@ async def test_toml_sync_idempotency(health_pool: Pool) -> None:
     assert count_2 == 1, "Second sync should not duplicate rows"
 
     # Cleanup
-    await health_pool.execute(
-        "DELETE FROM scheduled_tasks WHERE name = 'test-sync-idempotent'"
-    )
+    await health_pool.execute("DELETE FROM scheduled_tasks WHERE name = 'test-sync-idempotent'")
 
 
 # ---------------------------------------------------------------------------
@@ -291,9 +286,7 @@ async def test_toml_sync_idempotency(health_pool: Pool) -> None:
 
 
 @pytest.mark.asyncio
-async def test_schedule_crud_via_mcp(
-    butler_ecosystem: ButlerEcosystem, health_pool: Pool
-) -> None:
+async def test_schedule_crud_via_mcp(butler_ecosystem: ButlerEcosystem, health_pool: Pool) -> None:
     """Schedule management tools should work end-to-end.
 
     Validates schedule_create, schedule_list, schedule_update, schedule_delete
@@ -378,9 +371,7 @@ async def test_schedule_create_idempotency(health_pool: Pool) -> None:
     test_name = f"test-create-duplicate-{uuid.uuid4()}"
 
     # First creation should succeed
-    task_id_1 = await schedule_create(
-        health_pool, test_name, "0 * * * *", "First creation"
-    )
+    task_id_1 = await schedule_create(health_pool, test_name, "0 * * * *", "First creation")
     assert task_id_1 is not None
 
     # Second creation with same name should raise ValueError
@@ -511,9 +502,7 @@ async def test_disabled_schedule_skipped(health_pool: Pool) -> None:
     # Verify the disabled task was NOT dispatched
     # Check that the task's last_run_at is still NULL
     async with health_pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT last_run_at FROM scheduled_tasks WHERE id = $1", task_id
-        )
+        row = await conn.fetchrow("SELECT last_run_at FROM scheduled_tasks WHERE id = $1", task_id)
         assert row is not None
         assert row["last_run_at"] is None, "Disabled task should not have been dispatched"
 
@@ -591,8 +580,7 @@ async def test_scheduled_task_session_metadata(health_pool: Pool) -> None:
 
     assert session is not None, "Session should have been created"
     assert session["trigger_source"] == f"schedule:{task_name}", (
-        f"Expected trigger_source='schedule:{task_name}', "
-        f"got '{session['trigger_source']}'"
+        f"Expected trigger_source='schedule:{task_name}', got '{session['trigger_source']}'"
     )
     assert session["duration_ms"] is not None, "Session should have duration_ms"
     assert session["duration_ms"] >= 0, "Duration should be non-negative"
