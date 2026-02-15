@@ -1586,8 +1586,7 @@ class ButlerDaemon:
                     return {
                         "status": "error",
                         "error": (
-                            "React intent requires request_context with "
-                            "source_thread_identity."
+                            "React intent requires request_context with source_thread_identity."
                         ),
                     }
 
