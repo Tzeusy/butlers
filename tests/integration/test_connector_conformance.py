@@ -11,10 +11,8 @@ Follows the contract defined in docs/connectors/interface.md.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -457,9 +455,7 @@ class TestCrossConnectorConformance:
             with pytest.raises(httpx.HTTPStatusError):
                 await telegram_connector._submit_to_ingest(envelope)
 
-    async def test_gmail_rate_limit_handling(
-        self, gmail_connector: GmailConnectorRuntime
-    ) -> None:
+    async def test_gmail_rate_limit_handling(self, gmail_connector: GmailConnectorRuntime) -> None:
         """Test that Gmail connector handles 429 rate limit with retry."""
         gmail_message = {
             "id": "msg666",
