@@ -62,7 +62,7 @@ Required variables:
 
 ```bash
 # Switchboard API connection
-export SWITCHBOARD_API_BASE_URL="http://localhost:8000"
+export SWITCHBOARD_API_BASE_URL="https://switchboard.example.com"  # Use http://localhost:8000 for local dev only
 export SWITCHBOARD_API_TOKEN="sw_live_..."  # Get from platform team
 
 # Connector identity
@@ -99,6 +99,8 @@ This connector is currently a **v2-only draft feature**. To enable:
 ## Deployment
 
 ### Systemd Service (Linux)
+
+**SECURITY WARNING:** The example below uses `EnvironmentFile` for simplicity, but this stores credentials in plaintext on disk. For production deployments, use a secret manager (AWS Secrets Manager, Vault, etc.) with a wrapper script that loads secrets at runtime. See the Docker example for a more secure pattern using Docker secrets.
 
 Create `/etc/systemd/system/telegram-user-client-connector.service`:
 

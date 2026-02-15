@@ -391,6 +391,26 @@ class TestTelegramUserClientConnector:
         envelope = await connector._normalize_to_ingest_v1(mock_message)
         assert envelope["sender"]["identity"] == "22222"
 
+    async def test_normalize_sanitizes_xss_content(
+        self, config: TelegramUserClientConnectorConfig
+    ) -> None:
+        """Test that message text is sanitized to prevent XSS."""
+        connector = TelegramUserClientConnector(config)
+
+        # Mock message with potential XSS content
+        mock_message = MagicMock()
+        mock_message.id = 12345
+        mock_message.chat_id = 67890
+        mock_message.sender_id = 11111
+        mock_message.message = "<script>alert('xss')</script>"
+        mock_message.to_dict.return_value = {"id": 12345}
+
+        envelope = await connector._normalize_to_ingest_v1(mock_message)
+
+        # Verify HTML entities are escaped
+        expected = "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;"
+        assert envelope["payload"]["normalized_text"] == expected
+
 
 @pytest.mark.unit
 class TestTelegramUserClientConnectorUnit:

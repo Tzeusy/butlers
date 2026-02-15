@@ -40,6 +40,7 @@ Security requirements:
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -341,9 +342,9 @@ class TelegramUserClientConnector:
             if hasattr(from_id, "user_id"):
                 sender_id = str(from_id.user_id)
 
-        # Extract message text
+        # Extract message text and sanitize for XSS protection
         if hasattr(message, "message"):
-            normalized_text = message.message or ""
+            normalized_text = html.escape(message.message or "")
 
         # Convert message to dict for raw payload
         # Telethon objects have to_dict() method
@@ -402,12 +403,11 @@ class TelegramUserClientConnector:
                 },
             )
         except httpx.HTTPStatusError as exc:
-            # Log and re-raise for retry handling
+            # Log error without response body to avoid leaking sensitive data
             logger.error(
                 "Switchboard ingest API error",
                 extra={
                     "status_code": exc.response.status_code,
-                    "response": exc.response.text,
                     "endpoint_identity": self._config.endpoint_identity,
                 },
             )
