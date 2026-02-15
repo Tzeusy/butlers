@@ -7,7 +7,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from _test_helpers import MEMORY_MODULE_PATH
+from ._test_helpers import MEMORY_MODULE_PATH
 
 # ---------------------------------------------------------------------------
 # Load consolidation_executor module from disk (roster/ is not a Python package).

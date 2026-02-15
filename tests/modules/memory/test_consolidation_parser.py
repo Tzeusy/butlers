@@ -7,7 +7,7 @@ import json
 import uuid
 
 import pytest
-from _test_helpers import MEMORY_MODULE_PATH
+from ._test_helpers import MEMORY_MODULE_PATH
 
 # ---------------------------------------------------------------------------
 # Load the parser module from disk (roster/ is not a Python package).

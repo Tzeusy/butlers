@@ -7,13 +7,11 @@ import importlib.util
 import inspect
 
 import pytest
-from _test_helpers import MEMORY_MODULE_PATH
+from ._test_helpers import MEMORY_MODULE_PATH
 
 pytestmark = pytest.mark.unit
 
-MIGRATIONS_DIR = (
-    MEMORY_MODULE_PATH.parent.parent / "src" / "butlers" / "modules" / "memory" / "migrations"
-)
+MIGRATIONS_DIR = MEMORY_MODULE_PATH / "migrations"
 
 
 def _load_migration(filename: str):

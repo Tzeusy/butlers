@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from _test_helpers import MEMORY_MODULE_PATH
+from ._test_helpers import MEMORY_MODULE_PATH
 
 # ---------------------------------------------------------------------------
 # Load storage module from disk (roster/ is not a Python package).

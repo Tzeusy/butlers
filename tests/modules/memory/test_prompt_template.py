@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 
 import pytest
-from _test_helpers import MEMORY_MODULE_PATH
+from ._test_helpers import MEMORY_MODULE_PATH
 
 # ---------------------------------------------------------------------------
 # Load prompt_template module from disk (roster/ is not a Python package).

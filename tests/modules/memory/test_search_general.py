@@ -10,7 +10,7 @@ import importlib.util
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from _test_helpers import MEMORY_MODULE_PATH
+from ._test_helpers import MEMORY_MODULE_PATH
 
 # ---------------------------------------------------------------------------
 # Load search module from disk (roster/ is not a Python package)
