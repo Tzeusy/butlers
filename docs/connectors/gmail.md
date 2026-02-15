@@ -162,17 +162,20 @@ GMAIL_PUBSUB_ENABLED=true
 GMAIL_PUBSUB_TOPIC=projects/my-project/topics/gmail-push
 GMAIL_PUBSUB_WEBHOOK_PORT=8081
 GMAIL_PUBSUB_WEBHOOK_PATH=/gmail/webhook
+GMAIL_PUBSUB_WEBHOOK_TOKEN=your-secret-token  # Optional but recommended
 ```
 
 ### 8.4 Webhook Endpoint
 The connector automatically starts an HTTP server on the configured port to receive Pub/Sub push notifications. Ensure this endpoint is:
 - Publicly accessible (or accessible to GCP Pub/Sub service)
-- Configured with proper authentication if needed
+- Protected with `GMAIL_PUBSUB_WEBHOOK_TOKEN` (strongly recommended to prevent unauthorized requests)
 - Behind HTTPS in production (Cloud Run/Load Balancer handles this)
+
+When `GMAIL_PUBSUB_WEBHOOK_TOKEN` is set, the webhook verifies that incoming requests include `Authorization: Bearer <token>` header. Configure your Pub/Sub push subscription to send this header.
 
 ### 8.5 Watch Lifecycle
 - Watch subscription is created on connector startup
-- Auto-renewed every 24 hours (configurable via `GMAIL_WATCH_RENEW_INTERVAL_S`)
+- Auto-renewed when approaching expiration (configurable via `GMAIL_WATCH_RENEW_INTERVAL_S`)
 - Watch expires after ~7 days if not renewed
 - Connector logs watch expiration timestamps for monitoring
 

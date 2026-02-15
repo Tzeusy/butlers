@@ -32,6 +32,7 @@ Environment variables (see `docs/connectors/gmail.md` section 4):
 - GMAIL_PUBSUB_TOPIC (required if GMAIL_PUBSUB_ENABLED=true; GCP Pub/Sub topic)
 - GMAIL_PUBSUB_WEBHOOK_PORT (optional, default 8081; port for Pub/Sub webhook)
 - GMAIL_PUBSUB_WEBHOOK_PATH (optional, default /gmail/webhook; path for Pub/Sub webhook)
+- GMAIL_PUBSUB_WEBHOOK_TOKEN (optional but recommended; auth token for webhook security)
 """
 
 from __future__ import annotations
@@ -103,6 +104,7 @@ class GmailConnectorConfig(BaseModel):
     gmail_pubsub_topic: str | None = None
     gmail_pubsub_webhook_port: int = 8081
     gmail_pubsub_webhook_path: str = "/gmail/webhook"
+    gmail_pubsub_webhook_token: str | None = None  # Optional auth token for webhook
 
     @classmethod
     def from_env(cls) -> GmailConnectorConfig:
@@ -163,6 +165,7 @@ class GmailConnectorConfig(BaseModel):
             ) from exc
 
         pubsub_webhook_path = os.environ.get("GMAIL_PUBSUB_WEBHOOK_PATH", "/gmail/webhook")
+        pubsub_webhook_token = os.environ.get("GMAIL_PUBSUB_WEBHOOK_TOKEN")
 
         return cls(
             switchboard_api_base_url=os.environ["SWITCHBOARD_API_BASE_URL"],
@@ -182,6 +185,7 @@ class GmailConnectorConfig(BaseModel):
             gmail_pubsub_topic=pubsub_topic,
             gmail_pubsub_webhook_port=pubsub_webhook_port,
             gmail_pubsub_webhook_path=pubsub_webhook_path,
+            gmail_pubsub_webhook_token=pubsub_webhook_token,
         )
 
 
@@ -301,6 +305,14 @@ class GmailConnectorRuntime:
         async def webhook(request: Request) -> dict[str, str]:
             """Handle incoming Pub/Sub push notifications."""
             try:
+                # Verify webhook token if configured
+                if self._config.gmail_pubsub_webhook_token:
+                    auth_header = request.headers.get("Authorization", "")
+                    expected_token = f"Bearer {self._config.gmail_pubsub_webhook_token}"
+                    if auth_header != expected_token:
+                        logger.warning("Webhook request with invalid or missing auth token")
+                        return {"status": "unauthorized"}
+
                 body = await request.json()
                 logger.debug("Received Pub/Sub notification: %s", body)
 
@@ -652,10 +664,12 @@ class GmailConnectorRuntime:
         if not self._config.gmail_pubsub_enabled:
             return
 
-        # Renew if no expiration set or within 1 hour of expiration
+        # Renew if no expiration set or within renewal interval of expiration
         now = datetime.now(UTC)
         should_renew = (
-            self._watch_expiration is None or (self._watch_expiration - now).total_seconds() < 3600
+            self._watch_expiration is None
+            or (self._watch_expiration - now).total_seconds()
+            < self._config.gmail_watch_renew_interval_s
         )
 
         if should_renew:
