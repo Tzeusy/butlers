@@ -33,7 +33,7 @@ from butlers.tools.switchboard.routing.dispatch import dispatch_decomposed
 if TYPE_CHECKING:
     from asyncpg.pool import Pool
 
-    from tests.e2e.conftest import ButlerEcosystem, CostTracker
+    from tests.e2e.conftest import ButlerEcosystem
 
 pytestmark = pytest.mark.asyncio
 
@@ -400,9 +400,7 @@ async def test_partial_dispatch_failure(
 
     # Find results by butler
     health_result = next((r for r in dispatch_results if r["butler"] == "health"), None)
-    relationship_result = next(
-        (r for r in dispatch_results if r["butler"] == "relationship"), None
-    )
+    relationship_result = next((r for r in dispatch_results if r["butler"] == "relationship"), None)
 
     assert health_result is not None, "Should have health result"
     assert relationship_result is not None, "Should have relationship result"
