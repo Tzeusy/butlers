@@ -1,11 +1,15 @@
 """E2E performance and load tests — throughput, latency, concurrency, and cost.
 
 Tests cover:
-1. Serial dispatch under load: fire 5 concurrent triggers → all complete, sessions are sequential
+1. Serial dispatch under load: fire 5 concurrent triggers → all complete, sessions are
+   sequential
 2. Pipeline latency budget: full ingest→classify→dispatch→trigger completes within 120s
-3. Lock released on error: trigger that errors out releases lock (subsequent trigger succeeds)
-4. Connection pool queuing: fire 20 concurrent state_set calls → all succeed (pool queues, not rejects)
-5. Cost scales linearly: N triggers → cost/trigger is roughly constant (no prompt bloat)
+3. Lock released on error: trigger that errors out releases lock (subsequent trigger
+   succeeds)
+4. Connection pool queuing: fire 20 concurrent state_set calls → all succeed (pool
+   queues, not rejects)
+5. Cost scales linearly: N triggers → cost/trigger is roughly constant (no prompt
+   bloat)
 
 Performance baselines are stored in tests/e2e/baselines.json for regression detection.
 """
@@ -94,12 +98,12 @@ async def test_serial_dispatch_under_load(
         prev_session = sessions[i - 1]
         curr_session = sessions[i]
 
-        assert prev_session["completed_at"] is not None, f"Session {i-1} should have completed_at"
+        assert prev_session["completed_at"] is not None, f"Session {i - 1} should have completed_at"
         assert curr_session["triggered_at"] is not None, f"Session {i} should have triggered_at"
 
         # Serial execution: previous session completes before next starts
         assert prev_session["completed_at"] <= curr_session["triggered_at"], (
-            f"Sessions {i-1} and {i} overlap — serial dispatch lock violated"
+            f"Sessions {i - 1} and {i} overlap — serial dispatch lock violated"
         )
 
 
@@ -316,8 +320,7 @@ async def test_pool_exhaustion_queues_gracefully(
         # Fire many tool calls concurrently
         n = 20
         tasks = [
-            client.call_tool("state_set", {"key": f"load-pool-{i}", "value": i})
-            for i in range(n)
+            client.call_tool("state_set", {"key": f"load-pool-{i}", "value": i}) for i in range(n)
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
