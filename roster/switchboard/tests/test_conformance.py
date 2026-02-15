@@ -555,7 +555,7 @@ class TestDeadLetterReplay:
                 json.loads(replayed_request["request_context"])["replay_metadata"]["is_replay"]
                 is True
             )
-            assert replayed_request["request_context"]["replay_metadata"][
+            assert json.loads(replayed_request["request_context"])["replay_metadata"][
                 "original_request_id"
             ] == str(failed_request_id)
 

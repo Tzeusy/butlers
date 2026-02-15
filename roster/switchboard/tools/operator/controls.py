@@ -59,11 +59,18 @@ async def manual_reroute_request(
 
     try:
         # Update request with manual reroute annotation
-        request_context = request["request_context"]
+        # Parse JSONB fields (asyncpg returns them as strings)
+        request_context_raw = request["request_context"]
+        request_context = (
+            json.loads(request_context_raw)
+            if isinstance(request_context_raw, str)
+            else request_context_raw
+        ).copy()
+
         request_context["manual_reroute"] = {
             "operator": operator_identity,
             "reason": reason,
-            "original_target": request.get("dispatch_outcomes", {}).get("target"),
+            "original_target": (request.get("dispatch_outcomes") or {}).get("target"),
             "new_target": new_target_butler,
         }
 
@@ -100,13 +107,17 @@ async def manual_reroute_request(
             "message_inbox",
             operator_identity,
             reason,
-            {
-                "new_target_butler": new_target_butler,
-            },
+            json.dumps(
+                {
+                    "new_target_butler": new_target_butler,
+                }
+            ),
             "success",
-            {
-                "lifecycle_state": "rerouted",
-            },
+            json.dumps(
+                {
+                    "lifecycle_state": "rerouted",
+                }
+            ),
         )
 
         return {

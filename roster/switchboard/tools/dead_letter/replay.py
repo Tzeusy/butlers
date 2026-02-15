@@ -75,7 +75,22 @@ async def replay_dead_letter_request(
     try:
         # Insert into message_inbox with replay metadata
         new_request_id = uuid.uuid4()
-        request_context = dict(dead_letter["request_context"])
+        # Parse JSONB fields (asyncpg returns them as strings)
+        request_context_raw = dead_letter["request_context"]
+        original_payload_raw = dead_letter["original_payload"]
+
+        request_context = (
+            json.loads(request_context_raw)
+            if isinstance(request_context_raw, str)
+            else request_context_raw
+        )
+        original_payload = (
+            json.loads(original_payload_raw)
+            if isinstance(original_payload_raw, str)
+            else original_payload_raw
+        )
+
+        request_context = request_context.copy()
         request_context["replay_metadata"] = {
             "is_replay": True,
             "original_request_id": str(dead_letter["original_request_id"]),
@@ -98,8 +113,8 @@ async def replay_dead_letter_request(
             """,
             new_request_id,
             json.dumps(request_context),
-            json.dumps(dead_letter["original_payload"]),
-            dead_letter["original_payload"].get("content", ""),
+            json.dumps(original_payload),
+            original_payload.get("content", ""),
             json.dumps(
                 {
                     "replayed_from_dead_letter": str(dead_letter_id),
