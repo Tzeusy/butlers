@@ -168,7 +168,6 @@ Common config issues:
        },
        "description": "Auto-approve emails to team members",
        "max_uses": 100,  # Bounded scope for safety
-       "actor": "admin"
    })
    ```
 
@@ -277,9 +276,9 @@ If frontend errors:
    SELECT 
      event_type, 
      COUNT(*), 
-     DATE(timestamp) as day
+     DATE(occurred_at) as day
    FROM approval_events
-   WHERE timestamp > NOW() - INTERVAL '7 days'
+   WHERE occurred_at > NOW() - INTERVAL '7 days'
    GROUP BY event_type, day
    ORDER BY day DESC, count DESC;
    ```

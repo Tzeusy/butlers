@@ -39,7 +39,7 @@ This test plan validates the complete approvals subsystem across all implementat
 - Event creation for all state transitions
 - Immutability enforcement (no updates/deletes)
 - Event query and filtering
-- Actor and reason capture
+- Actor and reason capture (Note: Current implementation uses hardcoded "user:manual" actor; specific identity tracking not yet implemented)
 - Payload metadata preservation
 
 **Test files:**

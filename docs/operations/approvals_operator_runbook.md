@@ -10,7 +10,10 @@ This runbook provides operational guidance for managing the approvals subsystem 
 
 ## Daily Operations
 
+> **Note on API Authentication:** All curl examples shown below assume unauthenticated access for brevity. In production, add authentication headers: `-H "Authorization: Bearer <token>"`. The current implementation lacks consistent auth enforcement - see security audit tracking in butlers-0p6 epic.
+
 ### Morning Review
+
 
 **Goal:** Clear overnight pending actions and check for anomalies
 
@@ -19,7 +22,7 @@ This runbook provides operational guidance for managing the approvals subsystem 
 1. **Check pending action count:**
    ```bash
    # Via API
-   curl http://localhost:<port>/api/approvals/metrics | jq '.data.pending_count'
+   curl http://localhost:<port>/api/approvals/metrics | jq '.data.total_pending'  # Note: Add -H "Authorization: Bearer <token>" for authenticated requests
    
    # Or visit /approvals in frontend
    ```
@@ -129,122 +132,13 @@ Expired actions:
 
 1. **Export rule inventory:**
    ```sql
-   SELECT 
-     id, tool_name, description, 
-     created_at, expires_at, max_uses, use_count,
-     active
-   FROM approval_rules
-   ORDER BY created_at DESC;
-   ```
-
-2. **Categorize rules:**
-   - Permanent (no expiry, no max_uses) → review carefully
-   - Bounded (with expiry or max_uses) → healthy
-   - Inactive (active=false) → archive or delete
-
-3. **Test critical rules:**
-   - Verify high-value rules still match expected patterns
-   - Update constraints if tool signatures changed
-
-### Failed Execution Triage
-
-**Goal:** Identify and resolve execution failures
-
-**Detection:**
-
-Monitor metrics:
-```bash
-# Check execution failure rate
-curl http://localhost:<port>/api/approvals/metrics | jq '.data.execution_failure_rate'
-```
-
-Or query directly:
-```sql
-SELECT 
-  tool_name,
-  COUNT(*) as failed_count,
-  execution_result->>'error' as error_sample
+-- Note: risk_tier is not stored in pending_actions; it's determined by application logic.
+-- To triage by risk, filter by tool_name patterns or use the API/MCP tools.
+SELECT id, tool_name, requested_at, expires_at
 FROM pending_actions
-WHERE status = 'executed'
-  AND execution_result->>'success' = 'false'
-  AND executed_at > NOW() - INTERVAL '24 hours'
-GROUP BY tool_name, execution_result->>'error'
-ORDER BY failed_count DESC;
+WHERE status = 'pending'
+ORDER BY requested_at ASC;
 ```
-
-**Investigation steps:**
-
-1. **Find failed actions:**
-   - Navigate to `/approvals?status=executed`
-   - Filter by recent time range
-   - Look for actions with execution errors
-
-2. **Categorize failure:**
-   - **Transient failure:** Network timeout, service unavailable
-     - Action: Retry manually or ignore
-   - **Invalid arguments:** Malformed data, wrong format
-     - Action: Fix tool call validation
-   - **Permission denied:** Insufficient credentials
-     - Action: Check module configuration
-   - **Tool bug:** Unexpected exception
-     - Action: File bug, disable gating temporarily
-
-3. **Remediate:**
-   - For transient failures: No action needed
-   - For systemic issues: Fix root cause and re-test
-   - For urgent failures: Disable gating for affected tool temporarily
-
-**Example failure scenarios:**
-
-### Scenario: Email send failures (SMTP timeout)
-
-**Symptoms:**
-- Multiple send_email actions executed but failed
-- execution_result shows "Connection timeout"
-
-**Resolution:**
-1. Check SMTP server health
-2. Verify network connectivity
-3. Test manual email send outside butler
-4. If SMTP down, pause email gating:
-   ```toml
-   [modules.approvals.gated_tools]
-   # send_email = { ... }  # Comment out temporarily
-   ```
-5. Re-enable after SMTP restored
-
-### Scenario: Telegram send failures (invalid chat_id)
-
-**Symptoms:**
-- send_telegram_message actions fail with "Chat not found"
-
-**Resolution:**
-1. Review failed action arguments
-2. Check if chat_id format correct
-3. Verify user still in bot's contact list
-4. Update standing rules to exclude invalid chat_ids
-5. Add validation before queueing action
-
-## Incident Response
-
-### Critical: Action backlog (> 100 pending)
-
-**Impact:** High-priority actions delayed, operator overload
-
-**Response:**
-
-1. **Assess cause:**
-   - Operator unavailable?
-   - Sudden traffic spike?
-   - Auto-approval rules broken?
-
-2. **Triage by risk:**
-   ```sql
-   SELECT risk_tier, COUNT(*) 
-   FROM pending_actions 
-   WHERE status = 'pending'
-   GROUP BY risk_tier;
-   ```
 
 3. **Prioritize critical/high risk:**
    - Review high-risk actions first
@@ -273,13 +167,13 @@ ORDER BY failed_count DESC;
    ```sql
    SELECT 
      tool_name,
-     COUNT(*) as pending_count,
+     COUNT(*) as total_pending,
      (SELECT COUNT(*) FROM approval_rules WHERE tool_name = pa.tool_name AND active = true) as rule_count
    FROM pending_actions pa
    WHERE status = 'pending'
      AND requested_at > NOW() - INTERVAL '24 hours'
    GROUP BY tool_name
-   ORDER BY pending_count DESC;
+   ORDER BY total_pending DESC;
    ```
 
 2. **Check rule status:**
@@ -353,12 +247,12 @@ Events are immutable but can be archived/purged per retention policy:
 -- Archive old events to cold storage (example)
 COPY (
   SELECT * FROM approval_events
-  WHERE timestamp < NOW() - INTERVAL '365 days'
-) TO '/backup/approval_events_archive_2026.csv' WITH CSV HEADER;
+  WHERE occurred_at < NOW() - INTERVAL '365 days'
+) TO '/backup/approval_events_archive_$(date +%Y).csv' WITH CSV HEADER;
 
 -- Purge after archive confirmed
 DELETE FROM approval_events
-WHERE timestamp < NOW() - INTERVAL '365 days';
+WHERE occurred_at < NOW() - INTERVAL '365 days';
 ```
 
 **Automated retention:**
@@ -392,9 +286,10 @@ From frontend:
 
 From API:
 ```bash
+# Note: This endpoint returns 501 (not implemented). Use MCP tool revoke_approval_rule instead.
 curl -X POST http://localhost:<port>/api/approvals/rules/{rule_id}/revoke \
   -H "Content-Type: application/json" \
-  -d '{"actor": "admin", "reason": "No longer needed"}'
+  -d '{"reason": "No longer needed"}'
 ```
 
 **Effects:**
@@ -486,12 +381,12 @@ WHERE schemaname = 'public'
 3. Test constraint matching:
    ```python
    # In butler Python environment
-   from butlers.modules.approvals.rules import args_match_constraints
+   from butlers.modules.approvals.rules import _args_match_constraints  # Note: This is a private function
    
    constraints = {...}  # From rule
    args = {...}  # From action
    
-   result = args_match_constraints(args, constraints)
+   result = _args_match_constraints(args, constraints)
    print(result)  # Should be True
    ```
 4. Check precedence (higher-specificity rule may match first)
@@ -688,7 +583,7 @@ WHERE schemaname = 'public'
 
 ```bash
 # Check pending count
-curl localhost:<port>/api/approvals/metrics | jq '.data.pending_count'
+curl localhost:<port>/api/approvals/metrics | jq '.data.total_pending'
 
 # List pending actions
 curl localhost:<port>/api/approvals/actions?status=pending
