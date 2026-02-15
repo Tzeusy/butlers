@@ -204,21 +204,11 @@ async def test_prefix_listing(
 
     async with MCPClient(url) as client:
         # Set keys with different prefixes
-        await client.call_tool(
-            "state_set", {"key": "health:prefs", "value": {"theme": "dark"}}
-        )
-        await client.call_tool(
-            "state_set", {"key": "health:goals", "value": {"weight": 75}}
-        )
-        await client.call_tool(
-            "state_set", {"key": "health:history", "value": {"entries": 10}}
-        )
-        await client.call_tool(
-            "state_set", {"key": "general:prefs", "value": {"lang": "en"}}
-        )
-        await client.call_tool(
-            "state_set", {"key": "other:data", "value": {"foo": "bar"}}
-        )
+        await client.call_tool("state_set", {"key": "health:prefs", "value": {"theme": "dark"}})
+        await client.call_tool("state_set", {"key": "health:goals", "value": {"weight": 75}})
+        await client.call_tool("state_set", {"key": "health:history", "value": {"entries": 10}})
+        await client.call_tool("state_set", {"key": "general:prefs", "value": {"lang": "en"}})
+        await client.call_tool("state_set", {"key": "other:data", "value": {"foo": "bar"}})
 
         # List with "health:" prefix
         result = await client.call_tool("state_list", {"prefix": "health:"})
@@ -318,9 +308,7 @@ async def test_delete_behavior(
 
     async with MCPClient(url) as client:
         # Set a value
-        await client.call_tool(
-            "state_set", {"key": "e2e-delete", "value": {"temp": "data"}}
-        )
+        await client.call_tool("state_set", {"key": "e2e-delete", "value": {"temp": "data"}})
 
         # Verify it exists
         result = await client.call_tool("state_get", {"key": "e2e-delete"})
