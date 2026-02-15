@@ -344,6 +344,7 @@ class TestSessionsActive:
             "cost",
             "success",
             "error",
+            "request_id",
             "started_at",
             "completed_at",
         }
