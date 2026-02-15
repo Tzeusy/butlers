@@ -734,7 +734,10 @@ class TestGmailPubSubIngestion:
         with (
             patch.object(runtime, "_http_client", new=AsyncMock()) as mock_client,
             patch.object(runtime, "_get_access_token", new=AsyncMock(return_value="token")),
-            patch("time.time", side_effect=[0, 0, 301, 301]),  # Simulate 301 seconds elapsed
+            patch(
+                "time.time",
+                side_effect=[0, 301] + [302 + i for i in range(100)],
+            ),  # last_poll_time=0, current_time=301 (triggers fallback), then continuous time
         ):
             mock_client.get = AsyncMock(return_value=mock_history_response)
 
