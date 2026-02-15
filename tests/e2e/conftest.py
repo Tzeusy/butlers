@@ -14,6 +14,7 @@ Function-scoped fixtures:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -360,7 +361,3 @@ def cost_tracker() -> Iterator[CostTracker]:
     tracker = CostTracker()
     yield tracker
     tracker.print_summary()
-
-
-# Import asyncio for _wait_for_ecosystem_health
-import asyncio  # noqa: E402
