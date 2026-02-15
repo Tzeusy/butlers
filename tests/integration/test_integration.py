@@ -30,6 +30,9 @@ pytestmark = [
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
+# WARNING: This constant duplicates core table schemas. If you update
+# the schema via migrations, you MUST update it here as well to prevent
+# schema drift in tests.
 CORE_TABLES_SQL = """
     CREATE TABLE IF NOT EXISTS state (
         key TEXT PRIMARY KEY,

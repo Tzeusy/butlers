@@ -52,7 +52,12 @@ async def pool(postgres_container):
 
 @pytest.fixture
 async def pool_with_sessions(pool):
-    """Return a pool with the sessions table created."""
+    """Return a pool with the sessions table created.
+
+    WARNING: This fixture duplicates the 'sessions' table schema. If you update
+    the schema via migrations, you MUST update it here as well to prevent
+    schema drift in tests.
+    """
     await pool.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

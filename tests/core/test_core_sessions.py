@@ -34,7 +34,12 @@ def postgres_container():
 
 @pytest.fixture
 async def pool(postgres_container):
-    """Create a fresh database with the sessions table and return a pool."""
+    """Create a fresh database with the sessions table and return a pool.
+
+    WARNING: This fixture duplicates the 'sessions' table schema. If you update
+    the schema via migrations, you MUST update it here as well to prevent
+    schema drift in tests.
+    """
     db_name = _unique_db_name()
 
     # Create the database via the admin connection
