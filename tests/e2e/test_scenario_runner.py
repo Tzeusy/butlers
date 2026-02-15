@@ -18,7 +18,6 @@ from __future__ import annotations
 import logging
 
 import pytest
-from asyncpg import Pool
 from fastmcp import Client as MCPClient
 
 from tests.e2e.conftest import ButlerEcosystem, CostTracker
@@ -169,14 +168,11 @@ async def _execute_db_assertion(
         elif assertion.expected is None:
             # Expect no rows
             assert result is None, (
-                f"Assertion failed: {assertion.description}\n"
-                f"Expected no rows, but got: {result}"
+                f"Assertion failed: {assertion.description}\nExpected no rows, but got: {result}"
             )
 
         else:
-            raise TypeError(
-                f"Unsupported assertion.expected type: {type(assertion.expected)}"
-            )
+            raise TypeError(f"Unsupported assertion.expected type: {type(assertion.expected)}")
 
 
 @pytest.mark.asyncio
