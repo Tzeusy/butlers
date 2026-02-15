@@ -312,7 +312,9 @@ class Spawner:
             self._in_flight.add(task)
         try:
             async with self._lock:
-                return await self._run(prompt, trigger_source, context, max_turns, parent_context, request_id)
+                return await self._run(
+                    prompt, trigger_source, context, max_turns, parent_context, request_id
+                )
         finally:
             if task is not None:
                 self._in_flight.discard(task)
