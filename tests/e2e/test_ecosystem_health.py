@@ -62,9 +62,9 @@ async def test_butler_status_tools(butler_ecosystem: ButlerEcosystem) -> None:
                 f"Butler {butler_name} status returned wrong name: {result['butler']}"
             )
             assert "modules" in result, f"Butler {butler_name} status missing 'modules' key"
-            assert isinstance(
-                result["modules"], list
-            ), f"Butler {butler_name} modules is not a list"
+            assert isinstance(result["modules"], list), (
+                f"Butler {butler_name} modules is not a list"
+            )
 
 
 # ---------------------------------------------------------------------------
