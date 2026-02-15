@@ -917,7 +917,7 @@ class ButlerDaemon:
             subrequest: dict[str, Any] | None = None,
             target: dict[str, Any] | None = None,
             source_metadata: dict[str, Any] | None = None,
-            trace_context: dict[str, Any] | None = None,
+            trace_context: dict[str, str] | None = None,
         ) -> dict[str, Any]:
             """Execute routed requests and terminate messenger notify deliveries."""
             started_at = time.monotonic()
