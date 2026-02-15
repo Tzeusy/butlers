@@ -550,7 +550,11 @@ async def _call_butler_tool(endpoint_url: str, tool_name: str, args: dict[str, A
     if getattr(result, "is_error", False):
         error_text = _extract_mcp_error_text(result)
         if not error_text:
-            error_text = f"Tool '{tool_name}' returned an error."
+            # Use effective_tool_name to show what was actually called
+            if effective_tool_name != tool_name:
+                error_text = f"Tool '{effective_tool_name}' (from '{tool_name}') returned an error."
+            else:
+                error_text = f"Tool '{tool_name}' returned an error."
         raise RuntimeError(error_text)
 
     # FastMCP 2.x CallToolResult carries structured data directly.
