@@ -69,6 +69,7 @@ async def pool_with_sessions(pool):
             input_tokens INTEGER,
             output_tokens INTEGER,
             parent_session_id UUID,
+            request_id TEXT,
             started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             completed_at TIMESTAMPTZ
         )

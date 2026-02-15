@@ -207,7 +207,8 @@ async def pool(postgres_container):
             completed_at TIMESTAMPTZ,
             input_tokens INTEGER,
             output_tokens INTEGER,
-            parent_session_id UUID REFERENCES sessions(id)
+            parent_session_id UUID REFERENCES sessions(id),
+            request_id TEXT
         )
     """)
     yield p
