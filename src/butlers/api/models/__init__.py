@@ -300,21 +300,6 @@ from butlers.api.models.memory import (  # noqa: E402
     Rule as MemoryRule,
 )
 from butlers.api.models.notification import NotificationStats, NotificationSummary  # noqa: E402
-from butlers.api.models.relationship import (  # noqa: E402
-    ActivityFeedItem,
-    ContactDetail,
-    ContactListResponse,
-    ContactSummary,
-    Gift,
-    Group,
-    GroupListResponse,
-    Interaction,
-    Label,
-    Loan,
-    Note,
-    UpcomingDate,
-)
-from butlers.api.models.schedule import Schedule, ScheduleCreate, ScheduleUpdate  # noqa: E402
 from butlers.api.models.search import SearchResponse, SearchResult  # noqa: E402
 from butlers.api.models.session import SessionDetail  # noqa: E402
 from butlers.api.models.state import StateEntry, StateSetRequest  # noqa: E402
@@ -330,15 +315,11 @@ __all__ = [
     "ApprovalRuleCreateRequest",
     "ApprovalRuleFromActionRequest",
     "AuditEntry",
-    "ActivityFeedItem",
     "ApiMeta",
     "ApiResponse",
     "ButlerConfigResponse",
     "Collection",
     "Condition",
-    "ContactDetail",
-    "ContactListResponse",
-    "ContactSummary",
     "CostSummary",
     "ButlerDetail",
     "ButlerSummary",
@@ -353,20 +334,13 @@ __all__ = [
     "ErrorDetail",
     "ErrorResponse",
     "ExpireStaleActionsResponse",
-    "Gift",
-    "Group",
-    "GroupListResponse",
     "HealthResponse",
-    "Interaction",
     "Issue",
-    "Label",
-    "Loan",
     "Meal",
     "Measurement",
     "Medication",
     "ModuleInfo",
     "ModuleStatus",
-    "Note",
     "NotificationStats",
     "NotificationSummary",
     "PaginatedResponse",
@@ -397,5 +371,4 @@ __all__ = [
     "TopSession",
     "TriggerRequest",
     "TriggerResponse",
-    "UpcomingDate",
 ]
