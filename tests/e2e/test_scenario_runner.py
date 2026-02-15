@@ -123,9 +123,21 @@ async def _execute_db_assertion(
     assert pool is not None, f"Butler {assertion.butler} pool not found in ecosystem"
 
     async with pool.acquire() as conn:
+        # Handle different expected types with appropriate query method
+        if isinstance(assertion.expected, list):
+            # Multi-row result: fetch all and compare
+            rows = await conn.fetch(assertion.query)
+            actual_list = [dict(row) for row in rows]
+            assert actual_list == assertion.expected, (
+                f"Assertion failed: {assertion.description}\n"
+                f"Expected: {assertion.expected}\n"
+                f"Got: {actual_list}"
+            )
+            return
+
+        # For int, dict, and None, we expect a single row or no rows
         result = await conn.fetchrow(assertion.query)
 
-        # Handle different expected types
         if isinstance(assertion.expected, int):
             # Count queries: expect single row with 'count' column
             assert result is not None, (
@@ -154,16 +166,6 @@ async def _execute_db_assertion(
                     f"Assertion failed: {assertion.description}\n"
                     f"Key '{key}': expected {expected_value}, got {actual_dict[key]}"
                 )
-
-        elif isinstance(assertion.expected, list):
-            # Multi-row result: fetch all and compare
-            rows = await conn.fetch(assertion.query)
-            actual_list = [dict(row) for row in rows]
-            assert actual_list == assertion.expected, (
-                f"Assertion failed: {assertion.description}\n"
-                f"Expected: {assertion.expected}\n"
-                f"Got: {actual_list}"
-            )
 
         elif assertion.expected is None:
             # Expect no rows

@@ -71,8 +71,8 @@ HEALTH_SCENARIOS = [
         db_assertions=[
             DbAssertion(
                 butler="health",
-                query="SELECT COUNT(*) as count FROM measurements WHERE metric = 'weight'",
-                expected={"count": 1},
+                query="SELECT COUNT(*) as count FROM measurements WHERE type = 'weight'",
+                expected=1,
                 description="Weight measurement should be logged",
             ),
         ],
@@ -87,7 +87,7 @@ HEALTH_SCENARIOS = [
             DbAssertion(
                 butler="health",
                 query="SELECT COUNT(*) as count FROM medications WHERE name ILIKE '%aspirin%'",
-                expected={"count": 1},
+                expected=1,
                 description="Medication should be tracked",
             ),
         ],
@@ -117,7 +117,7 @@ RELATIONSHIP_SCENARIOS = [
             DbAssertion(
                 butler="relationship",
                 query="SELECT COUNT(*) as count FROM contacts WHERE name ILIKE '%sarah%'",
-                expected={"count": 1},
+                expected=1,
                 description="Contact should be created",
             ),
         ],
