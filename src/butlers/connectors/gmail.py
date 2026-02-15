@@ -42,7 +42,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Thread
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import uvicorn
@@ -55,11 +55,11 @@ logger = logging.getLogger(__name__)
 class HealthStatus(BaseModel):
     """Health check response model for Kubernetes probes."""
 
-    status: str  # "healthy" or "unhealthy"
+    status: Literal["healthy", "unhealthy"]
     uptime_seconds: float
     last_checkpoint_save_at: str | None
     last_ingest_submit_at: str | None
-    source_api_connectivity: str  # "connected", "disconnected", "unknown"
+    source_api_connectivity: Literal["connected", "disconnected", "unknown"]
     timestamp: str
 
 
