@@ -138,6 +138,20 @@ class TestLocalBlobStore:
         with pytest.raises(ValueError, match="Storage scheme mismatch"):
             await blob_store.get(wrong_ref)
 
+    async def test_path_traversal_blocked(self, blob_store):
+        """Path traversal attempts are blocked with ValueError."""
+        # Try various path traversal techniques
+        traversal_attempts = [
+            "local://../../../etc/passwd",
+            "local://../../sensitive.txt",
+            "local://../outside.jpg",
+            "local://subdir/../../outside.jpg",
+        ]
+
+        for malicious_ref in traversal_attempts:
+            with pytest.raises(ValueError, match="Path traversal attempt detected"):
+                await blob_store.get(malicious_ref)
+
     async def test_delete(self, blob_store, sample_data):
         """Delete removes blob from storage."""
         storage_ref = await blob_store.put(sample_data, content_type="text/plain")
@@ -172,6 +186,11 @@ class TestLocalBlobStore:
         """exists() returns False for wrong storage scheme."""
         wrong_ref = "s3://bucket/key.jpg"
         assert await blob_store.exists(wrong_ref) is False
+
+    async def test_exists_false_for_path_traversal(self, blob_store):
+        """exists() returns False for path traversal attempts."""
+        traversal_ref = "local://../../../etc/passwd"
+        assert await blob_store.exists(traversal_ref) is False
 
     async def test_binary_data_integrity(self, blob_store):
         """Binary data (like images) stored without corruption."""

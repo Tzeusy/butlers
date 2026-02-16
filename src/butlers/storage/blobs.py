@@ -158,14 +158,24 @@ class LocalBlobStore:
             Absolute path to blob file
 
         Raises:
-            ValueError: If storage_ref has wrong scheme
+            ValueError: If storage_ref has wrong scheme or attempts path traversal
         """
         blob_ref = BlobRef.parse(storage_ref)
         if blob_ref.scheme != self.scheme:
             msg = f"Storage scheme mismatch: expected '{self.scheme}', got '{blob_ref.scheme}'"
             raise ValueError(msg)
 
-        return self.base_dir / blob_ref.key
+        # Resolve path and check for traversal outside base_dir
+        resolved_path = (self.base_dir / blob_ref.key).resolve()
+
+        # Ensure resolved path is within base_dir
+        try:
+            resolved_path.relative_to(self.base_dir)
+        except ValueError as e:
+            msg = f"Path traversal attempt detected: {storage_ref}"
+            raise ValueError(msg) from e
+
+        return resolved_path
 
     async def put(self, data: bytes, *, content_type: str, filename: str | None = None) -> str:
         """Store blob, return storage_ref string.
@@ -237,5 +247,5 @@ class LocalBlobStore:
             file_path = self._ref_to_path(storage_ref)
             return file_path.exists()
         except ValueError:
-            # Wrong scheme, blob doesn't exist in this store
+            # Wrong scheme or path traversal, blob doesn't exist in this store
             return False
