@@ -146,7 +146,22 @@ class TestRunConsolidation:
 
     async def test_orchestrates_full_pipeline_with_spawner(self) -> None:
         """With cc_spawner, run_consolidation orchestrates the full pipeline."""
+        from unittest.mock import MagicMock as SyncMock
+
         episodes = [_episode_row(butler="test-butler", content="test content")]
+
+        # Mock connection with transaction support
+        mock_conn = SyncMock()
+        mock_transaction = SyncMock()
+        mock_transaction.__aenter__ = AsyncMock(return_value=None)
+        mock_transaction.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.transaction.return_value = mock_transaction
+
+        # Mock pool.acquire() to return an async context manager
+        mock_acquire_cm = SyncMock()
+        mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_acquire_cm.__aexit__ = AsyncMock(return_value=None)
+
         pool = AsyncMock()
         pool.fetch = AsyncMock(
             side_effect=[
@@ -156,6 +171,9 @@ class TestRunConsolidation:
             ]
         )
         pool.execute = AsyncMock(return_value="UPDATE 1")
+        # Make acquire() a regular method that returns the context manager
+        pool.acquire = SyncMock(return_value=mock_acquire_cm)
+
         engine = MagicMock()
 
         # Mock spawner that returns valid JSON output
@@ -228,7 +246,7 @@ class TestRunConsolidation:
         assert "alpha" in result["errors"][0]
 
     async def test_cc_failure_is_reported_in_errors(self) -> None:
-        """When CC session fails, error is captured in stats."""
+        """When CC session fails, error is captured in stats (sanitized)."""
         episodes = [_episode_row(butler="test-butler")]
         pool = AsyncMock()
         pool.fetch = AsyncMock(side_effect=[episodes, [], []])
@@ -247,7 +265,9 @@ class TestRunConsolidation:
 
         assert result["groups_consolidated"] == 0
         assert len(result["errors"]) > 0
-        assert "CC timeout" in result["errors"][0]
+        # Error message should be sanitized (no internal details in return value)
+        assert "test-butler" in result["errors"][0]
+        assert "CC session failed" in result["errors"][0]
 
     async def test_episodes_marked_consolidated_only_after_success(self) -> None:
         """Episodes are marked consolidated=true only after execute_consolidation."""

@@ -11,10 +11,12 @@ Provides two main entry points:
 
 from __future__ import annotations
 
-import importlib.util
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from butlers.modules.memory.consolidation_executor import execute_consolidation
+from butlers.modules.memory.consolidation_parser import parse_consolidation_output
+from butlers.modules.memory.prompt_template import build_consolidation_prompt
 
 if TYPE_CHECKING:
     from asyncpg import Pool
@@ -22,30 +24,6 @@ if TYPE_CHECKING:
     from butlers.core.spawner import CCSpawner
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Load sibling modules from disk (roster/ is not a Python package).
-# ---------------------------------------------------------------------------
-
-_MODULE_DIR = Path(__file__).resolve().parent
-
-
-def _load_module(name: str):
-    path = _MODULE_DIR / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_prompt_mod = _load_module("prompt_template")
-_parser_mod = _load_module("consolidation_parser")
-_executor_mod = _load_module("consolidation_executor")
-
-build_consolidation_prompt = _prompt_mod.build_consolidation_prompt
-parse_consolidation_output = _parser_mod.parse_consolidation_output
-execute_consolidation = _executor_mod.execute_consolidation
 
 
 # ---------------------------------------------------------------------------
@@ -117,109 +95,95 @@ async def run_consolidation(
     groups_consolidated = 0
     all_errors: list[str] = []
 
-    # If no spawner provided, return early with grouping stats only
-    if cc_spawner is None:
-        return {
-            "episodes_processed": len(rows),
-            "butlers_processed": len(groups),
-            "groups": group_counts,
-            "groups_consolidated": 0,
-            "facts_created": 0,
-            "facts_updated": 0,
-            "rules_created": 0,
-            "confirmations_made": 0,
-            "episodes_consolidated": 0,
-            "errors": [],
-        }
+    # Process each butler group (only if spawner is provided)
+    if cc_spawner is not None:
+        for butler_name, episodes in groups.items():
+            try:
+                # 1. Fetch existing facts and rules for dedup context
+                facts_rows = await pool.fetch(
+                    "SELECT id, subject, predicate, content, permanence "
+                    "FROM facts "
+                    "WHERE validity = 'active' AND source_butler = $1 "
+                    "ORDER BY created_at DESC "
+                    "LIMIT 100",
+                    butler_name,
+                )
+                existing_facts = [dict(row) for row in facts_rows]
 
-    # Process each butler group
-    for butler_name, episodes in groups.items():
-        try:
-            # 1. Fetch existing facts and rules for dedup context
-            facts_rows = await pool.fetch(
-                "SELECT id, subject, predicate, content, permanence "
-                "FROM facts "
-                "WHERE validity = 'active' AND source_butler = $1 "
-                "ORDER BY created_at DESC "
-                "LIMIT 100",
-                butler_name,
-            )
-            existing_facts = [dict(row) for row in facts_rows]
+                rules_rows = await pool.fetch(
+                    "SELECT id, content, status "
+                    "FROM rules "
+                    "WHERE status = 'active' AND source_butler = $1 "
+                    "ORDER BY created_at DESC "
+                    "LIMIT 50",
+                    butler_name,
+                )
+                existing_rules = [dict(row) for row in rules_rows]
 
-            rules_rows = await pool.fetch(
-                "SELECT id, content, status "
-                "FROM rules "
-                "WHERE status = 'active' AND source_butler = $1 "
-                "ORDER BY created_at DESC "
-                "LIMIT 50",
-                butler_name,
-            )
-            existing_rules = [dict(row) for row in rules_rows]
+                # 2. Build consolidation prompt
+                prompt = build_consolidation_prompt(
+                    episodes=episodes,
+                    existing_facts=existing_facts,
+                    existing_rules=existing_rules,
+                    butler_name=butler_name,
+                )
 
-            # 2. Build consolidation prompt
-            prompt = build_consolidation_prompt(
-                episodes=episodes,
-                existing_facts=existing_facts,
-                existing_rules=existing_rules,
-                butler_name=butler_name,
-            )
+                # 3. Spawn CC instance with consolidate skill
+                logger.info(
+                    "Spawning consolidation session for %s (%d episodes)",
+                    butler_name,
+                    len(episodes),
+                )
+                result = await cc_spawner.trigger(
+                    prompt=prompt,
+                    trigger_source="schedule:consolidation",
+                )
 
-            # 3. Spawn CC instance with consolidate skill
-            logger.info(
-                "Spawning consolidation session for %s (%d episodes)",
-                butler_name,
-                len(episodes),
-            )
-            result = await cc_spawner.trigger(
-                prompt=prompt,
-                trigger_source="schedule:consolidation",
-            )
+                if not result.success or result.output is None:
+                    error_msg = f"CC session failed for {butler_name}"
+                    logger.error("%s: %s", error_msg, result.error)
+                    all_errors.append(error_msg)
+                    continue
 
-            if not result.success or result.output is None:
-                error_msg = f"CC session failed for {butler_name}: {result.error}"
-                logger.error(error_msg)
+                # 4. Parse CC output
+                parsed = parse_consolidation_output(result.output)
+                if parsed.parse_errors:
+                    logger.warning("Parse errors for %s: %s", butler_name, parsed.parse_errors)
+                    all_errors.extend(parsed.parse_errors)
+
+                # 5. Execute consolidation actions
+                episode_ids = [row["id"] for row in episodes]
+                exec_result = await execute_consolidation(
+                    pool=pool,
+                    embedding_engine=embedding_engine,
+                    parsed=parsed,
+                    source_episode_ids=episode_ids,
+                    butler_name=butler_name,
+                )
+
+                # Aggregate stats
+                total_facts_created += exec_result["facts_created"]
+                total_facts_updated += exec_result["facts_updated"]
+                total_rules_created += exec_result["rules_created"]
+                total_confirmations += exec_result["confirmations_made"]
+                total_episodes_consolidated += exec_result["episodes_consolidated"]
+                groups_consolidated += 1
+
+                if exec_result["errors"]:
+                    all_errors.extend(exec_result["errors"])
+
+                logger.info(
+                    "Consolidated %s: %d facts, %d rules, %d episodes",
+                    butler_name,
+                    exec_result["facts_created"] + exec_result["facts_updated"],
+                    exec_result["rules_created"],
+                    exec_result["episodes_consolidated"],
+                )
+
+            except Exception as exc:
+                error_msg = f"Failed to consolidate {butler_name}"
+                logger.error("%s: %s", error_msg, exc, exc_info=True)
                 all_errors.append(error_msg)
-                continue
-
-            # 4. Parse CC output
-            parsed = parse_consolidation_output(result.output)
-            if parsed.parse_errors:
-                logger.warning("Parse errors for %s: %s", butler_name, parsed.parse_errors)
-                all_errors.extend(parsed.parse_errors)
-
-            # 5. Execute consolidation actions
-            episode_ids = [row["id"] for row in episodes]
-            exec_result = await execute_consolidation(
-                pool=pool,
-                embedding_engine=embedding_engine,
-                parsed=parsed,
-                source_episode_ids=episode_ids,
-                butler_name=butler_name,
-            )
-
-            # Aggregate stats
-            total_facts_created += exec_result["facts_created"]
-            total_facts_updated += exec_result["facts_updated"]
-            total_rules_created += exec_result["rules_created"]
-            total_confirmations += exec_result["confirmations_made"]
-            total_episodes_consolidated += exec_result["episodes_consolidated"]
-            groups_consolidated += 1
-
-            if exec_result["errors"]:
-                all_errors.extend(exec_result["errors"])
-
-            logger.info(
-                "Consolidated %s: %d facts, %d rules, %d episodes",
-                butler_name,
-                exec_result["facts_created"] + exec_result["facts_updated"],
-                exec_result["rules_created"],
-                exec_result["episodes_consolidated"],
-            )
-
-        except Exception as exc:
-            error_msg = f"Failed to consolidate {butler_name}: {type(exc).__name__}: {exc}"
-            logger.error(error_msg, exc_info=True)
-            all_errors.append(error_msg)
 
     return {
         "episodes_processed": len(rows),
