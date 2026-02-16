@@ -147,7 +147,10 @@ async def _load_email_history(
     *,
     max_tokens: int = 50000,
 ) -> list[dict[str, Any]]:
-    """Load full email chain, truncated to max_tokens from oldest end.
+    """Load full email chain, truncated to preserve newest messages.
+
+    When the email chain exceeds max_tokens, discards from the oldest end
+    and preserves the most recent messages.
 
     Token estimation: chars / 4
 
@@ -173,7 +176,7 @@ async def _load_email_history(
 
         messages = [dict(row) for row in chain_messages]
 
-        # Truncate to max_tokens from oldest end
+        # Truncate to max_tokens, preserving newest messages
         # Token estimation: chars / 4
         max_chars = max_tokens * 4
 
@@ -182,18 +185,19 @@ async def _load_email_history(
         if total_chars <= max_chars:
             return messages
 
-        # Truncate from newest end (keep oldest messages)
+        # Iterate from newest to oldest, collect messages until token limit
         result = []
         current_chars = 0
 
-        for msg in messages:
+        for msg in reversed(messages):
             msg_chars = len(msg["raw_content"])
             if current_chars + msg_chars > max_chars:
                 break
             result.append(msg)
             current_chars += msg_chars
 
-        return result
+        # Reverse to restore chronological order (oldest first)
+        return list(reversed(result))
 
 
 def _format_history_context(messages: list[dict[str, Any]]) -> str:

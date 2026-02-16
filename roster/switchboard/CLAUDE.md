@@ -88,7 +88,7 @@ When routing messages from real-time messaging channels (Telegram, WhatsApp, Sla
 ### History Loading Strategy
 
 - **Real-time messaging channels**: Receive the union of messages from the last 15 minutes OR the last 30 messages (whichever is more), ordered chronologically.
-- **Email**: Receive the full email chain, truncated to 50,000 tokens from the oldest end.
+- **Email**: Receive the full email chain, truncated to 50,000 tokens (preserves newest messages, discards oldest when over limit).
 - **Other channels** (API, MCP): No history loading.
 
 ### Using Conversation Context
@@ -110,6 +110,12 @@ message content
 
 <current message to route>
 ```
+
+**IMPORTANT WARNINGS:**
+- **Prior messages in the history MAY be completely unrelated to the current message.** Do not assume topical continuity.
+- **ONLY route the CURRENT message.** Do NOT attempt to re-route or re-process prior messages from the history.
+- **Use history context ONLY to improve routing of the CURRENT message.** Look for follow-up language ("it", "that", "also", "too") or explicit references to previous topics.
+- **When in doubt, route based on the current message alone.** History is supplementary, not primary.
 
 Use the conversation history to:
 - Understand ongoing context and previous topics

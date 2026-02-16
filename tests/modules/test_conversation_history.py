@@ -269,8 +269,8 @@ class TestLoadEmailHistory:
         assert messages[0]["raw_content"] == "First email"
         assert messages[1]["raw_content"] == "Reply email"
 
-    async def test_truncates_from_newest_end(self):
-        """Truncates email chain from newest end when over token limit."""
+    async def test_truncates_from_oldest_end(self):
+        """Truncates email chain from oldest end when over token limit, preserving newest."""
         now = datetime.now(UTC)
         thread_id = "email:longthread"
 
@@ -302,10 +302,10 @@ class TestLoadEmailHistory:
 
         messages = await _load_email_history(mock_pool, thread_id, now, max_tokens=5)
 
-        # Should keep first 2 messages (20 chars) and drop the newest
+        # Should keep newest 2 messages (20 chars) and drop the oldest
         assert len(messages) == 2
-        assert messages[0]["raw_content"] == "a" * 10
-        assert messages[1]["raw_content"] == "b" * 10
+        assert messages[0]["raw_content"] == "b" * 10
+        assert messages[1]["raw_content"] == "c" * 10
 
 
 # ---------------------------------------------------------------------------
