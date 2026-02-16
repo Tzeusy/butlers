@@ -85,6 +85,8 @@ def upgrade() -> None:
             counter_messages_ingested BIGINT,
             counter_messages_failed BIGINT,
             counter_source_api_calls BIGINT,
+            counter_checkpoint_saves BIGINT,
+            counter_dedupe_accepted BIGINT,
             received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             sent_at TIMESTAMPTZ,
             PRIMARY KEY (received_at, id)
