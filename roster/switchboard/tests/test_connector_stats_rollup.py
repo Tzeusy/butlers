@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import shutil
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -23,170 +24,169 @@ pytestmark = [
 ]
 
 
-@pytest.fixture
-async def pool(provisioned_postgres_pool):
-    """Provision a fresh database with connector tables and return a pool."""
-    async with provisioned_postgres_pool() as p:
-        # Create connector_heartbeat_log table (partitioned)
-        await p.execute(
-            """
-            CREATE TABLE connector_heartbeat_log (
-                id BIGINT GENERATED ALWAYS AS IDENTITY,
-                connector_type TEXT NOT NULL,
-                endpoint_identity TEXT NOT NULL,
-                instance_id UUID,
-                state TEXT NOT NULL,
-                error_message TEXT,
-                uptime_s INTEGER,
-                counter_messages_ingested BIGINT,
-                counter_messages_failed BIGINT,
-                counter_source_api_calls BIGINT,
-                counter_checkpoint_saves BIGINT,
-                counter_dedupe_accepted BIGINT,
-                received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                sent_at TIMESTAMPTZ,
-                PRIMARY KEY (received_at, id)
-            ) PARTITION BY RANGE (received_at)
-            """
+async def _create_test_schema(pool):
+    """Create test schema for connector statistics tables."""
+    # Create connector_heartbeat_log table (partitioned)
+    await pool.execute(
+        """
+        CREATE TABLE connector_heartbeat_log (
+            id BIGINT GENERATED ALWAYS AS IDENTITY,
+            connector_type TEXT NOT NULL,
+            endpoint_identity TEXT NOT NULL,
+            instance_id UUID,
+            state TEXT NOT NULL,
+            error_message TEXT,
+            uptime_s INTEGER,
+            counter_messages_ingested BIGINT,
+            counter_messages_failed BIGINT,
+            counter_source_api_calls BIGINT,
+            counter_checkpoint_saves BIGINT,
+            counter_dedupe_accepted BIGINT,
+            received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            sent_at TIMESTAMPTZ,
+            PRIMARY KEY (received_at, id)
+        ) PARTITION BY RANGE (received_at)
+        """
+    )
+
+    # Create partition for current month
+    await pool.execute(
+        """
+        CREATE TABLE connector_heartbeat_log_p202602
+        PARTITION OF connector_heartbeat_log
+        FOR VALUES FROM ('2026-02-01') TO ('2026-03-01')
+        """
+    )
+
+    # Create partition management function
+    await pool.execute(
+        """
+        CREATE OR REPLACE FUNCTION drop_expired_partitions(
+            retention INTERVAL DEFAULT INTERVAL '7 days',
+            reference_ts TIMESTAMPTZ DEFAULT now()
+        ) RETURNS INTEGER
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+            partition_name TEXT;
+            partition_month DATE;
+            cutoff_month DATE;
+            dropped_count INTEGER := 0;
+        BEGIN
+            cutoff_month := date_trunc('month', reference_ts - retention)::date;
+
+            FOR partition_name IN
+                SELECT child.relname
+                FROM pg_inherits
+                JOIN pg_class parent ON parent.oid = pg_inherits.inhparent
+                JOIN pg_class child ON child.oid = pg_inherits.inhrelid
+                JOIN pg_namespace ns ON ns.oid = child.relnamespace
+                WHERE parent.relname = 'connector_heartbeat_log'
+                AND ns.nspname = current_schema()
+                AND child.relname ~ '^connector_heartbeat_log_p[0-9]{6}$'
+            LOOP
+                partition_month := to_date(
+                    substring(partition_name from '[0-9]{6}$'), 'YYYYMM'
+                );
+                IF partition_month < cutoff_month THEN
+                    EXECUTE format('DROP TABLE IF EXISTS %I', partition_name);
+                    dropped_count := dropped_count + 1;
+                END IF;
+            END LOOP;
+
+            RETURN dropped_count;
+        END;
+        $$
+        """
+    )
+
+    # Create connector_stats_hourly table
+    await pool.execute(
+        """
+        CREATE TABLE connector_stats_hourly (
+            connector_type TEXT NOT NULL,
+            endpoint_identity TEXT NOT NULL,
+            hour TIMESTAMPTZ NOT NULL,
+            messages_ingested BIGINT DEFAULT 0,
+            messages_failed BIGINT DEFAULT 0,
+            source_api_calls BIGINT DEFAULT 0,
+            dedupe_accepted BIGINT DEFAULT 0,
+            heartbeat_count INTEGER DEFAULT 0,
+            healthy_count INTEGER DEFAULT 0,
+            degraded_count INTEGER DEFAULT 0,
+            error_count INTEGER DEFAULT 0,
+            PRIMARY KEY (connector_type, endpoint_identity, hour)
         )
+        """
+    )
 
-        # Create partition for current month
-        await p.execute(
-            """
-            CREATE TABLE connector_heartbeat_log_p202602
-            PARTITION OF connector_heartbeat_log
-            FOR VALUES FROM ('2026-02-01') TO ('2026-03-01')
-            """
+    # Create connector_stats_daily table
+    await pool.execute(
+        """
+        CREATE TABLE connector_stats_daily (
+            connector_type TEXT NOT NULL,
+            endpoint_identity TEXT NOT NULL,
+            day DATE NOT NULL,
+            messages_ingested BIGINT DEFAULT 0,
+            messages_failed BIGINT DEFAULT 0,
+            source_api_calls BIGINT DEFAULT 0,
+            dedupe_accepted BIGINT DEFAULT 0,
+            heartbeat_count INTEGER DEFAULT 0,
+            healthy_count INTEGER DEFAULT 0,
+            degraded_count INTEGER DEFAULT 0,
+            error_count INTEGER DEFAULT 0,
+            uptime_pct NUMERIC(5, 2),
+            PRIMARY KEY (connector_type, endpoint_identity, day)
         )
+        """
+    )
 
-        # Create partition management function
-        await p.execute(
-            """
-            CREATE OR REPLACE FUNCTION drop_expired_partitions(
-                retention INTERVAL DEFAULT INTERVAL '7 days',
-                reference_ts TIMESTAMPTZ DEFAULT now()
-            ) RETURNS INTEGER
-            LANGUAGE plpgsql
-            AS $$
-            DECLARE
-                partition_name TEXT;
-                partition_month DATE;
-                cutoff_month DATE;
-                dropped_count INTEGER := 0;
-            BEGIN
-                cutoff_month := date_trunc('month', reference_ts - retention)::date;
-
-                FOR partition_name IN
-                    SELECT child.relname
-                    FROM pg_inherits
-                    JOIN pg_class parent ON parent.oid = pg_inherits.inhparent
-                    JOIN pg_class child ON child.oid = pg_inherits.inhrelid
-                    JOIN pg_namespace ns ON ns.oid = child.relnamespace
-                    WHERE parent.relname = 'connector_heartbeat_log'
-                    AND ns.nspname = current_schema()
-                    AND child.relname ~ '^connector_heartbeat_log_p[0-9]{6}$'
-                LOOP
-                    partition_month := to_date(
-                        substring(partition_name from '[0-9]{6}$'), 'YYYYMM'
-                    );
-                    IF partition_month < cutoff_month THEN
-                        EXECUTE format('DROP TABLE IF EXISTS %I', partition_name);
-                        dropped_count := dropped_count + 1;
-                    END IF;
-                END LOOP;
-
-                RETURN dropped_count;
-            END;
-            $$
-            """
+    # Create connector_fanout_daily table
+    await pool.execute(
+        """
+        CREATE TABLE connector_fanout_daily (
+            connector_type TEXT NOT NULL,
+            endpoint_identity TEXT NOT NULL,
+            target_butler TEXT NOT NULL,
+            day DATE NOT NULL,
+            message_count BIGINT DEFAULT 0,
+            PRIMARY KEY (connector_type, endpoint_identity, target_butler, day)
         )
+        """
+    )
 
-        # Create connector_stats_hourly table
-        await p.execute(
-            """
-            CREATE TABLE connector_stats_hourly (
-                connector_type TEXT NOT NULL,
-                endpoint_identity TEXT NOT NULL,
-                hour TIMESTAMPTZ NOT NULL,
-                messages_ingested BIGINT DEFAULT 0,
-                messages_failed BIGINT DEFAULT 0,
-                source_api_calls BIGINT DEFAULT 0,
-                dedupe_accepted BIGINT DEFAULT 0,
-                heartbeat_count INTEGER DEFAULT 0,
-                healthy_count INTEGER DEFAULT 0,
-                degraded_count INTEGER DEFAULT 0,
-                error_count INTEGER DEFAULT 0,
-                PRIMARY KEY (connector_type, endpoint_identity, hour)
-            )
-            """
-        )
+    # Create message_inbox table (for fanout rollup tests)
+    await pool.execute(
+        """
+        CREATE TABLE message_inbox (
+            id UUID NOT NULL DEFAULT gen_random_uuid(),
+            received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            source_channel TEXT NOT NULL,
+            source_endpoint_identity TEXT NOT NULL,
+            dispatch_outcomes JSONB,
+            PRIMARY KEY (received_at, id)
+        ) PARTITION BY RANGE (received_at)
+        """
+    )
 
-        # Create connector_stats_daily table
-        await p.execute(
-            """
-            CREATE TABLE connector_stats_daily (
-                connector_type TEXT NOT NULL,
-                endpoint_identity TEXT NOT NULL,
-                day DATE NOT NULL,
-                messages_ingested BIGINT DEFAULT 0,
-                messages_failed BIGINT DEFAULT 0,
-                source_api_calls BIGINT DEFAULT 0,
-                dedupe_accepted BIGINT DEFAULT 0,
-                heartbeat_count INTEGER DEFAULT 0,
-                healthy_count INTEGER DEFAULT 0,
-                degraded_count INTEGER DEFAULT 0,
-                error_count INTEGER DEFAULT 0,
-                uptime_pct NUMERIC(5, 2),
-                PRIMARY KEY (connector_type, endpoint_identity, day)
-            )
-            """
-        )
-
-        # Create connector_fanout_daily table
-        await p.execute(
-            """
-            CREATE TABLE connector_fanout_daily (
-                connector_type TEXT NOT NULL,
-                endpoint_identity TEXT NOT NULL,
-                target_butler TEXT NOT NULL,
-                day DATE NOT NULL,
-                message_count BIGINT DEFAULT 0,
-                PRIMARY KEY (connector_type, endpoint_identity, target_butler, day)
-            )
-            """
-        )
-
-        # Create message_inbox table (for fanout rollup tests)
-        await p.execute(
-            """
-            CREATE TABLE message_inbox (
-                id UUID NOT NULL DEFAULT gen_random_uuid(),
-                received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                source_channel TEXT NOT NULL,
-                source_endpoint_identity TEXT NOT NULL,
-                dispatch_outcomes JSONB,
-                PRIMARY KEY (received_at, id)
-            ) PARTITION BY RANGE (received_at)
-            """
-        )
-
-        # Create partition for message_inbox
-        await p.execute(
-            """
-            CREATE TABLE message_inbox_p202602
-            PARTITION OF message_inbox
-            FOR VALUES FROM ('2026-02-01') TO ('2026-03-01')
-            """
-        )
-
-        yield p
+    # Create partition for message_inbox
+    await pool.execute(
+        """
+        CREATE TABLE message_inbox_p202602
+        PARTITION OF message_inbox
+        FOR VALUES FROM ('2026-02-01') TO ('2026-03-01')
+        """
+    )
 
 
-class TestHourlyRollup:
-    """Tests for hourly rollup SQL logic."""
+# Hourly rollup tests
 
-    async def test_computes_deltas_correctly(self, pool):
-        """Test that hourly rollup correctly computes counter deltas between heartbeats."""
+
+async def test_hourly_rollup_computes_deltas_correctly(provisioned_postgres_pool):
+    """Test that hourly rollup correctly computes counter deltas between heartbeats."""
+    async with provisioned_postgres_pool() as pool:
+        await _create_test_schema(pool)
+
         # Insert heartbeat data with incrementing counters
         base_time = datetime(2026, 2, 16, 10, 0, 0, tzinfo=UTC)
         hour_start = datetime(2026, 2, 16, 10, 0, 0, tzinfo=UTC)
@@ -333,8 +333,12 @@ class TestHourlyRollup:
         assert row["degraded_count"] == 1
         assert row["error_count"] == 0
 
-    async def test_is_idempotent(self, pool):
-        """Test that running hourly rollup multiple times produces the same result."""
+
+async def test_hourly_rollup_is_idempotent(provisioned_postgres_pool):
+    """Test that running hourly rollup multiple times produces the same result."""
+    async with provisioned_postgres_pool() as pool:
+        await _create_test_schema(pool)
+
         base_time = datetime(2026, 2, 16, 11, 0, 0, tzinfo=UTC)
         hour_start = datetime(2026, 2, 16, 11, 0, 0, tzinfo=UTC)
         hour_end = datetime(2026, 2, 16, 12, 0, 0, tzinfo=UTC)
@@ -467,11 +471,14 @@ class TestHourlyRollup:
         assert row1 == row2
 
 
-class TestDailyRollup:
-    """Tests for daily rollup SQL logic."""
+# Daily rollup tests
 
-    async def test_sums_hourly_data_and_computes_uptime(self, pool):
-        """Test that daily rollup correctly sums hourly data and computes uptime."""
+
+async def test_daily_rollup_sums_hourly_data_and_computes_uptime(provisioned_postgres_pool):
+    """Test that daily rollup correctly sums hourly data and computes uptime."""
+    async with provisioned_postgres_pool() as pool:
+        await _create_test_schema(pool)
+
         day = datetime(2026, 2, 15, tzinfo=UTC).date()
 
         # Insert hourly data for 3 hours
@@ -560,10 +567,15 @@ class TestDailyRollup:
         assert row["dedupe_accepted"] == 435  # 95 + 147 + 193
         assert row["heartbeat_count"] == 37  # 10 + 12 + 15
         assert row["healthy_count"] == 31  # 9 + 10 + 12
-        assert row["uptime_pct"] == pytest.approx(83.78, rel=0.01)  # 31/37 * 100
+        # uptime_pct is a Decimal, so compare as Decimal
+        assert row["uptime_pct"] == Decimal("83.78")  # 31/37 * 100
 
-    async def test_fanout_rollup_parses_dispatch_outcomes(self, pool):
-        """Test that fanout rollup correctly parses dispatch_outcomes JSONB."""
+
+async def test_fanout_rollup_parses_dispatch_outcomes(provisioned_postgres_pool):
+    """Test that fanout rollup correctly parses dispatch_outcomes JSONB."""
+    async with provisioned_postgres_pool() as pool:
+        await _create_test_schema(pool)
+
         day = datetime(2026, 2, 15, tzinfo=UTC).date()
 
         # Insert message_inbox data with dispatch_outcomes
@@ -626,30 +638,34 @@ class TestDailyRollup:
 
         assert len(rows) == 3
 
-        # telegram_bot.bot@789 -> health (2 messages)
-        assert rows[0]["connector_type"] == "telegram_bot"
-        assert rows[0]["endpoint_identity"] == "telegram_bot.bot@789"
-        assert rows[0]["target_butler"] == "health"
-        assert rows[0]["message_count"] == 2
+        # Check all rows without assuming specific order beyond the ORDER BY clause
+        # Email comes before telegram_bot alphabetically
+        assert rows[0]["connector_type"] == "email"
+        assert rows[0]["endpoint_identity"] == "email.user@example.com"
+        assert rows[0]["target_butler"] == "general"
+        assert rows[0]["message_count"] == 1
 
-        # telegram_bot.bot@789 -> relationship (1 message)
+        # telegram_bot.bot@789 -> health (2 messages)
         assert rows[1]["connector_type"] == "telegram_bot"
         assert rows[1]["endpoint_identity"] == "telegram_bot.bot@789"
-        assert rows[1]["target_butler"] == "relationship"
-        assert rows[1]["message_count"] == 1
+        assert rows[1]["target_butler"] == "health"
+        assert rows[1]["message_count"] == 2
 
-        # email.user@example.com -> general (1 message)
-        assert rows[2]["connector_type"] == "email"
-        assert rows[2]["endpoint_identity"] == "email.user@example.com"
-        assert rows[2]["target_butler"] == "general"
+        # telegram_bot.bot@789 -> relationship (1 message)
+        assert rows[2]["connector_type"] == "telegram_bot"
+        assert rows[2]["endpoint_identity"] == "telegram_bot.bot@789"
+        assert rows[2]["target_butler"] == "relationship"
         assert rows[2]["message_count"] == 1
 
 
-class TestPruning:
-    """Tests for pruning SQL logic."""
+# Pruning tests
 
-    async def test_removes_old_hourly_and_daily_data(self, pool):
-        """Test that pruning correctly removes old data."""
+
+async def test_pruning_removes_old_hourly_and_daily_data(provisioned_postgres_pool):
+    """Test that pruning correctly removes old data."""
+    async with provisioned_postgres_pool() as pool:
+        await _create_test_schema(pool)
+
         now = datetime.now(UTC)
 
         # Insert old hourly data (35 days ago)
