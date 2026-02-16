@@ -8,40 +8,15 @@ from executing.
 
 from __future__ import annotations
 
-import importlib.util
 import logging
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from butlers.modules.memory.consolidation_parser import ConsolidationResult
+from butlers.modules.memory.storage import confirm_memory, create_link, store_fact, store_rule
 
 if TYPE_CHECKING:
     from asyncpg import Pool
-
-# ---------------------------------------------------------------------------
-# Load sibling modules from disk (roster/ is not a Python package).
-# ---------------------------------------------------------------------------
-
-_MODULE_DIR = Path(__file__).resolve().parent
-
-
-def _load_module(name: str):
-    path = _MODULE_DIR / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_storage = _load_module("storage")
-_parser = _load_module("consolidation_parser")
-
-store_fact = _storage.store_fact
-store_rule = _storage.store_rule
-create_link = _storage.create_link
-confirm_memory = _storage.confirm_memory
-
-ConsolidationResult = _parser.ConsolidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +82,16 @@ async def execute_consolidation(
                 await create_link(pool, "fact", new_fact_id, "episode", episode_id, "derived_from")
             facts_created += 1
         except Exception as exc:
-            msg = f"Failed to store new fact ({fact.subject}/{fact.predicate}): {exc}"
-            logger.error(msg)
-            errors.append(msg)
+            # Log detailed error internally
+            logger.error(
+                "Failed to store new fact (%s/%s): %s",
+                fact.subject,
+                fact.predicate,
+                exc,
+                exc_info=True,
+            )
+            # Sanitize error message in return value
+            errors.append(f"Failed to store new fact ({fact.subject}/{fact.predicate})")
 
     # --- Updated facts ---
     for fact in parsed.updated_facts:
@@ -128,9 +110,10 @@ async def execute_consolidation(
                 await create_link(pool, "fact", new_fact_id, "episode", episode_id, "derived_from")
             facts_updated += 1
         except Exception as exc:
-            msg = f"Failed to update fact ({fact.target_id}): {exc}"
-            logger.error(msg)
-            errors.append(msg)
+            # Log detailed error internally
+            logger.error("Failed to update fact (%s): %s", fact.target_id, exc, exc_info=True)
+            # Sanitize error message in return value
+            errors.append(f"Failed to update fact ({fact.target_id})")
 
     # --- New rules ---
     for rule in parsed.new_rules:
@@ -147,9 +130,10 @@ async def execute_consolidation(
                 await create_link(pool, "rule", new_rule_id, "episode", episode_id, "derived_from")
             rules_created += 1
         except Exception as exc:
-            msg = f"Failed to store new rule: {exc}"
-            logger.error(msg)
-            errors.append(msg)
+            # Log detailed error internally
+            logger.error("Failed to store new rule: %s", exc, exc_info=True)
+            # Sanitize error message in return value
+            errors.append("Failed to store new rule")
 
     # --- Confirmations ---
     for confirmation_id in parsed.confirmations:
@@ -157,9 +141,10 @@ async def execute_consolidation(
             await confirm_memory(pool, "fact", uuid.UUID(confirmation_id))
             confirmations_made += 1
         except Exception as exc:
-            msg = f"Failed to confirm fact {confirmation_id}: {exc}"
-            logger.error(msg)
-            errors.append(msg)
+            # Log detailed error internally
+            logger.error("Failed to confirm fact %s: %s", confirmation_id, exc, exc_info=True)
+            # Sanitize error message in return value
+            errors.append(f"Failed to confirm fact {confirmation_id}")
 
     # --- Mark source episodes as consolidated ---
     episodes_consolidated = 0
@@ -171,9 +156,10 @@ async def execute_consolidation(
             )
             episodes_consolidated = len(source_episode_ids)
         except Exception as exc:
-            msg = f"Failed to mark episodes as consolidated: {exc}"
-            logger.error(msg)
-            errors.append(msg)
+            # Log detailed error internally
+            logger.error("Failed to mark episodes as consolidated: %s", exc, exc_info=True)
+            # Sanitize error message in return value
+            errors.append("Failed to mark episodes as consolidated")
 
     return {
         "facts_created": facts_created,
