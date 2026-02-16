@@ -574,7 +574,7 @@ class TestRetryAndFailureHandling:
             patch.object(_exec_mod, "store_rule", new_callable=AsyncMock),
             patch.object(_exec_mod, "confirm_memory", new_callable=AsyncMock),
         ):
-            result = await execute_consolidation(
+            await execute_consolidation(
                 pool, engine, parsed, episode_ids, "test-butler", max_retries=2
             )
 
