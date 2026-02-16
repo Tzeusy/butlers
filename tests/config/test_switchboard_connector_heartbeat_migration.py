@@ -9,6 +9,8 @@ import uuid
 import pytest
 from sqlalchemy import create_engine, text
 
+from alembic import command
+
 # Skip all tests if Docker is not available
 docker_available = shutil.which("docker") is not None
 pytestmark = [
@@ -361,9 +363,9 @@ def test_partition_management_functions_exist(postgres_container):
     assert _function_exists(db_url, "switchboard_connector_heartbeat_log_ensure_partition"), (
         "ensure_partition function should exist"
     )
-    assert not _function_exists(
+    assert _function_exists(
         db_url, "switchboard_connector_heartbeat_log_drop_expired_partitions"
-    ), "drop_expired_partitions function should be dropped after downgrade"
+    ), "drop_expired_partitions function should exist after upgrade"
 
 
 def test_initial_partition_created(postgres_container):
@@ -382,7 +384,7 @@ def test_initial_partition_created(postgres_container):
 
 def test_downgrade_drops_all_objects(postgres_container):
     """Verify downgrade cleanly drops all tables and functions."""
-    from butlers.migrations import downgrade_migrations, run_migrations
+    from butlers.migrations import _build_alembic_config, run_migrations
 
     db_name = _unique_db_name()
     db_url = _create_db(postgres_container, db_name)
@@ -396,8 +398,9 @@ def test_downgrade_drops_all_objects(postgres_container):
     assert _table_exists(db_url, "connector_heartbeat_log")
     assert _function_exists(db_url, "switchboard_connector_heartbeat_log_ensure_partition")
 
-    # Downgrade by one step (sw_013 -> sw_012)
-    asyncio.run(downgrade_migrations(db_url, chain="switchboard", steps=1))
+    # Downgrade by one step (sw_013 -> sw_012) using Alembic command directly
+    config = _build_alembic_config(db_url, chains=["switchboard"])
+    command.downgrade(config, "switchboard@sw_012")
 
     # Verify objects are dropped
     assert not _table_exists(db_url, "connector_registry"), (
