@@ -11,6 +11,28 @@ CONFIDENCE_HIGH = "high"
 CONFIDENCE_MEDIUM = "medium"
 CONFIDENCE_NONE = "none"
 
+# Relationship type weights for salience scoring
+RELATIONSHIP_WEIGHTS = {
+    "spouse": 50,
+    "partner": 50,
+    "parent": 30,
+    "child": 30,
+    "sibling": 30,
+    "close friend": 20,
+    "best friend": 20,
+    "friend": 10,
+    "colleague": 5,
+    "acquaintance": 2,
+}
+
+# Group type weights for salience scoring
+GROUP_TYPE_WEIGHTS = {
+    "couple": 15,
+    "family": 10,
+    "friends": 5,
+    "team": 3,
+}
+
 
 def _display_name_from_row(row: asyncpg.Record | dict[str, Any]) -> str:
     first = (row.get("first_name") if isinstance(row, dict) else row["first_name"]) or ""
@@ -81,6 +103,7 @@ async def contact_resolve(
     if len(exact_rows) > 1:
         # Multiple exact matches -- ambiguous, return as MEDIUM with context boosting
         candidates = _build_candidates(exact_rows, base_score=90)
+        candidates = await _compute_salience(pool, candidates)
         if context:
             candidates = await _boost_by_context(pool, candidates, context)
         candidates.sort(key=lambda c: c["score"], reverse=True)
@@ -147,6 +170,10 @@ async def contact_resolve(
 
     # Score partial matches
     candidates = _score_partial_matches(partial_rows, name, name_parts)
+
+    # Salience scoring (only when multiple candidates)
+    if len(candidates) >= 2:
+        candidates = await _compute_salience(pool, candidates)
 
     # Context boosting
     if context:
@@ -221,6 +248,117 @@ def _score_partial_matches(
                 "score": score,
             }
         )
+
+    return candidates
+
+
+async def _compute_salience(
+    pool: asyncpg.Pool,
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Compute salience scores for candidates based on relationship data.
+
+    Only called when len(candidates) >= 2.
+
+    For each candidate, queries:
+    - relationships: type-to-user weight
+    - interactions: count in last 90 days + recency
+    - quick_facts + notes: row count (density)
+    - contacts.stay_in_touch_days: cadence importance
+    - group_members → groups.type: group type weight
+
+    Returns candidates with 'salience' field added and score updated.
+    """
+    for candidate in candidates:
+        cid = candidate["contact_id"]
+        salience = 0
+
+        # 1. Relationship type weight
+        rel_row = await pool.fetchrow(
+            """
+            SELECT rt.forward_label
+            FROM relationships r
+            JOIN relationship_types rt ON r.relationship_type_id = rt.id
+            WHERE (r.contact_id = $1 OR r.related_contact_id = $1)
+            ORDER BY r.created_at DESC
+            LIMIT 1
+            """,
+            cid,
+        )
+        if rel_row:
+            rel_type = rel_row["forward_label"]
+            salience += RELATIONSHIP_WEIGHTS.get(rel_type, 0)
+
+        # 2. Interaction frequency (last 90 days, +2 per, cap +20)
+        interaction_count = await pool.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM interactions
+            WHERE contact_id = $1
+              AND interaction_date >= NOW() - INTERVAL '90 days'
+            """,
+            cid,
+        )
+        salience += min(interaction_count * 2, 20)
+
+        # 3. Interaction recency (<7d +15, <30d +10, <90d +5)
+        most_recent = await pool.fetchval(
+            """
+            SELECT MAX(interaction_date)
+            FROM interactions
+            WHERE contact_id = $1
+            """,
+            cid,
+        )
+        if most_recent:
+            import datetime
+
+            now = datetime.datetime.now(datetime.UTC)
+            delta = now - most_recent.replace(tzinfo=datetime.UTC)
+            if delta.days < 7:
+                salience += 15
+            elif delta.days < 30:
+                salience += 10
+            elif delta.days < 90:
+                salience += 5
+
+        # 4. Fact & note density (+1 per, cap +10)
+        fact_count = await pool.fetchval(
+            "SELECT COUNT(*) FROM quick_facts WHERE contact_id = $1", cid
+        )
+        note_count = await pool.fetchval("SELECT COUNT(*) FROM notes WHERE contact_id = $1", cid)
+        density = min((fact_count or 0) + (note_count or 0), 10)
+        salience += density
+
+        # 5. Stay-in-touch cadence
+        stay_in_touch_days = await pool.fetchval(
+            "SELECT stay_in_touch_days FROM contacts WHERE id = $1", cid
+        )
+        if stay_in_touch_days:
+            if stay_in_touch_days <= 7:
+                salience += 10
+            elif stay_in_touch_days <= 14:
+                salience += 7
+            elif stay_in_touch_days <= 30:
+                salience += 5
+
+        # 6. Group membership weight
+        group_rows = await pool.fetch(
+            """
+            SELECT g.type
+            FROM group_members gm
+            JOIN groups g ON gm.group_id = g.id
+            WHERE gm.contact_id = $1
+            """,
+            cid,
+        )
+        for g in group_rows:
+            group_type = g["type"]
+            salience += GROUP_TYPE_WEIGHTS.get(group_type, 0)
+
+        # Store salience and add to score
+        candidate["salience"] = salience
+        candidate["score"] += salience
 
     return candidates
 
