@@ -45,15 +45,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Recreate old partial index
+    # Drop the new partial index FIRST
+    op.execute("DROP INDEX IF EXISTS idx_episodes_unconsolidated")
+
+    # THEN recreate old partial index
     op.execute("""
         CREATE INDEX IF NOT EXISTS idx_episodes_unconsolidated
         ON episodes (butler, created_at) WHERE NOT consolidated
-    """)
-
-    # Drop the new partial index
-    op.execute("""
-        DROP INDEX IF EXISTS idx_episodes_unconsolidated
     """)
 
     # Drop new columns
