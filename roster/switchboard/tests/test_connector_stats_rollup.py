@@ -162,6 +162,7 @@ async def pool(provisioned_postgres_pool):
             CREATE TABLE message_inbox (
                 id UUID NOT NULL DEFAULT gen_random_uuid(),
                 received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                source_channel TEXT NOT NULL,
                 source_endpoint_identity TEXT NOT NULL,
                 dispatch_outcomes JSONB,
                 PRIMARY KEY (received_at, id)
@@ -569,14 +570,15 @@ class TestDailyRollup:
         await pool.execute(
             """
             INSERT INTO message_inbox (
+                source_channel,
                 source_endpoint_identity,
                 dispatch_outcomes,
                 received_at
             ) VALUES
-            ('telegram_bot.bot@789', '{"health": {"status": "success"}}', $1),
-            ('telegram_bot.bot@789', '{"health": {"status": "success"}}', $2),
-            ('telegram_bot.bot@789', '{"relationship": {"status": "success"}}', $3),
-            ('email.user@example.com', '{"general": {"status": "success"}}', $4)
+            ('telegram_bot', 'telegram_bot.bot@789', '{"health": {"status": "success"}}', $1),
+            ('telegram_bot', 'telegram_bot.bot@789', '{"health": {"status": "success"}}', $2),
+            ('telegram_bot', 'telegram_bot.bot@789', '{"relationship": {"status": "success"}}', $3),
+            ('email', 'email.user@example.com', '{"general": {"status": "success"}}', $4)
             """,
             datetime(2026, 2, 15, 10, 30, 0, tzinfo=UTC),
             datetime(2026, 2, 15, 11, 30, 0, tzinfo=UTC),
@@ -589,27 +591,25 @@ class TestDailyRollup:
             """
             WITH fanout_aggregates AS (
                 SELECT
+                    source_channel,
                     source_endpoint_identity,
                     jsonb_object_keys(dispatch_outcomes) AS target_butler,
                     COUNT(*) AS message_count
                 FROM message_inbox
                 WHERE DATE(received_at) = $1
                 AND dispatch_outcomes IS NOT NULL
-                GROUP BY source_endpoint_identity, target_butler
-            ),
-            connector_fanout AS (
-                SELECT
-                    SPLIT_PART(source_endpoint_identity, '.', 1) AS connector_type,
-                    source_endpoint_identity AS endpoint_identity,
-                    target_butler,
-                    message_count
-                FROM fanout_aggregates
+                GROUP BY source_channel, source_endpoint_identity, target_butler
             )
             INSERT INTO connector_fanout_daily (
                 connector_type, endpoint_identity, target_butler, day, message_count
             )
-            SELECT connector_type, endpoint_identity, target_butler, $1, message_count
-            FROM connector_fanout
+            SELECT
+                source_channel AS connector_type,
+                source_endpoint_identity AS endpoint_identity,
+                target_butler,
+                $1,
+                message_count
+            FROM fanout_aggregates
             """,
             day,
         )

@@ -252,21 +252,14 @@ async def run_connector_stats_daily_rollup(db_pool: asyncpg.Pool) -> dict[str, i
             """
             WITH fanout_aggregates AS (
                 SELECT
+                    source_channel,
                     source_endpoint_identity,
                     jsonb_object_keys(dispatch_outcomes) AS target_butler,
                     COUNT(*) AS message_count
                 FROM message_inbox
                 WHERE DATE(received_at) = $1
                 AND dispatch_outcomes IS NOT NULL
-                GROUP BY source_endpoint_identity, target_butler
-            ),
-            connector_fanout AS (
-                SELECT
-                    SPLIT_PART(source_endpoint_identity, '.', 1) AS connector_type,
-                    source_endpoint_identity AS endpoint_identity,
-                    target_butler,
-                    message_count
-                FROM fanout_aggregates
+                GROUP BY source_channel, source_endpoint_identity, target_butler
             )
             INSERT INTO connector_fanout_daily (
                 connector_type,
@@ -276,12 +269,12 @@ async def run_connector_stats_daily_rollup(db_pool: asyncpg.Pool) -> dict[str, i
                 message_count
             )
             SELECT
-                connector_type,
-                endpoint_identity,
+                source_channel AS connector_type,
+                source_endpoint_identity AS endpoint_identity,
                 target_butler,
                 $1,
                 message_count
-            FROM connector_fanout
+            FROM fanout_aggregates
             ON CONFLICT (connector_type, endpoint_identity, target_butler, day)
             DO UPDATE SET
                 message_count = EXCLUDED.message_count
