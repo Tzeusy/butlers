@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -57,7 +56,7 @@ execute_consolidation = _executor_mod.execute_consolidation
 async def run_consolidation(
     pool: Pool,
     embedding_engine: Any,
-    cc_spawner: "CCSpawner | None" = None,
+    cc_spawner: CCSpawner | None = None,
 ) -> dict[str, Any]:
     """Orchestrate the full consolidation pipeline for unconsolidated episodes.
 
@@ -185,9 +184,7 @@ async def run_consolidation(
             # 4. Parse CC output
             parsed = parse_consolidation_output(result.output)
             if parsed.parse_errors:
-                logger.warning(
-                    "Parse errors for %s: %s", butler_name, parsed.parse_errors
-                )
+                logger.warning("Parse errors for %s: %s", butler_name, parsed.parse_errors)
                 all_errors.extend(parsed.parse_errors)
 
             # 5. Execute consolidation actions
