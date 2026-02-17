@@ -39,12 +39,13 @@ def test_calendar_enabled_butlers_share_single_calendar_id() -> None:
         
         # All butlers should use the shared calendar ID
         assert calendar_id == SHARED_BUTLER_CALENDAR_ID, (
-            f"{butler_name} has calendar_id '{calendar_id}' but expected '{SHARED_BUTLER_CALENDAR_ID}'"
+            f"{butler_name} calendar_id='{calendar_id}', expected '{SHARED_BUTLER_CALENDAR_ID}'"
         )
         calendar_ids.add(calendar_id)
     
     # Verify all butlers are using the same calendar
-    assert len(calendar_ids) == 1, f"Expected 1 shared calendar, but found {len(calendar_ids)}: {calendar_ids}"
+    n = len(calendar_ids)
+    assert n == 1, f"Expected 1 shared calendar, found {n}: {calendar_ids}"
 
 
 def test_calendar_enabled_butlers_document_conflict_and_v1_scope() -> None:
