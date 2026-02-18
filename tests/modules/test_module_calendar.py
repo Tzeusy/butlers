@@ -2098,7 +2098,7 @@ class TestGoogleExtendedFieldParsers:
     def test_parse_google_event_status_tentative(self):
         assert _parse_google_event_status("tentative") == EventStatus.tentative
 
-    def test_parse_google_event_status_cancelled_returns_none(self):
+    def test_parse_google_event_status_cancelled_parses_correctly(self):
         # Cancelled events are filtered out upstream; parsing still returns the enum.
         assert _parse_google_event_status("cancelled") == EventStatus.cancelled
 
