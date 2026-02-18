@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -146,8 +147,6 @@ def _make_mock_pool(state_store: dict | None = None) -> AsyncMock:
     async def _execute(sql, key, *args):
         if "INSERT INTO state" in sql:
             # Extract value — third positional arg is the JSON string
-            import json
-
             value_str = args[0] if args else None
             if value_str is not None:
                 store[key] = json.loads(value_str)

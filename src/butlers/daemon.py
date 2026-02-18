@@ -41,7 +41,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qs
 
 import asyncpg
@@ -229,7 +229,7 @@ _MODULE_ENABLED_KEY_SUFFIX = "::enabled"
 class ModuleRuntimeState:
     """Combined health and enabled state for a module at runtime."""
 
-    health: str  # "active" | "failed" | "cascade_failed"
+    health: Literal["active", "failed", "cascade_failed"]
     enabled: bool
     failure_phase: str | None = None
     failure_error: str | None = None
@@ -535,7 +535,7 @@ class ButlerDaemon:
                         )
                         break
 
-    async def _init_module_runtime_states(self, pool: Any) -> None:
+    async def _init_module_runtime_states(self, pool: asyncpg.Pool) -> None:
         """Initialise ``_module_runtime_states`` from startup results + state store.
 
         For each module:
@@ -590,16 +590,18 @@ class ButlerDaemon:
         not exist or is unavailable (failed / cascade_failed) — unavailable
         modules cannot be re-enabled at runtime.
         """
-        if name not in self._module_runtime_states:
+        state = self._module_runtime_states.get(name)
+        if state is None:
             raise ValueError(f"Unknown module: {name!r}")
 
-        state = self._module_runtime_states[name]
         if state.health in ("failed", "cascade_failed"):
             raise ValueError(
                 f"Module {name!r} is unavailable (health={state.health!r}) and cannot be toggled"
             )
 
         state.enabled = enabled
+        if not self.db or not self.db.pool:
+            raise RuntimeError("Cannot set module state: database not connected.")
         pool = self.db.pool
         key = f"{_MODULE_ENABLED_KEY_PREFIX}{name}{_MODULE_ENABLED_KEY_SUFFIX}"
         await _state_set(pool, key, enabled)
