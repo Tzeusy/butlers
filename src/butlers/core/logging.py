@@ -238,8 +238,9 @@ def configure_logging(
     console_handler.setFormatter(formatter)
 
     root = logging.getLogger()
-    # Remove existing handlers to avoid duplicate output on reconfiguration
+    # Remove existing handlers and filters to avoid duplicates on reconfiguration
     root.handlers.clear()
+    root.filters.clear()
     root.addHandler(console_handler)
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
 

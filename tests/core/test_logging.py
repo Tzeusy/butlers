@@ -302,6 +302,14 @@ class TestCredentialRedactionFilter:
         redaction_filters = [f for f in root.filters if isinstance(f, CredentialRedactionFilter)]
         assert len(redaction_filters) == 1
 
+    def test_configure_logging_called_twice_has_single_filter(self):
+        """Calling configure_logging() twice does not accumulate duplicate filters."""
+        configure_logging()
+        configure_logging()
+        root = logging.getLogger()
+        redaction_filters = [f for f in root.filters if isinstance(f, CredentialRedactionFilter)]
+        assert len(redaction_filters) == 1
+
     def test_httpx_url_with_token_is_suppressed_or_redacted(self):
         """httpx logger set to WARNING means INFO token URLs never reach handlers.
 
