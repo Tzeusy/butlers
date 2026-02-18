@@ -13,6 +13,9 @@ docker_available = shutil.which("docker") is not None
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available, reason="Docker not available"),
+    # Run tests in the session event loop so the pool (created in the session
+    # fixture loop via asyncio_default_fixture_loop_scope=session) is usable.
+    pytest.mark.asyncio(loop_scope="session"),
 ]
 
 
@@ -20,18 +23,17 @@ def _unique_db_name() -> str:
     return f"test_{uuid.uuid4().hex[:12]}"
 
 
-@pytest.fixture(scope="module")
-def postgres_container():
-    """Start a PostgreSQL container for the test module."""
-    from testcontainers.postgres import PostgresContainer
-
-    with PostgresContainer("postgres:16") as pg:
-        yield pg
+# Use the session-scoped postgres_container from root conftest (not a local override)
+# so the event loop is shared across the whole session, avoiding asyncpg loop mismatch.
 
 
 @pytest.fixture
 async def pool(postgres_container):
-    """Provision a fresh database with the state table and return a pool."""
+    """Provision a fresh database with the state table and return a pool.
+
+    Uses the session-scoped postgres_container from root conftest.
+    Each test gets a fresh database for full isolation.
+    """
     from butlers.db import Database
 
     db = Database(
