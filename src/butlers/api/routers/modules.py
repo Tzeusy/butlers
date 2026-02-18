@@ -92,9 +92,19 @@ async def _get_module_states_via_mcp(
             if text:
                 raw = json.loads(text)
 
+        # Read butler.toml once before iterating to avoid repeated file I/O per module.
+        toml_path = butler_dir / "butler.toml"
+        configured_modules: set[str] = set()
+        if toml_path.is_file():
+            try:
+                configured_modules = set(
+                    tomllib.loads(toml_path.read_bytes().decode()).get("modules", {}).keys()
+                )
+            except (tomllib.TOMLDecodeError, OSError):
+                pass
+
         states: list[ModuleRuntimeStateResponse] = []
         for name, info in raw.items():
-            has_config = _has_module_config(butler_dir, name)
             states.append(
                 ModuleRuntimeStateResponse(
                     name=name,
@@ -102,7 +112,7 @@ async def _get_module_states_via_mcp(
                     enabled=info.get("enabled", True),
                     failure_phase=info.get("failure_phase"),
                     failure_error=info.get("failure_error"),
-                    has_config=has_config,
+                    has_config=name in configured_modules,
                 )
             )
         return states
@@ -193,8 +203,6 @@ async def set_module_enabled(
     503
         If the butler daemon is unreachable.
     """
-    import asyncio
-
     if not any(cfg.name == name for cfg in configs):
         raise HTTPException(status_code=404, detail=f"Butler not found: {name}")
 
