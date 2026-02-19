@@ -617,6 +617,7 @@ class TestOAuthCallbackCredentialPersistence:
     async def test_callback_success_persists_credentials_when_db_manager_available(self):
         """On success, credentials are stored in DB when DatabaseManager is wired."""
         from unittest.mock import AsyncMock, MagicMock, patch
+
         from butlers.api.routers import oauth as oauth_module
 
         app = _make_app()
@@ -690,6 +691,7 @@ class TestOAuthCallbackCredentialPersistence:
     async def test_callback_success_still_returns_200_when_db_persist_fails(self):
         """DB persistence failure is non-fatal; callback still succeeds."""
         from unittest.mock import AsyncMock, MagicMock, patch
+
         from butlers.api.routers import oauth as oauth_module
 
         app = _make_app()

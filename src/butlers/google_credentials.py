@@ -138,9 +138,9 @@ class GoogleCredentials(BaseModel):
         client_id = _pick("GOOGLE_OAUTH_CLIENT_ID", "GMAIL_CLIENT_ID") or cal_data.get(
             "client_id", ""
         )
-        client_secret = _pick(
-            "GOOGLE_OAUTH_CLIENT_SECRET", "GMAIL_CLIENT_SECRET"
-        ) or cal_data.get("client_secret", "")
+        client_secret = _pick("GOOGLE_OAUTH_CLIENT_SECRET", "GMAIL_CLIENT_SECRET") or cal_data.get(
+            "client_secret", ""
+        )
         refresh_token = _pick("GOOGLE_REFRESH_TOKEN", "GMAIL_REFRESH_TOKEN") or cal_data.get(
             "refresh_token", ""
         )
@@ -320,9 +320,7 @@ async def load_google_credentials(conn: Any) -> GoogleCredentials | None:
         )
 
     missing = [
-        field
-        for field in ("client_id", "client_secret", "refresh_token")
-        if not data.get(field)
+        field for field in ("client_id", "client_secret", "refresh_token") if not data.get(field)
     ]
     if missing:
         raise InvalidGoogleCredentialsError(

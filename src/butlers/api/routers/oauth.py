@@ -446,8 +446,7 @@ async def oauth_google_callback(
         message=(
             "OAuth bootstrap complete. Credentials persisted to database."
             if creds_persisted
-            else
-            "OAuth bootstrap complete. Set GMAIL_REFRESH_TOKEN / GOOGLE_REFRESH_TOKEN env vars."
+            else "OAuth bootstrap complete. Set GMAIL_REFRESH_TOKEN / GOOGLE_REFRESH_TOKEN."
         ),
         provider="google",
         scope=scope,

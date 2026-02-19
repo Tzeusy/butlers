@@ -71,9 +71,7 @@ class TestGoogleCredentialsModel:
         assert fake_creds.scope == "https://www.googleapis.com/auth/gmail.readonly"
 
     def test_scope_is_optional(self) -> None:
-        creds = GoogleCredentials(
-            client_id="id", client_secret="secret", refresh_token="token"
-        )
+        creds = GoogleCredentials(client_id="id", client_secret="secret", refresh_token="token")
         assert creds.scope is None
 
     def test_strips_whitespace_from_required_fields(self) -> None:
@@ -102,9 +100,7 @@ class TestGoogleCredentialsModel:
 
     def test_extra_fields_rejected(self) -> None:
         with pytest.raises(Exception):
-            GoogleCredentials(
-                client_id="id", client_secret="s", refresh_token="r", unknown="x"
-            )
+            GoogleCredentials(client_id="id", client_secret="s", refresh_token="r", unknown="x")
 
     def test_repr_does_not_leak_secret(self, fake_creds: GoogleCredentials) -> None:
         """client_secret and refresh_token must never appear in repr()."""
@@ -273,9 +269,7 @@ class TestStoreGoogleCredentials:
     async def test_store_empty_client_id_raises(self) -> None:
         conn = _make_conn()
         with pytest.raises(ValueError, match="client_id"):
-            await store_google_credentials(
-                conn, client_id="", client_secret="s", refresh_token="r"
-            )
+            await store_google_credentials(conn, client_id="", client_secret="s", refresh_token="r")
 
     async def test_store_empty_client_secret_raises(self) -> None:
         conn = _make_conn()
@@ -428,9 +422,7 @@ class TestResolveGoogleCredentials:
             or "bootstrap" in msg.lower()
         )
 
-    async def test_resolve_does_not_log_secrets(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_resolve_does_not_log_secrets(self, caplog: pytest.LogCaptureFixture) -> None:
         payload = {
             "client_id": "db-id",
             "client_secret": "NEVER-LOG-THIS",
