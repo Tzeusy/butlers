@@ -16,7 +16,8 @@ GET  /api/butlers/{name}/secrets/{key}
 
 PUT  /api/butlers/{name}/secrets/{key}
     Upsert a secret.  Body: {value, category?, description?, is_sensitive?,
-    expires_at?}.
+    expires_at?}.  Optional fields are preserved from the existing record
+    on update, not reset to defaults.
 
 DELETE  /api/butlers/{name}/secrets/{key}
     Delete a secret.  404 if not found.
@@ -154,19 +155,46 @@ async def upsert_secret(
     Performs an upsert — if the key already exists its value and metadata
     are updated; otherwise a new record is created.
 
+    Optional fields (``category``, ``description``, ``is_sensitive``,
+    ``expires_at``) are preserved from the existing record when omitted.
+    For new secrets, omitted fields use their documented defaults.
+
     The ``value`` in the request body is write-only: it is stored securely
     but never echoed back in the response.
     """
     store = _credential_store_for(db, name)
 
+    # Fetch existing metadata to support partial updates.
+    # On update, any field left as None in the request is kept from the
+    # existing record rather than reset to its Pydantic default.
+    existing_secrets = await store.list_secrets()
+    existing = next((m for m in existing_secrets if m.key == key), None)
+
+    category = (
+        request.category
+        if request.category is not None
+        else (existing.category if existing is not None else "general")
+    )
+    description = (
+        request.description
+        if request.description is not None
+        else (existing.description if existing is not None else None)
+    )
+    is_sensitive = (
+        request.is_sensitive
+        if request.is_sensitive is not None
+        else (existing.is_sensitive if existing is not None else True)
+    )
+    expires_at = request.expires_at  # None is a valid value (never expires), keep as-is
+
     try:
         await store.store(
             key,
             request.value,
-            category=request.category,
-            description=request.description,
-            is_sensitive=request.is_sensitive,
-            expires_at=request.expires_at,
+            category=category,
+            description=description,
+            is_sensitive=is_sensitive,
+            expires_at=expires_at,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))

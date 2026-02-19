@@ -58,6 +58,8 @@ class SecretEntry(BaseModel):
 # Request models — value accepted on write, never echoed back
 # ---------------------------------------------------------------------------
 
+_UNSET = object()  # sentinel for "field not provided in request"
+
 
 class SecretUpsertRequest(BaseModel):
     """Request body for creating or updating a secret (PUT).
@@ -65,7 +67,10 @@ class SecretUpsertRequest(BaseModel):
     The ``value`` field is required for creating/updating a secret.  It is
     write-only: it is accepted here but never included in any response model.
 
-    All other fields are optional and default to existing values on update.
+    All other fields are optional.  When omitted on an *update*, the existing
+    stored values are preserved — the PUT does **not** reset unspecified fields
+    to their defaults.  When creating a new secret, omitted fields use their
+    documented defaults (``category="general"``, ``is_sensitive=True``, etc.).
     """
 
     value: str = Field(
@@ -73,11 +78,17 @@ class SecretUpsertRequest(BaseModel):
         description="The secret value.  Write-only — never returned in responses.",
         min_length=1,
     )
-    category: str = Field(default="general", description="Grouping label for dashboard display.")
-    description: str | None = Field(default=None, description="Human-readable label.")
-    is_sensitive: bool = Field(
-        default=True,
-        description="When true, mask the value in UI and logs.",
+    category: str | None = Field(
+        default=None,
+        description="Grouping label for dashboard display. Preserved on update when omitted.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Human-readable label.  Preserved from existing record when omitted.",
+    )
+    is_sensitive: bool | None = Field(
+        default=None,
+        description="When true, mask the value in UI and logs. Preserved on update when omitted.",
     )
     expires_at: datetime | None = Field(
         default=None,

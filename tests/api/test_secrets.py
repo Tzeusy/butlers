@@ -434,3 +434,94 @@ class TestDeleteSecret:
                 resp = await client.delete("/api/butlers/nonexistent/secrets/KEY")
 
         assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Partial-update behaviour — existing metadata must be preserved
+# ---------------------------------------------------------------------------
+
+
+class TestUpsertPreservesExistingMetadata:
+    async def test_omitting_category_preserves_existing(self):
+        """When category is omitted in PUT, the existing category must be preserved."""
+        existing = _make_metadata("KEY", category="telegram", is_sensitive=True)
+        # After upsert, CredentialStore.list_secrets returns the updated record
+        # still with category='telegram' (preserved).
+        updated = _make_metadata("KEY", category="telegram", is_sensitive=True)
+        with _app_with_mock_store(list_return=[existing]) as (app, store):
+            # Override list_secrets to return 'existing' on the first call and
+            # 'updated' on the second (post-store re-read).
+            call_count = 0
+
+            async def _list_side_effect(**kwargs):
+                nonlocal call_count
+                call_count += 1
+                return [existing] if call_count == 1 else [updated]
+
+            store.list_secrets.side_effect = _list_side_effect
+
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.put(
+                    "/api/butlers/atlas/secrets/KEY",
+                    json={"value": "new-value"},
+                )
+
+        assert resp.status_code == 200
+        # The store call must have used the existing category, not "general"
+        _, kwargs = store.store.call_args
+        assert kwargs["category"] == "telegram"
+
+    async def test_omitting_is_sensitive_preserves_existing(self):
+        """When is_sensitive is omitted in PUT, existing is_sensitive is preserved."""
+        existing = _make_metadata("KEY", is_sensitive=False)
+        updated = _make_metadata("KEY", is_sensitive=False)
+        with _app_with_mock_store(list_return=[existing]) as (app, store):
+            call_count = 0
+
+            async def _list_side_effect(**kwargs):
+                nonlocal call_count
+                call_count += 1
+                return [existing] if call_count == 1 else [updated]
+
+            store.list_secrets.side_effect = _list_side_effect
+
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                await client.put(
+                    "/api/butlers/atlas/secrets/KEY",
+                    json={"value": "new-value"},
+                )
+
+        _, kwargs = store.store.call_args
+        # is_sensitive should be False (existing), not True (the old default)
+        assert kwargs["is_sensitive"] is False
+
+    async def test_new_secret_uses_defaults_when_fields_omitted(self):
+        """When creating a new secret (key not found), defaults are used for omitted fields."""
+        new_meta = _make_metadata("NEW_KEY", category="general", is_sensitive=True)
+        with _app_with_mock_store(list_return=[new_meta]) as (app, store):
+            # No existing secret — first list_secrets returns empty
+            call_count = 0
+
+            async def _list_side_effect(**kwargs):
+                nonlocal call_count
+                call_count += 1
+                return [] if call_count == 1 else [new_meta]
+
+            store.list_secrets.side_effect = _list_side_effect
+
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                resp = await client.put(
+                    "/api/butlers/atlas/secrets/NEW_KEY",
+                    json={"value": "val"},
+                )
+
+        assert resp.status_code == 200
+        _, kwargs = store.store.call_args
+        assert kwargs["category"] == "general"
+        assert kwargs["is_sensitive"] is True
