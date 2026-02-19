@@ -426,18 +426,21 @@ async def oauth_google_callback(
     )
     logger.info("Scope granted: %s", scope)
     if not creds_persisted:
-        # Log-only fallback: operator must capture and set env vars manually.
-        # Tokens are emitted to stdout for easy capture in dev/bootstrap environments.
-        logger.info(
-            "[BOOTSTRAP] Store the following credentials in your secrets file "
-            "(they are not persisted to DB in this run)."
+        # DB is not wired; warn the operator. Secrets are never printed or logged.
+        logger.warning(
+            "[BOOTSTRAP] Google credentials could NOT be persisted to DB (no DB pool wired). "
+            "Re-run the OAuth bootstrap with a running database, or set env vars manually: "
+            "GMAIL_CLIENT_ID / GOOGLE_OAUTH_CLIENT_ID, "
+            "GMAIL_CLIENT_SECRET / GOOGLE_OAUTH_CLIENT_SECRET, "
+            "GMAIL_REFRESH_TOKEN / GOOGLE_REFRESH_TOKEN."
         )
         print(f"\n{'=' * 60}")
         print("Google OAuth Bootstrap Complete")
-        print("Credentials NOT persisted to DB — set these env vars manually:")
+        print("WARNING: Credentials NOT persisted to DB.")
+        print("Re-run OAuth bootstrap with a running database, or set these env vars manually:")
         print(f"  GMAIL_CLIENT_ID={client_id}")
-        print("  GMAIL_CLIENT_SECRET=<see server logs — NOT printed for security>")
-        print("  GMAIL_REFRESH_TOKEN=<see server logs — NOT printed for security>")
+        print("  GMAIL_CLIENT_SECRET=<must be re-obtained via OAuth flow — never printed>")
+        print("  GMAIL_REFRESH_TOKEN=<must be re-obtained via OAuth flow — never printed>")
         print(f"  GOOGLE_OAUTH_SCOPES={scope}")
         print(f"{'=' * 60}\n")
 

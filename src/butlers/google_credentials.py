@@ -54,13 +54,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Sentinel for redaction
-# ---------------------------------------------------------------------------
-
-_SECRET_FIELDS = frozenset({"client_secret", "refresh_token"})
-
-
-# ---------------------------------------------------------------------------
 # Credential model
 # ---------------------------------------------------------------------------
 
@@ -242,20 +235,20 @@ async def store_google_credentials(
     scope:
         Space-separated OAuth scopes granted (optional).
     """
+    # Validate and normalise via the model (raises ValueError on empty/whitespace fields).
+    validated = GoogleCredentials(
+        client_id=client_id,
+        client_secret=client_secret,
+        refresh_token=refresh_token,
+        scope=scope or None,
+    )
     payload = {
-        "client_id": client_id.strip(),
-        "client_secret": client_secret.strip(),
-        "refresh_token": refresh_token.strip(),
-        "scope": scope.strip() if scope else None,
+        "client_id": validated.client_id,
+        "client_secret": validated.client_secret,
+        "refresh_token": validated.refresh_token,
+        "scope": validated.scope,
         "stored_at": datetime.now(UTC).isoformat(),
     }
-
-    if not payload["client_id"]:
-        raise ValueError("client_id must be a non-empty string")
-    if not payload["client_secret"]:
-        raise ValueError("client_secret must be a non-empty string")
-    if not payload["refresh_token"]:
-        raise ValueError("refresh_token must be a non-empty string")
 
     await conn.execute(
         f"""
