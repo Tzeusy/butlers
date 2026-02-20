@@ -65,7 +65,6 @@ class TestCore010SchemaBootstrapMigration:
         )
         source = inspect.getsource(mod.upgrade)
         assert "CREATE SCHEMA IF NOT EXISTS" in source
-        assert "AUTHORIZATION CURRENT_USER" in source
 
     def test_upgrade_sets_owner_best_effort(self):
         """Upgrade normalizes schema ownership when permissions allow."""

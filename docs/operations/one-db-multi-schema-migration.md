@@ -45,7 +45,6 @@ Target:
   - `relationship`
   - `health`
   - `messenger`
-  - `heartbeat`
 
 ## 4. Naming, Ownership, and Role Model
 
@@ -59,7 +58,6 @@ Target:
   - `butler_relationship_rw`
   - `butler_health_rw`
   - `butler_messenger_rw`
-  - `butler_heartbeat_rw`
 
 Schema ownership:
 - `shared` owned by `butlers_owner`.
@@ -293,6 +291,8 @@ Minimum rollback artifacts:
 
 ## 11. Open Questions
 
+- Should `heartbeat` be migrated as a first-class butler schema in this epic, or
+  deferred until it is roster-managed?
 - Whether any shared tables need read-only vs read-write split by role.
 - Whether cross-schema analytics should run via dedicated reporting role instead of
   runtime principals.

@@ -45,7 +45,7 @@ def _set_schema_owner_best_effort(schema: str) -> None:
 def upgrade() -> None:
     for schema in _REQUIRED_SCHEMAS:
         quoted_schema = _quote_ident(schema)
-        op.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema} AUTHORIZATION CURRENT_USER")
+        op.execute(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema}")
         _set_schema_owner_best_effort(schema)
 
 
