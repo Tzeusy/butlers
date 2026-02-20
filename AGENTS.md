@@ -253,10 +253,6 @@ make test-qg
 ### Notifications DB fallback contract
 - `src/butlers/api/routers/notifications.py` should degrade gracefully when the switchboard DB pool is unavailable: `GET /api/notifications` and `GET /api/butlers/{name}/notifications` return empty paginated payloads, and `GET /api/notifications/stats` returns zeroed stats instead of propagating a `KeyError`/404.
 
-### Notifications metadata normalization contract
-- `src/butlers/api/routers/notifications.py::_normalize_notification_metadata` must keep `NotificationSummary.metadata` object-or-null; non-mapping metadata payloads (arrays, strings, scalars) normalize to `null` instead of raising during serialization.
-- Regression coverage lives in `tests/api/test_notifications_router.py::TestListNotificationsResponseShape::test_non_mapping_metadata_is_normalized_to_null`.
-
 ### Memory Writing Tool Contract
 - `src/butlers/modules/memory/storage.py` write APIs return UUIDs (`store_episode`, `store_fact`, `store_rule`); MCP wrappers in `src/butlers/modules/memory/tools/writing.py` are responsible for shaping tool responses (`id`, `expires_at`, `superseded_id`) and must pass `embedding_engine` in the current positional order.
 
