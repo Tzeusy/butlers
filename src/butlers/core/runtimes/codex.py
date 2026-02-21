@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 # Default timeout for Codex CLI invocation (5 minutes)
 _DEFAULT_TIMEOUT_SECONDS = 300
+_SAFE_MCP_SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _infer_mcp_transport_from_url(url: str) -> str | None:
@@ -62,6 +64,25 @@ def _looks_like_transport_failure(error_detail: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
+def _resolve_transport_details(
+    server_cfg: dict[str, Any], url: str
+) -> tuple[str | None, str | None]:
+    """Return (explicit_transport, inferred_transport) for an MCP server."""
+    explicit_transport = server_cfg.get("transport")
+    normalized_transport = (
+        explicit_transport.strip().lower()
+        if isinstance(explicit_transport, str) and explicit_transport.strip()
+        else None
+    )
+    inferred_transport = _infer_mcp_transport_from_url(url.strip())
+    return normalized_transport, inferred_transport
+
+
+def _is_safe_mcp_server_name(server_name: str) -> bool:
+    """Accept only server names that are safe TOML bare keys."""
+    return bool(_SAFE_MCP_SERVER_NAME_RE.fullmatch(server_name))
+
+
 def _augment_transport_error_detail(error_detail: str, mcp_servers: dict[str, Any]) -> str:
     """Append actionable MCP transport diagnostics when mismatch is likely."""
     if not _looks_like_transport_failure(error_detail):
@@ -75,13 +96,7 @@ def _augment_transport_error_detail(error_detail: str, mcp_servers: dict[str, An
         if not isinstance(url, str) or not url.strip():
             continue
 
-        inferred_transport = _infer_mcp_transport_from_url(url.strip())
-        explicit_transport = server_cfg.get("transport")
-        normalized_transport = (
-            explicit_transport.strip().lower()
-            if isinstance(explicit_transport, str) and explicit_transport.strip()
-            else None
-        )
+        normalized_transport, inferred_transport = _resolve_transport_details(server_cfg, url)
 
         if (
             normalized_transport
@@ -448,6 +463,13 @@ class CodexAdapter(RuntimeAdapter):
             cmd.extend(["--model", model.strip()])
 
         for server_name, server_cfg in mcp_servers.items():
+            if not isinstance(server_name, str) or not _is_safe_mcp_server_name(server_name):
+                logger.warning(
+                    "Skipping Codex MCP server with unsupported name %r; "
+                    "allowed pattern is [A-Za-z0-9_-]+",
+                    server_name,
+                )
+                continue
             if not isinstance(server_cfg, dict):
                 continue
             url = server_cfg.get("url")
@@ -459,13 +481,7 @@ class CodexAdapter(RuntimeAdapter):
 
             # When streamable HTTP is configured/inferred, pass an explicit
             # transport to avoid runtime defaults drifting across Codex versions.
-            explicit_transport = server_cfg.get("transport")
-            normalized_transport = (
-                explicit_transport.strip().lower()
-                if isinstance(explicit_transport, str) and explicit_transport.strip()
-                else None
-            )
-            inferred_transport = _infer_mcp_transport_from_url(url.strip())
+            normalized_transport, inferred_transport = _resolve_transport_details(server_cfg, url)
             if normalized_transport == "streamable_http" or (
                 normalized_transport is None and inferred_transport == "streamable_http"
             ):

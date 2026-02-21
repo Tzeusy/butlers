@@ -581,6 +581,32 @@ async def test_invoke_adds_streamable_http_transport_for_mcp_url():
     assert 'mcp_servers.test.transport="streamable_http"' in cmd
 
 
+async def test_invoke_skips_unsafe_mcp_server_name():
+    """Unsafe MCP server names are ignored to avoid TOML key injection."""
+    adapter = CodexAdapter(codex_binary="/usr/bin/codex")
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
+    mock_proc.returncode = 0
+
+    with patch(_EXEC, return_value=mock_proc) as mock_sub:
+        await adapter.invoke(
+            prompt="do something",
+            system_prompt="you are helpful",
+            mcp_servers={
+                "safe_name": {"url": "http://localhost:9100/mcp"},
+                'unsafe".transport="sse': {"url": "http://localhost:9200/mcp"},
+            },
+            env={"OPENAI_API_KEY": "sk-test"},
+        )
+
+    cmd = mock_sub.call_args[0]
+    assert 'mcp_servers.safe_name.url="http://localhost:9100/mcp"' in cmd
+    assert not any(
+        token.startswith("mcp_servers.unsafe") or 'transport="sse' in token for token in cmd
+    )
+
+
 async def test_invoke_uses_exec_subcommand():
     """invoke() uses codex exec non-interactive invocation."""
     adapter = CodexAdapter(codex_binary="/usr/bin/codex")
