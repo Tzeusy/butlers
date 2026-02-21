@@ -23,6 +23,7 @@ import logging
 import shutil
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from butlers.core.runtimes.base import RuntimeAdapter, register_adapter
 
@@ -30,6 +31,79 @@ logger = logging.getLogger(__name__)
 
 # Default timeout for Codex CLI invocation (5 minutes)
 _DEFAULT_TIMEOUT_SECONDS = 300
+
+
+def _infer_mcp_transport_from_url(url: str) -> str | None:
+    """Infer MCP transport from URL path conventions.
+
+    Returns ``"streamable_http"`` for ``.../mcp`` URLs, ``"sse"`` for
+    ``.../sse`` URLs, and ``None`` when no convention can be inferred.
+    """
+    parsed = urlparse(url)
+    normalized_path = parsed.path.rstrip("/").lower()
+    if normalized_path.endswith("/mcp"):
+        return "streamable_http"
+    if normalized_path.endswith("/sse"):
+        return "sse"
+    return None
+
+
+def _looks_like_transport_failure(error_detail: str) -> bool:
+    """Best-effort detection for MCP transport mismatch failures."""
+    lowered = error_detail.lower()
+    markers = (
+        "rmcp startup failed",
+        "streamable_http",
+        "text/event-stream",
+        "method not allowed",
+        "unsupported media type",
+        "transport",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _augment_transport_error_detail(error_detail: str, mcp_servers: dict[str, Any]) -> str:
+    """Append actionable MCP transport diagnostics when mismatch is likely."""
+    if not _looks_like_transport_failure(error_detail):
+        return error_detail
+
+    hints: list[str] = []
+    for server_name, server_cfg in mcp_servers.items():
+        if not isinstance(server_cfg, dict):
+            continue
+        url = server_cfg.get("url")
+        if not isinstance(url, str) or not url.strip():
+            continue
+
+        inferred_transport = _infer_mcp_transport_from_url(url.strip())
+        explicit_transport = server_cfg.get("transport")
+        normalized_transport = (
+            explicit_transport.strip().lower()
+            if isinstance(explicit_transport, str) and explicit_transport.strip()
+            else None
+        )
+
+        if (
+            normalized_transport
+            and inferred_transport
+            and normalized_transport != inferred_transport
+        ):
+            hints.append(
+                f"{server_name} has transport={normalized_transport!r} but URL looks like "
+                f"{inferred_transport!r} ({url.strip()!r})"
+            )
+
+        if inferred_transport == "sse" or normalized_transport == "sse":
+            hints.append(
+                f"{server_name} uses SSE endpoint {url.strip()!r}; Codex MCP expects streamable "
+                "HTTP (for example .../mcp)"
+            )
+
+    if not hints:
+        return error_detail
+
+    unique_hints = list(dict.fromkeys(hints))
+    return f"{error_detail} | MCP transport diagnostics: {'; '.join(unique_hints)}"
 
 
 def _looks_like_tool_call_event(obj: dict[str, Any]) -> bool:
@@ -383,6 +457,20 @@ class CodexAdapter(RuntimeAdapter):
             escaped_url = url.strip().replace("\\", "\\\\").replace('"', '\\"')
             cmd.extend(["-c", f'mcp_servers.{server_name}.url="{escaped_url}"'])
 
+            # When streamable HTTP is configured/inferred, pass an explicit
+            # transport to avoid runtime defaults drifting across Codex versions.
+            explicit_transport = server_cfg.get("transport")
+            normalized_transport = (
+                explicit_transport.strip().lower()
+                if isinstance(explicit_transport, str) and explicit_transport.strip()
+                else None
+            )
+            inferred_transport = _infer_mcp_transport_from_url(url.strip())
+            if normalized_transport == "streamable_http" or (
+                normalized_transport is None and inferred_transport == "streamable_http"
+            ):
+                cmd.extend(["-c", f'mcp_servers.{server_name}.transport="streamable_http"'])
+
         # Delimit options from positional prompt so prompts that start with
         # '-'/'--' are never parsed as CLI flags by codex exec.
         cmd.append("--")
@@ -413,6 +501,7 @@ class CodexAdapter(RuntimeAdapter):
             returncode = proc.returncode or 0
             if returncode != 0:
                 error_detail = stderr.strip() or stdout.strip() or f"exit code {returncode}"
+                error_detail = _augment_transport_error_detail(error_detail, mcp_servers)
                 logger.error("Codex CLI exited with code %d: %s", returncode, error_detail)
                 raise RuntimeError(f"Codex CLI exited with code {returncode}: {error_detail}")
 

@@ -252,6 +252,29 @@ def test_all_adapters_instantiate():
     assert GeminiAdapter()
 
 
+@pytest.mark.parametrize(
+    ("adapter_factory", "expected_filename"),
+    [
+        (ClaudeCodeAdapter, "mcp.json"),
+        (CodexAdapter, "codex.json"),
+        (GeminiAdapter, "gemini_mcp.json"),
+    ],
+)
+def test_build_config_file_preserves_streamable_http_urls(
+    tmp_path: Path, adapter_factory: Any, expected_filename: str
+):
+    """All runtime adapters preserve streamable HTTP MCP endpoint URLs."""
+    import json
+
+    adapter = adapter_factory()
+    mcp_servers = {"switchboard": {"url": "http://localhost:40100/mcp"}}
+    config_path = adapter.build_config_file(mcp_servers=mcp_servers, tmp_dir=tmp_path)
+
+    assert config_path == tmp_path / expected_filename
+    data = json.loads(config_path.read_text())
+    assert data["mcpServers"]["switchboard"]["url"] == "http://localhost:40100/mcp"
+
+
 # ---------------------------------------------------------------------------
 # ClaudeCodeAdapter-specific tests
 # ---------------------------------------------------------------------------
