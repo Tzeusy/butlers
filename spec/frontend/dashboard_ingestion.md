@@ -50,9 +50,10 @@ The `/ingestion` page SHALL follow existing dashboard conventions used across `f
 - Sidebar icon SHOULD use inbox/download semantics (e.g., inbox tray glyph), not a butler-specific icon.
 
 ### 3.5 Keyboard shortcut
-- Add `g` then `i` navigation to `/ingestion`.
+- Add `g` then `e` navigation to `/ingestion`.
+- Keep `g` then `i` mapped to `/issues` to avoid regressions in existing issue workflows.
 - Keep `g` then `c` mapped to `/contacts` to avoid regressions in existing contact workflows.
-- Shortcut hint dialog SHALL include the new `g` -> `i` mapping.
+- Shortcut hint dialog SHALL include the new `g` -> `e` mapping.
 
 ## 4. Tab Information Architecture
 The page SHALL render four top-level tabs:
@@ -321,6 +322,12 @@ Required backend dependencies:
 Dashboard read APIs required:
 - `GET /api/switchboard/backfill-jobs`
 - `GET /api/switchboard/backfill-jobs/:id`
+
+Dashboard write APIs required:
+- `POST /api/switchboard/backfill-jobs` (start new backfill; maps to `create_backfill_job`)
+- `POST /api/switchboard/backfill-jobs/:id/pause` (maps to `backfill.pause`)
+- `POST /api/switchboard/backfill-jobs/:id/cancel` (maps to `backfill.cancel`)
+- `POST /api/switchboard/backfill-jobs/:id/resume` (maps to `backfill.resume`)
 
 Dashboard write behavior:
 - Dashboard API SHALL call Switchboard MCP tools for backfill lifecycle writes.
