@@ -5642,16 +5642,20 @@ class CalendarModule(Module):
             insert_values.append(value)
 
         reminder_type = "one_time"
+        reminder_legacy_type = "one_time"
         normalized_rule = _normalize_recurrence_rule(recurrence_rule)
         if normalized_rule is not None or cron is not None:
             reminder_type = "recurring"
+            reminder_legacy_type = "recurring_monthly"
+            if normalized_rule and "FREQ=YEARLY" in normalized_rule.upper():
+                reminder_legacy_type = "recurring_yearly"
 
         if "label" in columns:
             add("label", title)
         if "message" in columns:
             add("message", action)
         if "type" in columns:
-            add("type", "one_time" if reminder_type == "one_time" else "recurring_monthly")
+            add("type", reminder_legacy_type)
         if "reminder_type" in columns:
             add("reminder_type", reminder_type)
         if "next_trigger_at" in columns:

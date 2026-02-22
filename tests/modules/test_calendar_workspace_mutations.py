@@ -182,3 +182,59 @@ class TestButlerEventTools:
 
         assert result["status"] == "approval_required"
         assert result["action_id"] == "approval-action-1"
+
+
+class TestReminderBackedTypeMapping:
+    async def test_create_reminder_event_maps_yearly_rrule_to_yearly_legacy_type(self):
+        mod = CalendarModule()
+        db = _mock_db()
+        mod._db = db
+        pool = db.pool
+
+        async def _fetchrow(sql: str, *values):
+            columns_sql = sql.split("INSERT INTO reminders (", 1)[1].split(")", 1)[0]
+            columns = [part.strip() for part in columns_sql.split(",")]
+            row = {"id": uuid.uuid4()}
+            row.update(dict(zip(columns, values, strict=False)))
+            return row
+
+        pool.fetchrow = AsyncMock(side_effect=_fetchrow)
+
+        with (
+            patch.object(mod, "_table_exists", AsyncMock(return_value=True)),
+            patch.object(
+                mod,
+                "_table_columns",
+                AsyncMock(
+                    return_value=[
+                        "label",
+                        "message",
+                        "type",
+                        "reminder_type",
+                        "next_trigger_at",
+                        "due_at",
+                        "timezone",
+                        "until_at",
+                        "recurrence_rule",
+                        "cron",
+                        "dismissed",
+                        "calendar_event_id",
+                        "updated_at",
+                    ]
+                ),
+            ),
+        ):
+            reminder = await mod._create_reminder_event(
+                title="Annual check-in",
+                start_at=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+                timezone="UTC",
+                until_at=None,
+                recurrence_rule="RRULE:FREQ=YEARLY",
+                cron=None,
+                action="Check in",
+                action_args=None,
+                calendar_event_id=uuid.uuid4(),
+            )
+
+        assert reminder["type"] == "recurring_yearly"
+        assert reminder["reminder_type"] == "recurring"

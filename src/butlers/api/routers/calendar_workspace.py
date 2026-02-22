@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections import defaultdict
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -34,6 +35,7 @@ from butlers.api.models.calendar_workspace import (
 from butlers.api.routers.audit import log_audit_entry
 
 router = APIRouter(prefix="/api/calendar/workspace", tags=["calendar", "workspace"])
+logger = logging.getLogger(__name__)
 
 _WORKSPACE_STALE_THRESHOLD = timedelta(minutes=10)
 _WORKSPACE_MAX_RANGE = timedelta(days=90)
@@ -721,6 +723,11 @@ async def _call_mcp_tool(
             detail=f"Butler '{butler_name}' is unreachable: {exc}",
         ) from exc
     except Exception as exc:  # pragma: no cover - defensive transport fallback
+        logger.exception(
+            "Unexpected MCP call failure for butler '%s' tool '%s'",
+            butler_name,
+            tool_name,
+        )
         raise HTTPException(
             status_code=503,
             detail=f"MCP call to '{butler_name}' failed: {exc}",
@@ -762,7 +769,13 @@ async def _projection_freshness_after_mutation(
 
     try:
         status = await _call_mcp_tool(mgr, butler_name, "calendar_sync_status", status_args)
-    except HTTPException:
+    except HTTPException as exc:
+        logger.warning(
+            "Unable to fetch projection freshness for butler '%s': %s",
+            butler_name,
+            exc.detail,
+            exc_info=True,
+        )
         return None
     freshness = status.get("projection_freshness")
     return freshness if isinstance(freshness, dict) else None
