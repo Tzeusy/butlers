@@ -18,7 +18,7 @@ from butlers.api.routers.calendar_workspace import _get_db_manager
 pytestmark = pytest.mark.unit
 
 
-def _mock_mcp_result(payload: dict) -> object:
+def _mock_mcp_result(payload: object) -> object:
     block = MagicMock()
     block.text = json.dumps(payload)
     result = MagicMock()
@@ -315,6 +315,25 @@ class TestWorkspaceSync:
         general_client.call_tool.assert_awaited_once_with("calendar_force_sync", {})
         relationship_client.call_tool.assert_awaited_once_with("calendar_force_sync", {})
 
+    async def test_sync_all_preserves_detail_for_string_payloads(self):
+        general_client = AsyncMock()
+        relationship_client = AsyncMock()
+        general_client.call_tool = AsyncMock(return_value=_mock_mcp_result("triggered"))
+        relationship_client.call_tool = AsyncMock(return_value=_mock_mcp_result("triggered"))
+        app, _, _ = _build_app(
+            mcp_clients={"general": general_client, "relationship": relationship_client}
+        )
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post("/api/calendar/workspace/sync", json={"all": True})
+
+        assert resp.status_code == 200
+        targets = resp.json()["data"]["targets"]
+        assert len(targets) == 2
+        assert {target["detail"] for target in targets} == {"triggered"}
+
     async def test_sync_source_key_targets_specific_source(self):
         source_rows = {
             "general": [
@@ -360,3 +379,40 @@ class TestWorkspaceSync:
             {"calendar_id": "primary"},
         )
         relationship_client.call_tool.assert_not_awaited()
+
+    async def test_sync_source_preserves_detail_for_non_dict_payloads(self):
+        source_rows = {
+            "general": [
+                _workspace_source_row(
+                    source_key="provider:google:primary",
+                    source_kind="provider_event",
+                    lane="user",
+                    butler_name=None,
+                    provider="google",
+                    calendar_id="primary",
+                    writable=True,
+                )
+            ]
+        }
+        general_client = AsyncMock()
+        relationship_client = AsyncMock()
+        general_client.call_tool = AsyncMock(return_value=_mock_mcp_result(["ok", 1]))
+        relationship_client.call_tool = AsyncMock(
+            return_value=_mock_mcp_result({"status": "sync_triggered"})
+        )
+        app, _, _ = _build_app(
+            source_rows=source_rows,
+            mcp_clients={"general": general_client, "relationship": relationship_client},
+        )
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/calendar/workspace/sync",
+                json={"source_key": "provider:google:primary"},
+            )
+
+        assert resp.status_code == 200
+        target = resp.json()["data"]["targets"][0]
+        assert target["detail"] == "[\"ok\", 1]"

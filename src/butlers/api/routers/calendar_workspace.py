@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import defaultdict
 from collections.abc import Mapping
@@ -204,6 +205,14 @@ def _parse_mcp_payload(raw_text: str | None) -> object:
         return json.loads(raw_text)
     except (TypeError, json.JSONDecodeError):
         return raw_text
+
+
+def _sync_detail(parsed: object) -> str | None:
+    if parsed is None:
+        return None
+    if isinstance(parsed, dict | list):
+        return json.dumps(parsed)
+    return str(parsed)
 
 
 def _build_lane_definitions(
@@ -619,70 +628,67 @@ async def sync_workspace(
         else:
             target_rows = [{"db_butler": name} for name in db.butler_names]
 
-    targets: list[CalendarWorkspaceSyncTarget] = []
+    async def _sync_target(
+        *,
+        butler_name: str,
+        call_args: dict[str, Any],
+        source_key: str | None = None,
+        calendar_id: str | None = None,
+    ) -> CalendarWorkspaceSyncTarget:
+        try:
+            client = await mcp_manager.get_client(butler_name)
+            result = await client.call_tool("calendar_force_sync", call_args)
+            parsed = _parse_mcp_payload(_extract_mcp_result_text(result))
+            status = (
+                parsed.get("status", "sync_triggered")
+                if isinstance(parsed, dict)
+                else "sync_triggered"
+            )
+            return CalendarWorkspaceSyncTarget(
+                butler_name=butler_name,
+                source_key=source_key,
+                calendar_id=calendar_id,
+                status=status,
+                detail=_sync_detail(parsed),
+            )
+        except ButlerUnreachableError as exc:
+            return CalendarWorkspaceSyncTarget(
+                butler_name=butler_name,
+                source_key=source_key,
+                calendar_id=calendar_id,
+                status="failed",
+                error=str(exc),
+            )
+
+    targets: list[CalendarWorkspaceSyncTarget]
     if scope == "all":
-        for target in target_rows:
-            butler_name = str(target["db_butler"])
-            try:
-                client = await mcp_manager.get_client(butler_name)
-                result = await client.call_tool("calendar_force_sync", {})
-                parsed = _parse_mcp_payload(_extract_mcp_result_text(result))
-                status = (
-                    parsed.get("status", "sync_triggered")
-                    if isinstance(parsed, dict)
-                    else "sync_triggered"
-                )
-                detail = json.dumps(parsed) if isinstance(parsed, dict) else None
-                targets.append(
-                    CalendarWorkspaceSyncTarget(
-                        butler_name=butler_name,
-                        status=status,
-                        detail=detail,
-                    )
-                )
-            except ButlerUnreachableError as exc:
-                targets.append(
-                    CalendarWorkspaceSyncTarget(
-                        butler_name=butler_name,
-                        status="failed",
-                        error=str(exc),
-                    )
-                )
+        targets = list(
+            await asyncio.gather(
+                *[
+                    _sync_target(butler_name=str(target["db_butler"]), call_args={})
+                    for target in target_rows
+                ]
+            )
+        )
     else:
-        for source in target_rows:
-            butler_name = str(source["db_butler"])
-            call_args: dict[str, Any] = {}
-            if source.get("source_kind") == "provider_event" and source.get("calendar_id"):
-                call_args["calendar_id"] = source["calendar_id"]
-            try:
-                client = await mcp_manager.get_client(butler_name)
-                result = await client.call_tool("calendar_force_sync", call_args)
-                parsed = _parse_mcp_payload(_extract_mcp_result_text(result))
-                status = (
-                    parsed.get("status", "sync_triggered")
-                    if isinstance(parsed, dict)
-                    else "sync_triggered"
-                )
-                detail = json.dumps(parsed) if isinstance(parsed, dict) else None
-                targets.append(
-                    CalendarWorkspaceSyncTarget(
-                        butler_name=butler_name,
+        targets = list(
+            await asyncio.gather(
+                *[
+                    _sync_target(
+                        butler_name=str(source["db_butler"]),
+                        call_args=(
+                            {"calendar_id": source["calendar_id"]}
+                            if source.get("source_kind") == "provider_event"
+                            and source.get("calendar_id")
+                            else {}
+                        ),
                         source_key=source.get("source_key"),
                         calendar_id=source.get("calendar_id"),
-                        status=status,
-                        detail=detail,
                     )
-                )
-            except ButlerUnreachableError as exc:
-                targets.append(
-                    CalendarWorkspaceSyncTarget(
-                        butler_name=butler_name,
-                        source_key=source.get("source_key"),
-                        calendar_id=source.get("calendar_id"),
-                        status="failed",
-                        error=str(exc),
-                    )
-                )
+                    for source in target_rows
+                ]
+            )
+        )
 
     data = CalendarWorkspaceSyncResponse(
         scope=scope,
