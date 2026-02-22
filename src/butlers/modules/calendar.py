@@ -3168,7 +3168,7 @@ class CalendarModule(Module):
                 row["has_cursors"],
                 row["has_action_log"],
             ]
-        except Exception:
+        except KeyError:
             self._projection_tables_available_cache = False
             return False
 
@@ -3647,11 +3647,12 @@ class CalendarModule(Module):
                 metadata={"source_type": SOURCE_KIND_PROVIDER, "provider": provider_name},
             )
 
+        cancelled_at = datetime.now(UTC)
         for cancelled_id in cancelled_ids:
             await self._mark_projection_event_cancelled(
                 source_id=source_id,
                 origin_ref=cancelled_id,
-                origin_updated_at=datetime.now(UTC),
+                origin_updated_at=cancelled_at,
             )
 
     async def _project_scheduler_source(self) -> None:
@@ -3800,7 +3801,6 @@ class CalendarModule(Module):
             if next_trigger_at is None:
                 next_trigger_at = self._coerce_datetime(record.get("due_at"))
 
-            dismissed = bool(record.get("dismissed")) or next_trigger_at is None
             if next_trigger_at is None:
                 await self._mark_projection_event_cancelled(
                     source_id=source_id,
@@ -3808,6 +3808,7 @@ class CalendarModule(Module):
                     origin_updated_at=updated_at,
                 )
                 continue
+            dismissed = bool(record.get("dismissed"))
 
             title = str(record.get("label") or record.get("message") or "Reminder")
             starts_at = next_trigger_at
