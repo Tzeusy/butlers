@@ -72,7 +72,7 @@ GLOBAL_MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024
 Normative requirement:
 - `_extract_attachments()` MUST keep using `SUPPORTED_ATTACHMENT_TYPES` for MIME
   eligibility.
-- `_process_attachments()` MUST apply `ATTACHMENT_POLICY[mime_type]` size and
+- `_process_attachments()` MUST apply `ATTACHMENT_POLICY[media_type]` size and
   fetch behavior, plus global cap.
 
 ## 5. Lazy Attachment Fetching Model
@@ -100,7 +100,7 @@ CREATE TABLE switchboard.attachment_refs (
     message_id TEXT NOT NULL,
     attachment_id TEXT NOT NULL,
     filename TEXT NULL,
-    mime_type TEXT NOT NULL,
+    media_type TEXT NOT NULL,
     size_bytes BIGINT NOT NULL,
     fetched BOOLEAN NOT NULL DEFAULT FALSE,
     blob_ref TEXT NULL,
@@ -111,12 +111,11 @@ CREATE TABLE switchboard.attachment_refs (
 
 Recommended indexes:
 - `(fetched, created_at DESC)` for lazy-fetch queueing/inspection.
-- `(mime_type, created_at DESC)` for analytics and policy audits.
+- `(media_type, created_at DESC)` for analytics and policy audits.
 
 ### 5.3 On-Demand Fetch
 When a butler requires content for an unfetched attachment:
-1. Resolve `attachment_refs` row by `(message_id, attachment_id)` or stable
-   attachment reference handle.
+1. Resolve `attachment_refs` row by `(message_id, attachment_id)`.
 2. Download bytes from Gmail attachment API.
 3. Store in BlobStore and persist `blob_ref`, `fetched=true`.
 4. Return `blob_ref` for existing `get_attachment(storage_ref)` workflow.
@@ -189,7 +188,7 @@ The connector and ingest pipeline MUST emit:
 - `attachment_type_distribution` (counter by MIME type)
 
 Recommended metric attributes (low cardinality):
-- `mime_type`
+- `media_type`
 - `fetch_mode` (`eager`/`lazy`)
 - `result` (`success`/`error`/`skipped_oversized`)
 
