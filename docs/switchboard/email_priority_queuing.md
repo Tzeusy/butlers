@@ -43,7 +43,7 @@ Tier assignment MUST run in deterministic order. The first matching rule wins.
 
 3. `interactive` for direct correspondence
 - Conditions (all required):
-  - user address is present in `To` recipients,
+  - user address is present in `To` or `Cc` recipients,
   - no `List-Unsubscribe` header,
   - no bulk signal in `Precedence` header (for example `bulk` or `list`).
 
@@ -53,7 +53,8 @@ Tier assignment MUST run in deterministic order. The first matching rule wins.
 ### 2.3 Normalization constraints
 
 The connector MUST normalize header matching to avoid casing and formatting drift:
-- email address comparisons use lowercase canonical forms,
+- email address comparisons trim surrounding whitespace, strip wrapper formatting (for example angle brackets), and compare lowercase local/domain values,
+- provider-specific alias rewrites (for example Gmail dot removal or `+tag` stripping) MUST NOT be applied unless both compared datasets are normalized with the same provider-aware routine,
 - header key checks are case-insensitive,
 - missing headers are treated as absent (not as match).
 
@@ -74,6 +75,10 @@ To prevent permanent deferral of lower tiers during sustained high-priority burs
 - `max_consecutive_same_tier` (default: `10`)
 - After `N` consecutive dequeues from tier `T`, if any lower-priority tier queue is non-empty, the next dequeue MUST come from the highest available lower tier.
 - If no lower-priority queue is non-empty, processing MAY continue from tier `T`.
+- Consecutive counter semantics:
+  - counter tracks the currently served tier,
+  - counter resets to `1` whenever dequeued tier changes,
+  - after a forced lower-tier dequeue, next selection re-evaluates from highest non-empty tier.
 
 This yields bounded fairness while preserving urgency preference.
 
