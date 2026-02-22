@@ -512,6 +512,8 @@ class TestContactsSyncStateStore:
         [
             ("{}", {}),
             ('{"people/1":"etag:v1:deleted=0"}', {"people/1": "etag:v1:deleted=0"}),
+            ("", {}),
+            ("   ", {}),
         ],
     )
     async def test_load_parses_contact_versions_json_text(
@@ -539,6 +541,39 @@ class TestContactsSyncStateStore:
         state = await store.load(provider="google", account_id="acct-1")
 
         assert state.contact_versions == {"people/1": "etag:v1:deleted=0"}
+
+    @pytest.mark.parametrize("raw_versions", ['{"people/1"', "{bad json}"])
+    async def test_load_rejects_malformed_contact_versions_json_text(
+        self, raw_versions: str
+    ) -> None:
+        """load() raises when contact_versions contains malformed JSON text."""
+        pool = _FakePool()
+        pool._rows[("google", "acct-1")] = self._state_row(contact_versions=raw_versions)
+        store = ContactsSyncStateStore(pool)
+
+        with pytest.raises(ValueError, match="contains invalid JSON"):
+            await store.load(provider="google", account_id="acct-1")
+
+    @pytest.mark.parametrize("raw_versions", ["[]", '"literal"'])
+    async def test_load_rejects_non_object_contact_versions_json_text(
+        self, raw_versions: str
+    ) -> None:
+        """load() raises when JSON text decodes to non-object values."""
+        pool = _FakePool()
+        pool._rows[("google", "acct-1")] = self._state_row(contact_versions=raw_versions)
+        store = ContactsSyncStateStore(pool)
+
+        with pytest.raises(ValueError, match="must decode to an object"):
+            await store.load(provider="google", account_id="acct-1")
+
+    async def test_load_rejects_non_mapping_contact_versions_value(self) -> None:
+        """load() raises when contact_versions is neither mapping nor JSON text."""
+        pool = _FakePool()
+        pool._rows[("google", "acct-1")] = self._state_row(contact_versions=123)
+        store = ContactsSyncStateStore(pool)
+
+        with pytest.raises(ValueError, match="must be a mapping or JSON object text"):
+            await store.load(provider="google", account_id="acct-1")
 
     async def test_save_and_load_round_trip(self) -> None:
         """save() persists state and load() retrieves it correctly."""
