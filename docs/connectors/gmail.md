@@ -100,9 +100,6 @@ Optional runtime controls:
 - `GMAIL_WATCH_RENEW_INTERVAL_S` (watch renewal cadence, default 86400 = 1 day)
 - `GMAIL_LABEL_INCLUDE` (comma-separated label filter, future)
 - `GMAIL_LABEL_EXCLUDE` (comma-separated label filter, future)
-- `CONNECTOR_BACKFILL_POLL_INTERVAL_S` (optional, default `60`; backfill poll cadence)
-- `CONNECTOR_BACKFILL_PROGRESS_INTERVAL` (optional, default `50`; backfill progress report cadence in messages)
-- `CONNECTOR_BACKFILL_ENABLED` (optional, default `true`; disable backfill polling entirely)
 
 Pub/Sub push notification controls (optional, for near real-time ingestion):
 - `GMAIL_PUBSUB_ENABLED` (enable Pub/Sub push mode, default false)
@@ -246,9 +243,9 @@ historical email processing.
   Gmail connectors.
 
 ### 9.6 Environment Variables
-- `CONNECTOR_BACKFILL_POLL_INTERVAL_S` (optional, default `60`)
-- `CONNECTOR_BACKFILL_PROGRESS_INTERVAL` (optional, default `50`)
-- `CONNECTOR_BACKFILL_ENABLED` (optional, default `true`)
+- `CONNECTOR_BACKFILL_POLL_INTERVAL_S` (optional, default `60`; backfill poll cadence)
+- `CONNECTOR_BACKFILL_PROGRESS_INTERVAL` (optional, default `50`; backfill progress report cadence in messages)
+- `CONNECTOR_BACKFILL_ENABLED` (optional, default `true`; disable backfill polling entirely)
 
 ### 9.7 Non-Goals for Gmail Backfill
 - Backfill does not process drafts, sent mail, or trash (inbox/label-scoped
