@@ -160,12 +160,16 @@ Switchboard MUST expose the following tools.
 
 ### 5.2 Connector-facing tools
 - `backfill.poll(connector_type, endpoint_identity) -> {job_id, params, cursor} | null`
-- `backfill.progress(job_id, rows_processed, rows_skipped, cost_spent_cents, cursor?, status?, error?) -> {status}`
+- `backfill.progress(job_id, rows_processed, rows_skipped, cost_spent_cents_delta, cursor?, status?, error?) -> {status}`
 
-### 5.3 Tool behavior requirements
+### 5.3 On-demand retrieval tool
+- `email_search_and_ingest(query, max_results?) -> {results_ingested, results_skipped, truncation_applied}`
+- This tool is exposed by Switchboard MCP for user-initiated retrieval and invoked by butlers (or dashboard-triggered butler flows), not by connector backfill poll loops.
+
+### 5.4 Tool behavior requirements
 - `backfill.poll` returns the oldest `pending` job for that connector identity and transitions it to `active` (setting `started_at` when first activated).
-- `backfill.progress` updates counters, optional cursor, optional error, and returns authoritative status.
-- If `cost_spent_cents >= daily_cost_cap_cents`, Switchboard MUST transition to `cost_capped` and return that status.
+- `backfill.progress` updates counters, `updated_at`, optional cursor, optional error, and returns authoritative status.
+- If cumulative `cost_spent_cents >= daily_cost_cap_cents`, Switchboard MUST transition to `cost_capped` and return that status.
 - Dashboard controls and connector execution tools must remain role-separated (dashboard does not directly mutate DB, connector does not directly mutate DB).
 
 ## 6. Connector Polling and Execution Protocol
@@ -181,7 +185,7 @@ When `backfill.poll` returns a job:
 1. Traverse message history backward within `[date_from, date_to]`.
 2. For each message, apply tiered ingestion policy from `docs/connectors/email_ingestion_policy.md`.
 3. Submit historical events using standard `ingest.v1` contract.
-4. Reuse live idempotency key format (for Gmail: `gmail:<endpoint_identity>:<message_id>`).
+4. Reuse live idempotency key rules from `docs/connectors/interface.md` section 6 (email default: RFC `Message-ID` + mailbox identity; provider message IDs are fallback-only when RFC header is unavailable).
 5. Report progress every `N` messages (default `N=50`, configurable via `CONNECTOR_BACKFILL_PROGRESS_INTERVAL`).
 
 Connector stop conditions:
@@ -205,7 +209,7 @@ Required controls per active job:
 - `daily_cost_cap_cents`: connector and Switchboard enforce daily spend ceiling.
 
 Normative behavior:
-- Connector tracks estimated spend and includes deltas in `backfill.progress`.
+- Connector tracks estimated spend and reports per-batch deltas via `cost_spent_cents_delta` in `backfill.progress`.
 - Switchboard computes authoritative cumulative spend in job state.
 - When cap is reached, status transitions to `cost_capped` and work stops.
 - Daily cap reset occurs at midnight UTC by default; deployments MAY define a different timezone policy but MUST document it.
@@ -232,7 +236,7 @@ Execution shape:
 ### 8.2 Mode B: On-demand backfill
 On-demand retrieval is user-question-driven:
 - Example: "When did I last visit Dr. Smith?"
-- Butler executes `email_search_and_ingest(query, max_results)` against Gmail API.
+- Butler executes Switchboard MCP tool `email_search_and_ingest(query, max_results)` to request provider search + ingest on demand.
 - Results are ingested immediately via Switchboard ingest path.
 
 Normative limits:
