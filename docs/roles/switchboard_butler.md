@@ -690,22 +690,27 @@ Minimum `job summary` fields:
 - `target_categories`
 - `date_from`
 - `date_to`
+- `rate_limit_per_hour`
+- `daily_cost_cap_cents`
 - `status`
 - `rows_processed`
 - `rows_skipped`
 - `cost_spent_cents`
+- `error`
 - `created_at`
 - `started_at`
 - `completed_at`
+- `updated_at`
 
 ### 16.2 Connector-Facing Backfill Tools
 These tools are called by connector processes through Switchboard MCP.
 
 - `backfill.poll(connector_type, endpoint_identity) -> {job_id, params, cursor} | null`
   - Returns the oldest `pending` job for the connector identity, or `null` when none is available.
+  - `params` includes `target_categories`, `date_from`, `date_to`, `rate_limit_per_hour`, and `daily_cost_cap_cents`.
   - On assignment, sets `status=active` and initializes `started_at` when first transitioning from `pending`.
 - `backfill.progress(job_id, rows_processed, rows_skipped, cost_spent_cents, cursor?, status?, error?) -> {status}`
-  - Updates counters and optional cursor/error payload.
+  - Updates counters using per-batch deltas (`rows_processed`, `rows_skipped`, `cost_spent_cents`) and updates optional cursor/error payload.
   - Returns the current authoritative job status so connectors can react to `paused`/`cancelled`.
   - If `cost_spent_cents >= daily_cost_cap_cents`, Switchboard must set `status=cost_capped` and return `cost_capped`.
 
