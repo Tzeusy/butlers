@@ -30,7 +30,9 @@ def upgrade() -> None:
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             CONSTRAINT chk_entities_entity_type CHECK (
                 entity_type IN ('person', 'organization', 'place', 'other')
-            )
+            ),
+            CONSTRAINT uq_entities_tenant_canonical_type
+                UNIQUE (tenant_id, canonical_name, entity_type)
         )
     """)
 
@@ -52,24 +54,24 @@ def upgrade() -> None:
     op.execute("""
         ALTER TABLE facts
         ADD COLUMN IF NOT EXISTS entity_id UUID
-            REFERENCES entities(id) ON DELETE SET NULL
+            REFERENCES entities(id) ON DELETE RESTRICT
     """)
 
     op.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_entity_subject_predicate_active
-        ON facts (entity_id, subject, predicate)
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_entity_scope_predicate_active
+        ON facts (entity_id, scope, predicate)
         WHERE entity_id IS NOT NULL AND validity = 'active'
     """)
 
     op.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_no_entity_subject_predicate_active
-        ON facts (subject, predicate)
+        ON facts (scope, subject, predicate)
         WHERE entity_id IS NULL AND validity = 'active'
     """)
 
 
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS idx_facts_no_entity_subject_predicate_active")
-    op.execute("DROP INDEX IF EXISTS idx_facts_entity_subject_predicate_active")
+    op.execute("DROP INDEX IF EXISTS idx_facts_entity_scope_predicate_active")
     op.execute("ALTER TABLE facts DROP COLUMN IF EXISTS entity_id")
     op.execute("DROP TABLE IF EXISTS entities CASCADE")

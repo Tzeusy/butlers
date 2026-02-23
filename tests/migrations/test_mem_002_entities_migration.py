@@ -80,6 +80,13 @@ class TestMem002UpgradeEntitiesTable:
         for valid_type in ("person", "organization", "place", "other"):
             assert valid_type in source
 
+    def test_entities_table_has_unique_tenant_canonical_type(self) -> None:
+        """Entities table has unique constraint on (tenant_id, canonical_name, entity_type)."""
+        mod = _load_migration_002()
+        source = inspect.getsource(mod.upgrade)
+        assert "uq_entities_tenant_canonical_type" in source
+        assert "UNIQUE (tenant_id, canonical_name, entity_type)" in source
+
     def test_entities_table_has_aliases_array(self) -> None:
         """Entities table has aliases TEXT[] column."""
         mod = _load_migration_002()
@@ -132,25 +139,27 @@ class TestMem002UpgradeFactsFK:
         assert "ADD COLUMN IF NOT EXISTS entity_id UUID" in source
         assert "REFERENCES entities(id)" in source
 
-    def test_entity_id_fk_on_delete_set_null(self) -> None:
-        """entity_id FK uses ON DELETE SET NULL semantics."""
+    def test_entity_id_fk_on_delete_restrict(self) -> None:
+        """entity_id FK uses ON DELETE RESTRICT to protect entity records."""
         mod = _load_migration_002()
         source = inspect.getsource(mod.upgrade)
-        assert "ON DELETE SET NULL" in source
+        assert "ON DELETE RESTRICT" in source
 
-    def test_partial_unique_index_with_entity_id(self) -> None:
-        """Unique partial index on (entity_id, subject, predicate) WHERE entity_id IS NOT NULL."""
+    def test_partial_unique_index_with_entity_id_includes_scope(self) -> None:
+        """Unique partial index on (entity_id, scope, predicate) WHERE entity_id IS NOT NULL."""
         mod = _load_migration_002()
         source = inspect.getsource(mod.upgrade)
-        assert "idx_facts_entity_subject_predicate_active" in source
+        assert "idx_facts_entity_scope_predicate_active" in source
+        assert "entity_id, scope, predicate" in source
         assert "entity_id IS NOT NULL" in source
         assert "validity = 'active'" in source
 
-    def test_partial_unique_index_without_entity_id(self) -> None:
-        """Unique partial index on (subject, predicate) WHERE entity_id IS NULL AND active."""
+    def test_partial_unique_index_without_entity_id_includes_scope(self) -> None:
+        """Unique partial index on (scope, subject, predicate) WHERE entity_id IS NULL."""
         mod = _load_migration_002()
         source = inspect.getsource(mod.upgrade)
         assert "idx_facts_no_entity_subject_predicate_active" in source
+        assert "scope, subject, predicate" in source
         assert "entity_id IS NULL" in source
 
 
@@ -159,7 +168,7 @@ class TestMem002Downgrade:
         """Downgrade removes both partial unique indexes on facts."""
         mod = _load_migration_002()
         source = inspect.getsource(mod.downgrade)
-        assert "DROP INDEX IF EXISTS idx_facts_entity_subject_predicate_active" in source
+        assert "DROP INDEX IF EXISTS idx_facts_entity_scope_predicate_active" in source
         assert "DROP INDEX IF EXISTS idx_facts_no_entity_subject_predicate_active" in source
 
     def test_downgrade_drops_entity_id_column(self) -> None:
@@ -178,7 +187,7 @@ class TestMem002Downgrade:
         """Downgrade drops indexes, then FK column, then entities table (dependency order)."""
         mod = _load_migration_002()
         source = inspect.getsource(mod.downgrade)
-        idx1_pos = source.index("idx_facts_entity_subject_predicate_active")
+        idx1_pos = source.index("idx_facts_entity_scope_predicate_active")
         idx2_pos = source.index("idx_facts_no_entity_subject_predicate_active")
         col_pos = source.index("DROP COLUMN IF EXISTS entity_id")
         table_pos = source.index("DROP TABLE IF EXISTS entities CASCADE")
