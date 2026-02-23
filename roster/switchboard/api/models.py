@@ -411,6 +411,8 @@ class TriageRuleTestResponse(BaseModel):
     """Response envelope for POST /api/switchboard/triage-rules/test."""
 
     data: TriageRuleTestResult
+
+
 # Backfill job models
 # ---------------------------------------------------------------------------
 

@@ -15,11 +15,12 @@ import importlib.util
 import json
 import logging
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from butlers.api.db import DatabaseManager
 from butlers.api.models import ApiResponse, PaginatedResponse, PaginationMeta
@@ -43,6 +44,10 @@ if _spec is not None and _spec.loader is not None:
     ConnectorStatsDaily = _models.ConnectorStatsDaily
     FanoutRow = _models.FanoutRow
     IngestionOverviewStats = _models.IngestionOverviewStats
+    BackfillJobEntry = _models.BackfillJobEntry
+    BackfillJobSummary = _models.BackfillJobSummary
+    CreateBackfillJobRequest = _models.CreateBackfillJobRequest
+    BackfillLifecycleResponse = _models.BackfillLifecycleResponse
     TriageRule = _models.TriageRule
     TriageRuleCreate = _models.TriageRuleCreate
     TriageRuleUpdate = _models.TriageRuleUpdate
@@ -925,7 +930,6 @@ async def get_ingestion_fanout(
     return ApiResponse[list[FanoutRow]](data=data)
 
 
-
 # ---------------------------------------------------------------------------
 # Backfill helpers
 # ---------------------------------------------------------------------------
@@ -1344,6 +1348,7 @@ async def get_backfill_job_progress(
     Returns 503 on database error.
     """
     return await get_backfill_job(job_id=job_id, db=db)
+
 
 # ---------------------------------------------------------------------------
 # Helpers — triage rules
