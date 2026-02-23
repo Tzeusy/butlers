@@ -101,9 +101,7 @@ def test_migration_down_revision_is_none():
 def test_migration_depends_on_is_none():
     """depends_on must be None for the chain root."""
     module = _load_migration()
-    assert module.depends_on is None, (
-        f"Expected depends_on=None, got {module.depends_on!r}"
-    )
+    assert module.depends_on is None, f"Expected depends_on=None, got {module.depends_on!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -531,8 +529,7 @@ class TestDataIntegrityRules:
         # There must be no ON DELETE CASCADE pointing at accounts
         # (accounts FK should only be SET NULL so records survive account deletion)
         lines_with_cascade = [
-            line for line in src.splitlines()
-            if "REFERENCES accounts" in line and "CASCADE" in line
+            line for line in src.splitlines() if "REFERENCES accounts" in line and "CASCADE" in line
         ]
         assert not lines_with_cascade, (
             f"FK to accounts must use ON DELETE SET NULL, not CASCADE: {lines_with_cascade}"
