@@ -182,6 +182,27 @@ class TestListNotificationsPagination:
         assert data_call_args[0][-2] == 10
         assert data_call_args[0][-1] == 5
 
+    async def test_invalid_offset_returns_422(self):
+        app, _, _ = _build_app_with_mock_db([])
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/notifications", params={"offset": -1})
+
+        assert resp.status_code == 422
+
+    async def test_invalid_limit_zero_returns_422(self):
+        app, _, _ = _build_app_with_mock_db([])
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/notifications", params={"limit": 0})
+
+        assert resp.status_code == 422
+
+
 class TestListNotificationsFilterByButler:
     """Test filtering by source butler."""
 

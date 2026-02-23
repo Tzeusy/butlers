@@ -225,9 +225,6 @@ All 122 beads closed. 449 tests passing on main. Full implementation complete.
 - `pyproject.toml` testpaths: `["tests", "roster"]`
 - Uses `--import-mode=importlib` to avoid module-name collisions across butler test dirs
 
-### Butler API fixture duplication
-- Many API tests rebuild the same roster fixture/`create_app` overrides (e.g., `tests/api/test_butler_config.py`, `tests/api/test_butler_detail.py`, `tests/api/test_butler_discovery.py`, `tests/api/test_butler_skills.py`). Factor a shared helper so markdown, butler.toml, skill folder and dependency overrides can be reused instead of being redefined per file.
-
 ### Test Patterns
 - All DB tests use `testcontainers.postgres.PostgresContainer` with `asyncpg.create_pool()`
 - Tables created via direct SQL from migration files (not Alembic runner)
