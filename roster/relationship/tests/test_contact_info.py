@@ -56,11 +56,13 @@ async def pool(provisioned_postgres_pool):
                 ON activity_feed (contact_id, created_at)
         """)
 
-        # Create contact_info table (from 002 migration)
+        # Create shared schema and shared.contact_info
+        # (moved from per-butler schema in contacts_002)
+        await p.execute("CREATE SCHEMA IF NOT EXISTS shared")
         await p.execute("""
-            CREATE TABLE IF NOT EXISTS contact_info (
+            CREATE TABLE IF NOT EXISTS shared.contact_info (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+                contact_id UUID NOT NULL,
                 type VARCHAR NOT NULL,
                 value TEXT NOT NULL,
                 label VARCHAR,
@@ -69,12 +71,12 @@ async def pool(provisioned_postgres_pool):
             )
         """)
         await p.execute("""
-            CREATE INDEX IF NOT EXISTS idx_contact_info_type_value
-                ON contact_info (type, value)
+            CREATE INDEX IF NOT EXISTS idx_shared_contact_info_type_value
+                ON shared.contact_info (type, value)
         """)
         await p.execute("""
-            CREATE INDEX IF NOT EXISTS idx_contact_info_contact_id
-                ON contact_info (contact_id)
+            CREATE INDEX IF NOT EXISTS idx_shared_contact_info_contact_id
+                ON shared.contact_info (contact_id)
         """)
 
         yield p
@@ -510,5 +512,5 @@ async def test_contact_info_cascade_on_contact_delete(pool):
     await pool.execute("DELETE FROM contacts WHERE id = $1", c["id"])
 
     # Verify contact_info is also gone
-    rows = await pool.fetch("SELECT * FROM contact_info WHERE contact_id = $1", c["id"])
+    rows = await pool.fetch("SELECT * FROM shared.contact_info WHERE contact_id = $1", c["id"])
     assert len(rows) == 0
