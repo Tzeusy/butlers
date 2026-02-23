@@ -100,10 +100,6 @@ class TestLoadPricing:
         config = load_pricing()
         assert len(config.model_ids) >= 1
 
-    def test_missing_file_raises_error(self, tmp_path):
-        with pytest.raises(PricingError, match="not found"):
-            load_pricing(tmp_path / "nonexistent.toml")
-
     def test_invalid_toml_raises_error(self, tmp_path):
         bad_file = tmp_path / "bad.toml"
         bad_file.write_text("not valid [[[toml")

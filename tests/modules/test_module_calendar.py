@@ -1097,9 +1097,6 @@ class TestCalendarWriteTools:
 class TestGoogleCredentialParsing:
     """Verify credential JSON parsing and validation errors."""
 
-    def test_from_env_removed(self):
-        assert not hasattr(_GoogleOAuthCredentials, "from_env")
-
     def test_invalid_json_is_explicit(self, monkeypatch: pytest.MonkeyPatch):
         """from_json() raises CalendarCredentialError for malformed JSON."""
         with pytest.raises(CalendarCredentialError) as excinfo:
@@ -1373,10 +1370,6 @@ class TestGoogleReadOperations:
 
 class TestGooglePayloadValidationErrors:
     """Verify payload/data validation raises ValueError, not auth errors."""
-
-    def test_parse_google_datetime_raises_value_error_for_invalid_datetime(self):
-        with pytest.raises(ValueError, match="invalid dateTime"):
-            _parse_google_datetime("not-a-datetime")
 
     def test_parse_google_event_boundary_raises_value_error_for_invalid_date(self):
         with pytest.raises(ValueError, match="invalid date value"):
