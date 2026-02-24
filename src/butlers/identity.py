@@ -12,6 +12,7 @@ Used by:
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -215,8 +216,6 @@ async def create_temp_contact(
                     "source_channel": channel_type,
                     "source_value": channel_value,
                 }
-                import json
-
                 contact_row: asyncpg.Record = await conn.fetchrow(
                     """
                     INSERT INTO shared.contacts (name, roles, metadata)
