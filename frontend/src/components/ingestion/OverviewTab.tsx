@@ -112,7 +112,7 @@ export function OverviewTab({ isActive }: OverviewTabProps) {
           />
         </div>
         <div>
-          <TierBreakdownDonut summary={summary} overview={overview} isLoading={summaryLoading} />
+          <TierBreakdownDonut summary={summary} overview={overview} isLoading={summaryLoading || overviewLoading} />
         </div>
       </div>
 
