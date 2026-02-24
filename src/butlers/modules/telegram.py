@@ -25,10 +25,15 @@ logger = logging.getLogger(__name__)
 TELEGRAM_API_BASE = "https://api.telegram.org/bot{token}"
 _ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# Reaction lifecycle emoji keys (map to emoji via REACTION_TO_EMOJI).
+REACTION_IN_PROGRESS = ":eye"
+REACTION_SUCCESS = ":done"
+REACTION_FAILURE = ":space invader"
+
 REACTION_TO_EMOJI = {
-    ":eye": "\U0001f440",
-    ":done": "\u2705",
-    ":space invader": "\U0001f47e",
+    REACTION_IN_PROGRESS: "\U0001f440",
+    REACTION_SUCCESS: "\u2705",
+    REACTION_FAILURE: "\U0001f47e",
 }
 
 
@@ -295,18 +300,18 @@ class TelegramModule(Module):
         except (ValueError, AttributeError):
             return
 
-        # Reuse the same message_key format used by process_update so that
-        # lifecycle deduplication works correctly if both paths are live.
-        message_key = f"{chat_str}:{message_id}"
-
-        await self._update_reaction(
-            chat_id=chat_str,
-            message_id=message_id,
-            message_key=message_key,
-            reaction=reaction,
-        )
-        if reaction in (REACTION_SUCCESS, REACTION_FAILURE):
-            self._cleanup_message_state(message_key)
+        try:
+            await self._set_message_reaction(
+                chat_id=chat_str,
+                message_id=message_id,
+                reaction=reaction,
+            )
+        except Exception:
+            logger.debug(
+                "react_for_ingest: failed to set reaction %r for %s",
+                reaction,
+                external_thread_id,
+            )
 
     # ------------------------------------------------------------------
     # Telegram API helpers

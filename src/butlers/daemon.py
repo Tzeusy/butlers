@@ -2887,7 +2887,7 @@ class ButlerDaemon:
 
                 # Resolve TelegramModule for reaction lifecycle (telegram-only).
                 _telegram_mod = (
-                    {m.name: m for m in daemon._modules}.get("telegram")
+                    next((m for m in daemon._active_modules if m.name == "telegram"), None)
                     if channel == "telegram"
                     else None
                 )

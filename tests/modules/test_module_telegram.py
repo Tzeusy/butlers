@@ -499,14 +499,14 @@ class TestReactForIngest:
     async def test_valid_thread_id_fires_in_progress_reaction(
         self, telegram_module: TelegramModule, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """react_for_ingest calls _update_reaction for a valid thread identity."""
+        """react_for_ingest calls _set_message_reaction for a valid thread identity."""
         monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
         calls: list[dict] = []
 
-        async def mock_update_reaction(**kwargs: Any) -> None:
+        async def mock_set_reaction(**kwargs: Any) -> None:
             calls.append(kwargs)
 
-        telegram_module._update_reaction = mock_update_reaction  # type: ignore[method-assign]
+        telegram_module._set_message_reaction = mock_set_reaction  # type: ignore[method-assign]
 
         await telegram_module.react_for_ingest(
             external_thread_id="42:100",
@@ -516,20 +516,19 @@ class TestReactForIngest:
         assert len(calls) == 1
         assert calls[0]["chat_id"] == "42"
         assert calls[0]["message_id"] == 100
-        assert calls[0]["message_key"] == "42:100"
         assert calls[0]["reaction"] == ":eye"
 
     async def test_valid_thread_id_fires_success_reaction(
         self, telegram_module: TelegramModule, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """react_for_ingest fires success reaction and cleans up lifecycle state."""
+        """react_for_ingest fires success reaction via _set_message_reaction."""
         monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
         calls: list[dict] = []
 
-        async def mock_update_reaction(**kwargs: Any) -> None:
+        async def mock_set_reaction(**kwargs: Any) -> None:
             calls.append(kwargs)
 
-        telegram_module._update_reaction = mock_update_reaction  # type: ignore[method-assign]
+        telegram_module._set_message_reaction = mock_set_reaction  # type: ignore[method-assign]
 
         await telegram_module.react_for_ingest(
             external_thread_id="123:456",
@@ -542,14 +541,14 @@ class TestReactForIngest:
     async def test_valid_thread_id_fires_failure_reaction(
         self, telegram_module: TelegramModule, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """react_for_ingest fires failure reaction and cleans up lifecycle state."""
+        """react_for_ingest fires failure reaction via _set_message_reaction."""
         monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
         calls: list[dict] = []
 
-        async def mock_update_reaction(**kwargs: Any) -> None:
+        async def mock_set_reaction(**kwargs: Any) -> None:
             calls.append(kwargs)
 
-        telegram_module._update_reaction = mock_update_reaction  # type: ignore[method-assign]
+        telegram_module._set_message_reaction = mock_set_reaction  # type: ignore[method-assign]
 
         await telegram_module.react_for_ingest(
             external_thread_id="99:200",
@@ -563,11 +562,11 @@ class TestReactForIngest:
         """react_for_ingest silently no-ops when external_thread_id is None."""
         called = False
 
-        async def mock_update_reaction(**kwargs: Any) -> None:
+        async def mock_set_reaction(**kwargs: Any) -> None:
             nonlocal called
             called = True
 
-        telegram_module._update_reaction = mock_update_reaction  # type: ignore[method-assign]
+        telegram_module._set_message_reaction = mock_set_reaction  # type: ignore[method-assign]
 
         await telegram_module.react_for_ingest(
             external_thread_id=None,
@@ -580,11 +579,11 @@ class TestReactForIngest:
         """react_for_ingest silently no-ops when external_thread_id is empty string."""
         called = False
 
-        async def mock_update_reaction(**kwargs: Any) -> None:
+        async def mock_set_reaction(**kwargs: Any) -> None:
             nonlocal called
             called = True
 
-        telegram_module._update_reaction = mock_update_reaction  # type: ignore[method-assign]
+        telegram_module._set_message_reaction = mock_set_reaction  # type: ignore[method-assign]
 
         await telegram_module.react_for_ingest(
             external_thread_id="",
@@ -599,11 +598,11 @@ class TestReactForIngest:
         """react_for_ingest no-ops when thread id has no colon separator."""
         called = False
 
-        async def mock_update_reaction(**kwargs: Any) -> None:
+        async def mock_set_reaction(**kwargs: Any) -> None:
             nonlocal called
             called = True
 
-        telegram_module._update_reaction = mock_update_reaction  # type: ignore[method-assign]
+        telegram_module._set_message_reaction = mock_set_reaction  # type: ignore[method-assign]
 
         await telegram_module.react_for_ingest(
             external_thread_id="nocolon",
@@ -618,11 +617,11 @@ class TestReactForIngest:
         """react_for_ingest no-ops when message_id part is not an integer."""
         called = False
 
-        async def mock_update_reaction(**kwargs: Any) -> None:
+        async def mock_set_reaction(**kwargs: Any) -> None:
             nonlocal called
             called = True
 
-        telegram_module._update_reaction = mock_update_reaction  # type: ignore[method-assign]
+        telegram_module._set_message_reaction = mock_set_reaction  # type: ignore[method-assign]
 
         await telegram_module.react_for_ingest(
             external_thread_id="42:notanumber",
@@ -637,11 +636,11 @@ class TestReactForIngest:
         """react_for_ingest no-ops when chat_id part is empty."""
         called = False
 
-        async def mock_update_reaction(**kwargs: Any) -> None:
+        async def mock_set_reaction(**kwargs: Any) -> None:
             nonlocal called
             called = True
 
-        telegram_module._update_reaction = mock_update_reaction  # type: ignore[method-assign]
+        telegram_module._set_message_reaction = mock_set_reaction  # type: ignore[method-assign]
 
         await telegram_module.react_for_ingest(
             external_thread_id=":100",
@@ -650,47 +649,28 @@ class TestReactForIngest:
 
         assert not called
 
-    async def test_terminal_reaction_triggers_cleanup(
-        self, telegram_module: TelegramModule, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """react_for_ingest cleans up lifecycle state on terminal reactions."""
-        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+    async def test_api_error_is_swallowed(self, telegram_module: TelegramModule) -> None:
+        """react_for_ingest swallows exceptions from _set_message_reaction."""
 
-        # Pre-populate lifecycle state
-        message_key = "7:500"
-        from butlers.modules.telegram import ProcessingLifecycle
+        async def mock_set_reaction(**kwargs: Any) -> None:
+            raise RuntimeError("Telegram API unavailable")
 
-        telegram_module._processing_lifecycle[message_key] = ProcessingLifecycle()
-        telegram_module._reaction_locks[message_key] = __import__("asyncio").Lock()
+        telegram_module._set_message_reaction = mock_set_reaction  # type: ignore[method-assign]
 
-        async def mock_update_reaction(**kwargs: Any) -> None:
-            # Simulate that _update_reaction records terminal reaction
-            from butlers.modules.telegram import REACTION_SUCCESS
-
-            if kwargs["reaction"] == REACTION_SUCCESS:
-                lifecycle = telegram_module._processing_lifecycle.get(kwargs["message_key"])
-                if lifecycle:
-                    lifecycle.terminal_reaction = REACTION_SUCCESS
-                telegram_module._record_terminal_reaction(kwargs["message_key"], REACTION_SUCCESS)
-
-        telegram_module._update_reaction = mock_update_reaction  # type: ignore[method-assign]
-
+        # Should not raise
         await telegram_module.react_for_ingest(
-            external_thread_id="7:500",
-            reaction=":done",
+            external_thread_id="123:456",
+            reaction=":eye",
         )
-
-        # Lifecycle state should be cleaned up after terminal reaction
-        assert message_key not in telegram_module._processing_lifecycle
 
     async def test_negative_chat_id_parsed_correctly(self, telegram_module: TelegramModule) -> None:
         """react_for_ingest handles negative chat IDs (groups/supergroups)."""
         calls: list[dict] = []
 
-        async def mock_update_reaction(**kwargs: Any) -> None:
+        async def mock_set_reaction(**kwargs: Any) -> None:
             calls.append(kwargs)
 
-        telegram_module._update_reaction = mock_update_reaction  # type: ignore[method-assign]
+        telegram_module._set_message_reaction = mock_set_reaction  # type: ignore[method-assign]
 
         await telegram_module.react_for_ingest(
             external_thread_id="-100123456789:42",
@@ -701,23 +681,3 @@ class TestReactForIngest:
         assert len(calls) == 1
         assert calls[0]["chat_id"] == "-100123456789"
         assert calls[0]["message_id"] == 42
-
-    async def test_uses_consistent_message_key_format(
-        self, telegram_module: TelegramModule
-    ) -> None:
-        """react_for_ingest uses chat_id:message_id format for message_key."""
-        calls: list[dict] = []
-
-        async def mock_update_reaction(**kwargs: Any) -> None:
-            calls.append(kwargs)
-
-        telegram_module._update_reaction = mock_update_reaction  # type: ignore[method-assign]
-
-        await telegram_module.react_for_ingest(
-            external_thread_id="555:789",
-            reaction=":eye",
-        )
-
-        assert len(calls) == 1
-        # message_key format must match what process_update uses for dedup
-        assert calls[0]["message_key"] == "555:789"

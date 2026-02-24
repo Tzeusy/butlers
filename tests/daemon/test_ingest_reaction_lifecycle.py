@@ -82,15 +82,15 @@ def _make_minimal_pipeline(result: RoutingResult | None = None) -> MessagePipeli
 class TestReactForIngestParsing:
     """Test the parsing logic of react_for_ingest without network calls."""
 
-    async def test_valid_thread_id_calls_update_reaction(self) -> None:
-        """react_for_ingest parses 'chat_id:message_id' and calls _update_reaction."""
+    async def test_valid_thread_id_calls_set_message_reaction(self) -> None:
+        """react_for_ingest parses 'chat_id:message_id' and calls _set_message_reaction."""
         mod = TelegramModule()
         calls: list[dict] = []
 
         async def mock_reaction(**kwargs: Any) -> None:
             calls.append(dict(kwargs))
 
-        mod._update_reaction = mock_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
 
         await mod.react_for_ingest(
             external_thread_id="12345:678",
@@ -100,7 +100,6 @@ class TestReactForIngestParsing:
         assert len(calls) == 1
         assert calls[0]["chat_id"] == "12345"
         assert calls[0]["message_id"] == 678
-        assert calls[0]["message_key"] == "12345:678"
         assert calls[0]["reaction"] == REACTION_IN_PROGRESS
 
     async def test_negative_chat_id_valid(self) -> None:
@@ -111,7 +110,7 @@ class TestReactForIngestParsing:
         async def mock_reaction(**kwargs: Any) -> None:
             calls.append(dict(kwargs))
 
-        mod._update_reaction = mock_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
 
         await mod.react_for_ingest(
             external_thread_id="-100987654321:999",
@@ -123,7 +122,7 @@ class TestReactForIngestParsing:
         assert calls[0]["message_id"] == 999
 
     async def test_none_is_noop(self) -> None:
-        """None external_thread_id → no _update_reaction call."""
+        """None external_thread_id → no _set_message_reaction call."""
         mod = TelegramModule()
         called = False
 
@@ -131,13 +130,13 @@ class TestReactForIngestParsing:
             nonlocal called
             called = True
 
-        mod._update_reaction = mock_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
 
         await mod.react_for_ingest(external_thread_id=None, reaction=REACTION_IN_PROGRESS)
         assert not called
 
     async def test_empty_string_is_noop(self) -> None:
-        """Empty string external_thread_id → no _update_reaction call."""
+        """Empty string external_thread_id → no _set_message_reaction call."""
         mod = TelegramModule()
         called = False
 
@@ -145,7 +144,7 @@ class TestReactForIngestParsing:
             nonlocal called
             called = True
 
-        mod._update_reaction = mock_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
 
         await mod.react_for_ingest(external_thread_id="", reaction=REACTION_IN_PROGRESS)
         assert not called
@@ -159,7 +158,7 @@ class TestReactForIngestParsing:
             nonlocal called
             called = True
 
-        mod._update_reaction = mock_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
 
         await mod.react_for_ingest(external_thread_id="12345", reaction=REACTION_IN_PROGRESS)
         assert not called
@@ -173,7 +172,7 @@ class TestReactForIngestParsing:
             nonlocal called
             called = True
 
-        mod._update_reaction = mock_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
 
         await mod.react_for_ingest(external_thread_id="123:abc", reaction=REACTION_IN_PROGRESS)
         assert not called
@@ -187,7 +186,7 @@ class TestReactForIngestParsing:
             nonlocal called
             called = True
 
-        mod._update_reaction = mock_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
 
         await mod.react_for_ingest(external_thread_id=":100", reaction=REACTION_IN_PROGRESS)
         assert not called
@@ -201,112 +200,80 @@ class TestReactForIngestParsing:
             nonlocal called
             called = True
 
-        mod._update_reaction = mock_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
 
         await mod.react_for_ingest(external_thread_id="12345:", reaction=REACTION_IN_PROGRESS)
         assert not called
 
 
-class TestReactForIngestLifecycle:
-    """Test that react_for_ingest integrates correctly with reaction lifecycle."""
+class TestReactForIngestReactionValues:
+    """Test that react_for_ingest passes the correct reaction strings through."""
 
-    async def test_success_reaction_cleans_up_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """After terminal ✅ reaction, lifecycle state is removed."""
-        from butlers.modules.telegram import ProcessingLifecycle
-
-        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+    async def test_in_progress_reaction_value(self) -> None:
+        """REACTION_IN_PROGRESS is passed through to _set_message_reaction."""
         mod = TelegramModule()
-
-        # Pre-populate lifecycle state as if in-progress reaction was set
-        key = "77:300"
-        mod._processing_lifecycle[key] = ProcessingLifecycle()
+        captured: list[str] = []
 
         async def mock_reaction(**kwargs: Any) -> None:
-            # Simulate _update_reaction recording terminal reaction
-            if kwargs["reaction"] == REACTION_SUCCESS:
-                lc = mod._processing_lifecycle.get(kwargs["message_key"])
-                if lc:
-                    lc.terminal_reaction = REACTION_SUCCESS
-                mod._record_terminal_reaction(kwargs["message_key"], REACTION_SUCCESS)
+            captured.append(kwargs["reaction"])
 
-        mod._update_reaction = mock_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
 
         await mod.react_for_ingest(
-            external_thread_id="77:300",
+            external_thread_id="1:1",
+            reaction=REACTION_IN_PROGRESS,
+        )
+
+        assert captured == [REACTION_IN_PROGRESS]
+
+    async def test_success_reaction_value(self) -> None:
+        """REACTION_SUCCESS is passed through to _set_message_reaction."""
+        mod = TelegramModule()
+        captured: list[str] = []
+
+        async def mock_reaction(**kwargs: Any) -> None:
+            captured.append(kwargs["reaction"])
+
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
+
+        await mod.react_for_ingest(
+            external_thread_id="1:1",
             reaction=REACTION_SUCCESS,
         )
 
-        assert key not in mod._processing_lifecycle
+        assert captured == [REACTION_SUCCESS]
 
-    async def test_failure_reaction_cleans_up_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """After terminal 👾 reaction, lifecycle state is removed."""
-        from butlers.modules.telegram import ProcessingLifecycle
-
-        monkeypatch.setenv("BUTLER_TELEGRAM_TOKEN", "test-token")
+    async def test_failure_reaction_value(self) -> None:
+        """REACTION_FAILURE is passed through to _set_message_reaction."""
         mod = TelegramModule()
-
-        key = "88:400"
-        mod._processing_lifecycle[key] = ProcessingLifecycle()
+        captured: list[str] = []
 
         async def mock_reaction(**kwargs: Any) -> None:
-            if kwargs["reaction"] == REACTION_FAILURE:
-                lc = mod._processing_lifecycle.get(kwargs["message_key"])
-                if lc:
-                    lc.terminal_reaction = REACTION_FAILURE
-                mod._record_terminal_reaction(kwargs["message_key"], REACTION_FAILURE)
+            captured.append(kwargs["reaction"])
 
-        mod._update_reaction = mock_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
 
         await mod.react_for_ingest(
-            external_thread_id="88:400",
+            external_thread_id="1:1",
             reaction=REACTION_FAILURE,
         )
 
-        assert key not in mod._processing_lifecycle
+        assert captured == [REACTION_FAILURE]
 
-    async def test_in_progress_reaction_does_not_clean_up_state(self) -> None:
-        """👀 reaction does NOT clean up lifecycle state (non-terminal)."""
-        from butlers.modules.telegram import ProcessingLifecycle
-
+    async def test_api_error_is_swallowed(self) -> None:
+        """Exceptions from _set_message_reaction do not propagate to the caller."""
         mod = TelegramModule()
-        key = "10:50"
-        mod._processing_lifecycle[key] = ProcessingLifecycle()
 
         async def mock_reaction(**kwargs: Any) -> None:
-            pass  # No terminal state set for in-progress
+            raise RuntimeError("Telegram API unavailable")
 
-        mod._update_reaction = mock_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
 
+        # Should not raise
         await mod.react_for_ingest(
-            external_thread_id="10:50",
+            external_thread_id="123:456",
             reaction=REACTION_IN_PROGRESS,
         )
-
-        # Lifecycle state should still be present (message is in-flight)
-        assert key in mod._processing_lifecycle
-
-    async def test_message_key_format_consistent_with_process_update(self) -> None:
-        """react_for_ingest uses the same message_key format as process_update.
-
-        Both methods must use 'chat_id:message_id' so that lifecycle deduplication
-        works correctly when both paths could be active simultaneously.
-        """
-        mod = TelegramModule()
-        ingest_key: str | None = None
-
-        async def capture_key(**kwargs: Any) -> None:
-            nonlocal ingest_key
-            ingest_key = kwargs.get("message_key")
-
-        mod._update_reaction = capture_key  # type: ignore[method-assign]
-
-        await mod.react_for_ingest(
-            external_thread_id="555:789",
-            reaction=REACTION_IN_PROGRESS,
-        )
-
-        # Must match the format used by _message_tracking_key in process_update
-        assert ingest_key == "555:789"
 
 
 class TestIngestReactionNonTelegram:
@@ -325,7 +292,7 @@ class TestIngestReactionNonTelegram:
             nonlocal called
             called = True
 
-        mod._update_reaction = mock_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = mock_reaction  # type: ignore[method-assign]
 
         # Simulate what the daemon does: check channel before calling react_for_ingest
         channel = "email"
@@ -338,25 +305,20 @@ class TestIngestReactionNonTelegram:
         assert not called, "react_for_ingest must not be called for non-telegram channels"
 
 
-class TestBufferProcessReactionIntegration:
-    """Integration tests for the DurableBuffer process function reaction wiring."""
+class TestReactForIngestSequence:
+    """Test that react_for_ingest fires in the correct sequence for the pipeline flow."""
 
-    async def test_buffer_process_fires_in_progress_then_success(self) -> None:
-        """_buffer_process fires 👀 before pipeline and ✅ after success."""
-        # We test react_for_ingest directly since _buffer_process is an inner
-        # closure inside _wire_pipelines that's hard to isolate.
-        # The unit contract is: react_for_ingest(REACTION_IN_PROGRESS) before
-        # pipeline.process(), react_for_ingest(REACTION_SUCCESS) after.
+    async def test_fires_in_progress_then_success(self) -> None:
+        """Simulates _buffer_process: 👀 before pipeline then ✅ after success."""
         mod = TelegramModule()
         reaction_sequence: list[str] = []
 
         async def record_reaction(**kwargs: Any) -> None:
             reaction_sequence.append(kwargs["reaction"])
 
-        mod._update_reaction = record_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = record_reaction  # type: ignore[method-assign]
 
-        # Simulate what _buffer_process does:
-        # 1. Fire in-progress reaction
+        # 1. Fire in-progress reaction (before pipeline.process())
         await mod.react_for_ingest(
             external_thread_id="42:100",
             reaction=REACTION_IN_PROGRESS,
@@ -364,7 +326,7 @@ class TestBufferProcessReactionIntegration:
 
         # 2. pipeline.process() runs (simulated by doing nothing here)
 
-        # 3. Fire success reaction
+        # 3. Fire success reaction (after pipeline.process())
         await mod.react_for_ingest(
             external_thread_id="42:100",
             reaction=REACTION_SUCCESS,
@@ -372,15 +334,15 @@ class TestBufferProcessReactionIntegration:
 
         assert reaction_sequence == [REACTION_IN_PROGRESS, REACTION_SUCCESS]
 
-    async def test_buffer_process_fires_in_progress_then_failure(self) -> None:
-        """_buffer_process fires 👀 before pipeline and 👾 after failure."""
+    async def test_fires_in_progress_then_failure(self) -> None:
+        """Simulates _buffer_process: 👀 before pipeline then 👾 after failure."""
         mod = TelegramModule()
         reaction_sequence: list[str] = []
 
         async def record_reaction(**kwargs: Any) -> None:
             reaction_sequence.append(kwargs["reaction"])
 
-        mod._update_reaction = record_reaction  # type: ignore[method-assign]
+        mod._set_message_reaction = record_reaction  # type: ignore[method-assign]
 
         await mod.react_for_ingest(
             external_thread_id="99:200",
