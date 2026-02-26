@@ -516,7 +516,7 @@ class TestDiagnosticRecordProbe:
 
         # Simulate flow state already having 2 probes
         existing_flow: dict[str, Any] = {
-            "status": "DIAGNOSING",
+            "status": "diagnosing",
             "mind_map_id": MAP_ID,
             "probes_issued": 2,
             "diagnostic_results": {},
@@ -665,7 +665,7 @@ class TestDiagnosticComplete:
 
         pool = MagicMock()
         pool.fetchval = AsyncMock(return_value=None)
-        with pytest.raises(ValueError, match="DIAGNOSING"):
+        with pytest.raises(ValueError, match="diagnosing"):
             await diagnostic_complete(pool, MAP_ID)
 
     async def test_raises_if_zero_probes_issued(self) -> None:
