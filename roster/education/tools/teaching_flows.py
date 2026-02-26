@@ -26,9 +26,12 @@ CAS semantics: state_compare_and_set is used for concurrent-safe writes.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import uuid as _uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from datetime import datetime as _dt
 from typing import Any
 
 import asyncpg
@@ -149,8 +152,6 @@ async def _get_state_with_version(
     )
     if row is None:
         return None, None
-    import json
-
     val = row["value"]
     if isinstance(val, str):
         val = json.loads(val)
@@ -228,15 +229,13 @@ async def teaching_flow_start(
 
     # Store goal in metadata if provided
     if goal is not None:
-        import json as _json
-
         await pool.execute(
             """
             UPDATE education.mind_maps
             SET metadata = metadata || $1::jsonb, updated_at = now()
             WHERE id = $2
             """,
-            _json.dumps({"goal": goal}),
+            json.dumps({"goal": goal}),
             mind_map_id,
         )
 
@@ -661,10 +660,7 @@ async def assemble_session_context(
                     current_node_id,
                 )
                 recent_responses = [dict(row) for row in rows]
-                # Serialize datetimes
-                import uuid as _uuid
-                from datetime import datetime as _dt
-
+                # Serialize datetimes and UUIDs for JSON compatibility
                 for resp in recent_responses:
                     for k, v in resp.items():
                         if isinstance(v, _dt):
