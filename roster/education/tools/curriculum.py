@@ -205,7 +205,7 @@ async def _fetch_nodes_and_edges(
     """Load all nodes and prerequisite edges for a mind map from the DB."""
     node_rows = await pool.fetch(
         """
-        SELECT id, label, depth, effort_minutes, mastery_status, metadata, sequence
+        SELECT id, label, depth, effort_minutes, mastery_status, mastery_score, metadata, sequence
         FROM education.mind_map_nodes
         WHERE mind_map_id = $1
         ORDER BY depth ASC, label ASC
@@ -233,17 +233,26 @@ async def _write_sequences(
     pool: asyncpg.Pool,
     ordered_ids: list[str],
 ) -> None:
-    """Write sequence integers (1-based) to mind_map_nodes rows."""
-    for seq, node_id in enumerate(ordered_ids, start=1):
-        await pool.execute(
-            """
-            UPDATE education.mind_map_nodes
-            SET sequence = $1, updated_at = now()
-            WHERE id = $2
-            """,
-            seq,
-            node_id,
-        )
+    """Write sequence integers (1-based) to mind_map_nodes rows (single batched UPDATE)."""
+    if not ordered_ids:
+        return
+
+    sequences = list(range(1, len(ordered_ids) + 1))
+    await pool.execute(
+        """
+        UPDATE education.mind_map_nodes AS n
+        SET sequence = s.seq,
+            updated_at = now()
+        FROM (
+            SELECT unnest($1::uuid[]) AS id,
+                   unnest($2::integer[]) AS seq
+        ) AS s
+        WHERE n.id = s.id
+          AND n.sequence IS DISTINCT FROM s.seq
+        """,
+        ordered_ids,
+        sequences,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -335,28 +344,29 @@ async def curriculum_generate(
     # Write sequences to DB
     await _write_sequences(pool, ordered_ids)
 
-    # Store goal in mind_maps.metadata if supplied
+    # Transition to 'active'; merge goal into metadata if supplied
     if goal is not None:
-        metadata_json = json.dumps({"goal": goal})
+        goal_json = json.dumps({"goal": goal})
         await pool.execute(
             """
             UPDATE education.mind_maps
-            SET metadata = $1::jsonb, updated_at = now()
+            SET metadata = metadata || $1::jsonb,
+                status = 'active',
+                updated_at = now()
             WHERE id = $2
             """,
-            metadata_json,
+            goal_json,
             mind_map_id,
         )
-
-    # Transition to 'active'
-    await pool.execute(
-        """
-        UPDATE education.mind_maps
-        SET status = 'active', updated_at = now()
-        WHERE id = $1
-        """,
-        mind_map_id,
-    )
+    else:
+        await pool.execute(
+            """
+            UPDATE education.mind_maps
+            SET status = 'active', updated_at = now()
+            WHERE id = $1
+            """,
+            mind_map_id,
+        )
 
     logger.info(
         "curriculum_generate: mind_map_id=%s nodes=%d edges=%d goal=%r",
@@ -476,22 +486,19 @@ async def curriculum_replan(
     node_count = len(nodes)
     edge_count = len(edges)
 
-    # Mark mastered nodes (mastery_score >= 0.9) as skippable in metadata
-    for node in nodes:
-        if node.get("mastery_status") == "mastered" and (node.get("mastery_score") or 0.0) >= 0.9:
-            current_meta = node.get("metadata") or {}
-            if not current_meta.get("skippable"):
-                new_meta = dict(current_meta)
-                new_meta["skippable"] = True
-                await pool.execute(
-                    """
-                    UPDATE education.mind_map_nodes
-                    SET metadata = $1::jsonb, updated_at = now()
-                    WHERE id = $2
-                    """,
-                    json.dumps(new_meta),
-                    node["id"],
-                )
+    # Mark mastered nodes (mastery_score >= 0.9) as skippable in metadata (single batched UPDATE)
+    await pool.execute(
+        """
+        UPDATE education.mind_map_nodes
+        SET metadata = metadata || '{"skippable": true}'::jsonb,
+            updated_at = now()
+        WHERE mind_map_id = $1
+          AND mastery_status = 'mastered'
+          AND mastery_score >= 0.9
+          AND NOT (metadata @> '{"skippable": true}')
+        """,
+        mind_map_id,
+    )
 
     # Re-run topological sort
     ordered_ids = _topological_sort_with_tiebreak(nodes, edges)

@@ -536,7 +536,7 @@ class TestCurriculumGenerate:
         with pytest.raises(ValueError, match="[Cc]ycle"):
             await curriculum_generate(pool, map_id)
 
-    async def test_sequence_writes_are_called_for_each_node(self) -> None:
+    async def test_sequence_writes_are_called(self) -> None:
         from butlers.tools.education import curriculum_generate
 
         map_id = str(uuid.uuid4())
@@ -547,9 +547,11 @@ class TestCurriculumGenerate:
         ]
         pool = _make_generate_pool(map_id=map_id, nodes=nodes, edges=[], execute_count=20)
         await curriculum_generate(pool, map_id)
-        # One execute per node (sequence write) + map status update + possibly goal update
-        # At minimum, 3 node sequence updates + 1 status = 4 calls
-        assert pool.execute.call_count >= len(nodes) + 1
+        # Batched: 1 call for sequences (unnest), 1 for mind_maps status = 2 total minimum
+        assert pool.execute.call_count >= 2
+        # Verify the batched sequence write was issued
+        all_calls = [str(c) for c in pool.execute.call_args_list]
+        assert any("unnest" in c for c in all_calls)
 
     async def test_goal_stored_in_metadata(self) -> None:
         from butlers.tools.education import curriculum_generate
@@ -727,8 +729,10 @@ class TestCurriculumReplan:
         nodes = [_node(label=f"N{i}", depth=i) for i in range(4)]
         pool = _make_replan_pool(map_id=map_id, nodes=nodes, edges=[])
         await curriculum_replan(pool, map_id)
-        # At minimum, one execute per node for sequence update
-        assert pool.execute.call_count >= len(nodes)
+        # Batched: 1 call for skippable marking + 1 call for sequences (unnest) = 2 minimum
+        assert pool.execute.call_count >= 2
+        all_calls = [str(c) for c in pool.execute.call_args_list]
+        assert any("unnest" in c for c in all_calls)
 
     async def test_mastered_high_score_node_marked_skippable(self) -> None:
         """Nodes with mastery_status='mastered' and mastery_score >= 0.9 get skippable=True."""
@@ -748,7 +752,12 @@ class TestCurriculumReplan:
         assert any("skippable" in c for c in all_calls)
 
     async def test_already_skippable_node_not_double_updated(self) -> None:
-        """Node already marked skippable does not trigger another metadata update."""
+        """Batched skippable UPDATE uses WHERE NOT (metadata @> '{"skippable": true}') guard.
+
+        The single batched UPDATE is always issued, but the DB-side WHERE clause prevents
+        re-updating nodes that already carry skippable=True.  Verify that exactly one
+        skippable execute call is made (not N+1).
+        """
         from butlers.tools.education import curriculum_replan
 
         map_id = str(uuid.uuid4())
@@ -762,12 +771,17 @@ class TestCurriculumReplan:
         pool = _make_replan_pool(map_id=map_id, nodes=[already_skippable], edges=[])
         await curriculum_replan(pool, map_id)
         all_calls = [str(c) for c in pool.execute.call_args_list]
-        # Should only have sequence write, no skippable update
-        skippable_updates = [c for c in all_calls if "skippable" in c]
-        assert len(skippable_updates) == 0
+        # Exactly one skippable call (batched), with DB-side @> guard preventing double-update
+        skippable_calls = [c for c in all_calls if "skippable" in c]
+        assert len(skippable_calls) == 1
 
     async def test_low_mastery_score_mastered_not_skippable(self) -> None:
-        """mastered node with mastery_score < 0.9 does NOT get skippable=True."""
+        """Batched skippable UPDATE uses mastery_score >= 0.9 WHERE guard.
+
+        The batched UPDATE is always issued (SQL contains 'skippable'), but the
+        DB-side WHERE clause (mastery_score >= 0.9) prevents rows with lower scores
+        from being updated.  Verify the call count: exactly 1 skippable call.
+        """
         from butlers.tools.education import curriculum_replan
 
         map_id = str(uuid.uuid4())
@@ -781,7 +795,9 @@ class TestCurriculumReplan:
         pool = _make_replan_pool(map_id=map_id, nodes=[barely_mastered], edges=[])
         await curriculum_replan(pool, map_id)
         all_calls = [str(c) for c in pool.execute.call_args_list]
-        assert not any("skippable" in c for c in all_calls)
+        # Exactly 1 skippable call (batched), DB WHERE mastery_score >= 0.9 filters this out
+        skippable_calls = [c for c in all_calls if "skippable" in c]
+        assert len(skippable_calls) == 1
 
     async def test_reason_parameter_accepted(self) -> None:
         """reason kwarg does not affect behavior — just logged."""
