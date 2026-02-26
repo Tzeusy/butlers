@@ -57,12 +57,15 @@ def upgrade() -> None:
         )
     """)
 
-    # Add FK from mind_maps.root_node_id -> mind_map_nodes.id (after nodes table exists)
+    # Add FK from mind_maps.root_node_id -> mind_map_nodes.id (after nodes table exists).
+    # ON DELETE SET NULL: deleting a root node clears root_node_id rather than blocking
+    # the delete or cascade-deleting the entire mind map.
     op.execute("""
         ALTER TABLE education.mind_maps
             ADD CONSTRAINT fk_root
             FOREIGN KEY (root_node_id)
             REFERENCES education.mind_map_nodes(id)
+            ON DELETE SET NULL
     """)
 
     # --- education.mind_map_edges ---
@@ -140,4 +143,4 @@ def downgrade() -> None:
     op.execute("ALTER TABLE education.mind_maps DROP CONSTRAINT IF EXISTS fk_root")
     op.execute("DROP TABLE IF EXISTS education.mind_map_nodes")
     op.execute("DROP TABLE IF EXISTS education.mind_maps")
-    op.execute("DROP SCHEMA IF EXISTS education")
+    op.execute("DROP SCHEMA IF EXISTS education CASCADE")
