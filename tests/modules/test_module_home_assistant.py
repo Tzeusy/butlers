@@ -1211,7 +1211,12 @@ class TestReconnectScheduling:
         assert ha_module._ws_reconnect_task is not None
         assert not ha_module._ws_reconnect_task.done()
         # Cleanup
-        ha_module._ws_reconnect_task.cancel()
+        task = ha_module._ws_reconnect_task
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # Task cancellation is expected
 
     async def test_schedule_reconnect_noop_when_shutdown(
         self, ha_module: HomeAssistantModule
@@ -1239,7 +1244,12 @@ class TestReconnectScheduling:
 
         # Same task object — no new task created
         assert ha_module._ws_reconnect_task is task
+        # Cleanup
         task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # Task cancellation is expected
 
     async def test_start_poll_fallback_creates_task(self, ha_module: HomeAssistantModule) -> None:
         """_start_poll_fallback creates a background polling task."""
@@ -1251,7 +1261,13 @@ class TestReconnectScheduling:
 
         assert ha_module._poll_task is not None
         assert not ha_module._poll_task.done()
-        ha_module._poll_task.cancel()
+        # Cleanup
+        task = ha_module._poll_task
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass  # Task cancellation is expected
 
     async def test_stop_poll_fallback_cancels_task(self, ha_module: HomeAssistantModule) -> None:
         """_stop_poll_fallback cancels and clears the polling task."""
