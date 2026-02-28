@@ -136,18 +136,18 @@ engage interactive response mode.
 1. `ha_list_entities(domain="light")` — discover all light entity IDs
 2. `ha_call_service(domain="climate", service="set_temperature", target={"area_id": "bedroom"}, data={"temperature": 68})`
 3. `ha_call_service(domain="light", service="turn_on", target={"area_id": "all"}, data={"brightness_pct": 10})`
-4. `ha_call_service(domain="scene", service="create", data={"scene_id": "bedtime", "entities": {"climate.bedroom": {"state": "heat", "temperature": 68}, "light.living_room": {"state": "on", "brightness": 26}, "light.bedroom": {"state": "off"}}})`
+4. `ha_call_service(domain="scene", service="create", data={"scene_id": "bedtime", "entities": {"climate.bedroom": {"state": "cool", "temperature": 68}, "light.living_room": {"state": "on", "brightness": 26}, "light.bedroom": {"state": "on", "brightness": 26}}})`
 5. `memory_store_fact(subject="bedtime-scene", predicate="scene_preference", content="user created bedtime scene with temperature 68 and dim lighting", permanence="standard", importance=6.0, tags=["scene", "bedtime", "automation"])`
 6. `notify(channel="telegram", message="Bedtime scene created — bedroom cooling to 68°F, all lights dimmed to 10%. Want me to schedule it for 10pm every night?", intent="reply", request_context=...)`
 
 #### Example 8: Destructive Action Confirmation (Follow-up)
 
-**User message**: "Delete the movie night scene"
+**User message**: "Disable the movie night automation"
 
 **Actions**:
-1. Instead of immediately deleting, ask for confirmation via `notify()`
-2. `notify(channel="telegram", message="Delete 'Movie Night' scene? This cannot be undone. React with ✅ to confirm or ❌ to cancel.", intent="reply", request_context=...)`
-3. Wait for user confirmation before calling `ha_call_service(domain="scene", service="delete", data={"entity_id": "scene.movie_night"})`
+1. Instead of immediately disabling, ask for confirmation via `notify()`
+2. `notify(channel="telegram", message="Disable 'Movie Night' automation? React with ✅ to confirm or ❌ to cancel.", intent="reply", request_context=...)`
+3. Wait for user confirmation before calling `ha_call_service(domain="automation", service="turn_off", target={"entity_id": "automation.movie_night"})`
 
 ## Memory Classification
 
@@ -268,7 +268,9 @@ memory_store_fact(
 **Actions**:
 1. `ha_list_entities(domain="cover")` — find blind/cover entity IDs
 2. `ha_call_service(domain="cover", service="close_cover", target={"area_id": "all"})`
-3. Affirm: "Updated — blinds are now closing as part of your relaxation setup."
+3. `ha_call_service(domain="scene", service="create", data={"scene_id": "relaxation", "entities": {"light.living_room": {"state": "on", "brightness": 77}, "light.bedroom": {"state": "on", "brightness": 77}, "media_player.living_room": {"state": "playing"}, "climate.main": {"temperature": 72}, "cover.living_room": {"state": "closed"}, "cover.bedroom": {"state": "closed"}}})`
+4. `memory_store_fact(subject="relaxation-scene", predicate="scene_preference", content="user created relaxation scene with dimmed lighting (30%), soft music, 72°F temperature, and closed blinds", permanence="standard", importance=6.0, tags=["scene", "relaxation", "automation"])`
+5. Affirm: "Relaxation scene saved — blinds are now closed, lights dimmed to 30%, soft music playing, temperature at 72°F. Ready to activate anytime!"
 
 ### Multi-Turn Example: Energy Optimization
 
