@@ -117,7 +117,7 @@ class TestModuleABCCompliance:
 
     def test_dependencies_empty(self, ha_module: HomeAssistantModule) -> None:
         """Home Assistant module declares no dependencies."""
-        assert ha_module.dependencies == []
+        assert ha_module.dependencies == ["contacts", "approvals"]
 
     def test_migration_revisions(self, ha_module: HomeAssistantModule) -> None:
         """migration_revisions() returns 'home_assistant'."""
