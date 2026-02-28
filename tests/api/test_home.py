@@ -501,9 +501,9 @@ class TestHomeRouterDiscovery:
 
 
 class TestEntityListCombinedFilters:
-    async def test_domain_and_area_filters_combined(self):
+    async def test_domain_and_area_filters_combined(self, app):
         """Both ?domain= and ?area= can be provided simultaneously."""
-        app = _app_with_mock_db()
+        _app_with_mock_db(app)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -516,9 +516,9 @@ class TestEntityListCombinedFilters:
         assert "data" in body
         assert "meta" in body
 
-    async def test_large_limit_clamped(self):
+    async def test_large_limit_clamped(self, app):
         """?limit= values above 500 should return 422 (validation error)."""
-        app = _app_with_mock_db()
+        _app_with_mock_db(app)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -526,9 +526,9 @@ class TestEntityListCombinedFilters:
 
         assert resp.status_code == 422
 
-    async def test_negative_offset_returns_422(self):
+    async def test_negative_offset_returns_422(self, app):
         """?offset= values below 0 should return 422."""
-        app = _app_with_mock_db()
+        _app_with_mock_db(app)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -536,9 +536,9 @@ class TestEntityListCombinedFilters:
 
         assert resp.status_code == 422
 
-    async def test_meta_reflects_pagination_params(self):
+    async def test_meta_reflects_pagination_params(self, app):
         """Response meta should echo back the requested offset and limit."""
-        app = _app_with_mock_db(fetchval_result=100)
+        _app_with_mock_db(app, fetchval_result=100)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -557,9 +557,9 @@ class TestEntityListCombinedFilters:
 
 
 class TestCommandLogCombinedFilters:
-    async def test_all_filters_combined(self):
+    async def test_all_filters_combined(self, app):
         """start, end, domain, offset, and limit can all be provided together."""
-        app = _app_with_mock_db()
+        _app_with_mock_db(app)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -579,9 +579,9 @@ class TestCommandLogCombinedFilters:
         assert "data" in body
         assert "meta" in body
 
-    async def test_command_log_large_limit_rejected(self):
+    async def test_command_log_large_limit_rejected(self, app):
         """?limit= values above 500 should be rejected with 422."""
-        app = _app_with_mock_db()
+        _app_with_mock_db(app)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -589,7 +589,7 @@ class TestCommandLogCombinedFilters:
 
         assert resp.status_code == 422
 
-    async def test_command_log_row_has_optional_null_fields(self):
+    async def test_command_log_row_has_optional_null_fields(self, app):
         """CommandLogEntry serializes correctly when target, data, result, context_id are None."""
         row = MagicMock()
         row.__getitem__ = lambda self, key: {
@@ -602,7 +602,7 @@ class TestCommandLogCombinedFilters:
             "context_id": None,
             "issued_at": "2026-02-28T12:00:00+00:00",
         }[key]
-        app = _app_with_mock_db(fetch_rows=[row], fetchval_result=1)
+        _app_with_mock_db(app, fetch_rows=[row], fetchval_result=1)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
