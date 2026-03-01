@@ -10,6 +10,7 @@ These tests verify:
 
 from __future__ import annotations
 
+import json
 import shutil
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -593,8 +594,6 @@ async def test_fanout_rollup_parses_dispatch_outcomes(provisioned_postgres_pool)
 
         # Insert message_inbox data with dispatch_outcomes using v2 schema (sw_008+).
         # source_channel and source_endpoint_identity live inside request_context JSONB.
-        import json
-
         tg_ctx = json.dumps(
             {"source_channel": "telegram_bot", "source_endpoint_identity": "telegram_bot.bot@789"}
         )
