@@ -15,8 +15,8 @@
       "y": 20,
       "width": 900,
       "height": 36,
-      "text": "Butlers \u2014 Database Schema Isolation Architecture",
-      "originalText": "Butlers \u2014 Database Schema Isolation Architecture",
+      "text": "Butlers — Database Schema Isolation Architecture",
+      "originalText": "Butlers — Database Schema Isolation Architecture",
       "fontSize": 28,
       "fontFamily": 3,
       "textAlign": "left",
@@ -47,8 +47,8 @@
       "y": 60,
       "width": 1000,
       "height": 20,
-      "text": "Single PostgreSQL database \u2018butlers\u2019  \u2022  Per-butler schemas (isolated)  \u2022  Shared schema (cross-butler identity)  \u2022  MCP-only inter-butler communication",
-      "originalText": "Single PostgreSQL database \u2018butlers\u2019  \u2022  Per-butler schemas (isolated)  \u2022  Shared schema (cross-butler identity)  \u2022  MCP-only inter-butler communication",
+      "text": "Single PostgreSQL database ‘butlers’  •  Per-butler schemas (isolated)  •  Shared schema (cross-butler identity)  •  MCP-only inter-butler communication",
+      "originalText": "Single PostgreSQL database ‘butlers’  •  Per-butler schemas (isolated)  •  Shared schema (cross-butler identity)  •  MCP-only inter-butler communication",
       "fontSize": 14,
       "fontFamily": 3,
       "textAlign": "left",
@@ -72,7 +72,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "rectangle",
       "id": "db_outer",
@@ -129,7 +128,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "text",
       "id": "sec_butler_schemas_label",
@@ -162,7 +160,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "rectangle",
       "id": "schema_switchboard",
@@ -251,7 +248,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "rectangle",
       "id": "schema_general",
@@ -340,7 +336,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "rectangle",
       "id": "schema_relationship",
@@ -429,7 +424,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "rectangle",
       "id": "schema_health",
@@ -518,7 +512,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "rectangle",
       "id": "schema_messenger",
@@ -607,7 +600,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "rectangle",
       "id": "schema_finance",
@@ -696,7 +688,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "rectangle",
       "id": "schema_travel",
@@ -785,7 +776,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "rectangle",
       "id": "schema_education",
@@ -874,7 +864,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "rectangle",
       "id": "schema_home",
@@ -963,7 +952,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "text",
       "id": "sec_shared_label",
@@ -971,8 +959,8 @@
       "y": 455,
       "width": 500,
       "height": 20,
-      "text": "SHARED SCHEMA \u2014 Cross-butler identity (all butlers have SELECT; contacts module has INSERT/UPDATE/DELETE)",
-      "originalText": "SHARED SCHEMA \u2014 Cross-butler identity (all butlers have SELECT; contacts module has INSERT/UPDATE/DELETE)",
+      "text": "SHARED SCHEMA — Cross-butler identity (all butlers have SELECT; contacts module has INSERT/UPDATE/DELETE)",
+      "originalText": "SHARED SCHEMA — Cross-butler identity (all butlers have SELECT; contacts module has INSERT/UPDATE/DELETE)",
       "fontSize": 12,
       "fontFamily": 3,
       "textAlign": "left",
@@ -996,7 +984,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "rectangle",
       "id": "shared_outer",
@@ -1053,7 +1040,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "rectangle",
       "id": "contacts_table",
@@ -1117,8 +1103,8 @@
       "y": 548,
       "width": 364,
       "height": 150,
-      "text": "id          UUID PK\nname        TEXT\nroles       TEXT[]   -- e.g. ['owner']\nentity_id   UUID FK\u2192memory.entities\nmetadata    JSONB\ncreated_at  TIMESTAMPTZ\n\nUNIQUE INDEX (true) WHERE 'owner' = ANY(roles)\n-- enforces at most one owner contact",
-      "originalText": "id          UUID PK\nname        TEXT\nroles       TEXT[]   -- e.g. ['owner']\nentity_id   UUID FK\u2192memory.entities\nmetadata    JSONB\ncreated_at  TIMESTAMPTZ\n\nUNIQUE INDEX (true) WHERE 'owner' = ANY(roles)\n-- enforces at most one owner contact",
+      "text": "id          UUID PK\nname        TEXT\nroles       TEXT[]   -- e.g. ['owner']\nentity_id   UUID FK→memory.entities\nmetadata    JSONB\ncreated_at  TIMESTAMPTZ\n\nUNIQUE INDEX (true) WHERE 'owner' = ANY(roles)\n-- enforces at most one owner contact",
+      "originalText": "id          UUID PK\nname        TEXT\nroles       TEXT[]   -- e.g. ['owner']\nentity_id   UUID FK→memory.entities\nmetadata    JSONB\ncreated_at  TIMESTAMPTZ\n\nUNIQUE INDEX (true) WHERE 'owner' = ANY(roles)\n-- enforces at most one owner contact",
       "fontSize": 11,
       "fontFamily": 3,
       "textAlign": "left",
@@ -1142,7 +1128,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "rectangle",
       "id": "contact_info_table",
@@ -1206,8 +1191,8 @@
       "y": 548,
       "width": 364,
       "height": 150,
-      "text": "id          UUID PK\ncontact_id  UUID FK\u2192contacts(id) CASCADE\ntype        VARCHAR   -- telegram, email, ...\nvalue       TEXT      -- chat_id, address\nlabel       VARCHAR\nis_primary  BOOLEAN\nsecured     BOOLEAN   -- credential entries\ncreated_at  TIMESTAMPTZ\n\nUNIQUE (type, value)",
-      "originalText": "id          UUID PK\ncontact_id  UUID FK\u2192contacts(id) CASCADE\ntype        VARCHAR   -- telegram, email, ...\nvalue       TEXT      -- chat_id, address\nlabel       VARCHAR\nis_primary  BOOLEAN\nsecured     BOOLEAN   -- credential entries\ncreated_at  TIMESTAMPTZ\n\nUNIQUE (type, value)",
+      "text": "id          UUID PK\ncontact_id  UUID FK→contacts(id) CASCADE\ntype        VARCHAR   -- telegram, email, ...\nvalue       TEXT      -- chat_id, address\nlabel       VARCHAR\nis_primary  BOOLEAN\nsecured     BOOLEAN   -- credential entries\ncreated_at  TIMESTAMPTZ\n\nUNIQUE (type, value)",
+      "originalText": "id          UUID PK\ncontact_id  UUID FK→contacts(id) CASCADE\ntype        VARCHAR   -- telegram, email, ...\nvalue       TEXT      -- chat_id, address\nlabel       VARCHAR\nis_primary  BOOLEAN\nsecured     BOOLEAN   -- credential entries\ncreated_at  TIMESTAMPTZ\n\nUNIQUE (type, value)",
       "fontSize": 11,
       "fontFamily": 3,
       "textAlign": "left",
@@ -1231,7 +1216,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "arrow",
       "id": "fk_contact_info_contacts",
@@ -1255,14 +1239,22 @@
       "boundElements": null,
       "link": null,
       "locked": false,
-      "points": [[0, 0], [-18, 0]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          -18,
+          0
+        ]
+      ],
       "lastCommittedPoint": null,
       "startBinding": null,
       "endBinding": null,
       "startArrowhead": null,
       "endArrowhead": "arrow"
     },
-
     {
       "type": "rectangle",
       "id": "owner_bootstrap_box",
@@ -1326,8 +1318,8 @@
       "y": 548,
       "width": 244,
       "height": 150,
-      "text": "On daemon startup:\n\n1. Check for existing owner\n   contact in shared.contacts\n   WHERE 'owner' = ANY(roles)\n\n2. If missing, INSERT owner\n   with roles = ['owner']\n   from OWNER_* env vars\n\n3. Link Telegram / email\n   in shared.contact_info\n\nPartial unique index prevents\nduplicate owner rows.",
-      "originalText": "On daemon startup:\n\n1. Check for existing owner\n   contact in shared.contacts\n   WHERE 'owner' = ANY(roles)\n\n2. If missing, INSERT owner\n   with roles = ['owner']\n   from OWNER_* env vars\n\n3. Link Telegram / email\n   in shared.contact_info\n\nPartial unique index prevents\nduplicate owner rows.",
+      "text": "On daemon startup:\n\n1. Check for existing owner\n   contact in shared.contacts\n   WHERE 'owner' = ANY(roles)\n\n2. If missing, INSERT owner\n   with name=\"Owner\",\n   roles = ['owner']\n\nPartial unique index prevents\nduplicate owner rows.\n\n(contact_info rows linked\nseparately via credential store)",
+      "originalText": "On daemon startup:\n\n1. Check for existing owner\n   contact in shared.contacts\n   WHERE 'owner' = ANY(roles)\n\n2. If missing, INSERT owner\n   with name=\"Owner\",\n   roles = ['owner']\n\nPartial unique index prevents\nduplicate owner rows.\n\n(contact_info rows linked\nseparately via credential store)",
       "fontSize": 11,
       "fontFamily": 3,
       "textAlign": "left",
@@ -1351,7 +1343,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "text",
       "id": "sec_search_path_label",
@@ -1359,8 +1350,8 @@
       "y": 745,
       "width": 500,
       "height": 20,
-      "text": "SEARCH PATH \u2014 Per-butler layered lookup (set by schema_search_path() in db.py)",
-      "originalText": "SEARCH PATH \u2014 Per-butler layered lookup (set by schema_search_path() in db.py)",
+      "text": "SEARCH PATH — Per-butler layered lookup (set by schema_search_path() in db.py)",
+      "originalText": "SEARCH PATH — Per-butler layered lookup (set by schema_search_path() in db.py)",
       "fontSize": 12,
       "fontFamily": 3,
       "textAlign": "left",
@@ -1384,7 +1375,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "rectangle",
       "id": "search_path_outer",
@@ -1409,7 +1399,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "type": "rectangle",
       "id": "sp_layer1",
@@ -1498,7 +1487,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "arrow",
       "id": "sp_arrow1",
@@ -1522,7 +1510,16 @@
       "boundElements": null,
       "link": null,
       "locked": false,
-      "points": [[0, 0], [60, 0]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          60,
+          0
+        ]
+      ],
       "lastCommittedPoint": null,
       "startBinding": null,
       "endBinding": null,
@@ -1561,7 +1558,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "rectangle",
       "id": "sp_layer2",
@@ -1650,7 +1646,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "arrow",
       "id": "sp_arrow2",
@@ -1674,7 +1669,16 @@
       "boundElements": null,
       "link": null,
       "locked": false,
-      "points": [[0, 0], [60, 0]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          60,
+          0
+        ]
+      ],
       "lastCommittedPoint": null,
       "startBinding": null,
       "endBinding": null,
@@ -1713,7 +1717,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "rectangle",
       "id": "sp_layer3",
@@ -1802,7 +1805,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "text",
       "id": "sp_code",
@@ -1835,7 +1837,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "text",
       "id": "sec_migrations_label",
@@ -1843,8 +1844,8 @@
       "y": 952,
       "width": 500,
       "height": 20,
-      "text": "ALEMBIC MIGRATION BRANCHES \u2014 Multi-chain, independently versioned",
-      "originalText": "ALEMBIC MIGRATION BRANCHES \u2014 Multi-chain, independently versioned",
+      "text": "ALEMBIC MIGRATION BRANCHES — Multi-chain, independently versioned",
+      "originalText": "ALEMBIC MIGRATION BRANCHES — Multi-chain, independently versioned",
       "fontSize": 12,
       "fontFamily": 3,
       "textAlign": "left",
@@ -1868,7 +1869,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "rectangle",
       "id": "mig_outer",
@@ -1893,7 +1893,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "type": "rectangle",
       "id": "mig_core",
@@ -1957,8 +1956,8 @@
       "y": 1022,
       "width": 204,
       "height": 110,
-      "text": "alembic/versions/core/\n\ncore_001 \u2026 core_013\n\nShared infrastructure:\ntarget_state, sessions,\nscheduler, shared.contacts,\ncontact_info, credentials",
-      "originalText": "alembic/versions/core/\n\ncore_001 \u2026 core_013\n\nShared infrastructure:\ntarget_state, sessions,\nscheduler, shared.contacts,\ncontact_info, credentials",
+      "text": "alembic/versions/core/\n\ncore_001 … core_013\n\nShared infrastructure:\ntarget_state, sessions,\nscheduler, shared.contacts,\ncontact_info, credentials",
+      "originalText": "alembic/versions/core/\n\ncore_001 … core_013\n\nShared infrastructure:\ntarget_state, sessions,\nscheduler, shared.contacts,\ncontact_info, credentials",
       "fontSize": 11,
       "fontFamily": 3,
       "textAlign": "left",
@@ -1982,7 +1981,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "rectangle",
       "id": "mig_module",
@@ -2046,8 +2044,8 @@
       "y": 1022,
       "width": 244,
       "height": 110,
-      "text": "src/butlers/modules/*/migrations/\n\ncontacts_001, contacts_002\nmailbox_001\nmemory_001, mem_002, mem_003\napprovals_001 \u2026 003\n\nOne chain per enabled module,\nindependently versioned.",
-      "originalText": "src/butlers/modules/*/migrations/\n\ncontacts_001, contacts_002\nmailbox_001\nmemory_001, mem_002, mem_003\napprovals_001 \u2026 003\n\nOne chain per enabled module,\nindependently versioned.",
+      "text": "src/butlers/modules/*/migrations/\n\ncontacts_001, contacts_002\nmailbox_001\nmemory_001, mem_002, mem_003\napprovals_001 … 003\n\nOne chain per enabled module,\nindependently versioned.",
+      "originalText": "src/butlers/modules/*/migrations/\n\ncontacts_001, contacts_002\nmailbox_001\nmemory_001, mem_002, mem_003\napprovals_001 … 003\n\nOne chain per enabled module,\nindependently versioned.",
       "fontSize": 11,
       "fontFamily": 3,
       "textAlign": "left",
@@ -2071,7 +2069,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "rectangle",
       "id": "mig_butler",
@@ -2135,8 +2132,8 @@
       "y": 1022,
       "width": 284,
       "height": 110,
-      "text": "roster/<butler>/migrations/\n\nrelationship: rel_001 \u2026 rel_009\ngeneral: 001, 002\nhome: 001\neducation: 001, 002, 003\n\nDomain-specific tables per butler\nrouted through Alembic env.py\nauto-discovery.",
-      "originalText": "roster/<butler>/migrations/\n\nrelationship: rel_001 \u2026 rel_009\ngeneral: 001, 002\nhome: 001\neducation: 001, 002, 003\n\nDomain-specific tables per butler\nrouted through Alembic env.py\nauto-discovery.",
+      "text": "roster/<butler>/migrations/\n\nrelationship: rel_001 … rel_009\ngeneral: 001, 002\nhome: 001\neducation: 001, 002, 003\nfinance: 001\nhealth: 001\nswitchboard: 001 … 026\nmessenger: msg_001\ntravel: 001\n\nDomain-specific tables per butler\nrouted through Alembic env.py\nauto-discovery.",
+      "originalText": "roster/<butler>/migrations/\n\nrelationship: rel_001 … rel_009\ngeneral: 001, 002\nhome: 001\neducation: 001, 002, 003\nfinance: 001\nhealth: 001\nswitchboard: 001 … 026\nmessenger: msg_001\ntravel: 001\n\nDomain-specific tables per butler\nrouted through Alembic env.py\nauto-discovery.",
       "fontSize": 11,
       "fontFamily": 3,
       "textAlign": "left",
@@ -2160,7 +2157,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "text",
       "id": "mig_alembic_note",
@@ -2193,7 +2189,6 @@
       "containerId": null,
       "lineHeight": 1.4
     },
-
     {
       "type": "text",
       "id": "sec_comms_label",
@@ -2201,8 +2196,8 @@
       "y": 1178,
       "width": 700,
       "height": 20,
-      "text": "CROSS-BUTLER COMMUNICATION RULE \u2014 MCP-only through Switchboard (no direct DB access between butlers)",
-      "originalText": "CROSS-BUTLER COMMUNICATION RULE \u2014 MCP-only through Switchboard (no direct DB access between butlers)",
+      "text": "CROSS-BUTLER COMMUNICATION RULE — MCP-only through Switchboard (no direct DB access between butlers)",
+      "originalText": "CROSS-BUTLER COMMUNICATION RULE — MCP-only through Switchboard (no direct DB access between butlers)",
       "fontSize": 12,
       "fontFamily": 3,
       "textAlign": "left",
@@ -2226,7 +2221,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "rectangle",
       "id": "comms_outer",
@@ -2251,7 +2245,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "type": "rectangle",
       "id": "comms_butler_a",
@@ -2308,7 +2301,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "rectangle",
       "id": "comms_switchboard",
@@ -2365,7 +2357,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "rectangle",
       "id": "comms_butler_b",
@@ -2422,7 +2413,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "arrow",
       "id": "comms_mcp_arrow_a_sw",
@@ -2446,7 +2436,16 @@
       "boundElements": null,
       "link": null,
       "locked": false,
-      "points": [[0, 0], [176, 0]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          176,
+          0
+        ]
+      ],
       "lastCommittedPoint": null,
       "startBinding": null,
       "endBinding": null,
@@ -2460,8 +2459,8 @@
       "y": 1235,
       "width": 100,
       "height": 22,
-      "text": "\u2713 MCP call",
-      "originalText": "\u2713 MCP call",
+      "text": "✓ MCP call",
+      "originalText": "✓ MCP call",
       "fontSize": 13,
       "fontFamily": 3,
       "textAlign": "center",
@@ -2485,7 +2484,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "arrow",
       "id": "comms_mcp_arrow_sw_b",
@@ -2509,7 +2507,16 @@
       "boundElements": null,
       "link": null,
       "locked": false,
-      "points": [[0, 0], [176, 0]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          176,
+          0
+        ]
+      ],
       "lastCommittedPoint": null,
       "startBinding": null,
       "endBinding": null,
@@ -2523,8 +2530,8 @@
       "y": 1235,
       "width": 100,
       "height": 22,
-      "text": "\u2713 MCP route",
-      "originalText": "\u2713 MCP route",
+      "text": "✓ MCP route",
+      "originalText": "✓ MCP route",
       "fontSize": 13,
       "fontFamily": 3,
       "textAlign": "center",
@@ -2548,7 +2555,6 @@
       "containerId": null,
       "lineHeight": 1.25
     },
-
     {
       "type": "rectangle",
       "id": "comms_direct_forbidden_bg",
@@ -2596,7 +2602,16 @@
       "boundElements": null,
       "link": null,
       "locked": false,
-      "points": [[0, 0], [70, 70]]
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          70,
+          70
+        ]
+      ]
     },
     {
       "type": "line",
@@ -2621,7 +2636,16 @@
       "boundElements": null,
       "link": null,
       "locked": false,
-      "points": [[0, 0], [-70, 70]]
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          -70,
+          70
+        ]
+      ]
     },
     {
       "type": "arrow",
@@ -2646,7 +2670,16 @@
       "boundElements": null,
       "link": null,
       "locked": false,
-      "points": [[0, 0], [460, 0]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          460,
+          0
+        ]
+      ],
       "lastCommittedPoint": null,
       "startBinding": null,
       "endBinding": null,
@@ -2660,8 +2693,8 @@
       "y": 1344,
       "width": 400,
       "height": 80,
-      "text": "\u2718 FORBIDDEN: Direct cross-schema DB access\n\nButler A must NOT query Butler B's schema.\nNo SELECT relationship.contacts FROM general butler.\nNo schema cross-access except via shared.*",
-      "originalText": "\u2718 FORBIDDEN: Direct cross-schema DB access\n\nButler A must NOT query Butler B's schema.\nNo SELECT relationship.contacts FROM general butler.\nNo schema cross-access except via shared.*",
+      "text": "✘ FORBIDDEN: Direct cross-schema DB access\n\nButler A must NOT query Butler B's schema.\nNo SELECT relationship.contacts FROM general butler.\nNo schema cross-access except via shared.*",
+      "originalText": "✘ FORBIDDEN: Direct cross-schema DB access\n\nButler A must NOT query Butler B's schema.\nNo SELECT relationship.contacts FROM general butler.\nNo schema cross-access except via shared.*",
       "fontSize": 12,
       "fontFamily": 3,
       "textAlign": "left",
