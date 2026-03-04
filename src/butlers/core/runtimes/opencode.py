@@ -48,19 +48,12 @@ def parse_system_prompt_file(config_dir: Path) -> str:
     str
         The parsed system prompt text.
     """
-    # Prefer OPENCODE.md, fall back to AGENTS.md
-    opencode_md = config_dir / "OPENCODE.md"
-    if opencode_md.exists():
-        content = opencode_md.read_text().strip()
-        if content:
-            return content
-
-    agents_md = config_dir / "AGENTS.md"
-    if agents_md.exists():
-        content = agents_md.read_text().strip()
-        if content:
-            return content
-
+    for filename in ("OPENCODE.md", "AGENTS.md"):
+        prompt_file = config_dir / filename
+        if prompt_file.exists():
+            content = prompt_file.read_text().strip()
+            if content:
+                return content
     return ""
 
 

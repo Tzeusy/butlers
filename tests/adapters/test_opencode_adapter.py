@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -207,8 +208,6 @@ def test_build_config_file_multiple_servers(tmp_path: Path):
 
 def test_build_config_file_skips_non_dict_server(tmp_path: Path, caplog):
     """build_config_file() skips servers with non-dict config and logs warning."""
-    import logging
-
     adapter = OpenCodeAdapter()
     mcp_servers = {
         "valid-server": {"url": "http://localhost:9100/mcp"},
@@ -225,8 +224,6 @@ def test_build_config_file_skips_non_dict_server(tmp_path: Path, caplog):
 
 def test_build_config_file_skips_server_without_url(tmp_path: Path, caplog):
     """build_config_file() skips servers missing a url key and logs warning."""
-    import logging
-
     adapter = OpenCodeAdapter()
     mcp_servers = {
         "valid-server": {"url": "http://localhost:9100/mcp"},
@@ -243,8 +240,6 @@ def test_build_config_file_skips_server_without_url(tmp_path: Path, caplog):
 
 def test_build_config_file_skips_server_with_empty_url(tmp_path: Path, caplog):
     """build_config_file() skips servers with empty url string."""
-    import logging
-
     adapter = OpenCodeAdapter()
     mcp_servers = {
         "empty-url-server": {"url": "   "},
