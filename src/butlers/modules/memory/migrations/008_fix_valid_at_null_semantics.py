@@ -20,9 +20,10 @@ fixes that by:
    Rows with an explicitly supplied valid_at (temporal facts) are left alone.
 3. Dropping and recreating the three partial uniqueness indexes so they
    enforce uniqueness only among property facts (valid_at IS NULL).
-   Temporal facts coexist freely — their uniqueness is enforced by the
-   application layer (same key + same valid_at is a duplicate, which the
-   index would catch, but different valid_at values are allowed to coexist).
+   Temporal facts (valid_at IS NOT NULL) have NO DB-level uniqueness
+   constraint — the new indexes all carry AND valid_at IS NULL and therefore
+   do not cover temporal rows at all. Duplicate temporal facts (same key,
+   same valid_at) must be prevented entirely at the application layer.
 
 Revision ID: mem_008
 Revises: mem_007
