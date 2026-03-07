@@ -71,16 +71,13 @@ async def list_ingestion_events(
     )
 
     # Determine total count for pagination metadata
-    try:
-        if source_channel is not None:
-            total = await pool.fetchval(
-                "SELECT count(*) FROM shared.ingestion_events WHERE source_channel = $1",
-                source_channel,
-            )
-        else:
-            total = await pool.fetchval("SELECT count(*) FROM shared.ingestion_events")
-    except Exception:
-        total = len(rows)
+    if source_channel is not None:
+        total = await pool.fetchval(
+            "SELECT count(*) FROM shared.ingestion_events WHERE source_channel = $1",
+            source_channel,
+        )
+    else:
+        total = await pool.fetchval("SELECT count(*) FROM shared.ingestion_events")
 
     summaries = [IngestionEventSummary(**row) for row in rows]
 

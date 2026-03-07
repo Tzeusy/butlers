@@ -42,7 +42,7 @@ class IngestionEventSession(BaseModel):
     success: bool | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
-    cost: Any | None = None
+    cost: dict[str, Any] | None = None
     trace_id: str | None = None
 
 
