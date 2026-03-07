@@ -1857,8 +1857,6 @@ class HomeAssistantModule(Module):
         Silently skips when no DB pool is available or the entity cache is empty.
         Errors from individual entities are logged but do not abort the cycle.
         """
-        from datetime import datetime as _datetime
-
         from butlers.modules.memory.embedding import EmbeddingEngine
         from butlers.modules.memory.storage import store_fact
 
@@ -1880,7 +1878,11 @@ class HomeAssistantModule(Module):
             from butlers.modules.memory.tools import get_embedding_engine
 
             embedding_engine = get_embedding_engine()
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "HomeAssistantModule: failed to get embedding engine, falling back to no-op: %s",
+                exc,
+            )
             embedding_engine = EmbeddingEngine()
 
         tenant_id = "home"
@@ -1906,16 +1908,12 @@ class HomeAssistantModule(Module):
                     '{"source": "home_assistant"}',
                 )
 
-                # 2. Parse valid_at from HA last_updated (may be empty string).
-                valid_at: _datetime | None = None
-                if e.last_updated:
-                    try:
-                        valid_at = _datetime.fromisoformat(e.last_updated)
-                    except ValueError:
-                        valid_at = None
-
-                # 3. Store as a property fact (valid_at=None) so each new snapshot
+                # 2. Store as a property fact (valid_at=None) so each new snapshot
                 #    supersedes the previous active ha_state fact for this entity.
+                #    HA's last_updated timestamp is preserved in metadata for
+                #    provenance; it is NOT passed as valid_at because temporal
+                #    facts (valid_at IS NOT NULL) never trigger supersession and
+                #    would accumulate unboundedly in the facts table.
                 await store_fact(
                     pool,
                     subject=e.entity_id,
@@ -1932,7 +1930,7 @@ class HomeAssistantModule(Module):
                         "last_updated": e.last_updated or None,
                     },
                     entity_id=entity_uuid,
-                    valid_at=valid_at,
+                    valid_at=None,
                 )
                 persisted += 1
             except Exception as exc:

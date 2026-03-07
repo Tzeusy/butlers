@@ -3285,12 +3285,16 @@ class TestSnapshotPersistence:
         # valid_at=None means property fact (supersession semantics)
         assert call_kwargs["valid_at"] is None
 
-    async def test_persist_snapshot_valid_last_updated_passed_as_datetime(
+    async def test_persist_snapshot_valid_last_updated_uses_none_valid_at(
         self, ha_module: HomeAssistantModule
     ) -> None:
-        """Entities with a valid last_updated ISO string pass a datetime as valid_at."""
-        from datetime import UTC, datetime
+        """Entities with a valid last_updated ISO string still pass valid_at=None.
 
+        Supersession requires property facts (valid_at IS NULL). Passing the
+        HA last_updated timestamp as valid_at would create temporal facts that
+        coexist without superseding, causing unbounded table growth.
+        The last_updated value is preserved in metadata for provenance.
+        """
         mock_db = self._make_mock_db()
         ha_module._db = mock_db
         ha_module._entity_cache = {
@@ -3305,9 +3309,9 @@ class TestSnapshotPersistence:
             await ha_module._persist_entity_snapshot()
 
         call_kwargs = mock_store_fact.call_args.kwargs
-        valid_at = call_kwargs["valid_at"]
-        assert isinstance(valid_at, datetime)
-        assert valid_at == datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
+        assert call_kwargs["valid_at"] is None
+        # last_updated is still preserved in metadata
+        assert call_kwargs["metadata"]["last_updated"] == "2024-06-01T12:00:00+00:00"
 
     async def test_persist_snapshot_entity_error_does_not_abort(
         self, ha_module: HomeAssistantModule
