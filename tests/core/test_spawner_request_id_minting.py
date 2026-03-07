@@ -22,7 +22,7 @@ from butlers.core.spawner import Spawner
 
 pytestmark = pytest.mark.unit
 
-# UUID4 pattern for sanity-checking the minted IDs are valid UUIDs
+# UUID pattern for sanity-checking the minted IDs are valid UUIDs
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
