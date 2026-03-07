@@ -772,7 +772,7 @@ class TestTrackSubscriptionFact:
                 frequency="monthly",
                 next_renewal=renewal_str,
             )
-        assert result["next_renewal"] == date.fromisoformat(renewal_str)
+        assert result["next_renewal"] == renewal_str
 
     async def test_source_message_id_stored_in_metadata(self, pool_with_owner):
         with patch(
@@ -820,7 +820,7 @@ class TestTrackBillFact:
         assert result["payee"] == "PG&E"
         assert Decimal(result["amount"]) == Decimal("84.00")
         assert result["currency"] == "USD"
-        assert result["due_date"] == due
+        assert result["due_date"] == due.isoformat()
         assert result["status"] == "pending"
         assert result["frequency"] == "one_time"
         assert result["id"] is not None
@@ -895,7 +895,7 @@ class TestTrackBillFact:
                 currency="USD",
                 due_date=due_str,
             )
-        assert result["due_date"] == date.fromisoformat(due_str)
+        assert result["due_date"] == due_str
 
     async def test_paid_status_with_paid_at(self, pool_with_owner):
         with patch(

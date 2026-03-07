@@ -437,6 +437,8 @@ def _fact_row_to_transaction(row: dict[str, Any]) -> dict[str, Any]:
     meta = row.get("metadata") or {}
     if isinstance(meta, str):
         meta = json.loads(meta)
+    posted_at = row.get("valid_at")
+    created_at = row.get("created_at")
     return {
         "id": str(row["id"]),
         "direction": direction,
@@ -444,14 +446,14 @@ def _fact_row_to_transaction(row: dict[str, Any]) -> dict[str, Any]:
         "amount": meta.get("amount", "0.00"),
         "currency": meta.get("currency", "USD"),
         "category": meta.get("category", ""),
-        "posted_at": row.get("valid_at"),
+        "posted_at": posted_at.isoformat() if posted_at else None,
         "description": meta.get("description"),
         "payment_method": meta.get("payment_method"),
         "account_id": meta.get("account_id"),
         "receipt_url": meta.get("receipt_url"),
         "external_ref": meta.get("external_ref"),
         "source_message_id": meta.get("source_message_id"),
-        "created_at": row.get("created_at"),
+        "created_at": created_at.isoformat() if created_at else None,
         "metadata": meta,
     }
 
@@ -620,7 +622,7 @@ async def track_subscription_fact(
         "amount": stored_amount,
         "currency": currency.upper(),
         "frequency": frequency,
-        "next_renewal": renewal_date,
+        "next_renewal": renewal_date.isoformat(),
         "status": status,
         "auto_renew": auto_renew,
         "payment_method": payment_method,
@@ -724,12 +726,12 @@ async def track_bill_fact(
         "payee": payee,
         "amount": stored_amount,
         "currency": currency.upper(),
-        "due_date": due,
+        "due_date": due.isoformat(),
         "frequency": frequency,
         "status": status,
         "payment_method": payment_method,
         "account_id": account_id,
-        "paid_at": paid_at_dt,
+        "paid_at": paid_at_dt.isoformat() if paid_at_dt else None,
         "source_message_id": source_message_id,
         "metadata": fact_metadata,
     }
