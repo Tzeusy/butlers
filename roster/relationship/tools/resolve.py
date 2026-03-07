@@ -499,38 +499,58 @@ async def _compute_salience(
     )
     contact_data = {row["id"]: row for row in contact_data_rows}
 
-    # Batch query 2: Relationship types
-    rel_rows = await pool.fetch(
-        """
-        SELECT DISTINCT ON (contact_id)
-            CASE
-                WHEN r.contact_id = ANY($1) THEN r.contact_id
-                ELSE r.related_contact_id
-            END as contact_id,
-            rt.forward_label
-        FROM relationships r
-        JOIN relationship_types rt ON r.relationship_type_id = rt.id
-        WHERE r.contact_id = ANY($1) OR r.related_contact_id = ANY($1)
-        ORDER BY contact_id, r.created_at DESC
-        """,
-        candidate_ids,
-    )
-    relationships = {row["contact_id"]: row["forward_label"] for row in rel_rows}
+    # Batch query 2: Relationship types (graceful — table may not exist yet)
+    try:
+        rel_rows = await pool.fetch(
+            """
+            SELECT DISTINCT ON (contact_id)
+                CASE
+                    WHEN r.contact_id = ANY($1) THEN r.contact_id
+                    ELSE r.related_contact_id
+                END as contact_id,
+                rt.forward_label
+            FROM relationships r
+            JOIN relationship_types rt ON r.relationship_type_id = rt.id
+            WHERE r.contact_id = ANY($1) OR r.related_contact_id = ANY($1)
+            ORDER BY contact_id, r.created_at DESC
+            """,
+            candidate_ids,
+        )
+        relationships = {row["contact_id"]: row["forward_label"] for row in rel_rows}
+    except asyncpg.PostgresError:
+        relationships = {}
 
-    # Batch query 3: Interaction counts and recency (last 90 days)
-    interaction_rows = await pool.fetch(
-        """
-        SELECT
-            contact_id,
-            COUNT(*) FILTER (WHERE interaction_date >= NOW() - INTERVAL '90 days') as count_90d,
-            MAX(interaction_date) as most_recent
-        FROM interactions
-        WHERE contact_id = ANY($1)
-        GROUP BY contact_id
-        """,
-        candidate_ids,
-    )
-    interactions = {row["contact_id"]: row for row in interaction_rows}
+    # Batch query 3: Interaction counts and recency (last 90 days).
+    # Interactions are stored as SPO facts (predicate='interaction', valid_at=occurred_at).
+    # Graceful degradation if facts table is unavailable.
+    try:
+        interaction_rows = await pool.fetch(
+            """
+            SELECT
+                ('contact:' || c.id::text) AS subject_key,
+                c.id AS contact_id,
+                COUNT(*) FILTER (WHERE f.valid_at >= NOW() - INTERVAL '90 days') as count_90d,
+                MAX(f.valid_at) as most_recent
+            FROM contacts c
+            LEFT JOIN facts f
+                ON f.subject = 'contact:' || c.id::text
+               AND f.predicate = 'interaction'
+               AND f.scope = 'relationship'
+               AND f.validity = 'active'
+            WHERE c.id = ANY($1)
+            GROUP BY c.id
+            """,
+            candidate_ids,
+        )
+        # Only include contacts that have at least one interaction
+        interactions = {
+            row["contact_id"]: row
+            for row in interaction_rows
+            if row["count_90d"] or row["most_recent"]
+        }
+    except asyncpg.PostgresError:
+        # Graceful degradation: no interaction data available
+        interactions = {}
 
     # Batch query 4: Fact and note counts
     fact_note_rows = await pool.fetch(
@@ -692,14 +712,47 @@ async def _boost_single_by_context(
                 candidate["score"] += 5
                 break
 
-    # Check interactions
-    interaction_rows = await pool.fetch(
-        "SELECT summary FROM interactions WHERE contact_id = $1 AND summary IS NOT NULL LIMIT 10",
-        cid,
-    )
-    for interaction in interaction_rows:
-        int_text = interaction["summary"].lower()
-        for word in context_words:
-            if word in int_text:
-                candidate["score"] += 5
+    # Check interactions — stored as SPO facts (predicate='interaction', content=summary).
+    # Also fall back to legacy interactions table rows if any exist.
+    interaction_boost = False
+    try:
+        fact_interaction_rows = await pool.fetch(
+            """
+            SELECT content FROM facts
+            WHERE predicate = 'interaction'
+              AND scope = 'relationship'
+              AND validity = 'active'
+              AND subject = 'contact:' || $1::text
+              AND content IS NOT NULL
+            LIMIT 10
+            """,
+            cid,
+        )
+        for fact_row in fact_interaction_rows:
+            int_text = str(fact_row["content"] or "").lower()
+            for word in context_words:
+                if word in int_text:
+                    candidate["score"] += 5
+                    interaction_boost = True
+                    break
+            if interaction_boost:
                 break
+    except asyncpg.PostgresError:
+        pass
+
+    if not interaction_boost:
+        # Legacy fallback: interactions table with summary column
+        try:
+            interaction_rows = await pool.fetch(
+                "SELECT summary FROM interactions"
+                " WHERE contact_id = $1 AND summary IS NOT NULL LIMIT 10",
+                cid,
+            )
+            for interaction in interaction_rows:
+                int_text = interaction["summary"].lower()
+                for word in context_words:
+                    if word in int_text:
+                        candidate["score"] += 5
+                        break
+        except asyncpg.PostgresError:
+            pass
