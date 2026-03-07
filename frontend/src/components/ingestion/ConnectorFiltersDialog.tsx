@@ -145,7 +145,13 @@ export function ConnectorFiltersDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild onClick={(e) => e.stopPropagation()}>
+      <DialogTrigger
+        asChild
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+        }}
+      >
         {triggerButton}
       </DialogTrigger>
       <DialogContent
