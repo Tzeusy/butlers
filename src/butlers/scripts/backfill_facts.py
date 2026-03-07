@@ -45,7 +45,7 @@ import logging
 import os
 import sys
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -663,15 +663,11 @@ async def _backfill_rel_life_events(pool: asyncpg.Pool, stats: Stats, dry_run: b
             if entity_id and isinstance(entity_id, str):
                 entity_id = uuid.UUID(entity_id)
             event_at: datetime | None = None
-            if row.get("happened_at"):
-                d = row["happened_at"]
-                if hasattr(d, "isoformat"):
-                    import datetime as dt_mod
-
-                    if isinstance(d, dt_mod.datetime):
-                        event_at = d
-                    else:
-                        event_at = datetime(d.year, d.month, d.day, tzinfo=UTC)
+            if d := row.get("happened_at"):
+                if isinstance(d, datetime):
+                    event_at = d
+                elif isinstance(d, date):
+                    event_at = datetime(d.year, d.month, d.day, tzinfo=UTC)
             content = row.get("summary") or row.get("description") or row["type_name"]
             try:
                 await _insert_fact(
@@ -1221,11 +1217,9 @@ async def _backfill_fin_bills(
         permanence = "stable" if status in ("pending", "overdue") else "standard"
         valid_at: datetime | None = None
         if due_date:
-            import datetime as dt_mod
-
-            if isinstance(due_date, dt_mod.datetime):
+            if isinstance(due_date, datetime):
                 valid_at = due_date
-            elif isinstance(due_date, dt_mod.date):
+            elif isinstance(due_date, date):
                 valid_at = datetime(due_date.year, due_date.month, due_date.day, tzinfo=UTC)
         try:
             await _insert_fact(
