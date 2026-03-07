@@ -94,7 +94,7 @@ async def contact_resolve(
     Resolution strategy (in order):
     1. Exact full-name match (case-insensitive) -> HIGH confidence, single contact_id.
     2. Multiple candidates -> compute salience scores, call entity_resolve (when memory_pool
-       is provided and contacts have entity_ids), apply 30-point gap threshold.
+       is provided and contacts have entity_ids), apply 15-point gap threshold.
     3. Partial match (first name or last name, case-insensitive) -> MEDIUM confidence.
     4. Context-boosted: if context is provided and a candidate's details/notes match,
        boost that candidate's relevance.
@@ -199,7 +199,7 @@ async def contact_resolve(
 
         candidates.sort(key=lambda c: c["score"], reverse=True)
 
-        if len(candidates) >= 2 and candidates[0]["score"] - candidates[1]["score"] >= 30:
+        if len(candidates) >= 2 and candidates[0]["score"] - candidates[1]["score"] >= 15:
             winner = candidates[0]
             inferred_reason = _generate_inferred_reason(winner)
             return {
@@ -306,8 +306,8 @@ async def contact_resolve(
             "inferred_reason": None,
         }
 
-    # If one candidate clearly leads by ≥30 points, return HIGH confidence with auto-selection
-    if len(candidates) >= 2 and candidates[0]["score"] - candidates[1]["score"] >= 30:
+    # If one candidate clearly leads by ≥15 points, return HIGH confidence with auto-selection
+    if len(candidates) >= 2 and candidates[0]["score"] - candidates[1]["score"] >= 15:
         winner = candidates[0]
         inferred_reason = _generate_inferred_reason(winner)
         return {
@@ -723,6 +723,7 @@ async def _boost_single_by_context(
 
     # Check notes — stored as SPO facts (predicate='contact_note', content=note text).
     # Also fall back to legacy notes table rows if any exist.
+    subject_key = f"contact:{cid}"
     note_boost = False
     try:
         fact_note_rows = await pool.fetch(
@@ -731,10 +732,10 @@ async def _boost_single_by_context(
             WHERE predicate = 'contact_note'
               AND scope = 'relationship'
               AND validity = 'active'
-              AND subject = 'contact:' || $1::text
+              AND subject = $1
             LIMIT 10
             """,
-            cid,
+            subject_key,
         )
         for fact_row in fact_note_rows:
             note_text = str(fact_row["content"] or "").lower()
@@ -773,11 +774,11 @@ async def _boost_single_by_context(
             WHERE predicate = 'interaction'
               AND scope = 'relationship'
               AND validity = 'active'
-              AND subject = 'contact:' || $1::text
+              AND subject = $1
               AND content IS NOT NULL
             LIMIT 10
             """,
-            cid,
+            subject_key,
         )
         for fact_row in fact_interaction_rows:
             int_text = str(fact_row["content"] or "").lower()

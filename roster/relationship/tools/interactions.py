@@ -117,7 +117,7 @@ async def interaction_log(
         pool,
         subject=f"contact:{contact_id}",
         predicate="interaction",
-        content=str(summary) if summary is not None else "",
+        content=summary or "",
         embedding_engine=embedding_engine,
         permanence="stable",
         scope="relationship",
