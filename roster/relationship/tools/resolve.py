@@ -552,26 +552,44 @@ async def _compute_salience(
         # Graceful degradation: no interaction data available
         interactions = {}
 
-    # Batch query 4: Fact and note counts
-    fact_note_rows = await pool.fetch(
-        """
-        SELECT
-            contact_id,
-            SUM(CASE WHEN source = 'fact' THEN 1 ELSE 0 END) as fact_count,
-            SUM(CASE WHEN source = 'note' THEN 1 ELSE 0 END) as note_count
-        FROM (
-            SELECT contact_id, 'fact' as source FROM quick_facts WHERE contact_id = ANY($1)
-            UNION ALL
-            SELECT contact_id, 'note' as source FROM notes WHERE contact_id = ANY($1)
-        ) combined
-        GROUP BY contact_id
-        """,
-        candidate_ids,
-    )
-    fact_notes = {
-        row["contact_id"]: {"fact_count": row["fact_count"], "note_count": row["note_count"]}
-        for row in fact_note_rows
-    }
+    # Batch query 4: Fact and note counts.
+    # Count from both the facts table (SPO-migrated data) and legacy quick_facts/notes tables.
+    try:
+        fact_note_rows = await pool.fetch(
+            """
+            SELECT
+                contact_id,
+                SUM(CASE WHEN source = 'fact' THEN 1 ELSE 0 END) as fact_count,
+                SUM(CASE WHEN source = 'note' THEN 1 ELSE 0 END) as note_count
+            FROM (
+                -- SPO facts: contact_note predicate
+                SELECT
+                    SUBSTRING(subject FROM 9)::uuid AS contact_id,
+                    'note' as source
+                FROM facts
+                WHERE predicate = 'contact_note'
+                  AND scope = 'relationship'
+                  AND validity = 'active'
+                  AND subject = ANY(
+                      SELECT 'contact:' || id::text FROM contacts WHERE id = ANY($1)
+                  )
+                UNION ALL
+                -- Legacy quick_facts table (if still populated)
+                SELECT contact_id, 'fact' as source FROM quick_facts WHERE contact_id = ANY($1)
+                UNION ALL
+                -- Legacy notes table (if still populated)
+                SELECT contact_id, 'note' as source FROM notes WHERE contact_id = ANY($1)
+            ) combined
+            GROUP BY contact_id
+            """,
+            candidate_ids,
+        )
+        fact_notes = {
+            row["contact_id"]: {"fact_count": row["fact_count"], "note_count": row["note_count"]}
+            for row in fact_note_rows
+        }
+    except asyncpg.PostgresError:
+        fact_notes = {}
 
     # Batch query 5: Group memberships
     group_rows = await pool.fetch(
@@ -703,14 +721,47 @@ async def _boost_single_by_context(
                 candidate["score"] += 10
                 break
 
-    # Check notes
-    note_rows = await pool.fetch("SELECT body FROM notes WHERE contact_id = $1 LIMIT 10", cid)
-    for note in note_rows:
-        note_text = str(note["body"] or "").lower()
-        for word in context_words:
-            if word in note_text:
-                candidate["score"] += 5
+    # Check notes — stored as SPO facts (predicate='contact_note', content=note text).
+    # Also fall back to legacy notes table rows if any exist.
+    note_boost = False
+    try:
+        fact_note_rows = await pool.fetch(
+            """
+            SELECT content FROM facts
+            WHERE predicate = 'contact_note'
+              AND scope = 'relationship'
+              AND validity = 'active'
+              AND subject = 'contact:' || $1::text
+            LIMIT 10
+            """,
+            cid,
+        )
+        for fact_row in fact_note_rows:
+            note_text = str(fact_row["content"] or "").lower()
+            for word in context_words:
+                if word in note_text:
+                    candidate["score"] += 5
+                    note_boost = True
+                    break
+            if note_boost:
                 break
+    except asyncpg.PostgresError:
+        pass
+
+    if not note_boost:
+        # Legacy fallback: notes table with body column
+        try:
+            note_rows = await pool.fetch(
+                "SELECT body FROM notes WHERE contact_id = $1 LIMIT 10", cid
+            )
+            for note in note_rows:
+                note_text = str(note["body"] or "").lower()
+                for word in context_words:
+                    if word in note_text:
+                        candidate["score"] += 5
+                        break
+        except asyncpg.PostgresError:
+            pass
 
     # Check interactions — stored as SPO facts (predicate='interaction', content=summary).
     # Also fall back to legacy interactions table rows if any exist.
