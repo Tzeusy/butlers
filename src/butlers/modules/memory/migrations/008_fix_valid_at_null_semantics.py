@@ -99,7 +99,7 @@ def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS idx_facts_edge_scope_predicate_active")
     op.execute("DROP INDEX IF EXISTS idx_facts_no_entity_subject_predicate_active")
 
-    # 2. Restore NOT NULL by back-filling NULL → now() and adding the constraint.
+    # 2. Restore NOT NULL by back-filling NULL → created_at and adding the constraint.
     op.execute("""
         UPDATE facts SET valid_at = created_at WHERE valid_at IS NULL
     """)
