@@ -9,7 +9,7 @@
  *   - Delete with confirmation dialog
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Edit2, Loader2, Plus, Trash2, X } from "lucide-react";
 
 import type { SourceFilter, SourceFilterCreate, SourceFilterMode } from "@/api/index.ts";
@@ -440,6 +440,13 @@ function DeleteConfirmDialog({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!open) {
+      setPending(false);
+      setError(null);
+    }
+  }, [open]);
+
   async function handleConfirm() {
     if (!filter) return;
     setPending(true);
@@ -617,6 +624,9 @@ export function ManageSourceFiltersPanel({
 
   async function handleDeleteConfirm(id: string) {
     await deleteMutation.mutateAsync(id);
+    if (editingFilter?.id === id) {
+      setEditingFilter(null);
+    }
   }
 
   return (
@@ -665,6 +675,7 @@ export function ManageSourceFiltersPanel({
             {/* Inline edit form */}
             {editingFilter && (
               <EditFilterForm
+                key={editingFilter.id}
                 filter={editingFilter}
                 onSaved={handleEditSaved}
                 onCancel={handleEditCancel}
