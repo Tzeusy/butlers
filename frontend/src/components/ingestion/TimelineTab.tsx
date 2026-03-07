@@ -107,10 +107,10 @@ function LineageView({ requestId }: LineageViewProps) {
     );
   }
 
-  if (sessions.isError) {
+  if (sessions.isError || rollup.isError) {
     return (
       <p className="px-4 pb-4 text-sm text-destructive">
-        Failed to load session lineage.
+        Failed to load session lineage details. Please try again.
       </p>
     );
   }
@@ -219,7 +219,7 @@ function LineageView({ requestId }: LineageViewProps) {
                 <span key={butler} className="text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">{butler}</span>
                   {": "}
-                  {entry.sessions}s / {entry.input_tokens + entry.output_tokens} tok /{" "}
+                  {entry.sessions} sess / {entry.input_tokens + entry.output_tokens} tok /{" "}
                   {formatCost(entry.cost)}
                 </span>
               ))}
