@@ -1877,6 +1877,8 @@ import type {
   ConnectorDetail,
   ConnectorFanout,
   ConnectorFanoutEntry,
+  ConnectorFilterAssignment,
+  ConnectorFilterAssignmentItem,
   ConnectorStats,
   ConnectorStatsBucket,
   ConnectorStatsSummary,
@@ -1895,6 +1897,8 @@ export type {
   ConnectorDetail,
   ConnectorFanout,
   ConnectorFanoutEntry,
+  ConnectorFilterAssignment,
+  ConnectorFilterAssignmentItem,
   ConnectorStats,
   ConnectorStatsBucket,
   ConnectorStatsSummary,
@@ -2188,4 +2192,30 @@ export async function getConnectorFanout(
     ...resp,
     data: _toConnectorFanout(resp.data ?? [], period),
   };
+}
+
+/** Get all source filter assignments for a connector (GET /connectors/{type}/{identity}/filters). */
+export async function getConnectorFilters(
+  connectorType: string,
+  endpointIdentity: string,
+): Promise<ApiResponse<ConnectorFilterAssignment[]>> {
+  return apiFetch<ApiResponse<ConnectorFilterAssignment[]>>(
+    `/switchboard/connectors/${encodeURIComponent(connectorType)}/${encodeURIComponent(endpointIdentity)}/filters`,
+  );
+}
+
+/** Replace all filter assignments for a connector (PUT /connectors/{type}/{identity}/filters). */
+export async function updateConnectorFilters(
+  connectorType: string,
+  endpointIdentity: string,
+  assignments: ConnectorFilterAssignmentItem[],
+): Promise<ApiResponse<ConnectorFilterAssignment[]>> {
+  return apiFetch<ApiResponse<ConnectorFilterAssignment[]>>(
+    `/switchboard/connectors/${encodeURIComponent(connectorType)}/${encodeURIComponent(endpointIdentity)}/filters`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(assignments),
+    },
+  );
 }
