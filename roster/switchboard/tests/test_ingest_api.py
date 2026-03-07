@@ -52,11 +52,11 @@ async def pool(provisioned_postgres_pool):
     """Provision a fresh database with message_inbox table and return a pool.
 
     WARNING: This fixture duplicates the database schema from the `sw_008`,
-    `sw_009`, and `sw_019` migrations. If you update the `message_inbox` table
+    `sw_015`, `sw_016`, and `sw_019` migrations. If you update the `message_inbox` table
     schema, you must manually update this fixture to keep it synchronized.
     """
     async with provisioned_postgres_pool() as p:
-        # Create message_inbox table (partitioned, from sw_008 + sw_009 + sw_019 migrations)
+        # Create message_inbox table (partitioned, from sw_008, sw_015, sw_016, and sw_019 migrations)
         await p.execute(
             """
             CREATE TABLE message_inbox (
