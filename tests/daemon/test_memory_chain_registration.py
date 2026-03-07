@@ -72,6 +72,7 @@ class TestMemoryChainRegistration:
             "006_drop_shadow_entities.py",
             "007_bitemporal_facts.py",
             "008_fix_valid_at_null_semantics.py",
+            "009_facts_gin_indexes.py",
             "009_finance_predicates.py",
             "009_health_predicates.py",
             "010_relationship_predicates.py",
