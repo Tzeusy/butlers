@@ -30,7 +30,6 @@ from butlers.connectors.source_filter import (
     SourceFilterEvaluator,
     SourceFilterSpec,
     _matches_pattern,
-    _warned_unknown_key_type,
     extract_gmail_filter_key,
 )
 
@@ -167,7 +166,7 @@ class TestDomainBlacklist:
         ev = _evaluator_with_filters(
             [_spec(filter_mode="blacklist", source_key_type="domain", patterns=["spam.com"])]
         )
-        result = ev.evaluate("spam.com")
+        result = ev.evaluate("Spammer <spammer@spam.com>")
         assert result.allowed is False
         assert "blacklist_match" in result.reason
         assert result.filter_name == "test-filter"
@@ -176,16 +175,30 @@ class TestDomainBlacklist:
         ev = _evaluator_with_filters(
             [_spec(filter_mode="blacklist", source_key_type="domain", patterns=["spam.com"])]
         )
-        result = ev.evaluate("mail.spam.com")
+        result = ev.evaluate("sender@mail.spam.com")
         assert result.allowed is False
 
     def test_blacklist_passes_non_matching_domain(self) -> None:
         ev = _evaluator_with_filters(
             [_spec(filter_mode="blacklist", source_key_type="domain", patterns=["spam.com"])]
         )
-        result = ev.evaluate("legit.com")
+        result = ev.evaluate("sender@legit.com")
         assert result.allowed is True
         assert result.reason == "passed"
+
+    def test_domain_filter_with_display_name_from_header(self) -> None:
+        """Domain filter correctly extracts domain from 'Display Name <addr>' headers.
+
+        Regression test for bu-7w4: evaluate() now accepts a raw From header and
+        extracts the key per-filter type, so domain blacklists work correctly even
+        when the header includes a display name.
+        """
+        ev = _evaluator_with_filters(
+            [_spec(filter_mode="blacklist", source_key_type="domain", patterns=["spam.com"])]
+        )
+        result = ev.evaluate("Spammer Name <spammer@spam.com>")
+        assert result.allowed is False
+        assert "blacklist_match" in result.reason
 
 
 class TestSenderAddressWhitelist:
@@ -260,7 +273,7 @@ class TestMixedMode:
                 ),
             ]
         )
-        result = ev.evaluate("bad.com")
+        result = ev.evaluate("sender@bad.com")
         assert result.allowed is False
         assert "blacklist_match" in result.reason
 
@@ -275,7 +288,7 @@ class TestMixedMode:
                 )
             ]
         )
-        result = ev.evaluate("other.com")
+        result = ev.evaluate("sender@other.com")
         assert result.allowed is False
         assert result.reason == "whitelist_no_match"
 
@@ -301,7 +314,7 @@ class TestMixedMode:
                 ),
             ]
         )
-        result = ev.evaluate("good.com")
+        result = ev.evaluate("sender@good.com")
         assert result.allowed is True
         assert result.reason == "passed"
 
@@ -327,17 +340,14 @@ class TestMixedMode:
                 ),
             ]
         )
-        result = ev.evaluate("random.com")
+        result = ev.evaluate("sender@random.com")
         assert result.allowed is False
         assert result.reason == "whitelist_no_match"
 
 
 class TestUnknownKeyType:
     def test_unknown_key_type_skipped_with_warning(self, caplog: pytest.LogCaptureFixture) -> None:
-        # Ensure this filter_id is not yet in the warned set
         filter_id = "ffffffff-dead-beef-0000-000000000001"
-        _warned_unknown_key_type.discard(filter_id)
-
         ev = _evaluator_with_filters(
             [
                 _spec(
@@ -358,10 +368,12 @@ class TestUnknownKeyType:
         assert any("unknown source_key_type" in r.message for r in caplog.records)
 
     def test_unknown_key_type_one_time_warning(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Second call for the same filter_id does NOT emit another warning."""
-        filter_id = "ffffffff-dead-beef-0000-000000000002"
-        _warned_unknown_key_type.discard(filter_id)
+        """Second call for the same filter_id does NOT emit another warning.
 
+        Each SourceFilterEvaluator instance tracks warned filter_ids independently;
+        a fresh evaluator starts with an empty warned set.
+        """
+        filter_id = "ffffffff-dead-beef-0000-000000000002"
         ev = _evaluator_with_filters(
             [
                 _spec(
@@ -385,6 +397,30 @@ class TestUnknownKeyType:
 
         assert warning_count_first == 1
         assert warning_count_second == 1  # no new warning on second call
+
+    def test_unknown_key_type_warning_isolated_per_evaluator(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Two different evaluator instances track warned filter_ids independently."""
+        filter_id = "ffffffff-dead-beef-0000-000000000003"
+        spec = _spec(
+            id=filter_id,
+            name="isolated-unknown-filter",
+            filter_mode="blacklist",
+            source_key_type="carrier_pigeon",  # unknown
+            patterns=["coo"],
+        )
+        ev1 = _evaluator_with_filters([spec])
+        ev2 = _evaluator_with_filters([spec])
+
+        with caplog.at_level(logging.WARNING, logger="butlers.connectors.source_filter"):
+            ev1.evaluate("coo")
+            # ev1 has now warned; ev2 starts fresh and should also warn
+            ev2.evaluate("coo")
+            warning_count = sum(1 for r in caplog.records if "unknown source_key_type" in r.message)
+
+        # Both evaluators emit a warning (each has its own fresh warned set)
+        assert warning_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -410,9 +446,9 @@ class TestTTLRefresh:
             await asyncio.sleep(0)
 
         # Background task was created (may still be running)
-        assert mock_load.called or (
-            ev._background_refresh_task is not None
-        ), "expected background refresh task to be scheduled"
+        assert mock_load.called or (ev._background_refresh_task is not None), (
+            "expected background refresh task to be scheduled"
+        )
 
     async def test_refresh_does_not_stack_up(self) -> None:
         """A second evaluate() does not create a second task if one is pending."""
@@ -482,9 +518,7 @@ class TestTTLRefresh:
 
 
 class TestFailOpen:
-    async def test_db_error_retains_previous_cache(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_db_error_retains_previous_cache(self, caplog: pytest.LogCaptureFixture) -> None:
         """On DB error, _load_filters retains the previous cache and logs WARNING."""
         mock_pool = AsyncMock()
         mock_pool.fetch.side_effect = RuntimeError("connection refused")
@@ -534,7 +568,7 @@ class TestFailOpen:
         # DB error during reload — should not affect current evaluation
         await ev._load_filters()
 
-        result = ev.evaluate("blocked.com")
+        result = ev.evaluate("sender@blocked.com")
         assert result.allowed is False
 
     async def test_ensure_loaded_with_pool(self) -> None:
@@ -617,10 +651,7 @@ class TestGmailConnectorIntegration:
         from butlers.connectors.gmail import GmailConnectorRuntime
 
         runtime = GmailConnectorRuntime(gmail_config)
-        assert (
-            runtime._source_filter_evaluator._endpoint_identity
-            == "gmail:user:test@example.com"
-        )
+        assert runtime._source_filter_evaluator._endpoint_identity == "gmail:user:test@example.com"
 
     async def test_ensure_loaded_called_before_ingestion(self, gmail_config) -> None:
         """start() calls ensure_loaded() before the ingestion loop begins."""
@@ -709,9 +740,7 @@ class TestGmailConnectorIntegration:
 
         assert not submit_called, "message should not be submitted when source filter blocks"
 
-    async def test_source_filter_allows_message_proceeds_to_submission(
-        self, gmail_config
-    ) -> None:
+    async def test_source_filter_allows_message_proceeds_to_submission(self, gmail_config) -> None:
         """When source filter allows, message proceeds to Switchboard submission."""
         from butlers.connectors.gmail import GmailConnectorRuntime
 
@@ -751,9 +780,7 @@ class TestGmailConnectorIntegration:
         with (
             patch.object(runtime, "_fetch_message", side_effect=_mock_fetch_message),
             patch.object(runtime, "_submit_to_ingest_api", side_effect=_mock_submit),
-            patch.object(
-                runtime, "_build_ingest_envelope", side_effect=_mock_build_envelope
-            ),
+            patch.object(runtime, "_build_ingest_envelope", side_effect=_mock_build_envelope),
         ):
             await runtime._ingest_single_message("msg002")
 

@@ -75,7 +75,7 @@ from butlers.connectors.gmail_policy import (
 from butlers.connectors.heartbeat import ConnectorHeartbeat, HeartbeatConfig
 from butlers.connectors.mcp_client import CachedMCPClient, wait_for_switchboard_ready
 from butlers.connectors.metrics import ConnectorMetrics, get_error_type
-from butlers.connectors.source_filter import SourceFilterEvaluator, extract_gmail_filter_key
+from butlers.connectors.source_filter import SourceFilterEvaluator
 from butlers.core.logging import configure_logging
 from butlers.credential_store import CredentialStore, shared_db_name_from_env
 from butlers.db import db_params_from_env, schema_search_path, should_retry_with_ssl_disable
@@ -1122,19 +1122,8 @@ class GmailConnectorRuntime:
                                 )
                             else:
                                 # Source filter gate (backfill path)
-                                _bf_headers_raw = message_data.get("payload", {}).get(
-                                    "headers", []
-                                )
-                                _bf_from = ""
-                                for _bfh in _bf_headers_raw:
-                                    if (
-                                        isinstance(_bfh, dict)
-                                        and _bfh.get("name", "").lower() == "from"
-                                    ):
-                                        _bf_from = _bfh.get("value", "")
-                                        break
-                                _bf_key = extract_gmail_filter_key(_bf_from, "sender_address")
-                                _bf_sf = self._source_filter_evaluator.evaluate(_bf_key)
+                                _bf_from = self._get_from_header(message_data)
+                                _bf_sf = self._source_filter_evaluator.evaluate(_bf_from)
                                 if not _bf_sf.allowed:
                                     rows_skipped += 1
                                     logger.debug(
@@ -1712,16 +1701,9 @@ class GmailConnectorRuntime:
                     return
 
                 # Source filter gate (runs after label filter, before triage/envelope build)
-                # Extract From header for filter key resolution
-                _headers_raw = message_data.get("payload", {}).get("headers", [])
-                _from_header = ""
-                for _h in _headers_raw:
-                    if isinstance(_h, dict) and _h.get("name", "").lower() == "from":
-                        _from_header = _h.get("value", "")
-                        break
-                _sf_key_type = "sender_address"
-                _sf_key = extract_gmail_filter_key(_from_header, _sf_key_type)
-                _sf_result = self._source_filter_evaluator.evaluate(_sf_key)
+                _sf_result = self._source_filter_evaluator.evaluate(
+                    self._get_from_header(message_data)
+                )
                 if not _sf_result.allowed:
                     logger.debug(
                         "Source filter blocked message %s: reason=%s filter=%s",
@@ -1759,6 +1741,15 @@ class GmailConnectorRuntime:
                 raise
             except Exception as exc:
                 logger.error("Failed to ingest message %s: %s", message_id, exc, exc_info=True)
+
+    @staticmethod
+    def _get_from_header(message_data: dict[str, Any]) -> str:
+        """Extract the raw From header value from a Gmail message payload."""
+        headers = message_data.get("payload", {}).get("headers", [])
+        for header in headers:
+            if isinstance(header, dict) and header.get("name", "").lower() == "from":
+                return header.get("value", "")
+        return ""
 
     async def _fetch_message(self, message_id: str) -> dict[str, Any]:
         """Fetch full message metadata and payload from Gmail API."""

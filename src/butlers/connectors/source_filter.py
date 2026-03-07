@@ -120,10 +120,6 @@ def _extract_sender_address(from_header: str) -> str:
 # Pattern matching
 # ---------------------------------------------------------------------------
 
-# Track filter_ids for which we have already emitted a one-time warning about
-# an unknown source_key_type so we don't spam the logs.
-_warned_unknown_key_type: set[str] = set()
-
 
 def _matches_pattern(
     key_value: str,
@@ -188,6 +184,9 @@ class SourceFilterEvaluator:
         self._last_loaded_at: float | None = None
         self._load_lock = asyncio.Lock()
         self._background_refresh_task: asyncio.Task[None] | None = None
+        # Per-evaluator set of filter_ids for which we have already emitted a
+        # one-time warning about an unknown source_key_type.
+        self._warned_unknown_key_type: set[str] = set()
 
     # ------------------------------------------------------------------
     # Internal: DB load
@@ -271,8 +270,8 @@ class SourceFilterEvaluator:
     # Public: evaluate
     # ------------------------------------------------------------------
 
-    def evaluate(self, key_value: str) -> FilterResult:
-        """Evaluate *key_value* against the active filter cache.
+    def evaluate(self, from_header: str) -> FilterResult:
+        """Evaluate *from_header* against the active filter cache.
 
         Triggers a background TTL refresh if the cache is stale, but does
         **not** await it — callers always receive a response from the current
@@ -280,11 +279,12 @@ class SourceFilterEvaluator:
 
         Parameters
         ----------
-        key_value:
-            The pre-extracted key for the relevant ``source_key_type``.  For
-            example, when evaluating ``domain`` filters this should already be
-            the domain string; when evaluating ``sender_address`` it should be
-            the normalised address.
+        from_header:
+            Raw value of the ``From`` message header (e.g. the Gmail
+            ``From`` header).  The evaluator extracts the appropriate key for
+            each filter's ``source_key_type`` internally, so domain filters
+            receive just the domain and sender_address filters receive the
+            normalised address.
 
         Returns
         -------
@@ -310,7 +310,7 @@ class SourceFilterEvaluator:
         for spec in filters:
             if spec.filter_mode != "blacklist":
                 continue
-            if not self._filter_matches(spec, key_value):
+            if not self._filter_matches(spec, from_header):
                 continue
             # Pattern matched a blacklist → block
             result = FilterResult(
@@ -329,7 +329,7 @@ class SourceFilterEvaluator:
         # Rule 3: whitelists
         whitelist_filters = [s for s in filters if s.filter_mode == "whitelist"]
         if whitelist_filters:
-            matched_any = any(self._filter_matches(s, key_value) for s in whitelist_filters)
+            matched_any = any(self._filter_matches(s, from_header) for s in whitelist_filters)
             if not matched_any:
                 # Active whitelist(s) but no match → block
                 result = FilterResult(
@@ -359,20 +359,27 @@ class SourceFilterEvaluator:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _filter_matches(self, spec: SourceFilterSpec, key_value: str) -> bool:
-        """Return True if *key_value* matches any pattern in *spec*."""
+    def _filter_matches(self, spec: SourceFilterSpec, from_header: str) -> bool:
+        """Return True if *from_header* matches any pattern in *spec*.
+
+        The key appropriate for each filter's ``source_key_type`` is extracted
+        here so that domain filters receive the domain portion and
+        sender_address filters receive the normalised address.
+        """
         key_type = spec.source_key_type
         if key_type not in ("domain", "sender_address", "substring", "chat_id"):
-            if spec.id not in _warned_unknown_key_type:
+            if spec.id not in self._warned_unknown_key_type:
                 logger.warning(
                     "source_filter: unknown source_key_type %r for filter %r (id=%s); skipping",
                     key_type,
                     spec.name,
                     spec.id,
                 )
-                _warned_unknown_key_type.add(spec.id)
+                self._warned_unknown_key_type.add(spec.id)
             return False
 
+        # Extract the key appropriate for this filter's type from the raw header.
+        key_value = extract_gmail_filter_key(from_header, key_type)
         return any(_matches_pattern(key_value, pat, key_type) for pat in spec.patterns)
 
     def _maybe_schedule_refresh(self) -> None:
@@ -411,7 +418,7 @@ def extract_gmail_filter_key(from_header: str, key_type: str) -> str:
         return _extract_domain(from_header)
     if key_type == "sender_address":
         return _extract_sender_address(from_header)
-    # substring and chat_id: return verbatim
+    # substring: return verbatim
     return from_header
 
 
