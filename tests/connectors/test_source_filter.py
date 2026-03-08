@@ -650,10 +650,7 @@ class TestGmailConnectorIntegration:
         from butlers.connectors.gmail import GmailConnectorRuntime
 
         runtime = GmailConnectorRuntime(gmail_config)
-        assert (
-            runtime._ingestion_policy.scope
-            == "connector:gmail:gmail:user:test@example.com"
-        )
+        assert runtime._ingestion_policy.scope == "connector:gmail:gmail:user:test@example.com"
 
     async def test_ensure_loaded_called_before_ingestion(self, gmail_config) -> None:
         """start() calls ensure_loaded() before the ingestion loop begins."""
@@ -697,9 +694,7 @@ class TestGmailConnectorIntegration:
 
         assert ensure_loaded_called, "ensure_loaded() was not called"
 
-    async def test_ingestion_policy_blocks_message_before_submission(
-        self, gmail_config
-    ) -> None:
+    async def test_ingestion_policy_blocks_message_before_submission(self, gmail_config) -> None:
         """When ingestion policy blocks, message is not submitted to Switchboard."""
         from butlers.connectors.gmail import GmailConnectorRuntime
 

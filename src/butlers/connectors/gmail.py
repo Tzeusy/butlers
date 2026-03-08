@@ -1115,12 +1115,8 @@ class GmailConnectorRuntime:
                                 )
                             else:
                                 # Ingestion policy gate (backfill path)
-                                _bf_envelope = self._build_ingestion_envelope(
-                                    message_data
-                                )
-                                _bf_decision = self._ingestion_policy.evaluate(
-                                    _bf_envelope
-                                )
+                                _bf_envelope = self._build_ingestion_envelope(message_data)
+                                _bf_decision = self._ingestion_policy.evaluate(_bf_envelope)
                                 if not _bf_decision.allowed:
                                     rows_skipped += 1
                                     logger.debug(
