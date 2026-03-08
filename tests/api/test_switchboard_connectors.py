@@ -1021,9 +1021,7 @@ class TestUpdateConnectorCursor:
 
     async def test_returns_503_on_db_error(self, app):
         """When DB errors on update, 503 is returned."""
-        app = _app_with_mock_db(
-            app, fetchrow_side_effect=Exception("connection refused")
-        )
+        app = _app_with_mock_db(app, fetchrow_side_effect=Exception("connection refused"))
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
