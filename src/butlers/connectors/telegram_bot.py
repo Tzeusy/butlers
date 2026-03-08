@@ -399,9 +399,7 @@ class TelegramBotConnector:
         persists new checkpoint after successful submission.
         """
         if not self._config.cursor_path and self._cursor_pool is None:
-            raise ValueError(
-                "CONNECTOR_CURSOR_PATH or DB cursor pool is required for polling mode"
-            )
+            raise ValueError("CONNECTOR_CURSOR_PATH or DB cursor pool is required for polling mode")
 
         # Start health server
         self._start_health_server()

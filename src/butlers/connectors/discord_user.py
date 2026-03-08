@@ -438,9 +438,7 @@ class DiscordUserConnector:
         5. Processes dispatch events until stopped
         """
         if not self._config.cursor_path and self._cursor_pool is None:
-            raise ValueError(
-                "CONNECTOR_CURSOR_PATH or DB cursor pool is required"
-            )
+            raise ValueError("CONNECTOR_CURSOR_PATH or DB cursor pool is required")
 
         # Load checkpoint
         await self._load_checkpoint()
@@ -1010,9 +1008,7 @@ class DiscordUserConnector:
                     data = json.loads(raw)
                     checkpoints = data.get("channel_checkpoints", {})
                     if isinstance(checkpoints, dict):
-                        self._channel_checkpoints = {
-                            str(k): str(v) for k, v in checkpoints.items()
-                        }
+                        self._channel_checkpoints = {str(k): str(v) for k, v in checkpoints.items()}
                     logger.info(
                         "Loaded checkpoint from DB",
                         extra={"channel_count": len(self._channel_checkpoints)},

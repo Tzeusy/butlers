@@ -86,7 +86,7 @@ class TestGmailConnectorConfig:
         # Clear all required env vars
         monkeypatch.delenv("SWITCHBOARD_MCP_URL", raising=False)
         monkeypatch.delenv("CONNECTOR_ENDPOINT_IDENTITY", raising=False)
-        # Should raise ValueError for missing CONNECTOR_CURSOR_PATH first
+        # Should raise for missing SWITCHBOARD_MCP_URL or CONNECTOR_ENDPOINT_IDENTITY
         with pytest.raises((KeyError, ValueError)):
             GmailConnectorConfig.from_env(
                 gmail_client_id="client-id",

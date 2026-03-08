@@ -399,9 +399,7 @@ class TestTelegramUserClientConnector:
             with pytest.raises(ConnectionError):
                 await connector._submit_to_ingest(envelope)
 
-    async def test_load_checkpoint_no_file(
-        self, config: TelegramUserClientConnectorConfig
-    ) -> None:
+    async def test_load_checkpoint_no_file(self, config: TelegramUserClientConnectorConfig) -> None:
         """Test loading checkpoint when no file exists."""
         connector = TelegramUserClientConnector(config)
         await connector._load_checkpoint()

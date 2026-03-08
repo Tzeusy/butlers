@@ -226,9 +226,7 @@ class TelegramUserClientConnector:
         5. Runs until stopped
         """
         if not self._config.cursor_path and self._cursor_pool is None:
-            raise ValueError(
-                "CONNECTOR_CURSOR_PATH or DB cursor pool is required"
-            )
+            raise ValueError("CONNECTOR_CURSOR_PATH or DB cursor pool is required")
 
         # Load checkpoint
         await self._load_checkpoint()
