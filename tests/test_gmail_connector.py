@@ -206,7 +206,7 @@ class TestGmailCursor:
 class TestGmailConnectorRuntime:
     """Tests for GmailConnectorRuntime."""
 
-    async def test_ensure_cursor_file_creates_initial(
+    async def test_ensure_cursor_creates_initial(
         self, gmail_runtime: GmailConnectorRuntime, temp_cursor_path: Path
     ) -> None:
         """Test cursor file is created with initial historyId if missing."""
@@ -220,7 +220,7 @@ class TestGmailConnectorRuntime:
         ):
             mock_client.get = AsyncMock(return_value=mock_response)
 
-            await gmail_runtime._ensure_cursor_file()
+            await gmail_runtime._ensure_cursor()
 
             assert temp_cursor_path.exists()
             cursor_data = json.loads(temp_cursor_path.read_text())
