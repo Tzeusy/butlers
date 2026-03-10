@@ -214,7 +214,16 @@ class TestMemoryMigrationSchema:
             _TEST_BUTLER_SCHEMA,
         )
         names = {row["tablename"] for row in rows}
-        for table in ("episodes", "facts", "rules", "memory_links", "memory_policies"):
+        for table in (
+            "episodes",
+            "facts",
+            "rules",
+            "memory_links",
+            "memory_events",
+            "predicate_registry",
+            "memory_policies",
+            "rule_applications",
+        ):
             assert table in names, f"Expected table '{table}' to exist after migration"
 
     async def test_facts_tenant_and_lineage_columns(self, memory_pool) -> None:
@@ -224,10 +233,10 @@ class TestMemoryMigrationSchema:
             assert col in cols, f"facts.{col} missing — check mem_014 migration"
 
     async def test_facts_temporal_idempotency_columns(self, memory_pool) -> None:
-        """facts has idempotency_key, observed_at, invalid_at (mem_016)."""
+        """facts has idempotency_key, observed_at, invalid_at (mem_016) and valid_at (mem_007)."""
         cols = await _get_columns(memory_pool, "facts")
-        for col in ("idempotency_key", "observed_at", "invalid_at"):
-            assert col in cols, f"facts.{col} missing — check mem_016 migration"
+        for col in ("idempotency_key", "observed_at", "invalid_at", "valid_at"):
+            assert col in cols, f"facts.{col} missing — check mem_007/mem_016 migrations"
 
     async def test_facts_tenant_id_type(self, memory_pool) -> None:
         """facts.tenant_id is a text column."""
@@ -344,6 +353,21 @@ class TestMemoryPoliciesSeed:
         assert row["ttl_days"] is None, (
             f"operational.ttl_days should be NULL, got {row['ttl_days']}"
         )
+
+    async def test_policies_all_have_decay_rate_and_confidence(self, memory_pool) -> None:
+        """All 8 retention class rows have non-null decay_rate and min_retrieval_confidence."""
+        rows = await memory_pool.fetch(
+            "SELECT retention_class, decay_rate, min_retrieval_confidence FROM memory_policies"
+        )
+        assert len(rows) == 8, f"Expected 8 rows, got {len(rows)}"
+        for row in rows:
+            rc = row["retention_class"]
+            assert row["decay_rate"] is not None, (
+                f"memory_policies.decay_rate is NULL for retention_class={rc!r}"
+            )
+            assert row["min_retrieval_confidence"] is not None, (
+                f"memory_policies.min_retrieval_confidence is NULL for retention_class={rc!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
