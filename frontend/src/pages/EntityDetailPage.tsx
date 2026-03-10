@@ -821,17 +821,29 @@ export default function EntityDetailPage() {
                 </div>
               )}
 
-              {/* Metadata */}
-              {Object.keys(entity.metadata).length > 0 && (
-                <div>
-                  <p className="text-muted-foreground mb-1 text-sm font-medium">
-                    Metadata
-                  </p>
-                  <pre className="rounded-md bg-muted p-3 text-xs overflow-x-auto">
-                    {JSON.stringify(entity.metadata, null, 2)}
-                  </pre>
-                </div>
-              )}
+              {/* Metadata — exclude keys already shown in dedicated sections */}
+              {(() => {
+                const _DISPLAY_EXCLUDED = new Set([
+                  "source_butler",
+                  "source_scope",
+                  "unidentified",
+                ]);
+                const displayMetadata = Object.fromEntries(
+                  Object.entries(entity.metadata).filter(
+                    ([k]) => !_DISPLAY_EXCLUDED.has(k),
+                  ),
+                );
+                return Object.keys(displayMetadata).length > 0 ? (
+                  <div>
+                    <p className="text-muted-foreground mb-1 text-sm font-medium">
+                      Metadata
+                    </p>
+                    <pre className="rounded-md bg-muted p-3 text-xs overflow-x-auto">
+                      {JSON.stringify(displayMetadata, null, 2)}
+                    </pre>
+                  </div>
+                ) : null;
+              })()}
 
               {/* Timestamps */}
               <div className="flex gap-6 text-xs text-muted-foreground">
