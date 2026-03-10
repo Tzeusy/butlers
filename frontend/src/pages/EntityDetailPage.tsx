@@ -29,6 +29,7 @@ import {
   useCreateEntityInfo,
   useDeleteEntityInfo,
   useEntity,
+  usePromoteEntity,
   useRevealEntitySecret,
   useSetLinkedContact,
   useUnlinkContact,
@@ -574,6 +575,7 @@ export default function EntityDetailPage() {
   const { data, isLoading, error } = useEntity(entityId);
   const entity = data?.data;
   const updateEntity = useUpdateEntity();
+  const promoteEntity = usePromoteEntity();
 
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -718,6 +720,14 @@ export default function EntityDetailPage() {
                     Owner
                   </Badge>
                 )}
+                {entity.unidentified && (
+                  <Badge
+                    style={{ backgroundColor: "#f59e0b", color: "#fff" }}
+                    className="text-xs"
+                  >
+                    Unidentified
+                  </Badge>
+                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -784,6 +794,33 @@ export default function EntityDetailPage() {
                 </div>
               </div>
 
+              {/* Source provenance */}
+              {(entity.metadata?.source_butler || entity.metadata?.source_scope) && (
+                <div>
+                  <p className="text-muted-foreground mb-1 text-sm font-medium">
+                    Source Provenance
+                  </p>
+                  <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                    {entity.metadata.source_butler && (
+                      <span>
+                        Butler:{" "}
+                        <span className="text-foreground font-medium">
+                          {String(entity.metadata.source_butler)}
+                        </span>
+                      </span>
+                    )}
+                    {entity.metadata.source_scope && (
+                      <span>
+                        Scope:{" "}
+                        <span className="text-foreground font-medium">
+                          {String(entity.metadata.source_scope)}
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Metadata */}
               {Object.keys(entity.metadata).length > 0 && (
                 <div>
@@ -805,6 +842,31 @@ export default function EntityDetailPage() {
                   Updated: {new Date(entity.updated_at).toLocaleString()}
                 </span>
               </div>
+
+              {/* Promotion action */}
+              {entity.unidentified && (
+                <div className="pt-1 border-t">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                    disabled={promoteEntity.isPending}
+                    onClick={() => {
+                      if (!entityId) return;
+                      promoteEntity.mutate(entityId, {
+                        onSuccess: () => toast.success("Entity marked as confirmed."),
+                        onError: (err) =>
+                          toast.error(
+                            `Failed to confirm: ${err instanceof Error ? err.message : "Unknown error"}`,
+                          ),
+                      });
+                    }}
+                  >
+                    <Check className="mr-1 h-3.5 w-3.5" />
+                    {promoteEntity.isPending ? "Confirming..." : "Mark as confirmed"}
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
 
