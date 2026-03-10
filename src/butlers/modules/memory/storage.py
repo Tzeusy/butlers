@@ -969,12 +969,16 @@ async def confirm_memory(
 async def mark_helpful(
     pool: Pool,
     rule_id: uuid.UUID,
+    *,
+    session_id: uuid.UUID | None = None,
+    request_id: str | None = None,
 ) -> dict | None:
     """Mark a rule as having been applied successfully.
 
     Atomically increments ``applied_count`` and ``success_count``,
     recalculates ``effectiveness_score``, updates ``last_applied_at``,
-    and evaluates whether the rule qualifies for maturity promotion.
+    evaluates whether the rule qualifies for maturity promotion, and
+    inserts a ``rule_applications`` audit row with ``outcome='helpful'``.
 
     Effectiveness formula::
 
@@ -989,6 +993,8 @@ async def mark_helpful(
     Args:
         pool: asyncpg connection pool.
         rule_id: UUID of the rule.
+        session_id: Optional session UUID for audit correlation.
+        request_id: Optional request trace ID for audit correlation.
 
     Returns:
         Updated rule as dict, or None if rule not found.
@@ -1035,6 +1041,18 @@ async def mark_helpful(
                 rule_id,
             )
 
+            # Write rule_applications audit row (additive; does not replace counters)
+            tenant_id = row.get("tenant_id", "owner")
+            await conn.execute(
+                "INSERT INTO rule_applications "
+                "    (tenant_id, rule_id, session_id, request_id, outcome) "
+                "VALUES ($1, $2, $3, $4, 'helpful')",
+                tenant_id,
+                rule_id,
+                session_id,
+                request_id,
+            )
+
             row["effectiveness_score"] = effectiveness
             row["maturity"] = new_maturity
 
@@ -1049,6 +1067,9 @@ async def mark_harmful(
     pool: Pool,
     rule_id: uuid.UUID,
     reason: str | None = None,
+    *,
+    session_id: uuid.UUID | None = None,
+    request_id: str | None = None,
 ) -> dict | None:
     """Mark a rule as having caused problems.
 
@@ -1069,10 +1090,15 @@ async def mark_harmful(
 
     Stores the reason (if provided) in metadata.harmful_reasons list.
 
+    Also inserts a ``rule_applications`` audit row with ``outcome='harmful'``.
+    The audit row's ``notes`` field includes the reason when provided.
+
     Args:
         pool: asyncpg connection pool.
         rule_id: UUID of the rule.
         reason: Optional reason why the rule was harmful.
+        session_id: Optional session UUID for audit correlation.
+        request_id: Optional request trace ID for audit correlation.
 
     Returns:
         Updated rule as dict, or None if rule not found.
@@ -1133,6 +1159,23 @@ async def mark_harmful(
                 new_maturity,
                 metadata_json,
                 rule_id,
+            )
+
+            # Write rule_applications audit row (additive; does not replace counters)
+            tenant_id = row.get("tenant_id", "owner")
+            audit_notes: dict = {}
+            if reason:
+                audit_notes["reason"] = reason
+            audit_notes_json = json.dumps(audit_notes)
+            await conn.execute(
+                "INSERT INTO rule_applications "
+                "    (tenant_id, rule_id, session_id, request_id, outcome, notes) "
+                "VALUES ($1, $2, $3, $4, 'harmful', $5::jsonb)",
+                tenant_id,
+                rule_id,
+                session_id,
+                request_id,
+                audit_notes_json,
             )
 
             row["effectiveness_score"] = effectiveness
