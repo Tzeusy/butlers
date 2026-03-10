@@ -29,9 +29,10 @@ def _extract_request_context(
     """
     if not request_context:
         return "owner", None
-    tenant_id = request_context.get("tenant_id") or "owner"
+    tenant_id_val = request_context.get("tenant_id")
     request_id = request_context.get("request_id") or None
-    return str(tenant_id), str(request_id) if request_id is not None else None
+    tenant_id = "owner" if tenant_id_val in (None, "") else str(tenant_id_val)
+    return tenant_id, str(request_id) if request_id is not None else None
 
 
 async def memory_store_episode(
