@@ -45,8 +45,10 @@ import base64
 import html
 import logging
 import os
+import re
 import time
 from datetime import UTC, datetime, timedelta
+from html.parser import HTMLParser
 from threading import Thread
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -2038,8 +2040,6 @@ class GmailConnectorRuntime:
         ``<script>`` blocks entirely and collect visible text nodes.
         Collapses runs of whitespace into single spaces / newlines.
         """
-        import re
-        from html.parser import HTMLParser
 
         class _TextExtractor(HTMLParser):
             """Collect visible text, skipping style/script content."""
