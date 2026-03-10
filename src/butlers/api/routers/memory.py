@@ -900,10 +900,18 @@ async def update_entity(
         idx += 1
 
     if body.metadata is not None:
-        # Merge patch into existing metadata (JSONB || operator)
-        sets.append(f"metadata = COALESCE(metadata, '{{}}'::jsonb) || ${idx}::jsonb")
-        args.append(json.dumps(body.metadata))
-        idx += 1
+        # Filter out system-managed keys to prevent unauthorized state manipulation.
+        # deleted_at/merged_into are managed by delete_entity/merge_entity endpoints.
+        # unidentified is managed by the promote_entity endpoint.
+        _SYSTEM_METADATA_KEYS = {"deleted_at", "merged_into", "unidentified"}
+        allowed_metadata = {
+            k: v for k, v in body.metadata.items() if k not in _SYSTEM_METADATA_KEYS
+        }
+        if allowed_metadata:
+            # Merge patch into existing metadata (JSONB || operator)
+            sets.append(f"metadata = COALESCE(metadata, '{{}}'::jsonb) || ${idx}::jsonb")
+            args.append(json.dumps(allowed_metadata))
+            idx += 1
 
     if not sets:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -1163,31 +1171,24 @@ async def promote_entity(
     pool = _any_pool(db)
     eid = _uuid.UUID(entity_id)
 
-    row = await pool.fetchrow(
-        "SELECT id, canonical_name, entity_type, aliases, roles, metadata,"
-        " created_at, updated_at"
-        " FROM shared.entities WHERE id = $1",
-        eid,
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Entity not found")
-
-    metadata = _parse_jsonb(row["metadata"])
-    if not metadata.get("unidentified"):
-        raise HTTPException(status_code=409, detail="Entity is not unidentified")
-
-    # Remove the unidentified key from metadata
+    # Atomically promote: only update if the entity is currently unidentified.
+    # A single conditional UPDATE avoids the TOCTOU race between SELECT and UPDATE.
     updated_row = await pool.fetchrow(
         "UPDATE shared.entities"
         " SET metadata = metadata - 'unidentified',"
         " updated_at = now()"
-        " WHERE id = $1"
+        " WHERE id = $1 AND (metadata->>'unidentified')::boolean IS TRUE"
         " RETURNING id, canonical_name, entity_type, aliases, roles,"
         " metadata, created_at, updated_at",
         eid,
     )
+
     if updated_row is None:
-        raise HTTPException(status_code=404, detail="Entity not found")
+        # No rows updated — either the entity doesn't exist or it isn't unidentified.
+        exists = await pool.fetchval("SELECT 1 FROM shared.entities WHERE id = $1", eid)
+        if not exists:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        raise HTTPException(status_code=409, detail="Entity is not unidentified")
 
     return ApiResponse[EntitySummary](
         data=EntitySummary(

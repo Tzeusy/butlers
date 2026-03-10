@@ -1446,7 +1446,7 @@ class TestUpdateEntityMetadata:
         ) as client:
             await client.patch(
                 "/api/memory/entities/12345678-1234-5678-1234-567812345678",
-                json={"metadata": {"unidentified": False}},
+                json={"metadata": {"custom_tag": "value"}},
             )
 
         # Verify the SQL uses the JSONB merge operator (||)
@@ -1454,6 +1454,43 @@ class TestUpdateEntityMetadata:
             sql = call.args[0] if call.args else ""
             if "UPDATE shared.entities" in sql:
                 assert "||" in sql, f"PATCH metadata should use JSONB merge (||), got: {sql!r}"
+
+    async def test_metadata_patch_filters_system_keys(self, app):
+        """PATCH metadata must silently drop system-managed keys."""
+        row = {
+            "id": "12345678-1234-5678-1234-567812345678",
+            "canonical_name": "Alice",
+            "entity_type": "person",
+            "aliases": [],
+            "roles": [],
+            "metadata": {},
+            "created_at": "2025-06-01T12:00:00",
+            "updated_at": "2025-06-01T12:00:00",
+        }
+        pool = _make_pool(fetchrow_result=row)
+        pools_by_name = {"general": pool}
+        mock_db = MagicMock(spec=DatabaseManager)
+        mock_db.butler_names = ["general"]
+        mock_db.pool.side_effect = lambda name: pools_by_name[name]
+        app.dependency_overrides[_get_db_manager] = lambda: mock_db
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            await client.patch(
+                "/api/memory/entities/12345678-1234-5678-1234-567812345678",
+                json={"metadata": {"deleted_at": "2025-01-01", "merged_into": "other-id"}},
+            )
+
+        # All supplied keys are system-managed; no metadata SQL update should occur.
+        for call in pool.fetchrow.call_args_list:
+            sql = call.args[0] if call.args else ""
+            assert "merged_into" not in sql, (
+                f"System metadata key 'merged_into' must not appear in SQL: {sql!r}"
+            )
+            assert "deleted_at" not in sql, (
+                f"System metadata key 'deleted_at' must not appear in SQL: {sql!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1466,16 +1503,7 @@ class TestPromoteEntity:
         """POST /entities/{id}/promote should return 200 for an unidentified entity."""
         import json as _json
 
-        entity_row = {
-            "id": "12345678-1234-5678-1234-567812345678",
-            "canonical_name": "Mystery Person",
-            "entity_type": "person",
-            "aliases": [],
-            "roles": [],
-            "metadata": _json.dumps({"unidentified": True}),
-            "created_at": "2025-06-01T12:00:00",
-            "updated_at": "2025-06-01T12:00:00",
-        }
+        # Atomic promote: a single conditional UPDATE RETURNING is issued.
         promoted_row = {
             "id": "12345678-1234-5678-1234-567812345678",
             "canonical_name": "Mystery Person",
@@ -1486,11 +1514,7 @@ class TestPromoteEntity:
             "created_at": "2025-06-01T12:00:00",
             "updated_at": "2025-06-01T13:00:00",
         }
-        pool = MagicMock()
-        pool.fetchrow = AsyncMock(side_effect=[entity_row, promoted_row])
-        pool.fetchval = AsyncMock(return_value=0)
-        pool.fetch = AsyncMock(return_value=[])
-        pool.execute = AsyncMock(return_value=None)
+        pool = _make_pool(fetchrow_result=promoted_row)
         pools_by_name = {"general": pool}
         mock_db = MagicMock(spec=DatabaseManager)
         mock_db.butler_names = ["general"]
@@ -1509,19 +1533,9 @@ class TestPromoteEntity:
 
     async def test_promote_already_identified_entity_returns_409(self, app):
         """POST /entities/{id}/promote on a non-unidentified entity should return 409."""
-        import json as _json
-
-        entity_row = {
-            "id": "12345678-1234-5678-1234-567812345678",
-            "canonical_name": "Known Person",
-            "entity_type": "person",
-            "aliases": [],
-            "roles": [],
-            "metadata": _json.dumps({}),
-            "created_at": "2025-06-01T12:00:00",
-            "updated_at": "2025-06-01T12:00:00",
-        }
-        pool = _make_pool(fetchrow_result=entity_row)
+        # Atomic promote: UPDATE returns None (entity not unidentified), fetchval
+        # returns 1 to indicate the entity exists → 409 Conflict.
+        pool = _make_pool(fetchrow_result=None, fetchval_result=1)
         pools_by_name = {"general": pool}
         mock_db = MagicMock(spec=DatabaseManager)
         mock_db.butler_names = ["general"]
