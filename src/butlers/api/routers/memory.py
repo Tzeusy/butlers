@@ -1025,6 +1025,19 @@ async def merge_entity(
     if target_id == source_id:
         raise HTTPException(status_code=400, detail="Cannot merge entity into itself")
 
+    # Prevent merging owner entities — merge tombstones the source, which would
+    # bypass the deletion restriction on owner entities (mirrors delete_entity guard).
+    for eid, label in [(source_id, "source"), (target_id, "target")]:
+        row = await pool.fetchrow(
+            "SELECT roles FROM shared.entities WHERE id = $1",
+            _uuid.UUID(eid),
+        )
+        if row and "owner" in (list(row["roles"]) if row["roles"] else []):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Cannot merge owner entity ({label})",
+            )
+
     try:
         result = await entity_merge(pool, source_id, target_id, tenant_id="shared")
     except ValueError as exc:
