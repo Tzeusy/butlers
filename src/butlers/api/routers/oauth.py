@@ -405,14 +405,11 @@ async def oauth_google_start(
         "state": state,
     }
 
-    # Only force consent if explicitly requested or if no force_consent was passed
-    # (original behavior: always add prompt=consent).
-    # For multi-account: when force_consent=True, add prompt=consent; otherwise omit
-    # to let Google handle the re-auth gracefully (skip consent when not needed).
+    # Add prompt=consent when explicitly requested (scope upgrades, forced re-auth).
+    # When force_consent=False (default), omit the prompt parameter so Google decides
+    # whether to show the consent screen (skips it for re-auths without scope changes).
     if force_consent:
         params["prompt"] = "consent"
-    else:
-        params["prompt"] = "consent"  # Preserve original behavior: always request consent
 
     if account_hint:
         params["login_hint"] = account_hint
@@ -982,9 +979,10 @@ async def disconnect_google_account(
     await disconnect_account(shared_pool, account_id, hard_delete=hard_delete)
 
     # Detect auto-promoted account if this was primary.
+    # This applies to both soft and hard-delete: the registry always auto-promotes
+    # the next active account when a primary is removed.
     auto_promoted_id: uuid.UUID | None = None
-    if was_primary and not hard_delete:
-        # The oldest remaining active account (if any) was promoted.
+    if was_primary:
         accounts_after = await list_google_accounts(shared_pool)
         primary_after = next((a for a in accounts_after if a.is_primary), None)
         if primary_after and primary_after.id != account_id:

@@ -260,8 +260,13 @@ class TestOAuthGoogleStart:
         assert "state" in body
         assert "accounts.google.com" in body["authorization_url"]
 
-    async def test_start_includes_prompt_consent(self, app):
-        """Start URL must include prompt=consent to force refresh token issuance."""
+    async def test_start_without_force_consent_omits_prompt(self, app):
+        """Start URL omits prompt=consent by default (force_consent=False).
+
+        The multi-account behavior omits prompt=consent when not explicitly
+        requested, letting Google decide whether to show consent (skips for re-auths).
+        Use force_consent=True to force a consent screen.
+        """
         app = _make_app(app)
         with patch.dict("os.environ", GOOGLE_ENV, clear=False):
             async with httpx.AsyncClient(
@@ -270,6 +275,20 @@ class TestOAuthGoogleStart:
                 follow_redirects=False,
             ) as client:
                 resp = await client.get("/api/oauth/google/start")
+
+        location = resp.headers["location"]
+        assert "prompt=consent" not in location
+
+    async def test_start_with_force_consent_includes_prompt_consent(self, app):
+        """Start URL includes prompt=consent when force_consent=True."""
+        app = _make_app(app)
+        with patch.dict("os.environ", GOOGLE_ENV, clear=False):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                resp = await client.get("/api/oauth/google/start", params={"force_consent": "true"})
 
         location = resp.headers["location"]
         assert "prompt=consent" in location
