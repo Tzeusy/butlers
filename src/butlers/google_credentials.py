@@ -637,16 +637,24 @@ async def delete_google_credentials(
             await store.delete(KEY_SCOPES),
         ])
 
-        # Delete ALL refresh tokens across all companion entities.
+        # Delete ALL refresh tokens across all companion entities (bulk DELETE).
         if pool is not None:
             try:
                 async with _pool_acquire(pool) as conn:
                     rows = await conn.fetch(
                         "SELECT entity_id FROM shared.google_accounts"
                     )
-                    for row in rows:
-                        deleted = await _delete_entity_refresh_token(pool, row["entity_id"])
-                        results.append(deleted)
+                    entity_ids = [row["entity_id"] for row in rows]
+                    if entity_ids:
+                        delete_result = await conn.execute(
+                            "DELETE FROM shared.entity_info"
+                            " WHERE entity_id = ANY($1) AND type = $2",
+                            entity_ids,
+                            CONTACT_INFO_REFRESH_TOKEN,
+                        )
+                        # asyncpg returns e.g. "DELETE 3"; check count > 0
+                        deleted_count = int(delete_result.split()[-1]) if delete_result else 0
+                        results.append(deleted_count > 0)
                     # Update all accounts to revoked.
                     await conn.execute(
                         "UPDATE shared.google_accounts SET status = 'revoked'"

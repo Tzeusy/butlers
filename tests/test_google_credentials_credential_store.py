@@ -701,11 +701,12 @@ class TestDeleteGoogleCredentialsWithCredentialStore:
         assert result is True
 
     async def test_delete_all_removes_app_credentials_and_all_tokens(self) -> None:
-        """delete_all=True deletes app credentials AND all account refresh tokens."""
+        """delete_all=True deletes app credentials AND all account refresh tokens in bulk."""
         pool = _make_empty_pool()
         store = CredentialStore(pool)
 
-        # Simulate google_accounts returning two rows via acquire context manager
+        # Simulate google_accounts returning two rows via acquire context manager.
+        # The bulk DELETE returns "DELETE 2" meaning two entity_info rows removed.
         row1, row2 = MagicMock(), MagicMock()
         row1.__getitem__ = MagicMock(
             side_effect=lambda k: _ENTITY_ID if k == "entity_id" else None
@@ -713,16 +714,12 @@ class TestDeleteGoogleCredentialsWithCredentialStore:
         row2.__getitem__ = MagicMock(
             side_effect=lambda k: _ENTITY_ID_2 if k == "entity_id" else None
         )
-        ci_pool = _make_acquire_pool(fetch_return=[row1, row2])
+        ci_pool = _make_acquire_pool(
+            fetch_return=[row1, row2],
+            execute_return="DELETE 2",
+        )
 
-        with (
-            patch.object(store, "delete", new_callable=AsyncMock, return_value=True) as mock_del,
-            patch(
-                "butlers.google_credentials._delete_entity_refresh_token",
-                new_callable=AsyncMock,
-                return_value=True,
-            ) as mock_token_del,
-        ):
+        with patch.object(store, "delete", new_callable=AsyncMock, return_value=True) as mock_del:
             result = await delete_google_credentials(store, pool=ci_pool, delete_all=True)
 
         # App credentials should be deleted
@@ -730,8 +727,7 @@ class TestDeleteGoogleCredentialsWithCredentialStore:
         assert KEY_CLIENT_ID in keys_deleted
         assert KEY_CLIENT_SECRET in keys_deleted
         assert KEY_SCOPES in keys_deleted
-        # Refresh tokens for both accounts deleted
-        assert mock_token_del.call_count == 2
+        # Bulk delete for both accounts succeeded
         assert result is True
 
     async def test_returns_true_when_something_deleted(self) -> None:
