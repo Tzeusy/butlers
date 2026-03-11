@@ -63,7 +63,7 @@ from fastapi import FastAPI, Request
 from prometheus_client import REGISTRY, generate_latest
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from butlers.connectors.filtered_event_buffer import FilteredEventBuffer
+from butlers.connectors.filtered_event_buffer import FilteredEventBuffer, drain_replay_pending
 from butlers.connectors.gmail_policy import (
     INGESTION_TIER_FULL,
     INGESTION_TIER_METADATA,
@@ -1981,8 +1981,6 @@ class GmailConnectorRuntime:
         """
         if self._db_pool is None:
             return
-
-        from butlers.connectors.filtered_event_buffer import drain_replay_pending
 
         await drain_replay_pending(
             self._db_pool,

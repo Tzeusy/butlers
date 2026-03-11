@@ -44,7 +44,7 @@ from fastapi import FastAPI
 from prometheus_client import REGISTRY, generate_latest
 from pydantic import BaseModel
 
-from butlers.connectors.filtered_event_buffer import FilteredEventBuffer
+from butlers.connectors.filtered_event_buffer import FilteredEventBuffer, drain_replay_pending
 from butlers.connectors.heartbeat import ConnectorHeartbeat, HeartbeatConfig
 from butlers.connectors.mcp_client import CachedMCPClient, wait_for_switchboard_ready
 from butlers.connectors.metrics import ConnectorMetrics, get_error_type
@@ -1071,8 +1071,6 @@ class TelegramBotConnector:
         """
         if self._db_pool is None:
             return
-
-        from butlers.connectors.filtered_event_buffer import drain_replay_pending
 
         await drain_replay_pending(
             self._db_pool,
