@@ -463,7 +463,7 @@ class TestMicIdRuleTypeKnown:
 
         assert "mic_id" in _KNOWN_RULE_TYPES
 
-    def test_mic_id_rule_evaluated_as_substring_fallback(self) -> None:
+    def test_unregistered_mic_id_rule_is_skipped(self) -> None:
         """mic_id rules loaded into the evaluator fall through to pass_through
         when no matcher is registered (no crash, graceful skip)."""
         evaluator = IngestionPolicyEvaluator(
