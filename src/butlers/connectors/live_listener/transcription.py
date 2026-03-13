@@ -340,7 +340,7 @@ class WyomingTranscriptionClient(TranscriptionClient):
                         self._mic_name,
                     )
                     self._healthy = False
-                    _record_failure(self._mic_name, "connection_error")
+                    _record_failure(self._mic_name, type(retry_exc).__name__.lower())
             return None
         except TimeoutError:
             logger.warning(
@@ -578,7 +578,7 @@ class WebSocketTranscriptionClient(TranscriptionClient):
                         self._mic_name,
                     )
                     self._healthy = False
-                    _record_failure(self._mic_name, "connection_error")
+                    _record_failure(self._mic_name, type(retry_exc).__name__.lower())
             return None
         except TimeoutError:
             logger.warning("WebSocketTranscriptionClient: timeout (mic=%s)", self._mic_name)
