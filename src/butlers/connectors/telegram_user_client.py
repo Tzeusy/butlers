@@ -73,7 +73,6 @@ from butlers.ingestion_policy import IngestionEnvelope, IngestionPolicyEvaluator
 # Telethon is marked as optional dependency - handle import gracefully
 try:
     from telethon import TelegramClient, events
-    from telethon.errors import FloodWaitError
     from telethon.sessions import StringSession
     from telethon.tl.types import Message as TelegramMessage
 
@@ -82,7 +81,6 @@ except ImportError:
     TELETHON_AVAILABLE = False
     TelegramClient = None
     events = None
-    FloodWaitError = None
     StringSession = None
     TelegramMessage = None
 
@@ -834,8 +832,8 @@ class TelegramUserClientConnector:
         if not self._telegram_client:
             return list(buffered_messages)
 
-        history_max = getattr(self, "_history_max_messages", 50)
-        history_window_m = getattr(self, "_history_time_window_m", 30)
+        history_max = self._config.history_max_messages
+        history_window_m = self._config.history_time_window_m
 
         # Determine the offset_date: look back from the oldest buffered message.
         oldest_date: datetime | None = None

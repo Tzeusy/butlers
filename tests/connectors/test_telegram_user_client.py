@@ -1555,8 +1555,10 @@ class TestFetchConversationHistory:
         self, config: TelegramUserClientConnectorConfig
     ) -> None:
         """offset_date passed to get_messages is HISTORY_TIME_WINDOW_M before oldest msg."""
+        import dataclasses
+
+        config = dataclasses.replace(config, history_time_window_m=30)
         connector = TelegramUserClientConnector(config)
-        connector._history_time_window_m = 30
 
         oldest_date = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         buffered = [
@@ -1579,8 +1581,10 @@ class TestFetchConversationHistory:
         self, config: TelegramUserClientConnectorConfig
     ) -> None:
         """limit kwarg passed to get_messages equals _history_max_messages."""
+        import dataclasses
+
+        config = dataclasses.replace(config, history_max_messages=42)
         connector = TelegramUserClientConnector(config)
-        connector._history_max_messages = 42
 
         buffered = [_make_history_msg(1)]
 
@@ -1630,9 +1634,9 @@ class TestFetchConversationHistory:
     async def test_uses_default_history_config_when_attributes_absent(
         self, config: TelegramUserClientConnectorConfig
     ) -> None:
-        """Falls back to limit=50, window=30m when instance attributes are missing."""
+        """Uses config defaults: limit=50, window=30m."""
         connector = TelegramUserClientConnector(config)
-        # Ensure the default getattr fallbacks are used (don't set _history_max_messages etc.)
+        # config fixture uses default values: history_max_messages=50, history_time_window_m=30
 
         buffered = [_make_history_msg(1)]
 
