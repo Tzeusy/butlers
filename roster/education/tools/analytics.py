@@ -176,22 +176,34 @@ async def analytics_compute_snapshot(
         # ------------------------------------------------------------------
         # 11. Time-of-day distribution (bounded to the 30-day session period
         #     and anchored to snapshot_date for consistency with sessions_this_period)
+        #
+        #     Counts distinct session dates per time-of-day bucket, not individual
+        #     response rows.  A "session" is one calendar date.  Multiple responses
+        #     on the same date in the same time bucket count as one session.
         # ------------------------------------------------------------------
         time_rows = await conn.fetch(
             """
-            SELECT EXTRACT(HOUR FROM responded_at AT TIME ZONE 'UTC')::int AS hour
+            SELECT
+                CASE
+                    WHEN EXTRACT(HOUR FROM responded_at AT TIME ZONE 'UTC')::int BETWEEN 6 AND 11
+                        THEN 'morning'
+                    WHEN EXTRACT(HOUR FROM responded_at AT TIME ZONE 'UTC')::int BETWEEN 12 AND 17
+                        THEN 'afternoon'
+                    ELSE 'evening'
+                END AS bucket,
+                COUNT(DISTINCT responded_at::date) AS session_count
             FROM education.quiz_responses
             WHERE mind_map_id = $1
               AND responded_at::date <= $2
               AND responded_at::date > $2 - INTERVAL '30 days'
+            GROUP BY bucket
             """,
             mind_map_id,
             snapshot_date,
         )
         tod_dist: dict[str, int] = {"morning": 0, "afternoon": 0, "evening": 0}
         for row in time_rows:
-            bucket = _bucket_hour(row["hour"])
-            tod_dist[bucket] += 1
+            tod_dist[row["bucket"]] = int(row["session_count"])
 
         # ------------------------------------------------------------------
         # Build metrics dict
