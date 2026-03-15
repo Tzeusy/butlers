@@ -1095,6 +1095,17 @@ class TestChatBuffer:
         b1.messages.append("x")
         assert b2.messages == []
 
+    def test_chat_title_defaults_to_none(self) -> None:
+        """ChatBuffer.chat_title defaults to None."""
+        buf = ChatBuffer()
+        assert buf.chat_title is None
+
+    def test_chat_title_can_be_set(self) -> None:
+        """ChatBuffer.chat_title can be assigned."""
+        buf = ChatBuffer()
+        buf.chat_title = "My Group"
+        assert buf.chat_title == "My Group"
+
 
 # ---------------------------------------------------------------------------
 # Config: new buffering env vars
@@ -1211,6 +1222,30 @@ class TestChatBuffering:
 
         assert len(connector._chat_buffers["111"].messages) == 2
         assert len(connector._chat_buffers["222"].messages) == 1
+
+    async def test_buffer_message_captures_chat_title_from_message_chat(
+        self, config: TelegramUserClientConnectorConfig
+    ) -> None:
+        """_buffer_message populates chat_title from message.chat.title when available."""
+        connector = TelegramUserClientConnector(config)
+        msg = _make_mock_message(chat_id=7777)
+        # Simulate a group chat entity with a title attribute
+        msg.chat = MagicMock()
+        msg.chat.title = "My Group Chat"
+        await connector._buffer_message(msg)
+        assert connector._chat_buffers["7777"].chat_title == "My Group Chat"
+
+    async def test_buffer_message_chat_title_none_for_dm(
+        self, config: TelegramUserClientConnectorConfig
+    ) -> None:
+        """_buffer_message leaves chat_title as None for DMs (no title attribute)."""
+        connector = TelegramUserClientConnector(config)
+        msg = _make_mock_message(chat_id=8888)
+        # DM: message.chat has no title (or title is None/falsy)
+        msg.chat = MagicMock()
+        msg.chat.title = None
+        await connector._buffer_message(msg)
+        assert connector._chat_buffers["8888"].chat_title is None
 
     async def test_buffer_message_falls_back_when_no_chat_id(
         self, config: TelegramUserClientConnectorConfig

@@ -102,11 +102,14 @@ class ChatBuffer:
         last_flush_ts:  Monotonic timestamp of the last flush (or creation).
         lock:           asyncio.Lock preventing concurrent flush + append for
                         the same chat.
+        chat_title:     Human-readable chat title (groups/channels), or None for
+                        DMs and chats where the title is unavailable.
     """
 
     messages: list[Any] = field(default_factory=list)
     last_flush_ts: float = field(default_factory=time.monotonic)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    chat_title: str | None = None
 
 
 @dataclass
@@ -470,6 +473,14 @@ class TelegramUserClientConnector:
         async with buf.lock:
             buf.messages.append(message)
             msg_count = len(buf.messages)
+            # Opportunistically capture chat_title from message.chat (groups/channels
+            # expose a `title` attribute; DMs expose `first_name` or have no title).
+            # Update on every message so the buffer stays current in long-lived sessions.
+            if buf.chat_title is None:
+                chat_entity = getattr(message, "chat", None)
+                raw_title = getattr(chat_entity, "title", None)
+                if raw_title:
+                    buf.chat_title = str(raw_title)
 
         logger.debug(
             "Buffered message for chat %s (buffer size: %d)",
@@ -600,6 +611,7 @@ class TelegramUserClientConnector:
             buffered_messages = buf.messages
             buf.messages = []
             buf.last_flush_ts = time.monotonic()
+            chat_title = buf.chat_title
 
         logger.info(
             "Flushing %d messages for chat %s",
@@ -617,7 +629,9 @@ class TelegramUserClientConnector:
             )
 
             # d. Build batch ingest.v1 envelope.
-            envelope = self._build_batch_envelope(chat_id, buffered_messages, context_messages)
+            envelope = self._build_batch_envelope(
+                chat_id, buffered_messages, context_messages, chat_title=chat_title
+            )
 
             # Extract batch event ID from the envelope (already computed there).
             batch_event_id = envelope["event"]["external_event_id"]
