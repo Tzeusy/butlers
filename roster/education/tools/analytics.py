@@ -20,25 +20,6 @@ CurriculumReplanCallback = Callable[[str, dict[str, Any]], Coroutine[Any, Any, N
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-def _bucket_hour(hour: int) -> str:
-    """Map an hour (0-23) to a time-of-day bucket name.
-
-    morning   : 06:00–11:59 (hours 6-11)
-    afternoon : 12:00–17:59 (hours 12-17)
-    evening   : 18:00–05:59 (hours 18-23, 0-5)
-    """
-    if 6 <= hour <= 11:
-        return "morning"
-    if 12 <= hour <= 17:
-        return "afternoon"
-    return "evening"
-
-
-# ---------------------------------------------------------------------------
 # analytics_compute_snapshot
 # ---------------------------------------------------------------------------
 
@@ -183,19 +164,23 @@ async def analytics_compute_snapshot(
         # ------------------------------------------------------------------
         time_rows = await conn.fetch(
             """
+            WITH responses_in_period AS (
+                SELECT
+                    responded_at::date AS response_date,
+                    EXTRACT(HOUR FROM responded_at AT TIME ZONE 'UTC')::int AS hour
+                FROM education.quiz_responses
+                WHERE mind_map_id = $1
+                  AND responded_at::date <= $2
+                  AND responded_at::date > $2 - INTERVAL '30 days'
+            )
             SELECT
                 CASE
-                    WHEN EXTRACT(HOUR FROM responded_at AT TIME ZONE 'UTC')::int BETWEEN 6 AND 11
-                        THEN 'morning'
-                    WHEN EXTRACT(HOUR FROM responded_at AT TIME ZONE 'UTC')::int BETWEEN 12 AND 17
-                        THEN 'afternoon'
+                    WHEN hour BETWEEN 6 AND 11 THEN 'morning'
+                    WHEN hour BETWEEN 12 AND 17 THEN 'afternoon'
                     ELSE 'evening'
                 END AS bucket,
-                COUNT(DISTINCT responded_at::date) AS session_count
-            FROM education.quiz_responses
-            WHERE mind_map_id = $1
-              AND responded_at::date <= $2
-              AND responded_at::date > $2 - INTERVAL '30 days'
+                COUNT(DISTINCT response_date) AS session_count
+            FROM responses_in_period
             GROUP BY bucket
             """,
             mind_map_id,

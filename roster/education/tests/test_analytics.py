@@ -734,25 +734,6 @@ class TestTimeOfDayDistribution:
         assert tod["afternoon"] == 0, "no afternoon activity"
         assert tod["evening"] == 2, "3 responses across 2 evening dates should count as 2 sessions"
 
-    async def test_time_distribution_evening_includes_late_night(self) -> None:
-        """Hours 0-5 are classified as evening (wraps around midnight)."""
-        from butlers.tools.education.analytics import _bucket_hour
-
-        for hour in [0, 1, 2, 3, 4, 5, 18, 19, 20, 21, 22, 23]:
-            assert _bucket_hour(hour) == "evening", f"hour {hour} should be evening"
-
-    def test_bucket_hour_morning(self) -> None:
-        from butlers.tools.education.analytics import _bucket_hour
-
-        for hour in range(6, 12):
-            assert _bucket_hour(hour) == "morning"
-
-    def test_bucket_hour_afternoon(self) -> None:
-        from butlers.tools.education.analytics import _bucket_hour
-
-        for hour in range(12, 18):
-            assert _bucket_hour(hour) == "afternoon"
-
 
 # ---------------------------------------------------------------------------
 # Tests: analytics_compute_all
