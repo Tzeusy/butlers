@@ -728,20 +728,28 @@ class TelegramUserClientConnector:
         chat_id: str,
         buffered_messages: list[Any],
         context_messages: list[Any],
+        chat_title: str | None = None,
     ) -> dict[str, Any]:
         """Build an ingest.v1 batch envelope for a flushed chat buffer.
 
         The envelope contains:
         - event.external_event_id: "batch:<chat_id>:<min_id>-<max_id>"
         - sender.identity: "multiple" (batch contains multiple senders)
-        - payload.normalized_text: concatenated NEW messages with sender prefixes
+        - payload.normalized_text: framed conversation text with header/footer
         - payload.conversation_history: ordered list of all context messages
         - control.idempotency_key: "tg_batch:<chat_id>:<min_id>:<max_id>"
+
+        The normalized_text is enriched with:
+        - Header: chat identity (chat_id, chat_title), time window
+        - Participant list with owner tagging
+        - Message lines tagged with sender display name and owner status
+        - Footer: message count and flush window summary
 
         Args:
             chat_id: The chat identifier string.
             buffered_messages: The new (flush buffer) messages.
             context_messages: All context messages (history + buffered), sorted by ID.
+            chat_title: Optional human-readable chat title (None for DMs without title).
 
         Returns:
             ingest.v1 envelope dict.
@@ -753,17 +761,64 @@ class TelegramUserClientConnector:
         min_id = min(msg_ids) if msg_ids else 0
         max_id = max(msg_ids) if msg_ids else 0
 
+        # Resolve owner sender ID for owner tagging.
+        owner_sender_id = self._extract_owner_sender_id()
+
         # Build normalized_text: concatenate NEW messages only, with sender prefixes.
         new_messages_sorted = sorted(
             (m for m in buffered_messages if getattr(m, "id", None) is not None),
             key=lambda m: m.id,
         )
+
+        # Extract time window from new messages (oldest → newest date).
+        msg_dates = [getattr(m, "date", None) for m in new_messages_sorted]
+        valid_dates = [d for d in msg_dates if d is not None]
+        oldest_ts = valid_dates[0].isoformat() if valid_dates else None
+        newest_ts = valid_dates[-1].isoformat() if valid_dates else None
+
+        # Collect unique participants in new messages for the participant list.
+        seen_sender_ids: dict[str, str] = {}  # sender_id_str → display_name
+        for msg in new_messages_sorted:
+            sid = self._extract_sender_identity(msg)
+            if sid not in seen_sender_ids:
+                seen_sender_ids[sid] = self._get_sender_display_name(msg)
+
+        # Build framed normalized_text with header, body, and footer.
+        header_lines: list[str] = []
+        if chat_title:
+            header_lines.append(f"=== Chat: {chat_title} (id: {chat_id}) ===")
+        else:
+            header_lines.append(f"=== Chat id: {chat_id} ===")
+        if oldest_ts and newest_ts and oldest_ts != newest_ts:
+            header_lines.append(f"Window: {oldest_ts} → {newest_ts}")
+        elif oldest_ts:
+            header_lines.append(f"Timestamp: {oldest_ts}")
+
+        # Participant list with owner tagging.
+        participant_parts: list[str] = []
+        for sid, dname in seen_sender_ids.items():
+            tag = " (owner)" if owner_sender_id is not None and sid == owner_sender_id else ""
+            participant_parts.append(f"{dname}{tag}")
+        header_lines.append(f"Participants: {', '.join(participant_parts)}")
+        header_lines.append("---")
+
         text_parts: list[str] = []
         for msg in new_messages_sorted:
             sender_id = self._extract_sender_identity(msg)
+            display_name = self._get_sender_display_name(msg)
             text = getattr(msg, "message", None) or getattr(msg, "text", None) or ""
-            text_parts.append(f"[{sender_id}]: {text}")
-        normalized_text = "\n".join(text_parts)
+            is_owner = owner_sender_id is not None and sender_id == owner_sender_id
+            owner_tag = " (owner)" if is_owner else ""
+            text_parts.append(f"[{display_name}{owner_tag}]: {text}")
+
+        footer_lines: list[str] = [
+            "---",
+            f"Messages: {len(new_messages_sorted)} new",
+        ]
+        if oldest_ts and newest_ts:
+            footer_lines.append(f"Flush window: {oldest_ts} → {newest_ts}")
+
+        normalized_text = "\n".join(header_lines + text_parts + footer_lines)
 
         # Build conversation_history: all context messages, sorted ascending by ID.
         conversation_history: list[dict[str, Any]] = []
@@ -1059,6 +1114,59 @@ class TelegramUserClientConnector:
             if user_id is not None:
                 return str(user_id)
         return "unknown"
+
+    @staticmethod
+    def _get_sender_display_name(message: Any) -> str:
+        """Extract a human-readable display name for a message sender.
+
+        Prefers ``first_name`` from ``message.sender``, then ``username``,
+        then falls back to the raw numeric sender_id string.
+
+        Args:
+            message: A Telethon message object.
+
+        Returns:
+            A display name string (never empty).
+        """
+        sender = getattr(message, "sender", None)
+        if sender is not None:
+            first_name = getattr(sender, "first_name", None)
+            if first_name:
+                return str(first_name)
+            username = getattr(sender, "username", None)
+            if username:
+                return f"@{username}"
+        # Fall back to raw sender_id
+        sender_id = getattr(message, "sender_id", None)
+        if sender_id is not None:
+            return str(sender_id)
+        return "unknown"
+
+    def _extract_owner_sender_id(self) -> str | None:
+        """Parse the owner's numeric Telegram sender ID from endpoint_identity.
+
+        Endpoint identity format:
+        - ``telegram:user:<numeric_id>`` → returns ``"<numeric_id>"``
+        - ``telegram:user:@<username>`` → returns None (numeric ID unavailable
+          without a live Telegram lookup; owner tagging degrades gracefully)
+        - Any other format → returns None
+
+        Returns:
+            The owner's sender_id as a string, or None if not resolvable.
+        """
+        identity = self._config.endpoint_identity
+        if not identity:
+            return None
+        prefix = "telegram:user:"
+        if not identity.startswith(prefix):
+            return None
+        part = identity[len(prefix) :]
+        if part.startswith("@"):
+            # Username-based identity — numeric ID not available without a lookup.
+            return None
+        if part.isdigit():
+            return part
+        return None
 
     @staticmethod
     def _extract_preview(message: Any) -> str | None:
