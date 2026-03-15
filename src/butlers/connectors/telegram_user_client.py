@@ -805,7 +805,7 @@ class TelegramUserClientConnector:
         text_parts: list[str] = []
         for msg in new_messages_sorted:
             sender_id = self._extract_sender_identity(msg)
-            display_name = self._get_sender_display_name(msg)
+            display_name = seen_sender_ids[sender_id]
             text = getattr(msg, "message", None) or getattr(msg, "text", None) or ""
             is_owner = owner_sender_id is not None and sender_id == owner_sender_id
             owner_tag = " (owner)" if is_owner else ""
@@ -815,7 +815,7 @@ class TelegramUserClientConnector:
             "---",
             f"Messages: {len(new_messages_sorted)} new",
         ]
-        if oldest_ts and newest_ts:
+        if oldest_ts and newest_ts and oldest_ts != newest_ts:
             footer_lines.append(f"Flush window: {oldest_ts} → {newest_ts}")
 
         normalized_text = "\n".join(header_lines + text_parts + footer_lines)
