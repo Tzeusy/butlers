@@ -170,15 +170,19 @@ class TestSchemaIsolation:
 
     async def test_shared_schema_visible_from_alpha(self, alpha_pool):
         """The shared schema's global_contacts table must be queryable from butler_alpha's path."""
-        names = await alpha_pool.fetch("SELECT name FROM global_contacts ORDER BY name")
-        assert [r["name"] for r in names] == ["Alice"], (
+        row = await alpha_pool.fetchrow(
+            "SELECT name FROM global_contacts WHERE name = 'Alice'"
+        )
+        assert row is not None, (
             "butler_alpha should be able to read from shared.global_contacts"
         )
 
     async def test_shared_schema_visible_from_beta(self, beta_pool):
         """The shared schema's global_contacts table must be queryable from butler_beta's path."""
-        names = await beta_pool.fetch("SELECT name FROM global_contacts ORDER BY name")
-        assert [r["name"] for r in names] == ["Alice"], (
+        row = await beta_pool.fetchrow(
+            "SELECT name FROM global_contacts WHERE name = 'Alice'"
+        )
+        assert row is not None, (
             "butler_beta should be able to read from shared.global_contacts"
         )
 

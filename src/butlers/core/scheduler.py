@@ -63,8 +63,12 @@ def _check_notify_reference(
                 try:
                     if "notify" in skill_md.read_text(encoding="utf-8").lower():
                         return
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.debug(
+                        "Could not read skill file %s for notify check: %s",
+                        skill_md,
+                        exc,
+                    )
 
     logger.warning(
         "Scheduled task %r has dispatch_mode=prompt but prompt/skill does not reference"

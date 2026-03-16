@@ -34,7 +34,7 @@ class TestCheckNotifyReference:
                 prompt="Summarize and then call notify() to deliver it.",
                 skills_dir=None,
             )
-        assert "notify" not in caplog.text or "does not reference" not in caplog.text
+        assert "does not reference notify" not in caplog.text
 
     def test_no_warning_when_prompt_contains_notify_uppercase(self, caplog):
         """Case-insensitive match: NOTIFY should suppress the warning."""
@@ -103,8 +103,8 @@ class TestCheckNotifyReference:
             )
         assert "does not reference notify" in caplog.text
 
-    def test_no_warning_when_skills_dir_missing(self, tmp_path, caplog):
-        """Missing skills directory does not raise; falls back to prompt-only check."""
+    def test_warning_when_skills_dir_is_missing(self, tmp_path, caplog):
+        """Missing skills dir does not raise; warning is still emitted when prompt lacks notify."""
         with caplog.at_level(logging.WARNING, logger="butlers.core.scheduler"):
             _check_notify_reference(
                 task_name="task",
