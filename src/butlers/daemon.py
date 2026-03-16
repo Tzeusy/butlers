@@ -1395,7 +1395,14 @@ class ButlerDaemon:
             }
             for s in self.config.schedules
         ]
-        await sync_schedules(pool, schedules, stagger_key=self.config.name)
+        from butlers.core.skills import get_skills_dir
+
+        await sync_schedules(
+            pool,
+            schedules,
+            stagger_key=self.config.name,
+            skills_dir=get_skills_dir(self.config_dir),
+        )
 
         # 11b. Open MCP client connection to Switchboard (non-switchboard butlers)
         await self._connect_switchboard()
