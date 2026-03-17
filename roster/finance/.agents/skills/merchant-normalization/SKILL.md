@@ -218,7 +218,7 @@ store a memory fact so future runs can auto-apply it:
 entity_id = resolve_or_create_merchant_entity("Whole Foods")
 
 memory_store_fact(
-    subject="merchant_alias:WHOLEFDS MKT",
+    subject="merchant_alias:WHOLEFDS",
     predicate="normalizes_to",
     content="Whole Foods",
     entity_id=entity_id,
@@ -267,14 +267,14 @@ the loop and reuse them.
 
 **Scenario**: A Chase Checking account was imported last week with 3 months of
 transactions. Running `list_distinct_merchants(unnormalized_only=True, min_count=2)`
-returns 23 merchants.
+returns 22 merchants.
 
 ### Step 1: Query
 
 ```python
 result = list_distinct_merchants(unnormalized_only=True, min_count=2)
 # Returns:
-# total: 23
+# total: 22
 # merchants: [
 #   {merchant: "WHOLEFDS MKT #10456 AUSTIN TX",   count: 14, total_amount: "623.40"},
 #   {merchant: "WHOLEFDS MKT #10457 AUSTIN TX",   count:  3, total_amount: "142.10"},
@@ -285,7 +285,6 @@ result = list_distinct_merchants(unnormalized_only=True, min_count=2)
 #   {merchant: "SQ *BLUE BOTTLE COFFEE",           count:  6, total_amount:  "33.00"},
 #   {merchant: "SQ *BLUE BOTTLE COF",              count:  2, total_amount:  "11.00"},
 #   {merchant: "SPOTIFY AB",                       count:  3, total_amount:  "29.97"},
-#   {merchant: "PAYPAL *GITHUB",                   count:  1, total_amount:   "4.00"},
 #   ... 13 more ...
 # ]
 ```
@@ -313,7 +312,7 @@ Mark the two Amazon variants as handled.
 
 ### Step 4: LLM Normalizes Unknowns
 
-Remaining 21 merchants (23 minus 2 Amazon variants). The LLM groups:
+Remaining 20 merchants (22 minus 2 Amazon variants). The LLM groups:
 
 | Raw strings | Canonical name | Pattern |
 |---|---|---|
@@ -321,7 +320,7 @@ Remaining 21 merchants (23 minus 2 Amazon variants). The LLM groups:
 | `NETFLIX.COM` | `Netflix` | `NETFLIX%` |
 | `SQ *BLUE BOTTLE COFFEE`, `SQ *BLUE BOTTLE COF` | `Blue Bottle Coffee` | `SQ *BLUE BOTTLE%` |
 | `SPOTIFY AB` | `Spotify` | `SPOTIFY%` |
-| ... 17 remaining merchants individually reviewed ... | | |
+| ... 16 remaining merchants individually reviewed ... | | |
 
 ### Step 5: Apply
 
@@ -342,9 +341,9 @@ bulk_update_transactions(updates=[
 ```
 Merchant normalization complete.
 
-Distinct merchants processed:  23
+Distinct merchants processed:  22
   Auto-applied (known aliases):   2  (Amazon, from memory)
-  LLM-normalized:                21
+  LLM-normalized:                20
   Skipped (single-occurrence):    0
 
 Transactions updated: 357
