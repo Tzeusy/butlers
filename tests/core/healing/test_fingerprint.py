@@ -37,16 +37,6 @@ from butlers.core.healing.fingerprint import (
 # ---------------------------------------------------------------------------
 
 
-def _make_tb(depth: int = 1) -> types.TracebackType:
-    """Return the traceback from a live try/except block."""
-    try:
-        raise ValueError("test")
-    except ValueError:
-        import sys
-
-        return sys.exc_info()[2]  # type: ignore[return-value]
-
-
 def _tb_for_exc(exc: BaseException) -> types.TracebackType:
     """Raise and immediately catch *exc* to obtain a fresh traceback."""
     try:
@@ -191,6 +181,26 @@ class TestMessageSanitization:
         msg = "short error"
         result = _sanitize_message(msg)
         assert result == "short error"
+
+    def test_alphanumeric_id_replaced(self) -> None:
+        """Spec scenario: alphanumeric identifiers with numeric suffixes must be collapsed.
+
+        Covers the Fingerprint Computation scenario where two sessions failing with
+        'relation "foo_123" does not exist' and 'relation "foo_456" does not exist'
+        must produce the same fingerprint.
+        """
+        # Both variants (with different numeric suffixes) must produce the same result
+        result1 = _sanitize_message('relation "foo_123" does not exist')
+        result2 = _sanitize_message('relation "foo_456" does not exist')
+        assert result1 == result2
+        assert "<ID>" in result1
+        assert "123" not in result1
+        assert "456" not in result2
+
+    def test_pure_alpha_not_replaced(self) -> None:
+        """Non-numeric tokens (no digits) are not replaced."""
+        msg = "key missing_key not found"
+        assert _sanitize_message(msg) == "key missing_key not found"
 
 
 # ---------------------------------------------------------------------------
@@ -447,9 +457,22 @@ class TestSeverityScoring:
         )
         assert result.severity == SEVERITY_MEDIUM
 
-    def test_cancelled_error_by_type_string_is_info(self) -> None:
+    @pytest.mark.parametrize(
+        "error_type",
+        [
+            # Public alias
+            "asyncio.CancelledError",
+            # Internal module path returned by _fully_qualified_name() on Python 3.12+
+            "asyncio.exceptions.CancelledError",
+            "builtins.KeyboardInterrupt",
+            # concurrent.futures paths
+            "concurrent.futures.CancelledError",
+            "concurrent.futures._base.CancelledError",
+        ],
+    )
+    def test_cancelled_error_by_type_string_is_info(self, error_type: str) -> None:
         result = compute_fingerprint_from_report(
-            error_type="asyncio.CancelledError",
+            error_type=error_type,
             error_message="",
             call_site="<unknown>:<unknown>",
             traceback_str=None,
@@ -557,28 +580,36 @@ class TestFingerprintHashCorrectness:
         assert result.fingerprint == expected_hash
 
     def test_fingerprint_from_spec_scenario(self) -> None:
-        """Spec example: asyncpg UndefinedTableError at email.py:send_email."""
+        """Spec example: asyncpg UndefinedTableError at email.py:send_email.
+
+        Verifies that two sessions failing with different table names but the same
+        root cause ('relation "foo_123"' vs 'relation "foo_456"') produce the
+        same fingerprint — the core deduplication requirement of the spec.
+        """
         error_type = "asyncpg.exceptions.UndefinedTableError"
         call_site = "src/butlers/modules/email.py:send_email"
-        raw_msg = 'relation "foo_123" does not exist'
 
-        result = compute_fingerprint_from_report(
+        result_123 = compute_fingerprint_from_report(
             error_type=error_type,
-            error_message=raw_msg,
+            error_message='relation "foo_123" does not exist',
             call_site=call_site,
             traceback_str=None,
         )
-        # Verify structural correctness: 64-char hex, critical severity
-        assert len(result.fingerprint) == 64
-        assert result.severity == SEVERITY_CRITICAL
-        # Verify that the fingerprint is deterministic (same inputs → same output)
-        result2 = compute_fingerprint_from_report(
+        result_456 = compute_fingerprint_from_report(
             error_type=error_type,
-            error_message=raw_msg,
+            error_message='relation "foo_456" does not exist',
             call_site=call_site,
             traceback_str=None,
         )
-        assert result.fingerprint == result2.fingerprint
+        # Verify structural correctness
+        assert len(result_123.fingerprint) == 64
+        assert result_123.severity == SEVERITY_CRITICAL
+        # Same root cause (different dynamic table names) → same fingerprint
+        assert result_123.fingerprint == result_456.fingerprint
+        # Dynamic table name was collapsed to <ID>
+        assert "123" not in result_123.sanitized_message
+        assert "456" not in result_456.sanitized_message
+        assert "<ID>" in result_123.sanitized_message
 
 
 # ---------------------------------------------------------------------------

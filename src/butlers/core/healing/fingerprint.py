@@ -66,9 +66,15 @@ _RE_TIMESTAMP = re.compile(
     r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
 )
 
-# Standalone numeric IDs (sequences of digits not already consumed by timestamp).
-# We require word boundaries so partial matches inside other tokens are skipped.
-_RE_NUMERIC_ID = re.compile(r"\b\d+\b")
+# Numeric and alphanumeric IDs not already consumed by UUID/timestamp patterns.
+# Matches two forms:
+#   1. Standalone digit sequences surrounded by non-word characters: "row 123 missing"
+#   2. Word-tokens that contain at least one digit: "foo_123", "session_42", "0c869f47"
+#      These are dynamic identifiers (table names, hashes, session slugs) that must be
+#      collapsed so that "relation foo_123 does not exist" and
+#      "relation foo_456 does not exist" produce the same fingerprint.
+#      (spec scenario: relation "foo_123" -> relation <ID>)
+_RE_NUMERIC_ID = re.compile(r"\b\w*\d\w*\b")
 
 # ---------------------------------------------------------------------------
 # Severity rule patterns
@@ -278,10 +284,15 @@ def _score_severity(
     # Cancellation — check live exception type first (fastest path)
     if exc is not None and isinstance(exc, _CANCELLATION_TYPES):
         return SEVERITY_INFO
-    # Also check by type string for the structured path
+    # Also check by type string for the structured path.
+    # Include both the public alias ("asyncio.CancelledError") and the internal module
+    # path ("asyncio.exceptions.CancelledError") that _fully_qualified_name() returns on
+    # Python 3.12+, plus the concurrent.futures public and private paths.
     if exception_type in (
         "asyncio.CancelledError",
+        "asyncio.exceptions.CancelledError",
         "builtins.KeyboardInterrupt",
+        "concurrent.futures.CancelledError",
         "concurrent.futures._base.CancelledError",
     ):
         return SEVERITY_INFO
