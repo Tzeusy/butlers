@@ -40,7 +40,7 @@ def test_complexity_discretion_from_string() -> None:
 
 
 @pytest.mark.unit
-def test_complexity_enum_has_five_tiers() -> None:
+def test_complexity_enum_has_expected_tiers() -> None:
     """All expected tiers (including discretion and self_healing) must be present."""
     values = {m.value for m in Complexity}
     assert {"trivial", "medium", "high", "extra_high", "discretion"}.issubset(values)

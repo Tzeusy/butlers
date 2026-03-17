@@ -61,6 +61,7 @@ def _load_self_healing_seed_entries() -> list[dict]:
     """Load self_healing-tier model catalog entries from model_catalog_defaults.toml."""
     import tomllib  # noqa: PLC0415
 
+    # Path depth: core_035*.py → core/ (0) → versions/ (1) → alembic/ (2) → project root (3)
     defaults_path = Path(__file__).resolve().parents[3] / "model_catalog_defaults.toml"
     if not defaults_path.exists():
         return []
@@ -184,9 +185,24 @@ def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS shared.healing_attempts")
 
     # -------------------------------------------------------------------------
+    # Remove seed entries for the self_healing tier before reverting the CHECK
+    # constraint.  Rows with complexity_tier = 'self_healing' must be gone
+    # before we can restore the old constraint; if any are left the ALTER TABLE
+    # will fail.  This includes the 'healing-sonnet' entry seeded by upgrade().
+    # Per-butler overrides that reference those catalog entries are cascade-
+    # deleted automatically (ON DELETE CASCADE on catalog_entry_id FK).
+    # -------------------------------------------------------------------------
+    op.execute("""
+        DELETE FROM shared.model_catalog
+        WHERE complexity_tier = 'self_healing'
+    """)
+    op.execute("""
+        DELETE FROM shared.butler_model_overrides
+        WHERE complexity_tier = 'self_healing'
+    """)
+
+    # -------------------------------------------------------------------------
     # Revert to the discretion-only constraint.
-    # Note: this will FAIL if any rows already contain 'self_healing' — the
-    # caller must remove those rows first.
     # -------------------------------------------------------------------------
     op.execute("""
         ALTER TABLE shared.butler_model_overrides
