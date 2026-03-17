@@ -245,8 +245,7 @@ Category inference complete.
 
 Distinct merchants processed:  54
   Auto-applied (known mappings):  8  (from memory)
-  LLM-categorized:               43
-  Skipped (already have explicit category):  3
+  LLM-categorized:               46
 
 Transactions updated: 892
 
@@ -324,8 +323,8 @@ while True:
         limit=500,
         offset=offset,
     )
-    # Process result.merchants through Steps 2–5 for this batch
-    # (reuse known_mappings loaded before the loop)
+    # Process result.merchants through Steps 3–5 for this batch
+    # (known_mappings already loaded before the loop — do NOT re-run Step 2 here)
 
     if offset + 500 >= result.total:
         break
