@@ -447,7 +447,9 @@ class TestListAttemptsUnit:
         # asyncpg Records behave like mappings; dict() on them works via __iter__ over items
         # Use a simple dict-like object instead
         pool = MagicMock()
-        pool.fetch = AsyncMock(return_value=[{"status": "investigating", "butler_name": "my-butler"}])
+        pool.fetch = AsyncMock(
+            return_value=[{"status": "investigating", "butler_name": "my-butler"}]
+        )
 
         rows = await list_attempts(pool, limit=5, butler_name="my-butler")
 
