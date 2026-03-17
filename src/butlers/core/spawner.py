@@ -1429,7 +1429,7 @@ class Spawner:
                     if _gh_token is None:
                         _gh_token = os.environ.get(healing_config.gh_token_env_var)
 
-                    _task_registry: list | None = None
+                    _task_registry: list[asyncio.Task] | None = None
                     if self._healing_module is not None and hasattr(
                         self._healing_module, "_watchdog_tasks"
                     ):
