@@ -336,6 +336,9 @@ class SelfHealingModule(Module):
                 "message": "Self-healing module not fully initialised (no DB pool or spawner)",
             }
 
+        # Prune completed tasks before dispatching to prevent unbounded accumulation.
+        self._watchdog_tasks = [t for t in self._watchdog_tasks if not t.done()]
+
         result = await dispatch_healing(
             pool=self._pool,
             butler_name=self._butler_name,
