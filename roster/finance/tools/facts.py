@@ -954,7 +954,8 @@ async def list_distinct_merchants(
 ) -> dict[str, Any]:
     """Return distinct merchants from active transaction facts with aggregates.
 
-    Groups by normalized_merchant when present, falling back to merchant.
+    Groups by the unique combination of original merchant and normalized merchant.
+    Each distinct (merchant, normalized_merchant) pair is a separate row.
     Returns: {items: [{merchant, normalized_merchant, count, total_amount}], total, limit, offset}
 
     Filters:
@@ -996,7 +997,7 @@ async def list_distinct_merchants(
 
     # Build HAVING clause for min_count
     having_clause = ""
-    if min_count is not None and min_count > 1:
+    if min_count is not None and min_count >= 1:
         having_clause = f"HAVING COUNT(*) >= ${idx}"
         params.append(min_count)
         idx += 1

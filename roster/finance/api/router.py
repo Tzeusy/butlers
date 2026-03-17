@@ -640,14 +640,7 @@ async def bulk_update_transactions(
     ops_raw = [
         {
             "match": {"merchant_pattern": op.match.merchant_pattern},
-            "set": {
-                k: v
-                for k, v in {
-                    "normalized_merchant": op.set.normalized_merchant,
-                    "inferred_category": op.set.inferred_category,
-                }.items()
-                if v is not None
-            },
+            "set": op.set.model_dump(exclude_none=True),
         }
         for op in request.ops
     ]
