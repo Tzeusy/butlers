@@ -214,8 +214,16 @@ For each new mapping produced by the LLM in Step 4 (i.e., not already in memory)
 store a memory fact so future runs can auto-apply it:
 
 ```python
-# Resolve or create the merchant entity first (follow memory-classification skill)
-entity_id = resolve_or_create_merchant_entity("Whole Foods")
+# Resolve or create the merchant entity first (follow memory-classification skill).
+# resolve_or_create_merchant_entity is shorthand for the try/except pattern below —
+# use the real MCP calls (as shown in the worked example's Step 7):
+try:
+    result = memory_entity_create(canonical_name="Whole Foods", entity_type="organization",
+                                   metadata={"source": "fact_storage", "source_butler": "finance"})
+    entity_id = result["entity_id"]
+except ValueError:
+    candidates = memory_entity_resolve(name="Whole Foods", entity_type="organization")
+    entity_id = candidates[0]["entity_id"]
 
 memory_store_fact(
     subject="merchant_alias:WHOLEFDS",
