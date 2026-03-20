@@ -220,7 +220,7 @@ async def memory_store_fact(
     # Backward-compatible: older storage variants may return a mapping.
     if isinstance(result, dict):
         fact_id = result["id"]
-        superseded_id = result.get("superseded_id")
+        superseded_id = result.get("supersedes_id")
         suggestions = result.get("suggestions")
     else:
         fact_id = result

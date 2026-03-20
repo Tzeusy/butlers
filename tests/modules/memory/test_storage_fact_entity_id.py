@@ -503,7 +503,7 @@ class TestMemoryStoreFactEntityIdTool:
         pool = AsyncMock()
         engine = MagicMock()
         eid = uuid.uuid4()
-        storage_result = {"id": uuid.uuid4(), "superseded_id": uuid.uuid4()}
+        storage_result = {"id": uuid.uuid4(), "supersedes_id": uuid.uuid4()}
 
         with patch.object(_helpers._storage, "store_fact", new_callable=AsyncMock) as mock_store:
             mock_store.return_value = storage_result

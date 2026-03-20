@@ -136,7 +136,9 @@ def _levenshtein_distance(a: str, b: str) -> int:
     if not b:
         return len(a)
     # Optimise: if lengths differ by more than threshold, early exit.
-    # (Caller checks against _FUZZY_EDIT_DISTANCE_THRESHOLD.)
+    # The edit distance can't be smaller than the absolute length difference.
+    if abs(len(a) - len(b)) > _FUZZY_EDIT_DISTANCE_THRESHOLD:
+        return _FUZZY_EDIT_DISTANCE_THRESHOLD + 1
     prev = list(range(len(b) + 1))
     for i, ca in enumerate(a, 1):
         curr = [i] + [0] * len(b)
