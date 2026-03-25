@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
@@ -374,8 +375,6 @@ async def compute_urgency(
         if last_at is None:
             days_since: float = float("inf")
         else:
-            from datetime import UTC, datetime
-
             now = datetime.now(UTC)
             # Ensure last_at is tz-aware
             if last_at.tzinfo is None:
@@ -454,22 +453,43 @@ async def _upcoming_date_contact_ids(
         return set()
     rows = await pool.fetch(
         """
-        SELECT DISTINCT contact_id
-        FROM important_dates
-        WHERE contact_id = ANY($1::uuid[])
-          AND (
-            -- Build a date for this year (or next if already passed this year)
-            -- using the month/day stored on the date record.
-            make_date(
+        WITH params AS (
+            -- Precompute leap-year flags to avoid repeating the formula.
+            SELECT
+                EXTRACT(YEAR FROM now())::int AS this_year,
+                -- A year is a leap year if: (div by 4 AND NOT div by 100) OR div by 400
+                (EXTRACT(YEAR FROM now())::int % 4 = 0
+                 AND (EXTRACT(YEAR FROM now())::int % 100 != 0
+                      OR EXTRACT(YEAR FROM now())::int % 400 = 0)
+                ) AS this_year_is_leap,
+                ((EXTRACT(YEAR FROM now())::int + 1) % 4 = 0
+                 AND ((EXTRACT(YEAR FROM now())::int + 1) % 100 != 0
+                      OR (EXTRACT(YEAR FROM now())::int + 1) % 400 = 0)
+                ) AS next_year_is_leap
+        ),
+        candidate AS (
+            -- Build the nearest future (or today) occurrence of each anniversary.
+            -- Skip Feb-29 rows when the current year is not a leap year.
+            SELECT
+                d.contact_id,
+                d.month,
+                d.day,
                 CASE
-                    WHEN make_date(EXTRACT(YEAR FROM now())::int, month, day) >= now()::date
-                    THEN EXTRACT(YEAR FROM now())::int
-                    ELSE EXTRACT(YEAR FROM now())::int + 1
-                END,
-                month,
-                day
-            ) BETWEEN now()::date AND (now() + INTERVAL '14 days')::date
-          )
+                    WHEN make_date(p.this_year, d.month, d.day) >= now()::date
+                    THEN p.this_year
+                    ELSE p.this_year + 1
+                END AS yr,
+                p.this_year + 1 AS next_year,
+                p.next_year_is_leap
+            FROM important_dates d, params p
+            WHERE d.contact_id = ANY($1::uuid[])
+              AND NOT (d.month = 2 AND d.day = 29 AND NOT p.this_year_is_leap)
+        )
+        SELECT DISTINCT contact_id
+        FROM candidate
+        WHERE NOT (month = 2 AND day = 29 AND yr = next_year AND NOT next_year_is_leap)
+          AND make_date(yr, month, day)
+              BETWEEN now()::date AND (now() + INTERVAL '14 days')::date
         """,
         contact_ids,
     )
