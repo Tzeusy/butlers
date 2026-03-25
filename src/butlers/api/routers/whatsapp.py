@@ -293,7 +293,7 @@ async def poll_whatsapp_pairing(
 
     phone: str | None = None
     if status == WhatsAppPairStatus.paired:
-        phone = data.get("phone")
+        phone = _mask_phone(data.get("phone"))
 
     return WhatsAppPairPollResponse(status=status, phone=phone)
 

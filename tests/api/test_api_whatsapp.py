@@ -196,14 +196,17 @@ class TestWhatsAppPairPoll:
         assert response.json()["phone"] is None
 
     async def test_poll_paired(self, client):
-        """poll returns 'paired' with phone number on success."""
+        """poll returns 'paired' with masked phone number on success."""
         with mock_bridge_get({"status": "paired", "phone": "+12345677890"}):
             response = await client.get("/api/connectors/whatsapp/pair/poll")
 
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "paired"
-        assert data["phone"] == "+12345677890"
+        # Phone must be masked — raw number must not be returned
+        assert data["phone"] is not None
+        assert data["phone"] != "+12345677890"
+        assert "7890" in data["phone"]
 
     async def test_poll_expired(self, client):
         """poll returns 'expired' when QR code expired."""
