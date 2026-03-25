@@ -286,7 +286,22 @@ async def _sse_event_stream(socket_path: str) -> asyncio.AsyncGenerator[dict[str
         writer.write(request.encode())
         await writer.drain()
 
-        # Read and discard HTTP headers
+        # Read HTTP status line and validate before consuming headers
+        status_line = await asyncio.wait_for(reader.readline(), timeout=30.0)
+        if status_line:
+            parts = status_line.split(None, 2)
+            if len(parts) >= 2:
+                try:
+                    status_code = int(parts[1])
+                except ValueError:
+                    status_code = 0
+                if status_code != 200:
+                    status_text = status_line.decode(errors="replace").strip()
+                    raise ConnectionError(
+                        f"Bridge /events returned non-200 status: {status_text}"
+                    )
+
+        # Read and discard remaining HTTP headers
         while True:
             line = await asyncio.wait_for(reader.readline(), timeout=30.0)
             if not line or line == b"\r\n":
@@ -317,7 +332,8 @@ async def _sse_event_stream(socket_path: str) -> asyncio.AsyncGenerator[dict[str
                     yield json.loads(data_str)
                 except json.JSONDecodeError:
                     logger.warning(
-                        "WhatsApp bridge SSE: malformed JSON in event: %r", data_str[:200]
+                        "WhatsApp bridge SSE: malformed JSON in event (redacted, length=%d bytes)",
+                        len(data_str),
                     )
     finally:
         writer.close()
@@ -655,7 +671,18 @@ class WhatsAppUserClientConnector:
             return
 
         logger.info("Flushing all %d chat buffers (%s)", len(chat_jids), reason)
-        await asyncio.gather(*(self._flush_chat_buffer(jid) for jid in chat_jids))
+        results = await asyncio.gather(
+            *(self._flush_chat_buffer(jid) for jid in chat_jids),
+            return_exceptions=True,
+        )
+        for jid, result in zip(chat_jids, results):
+            if isinstance(result, Exception):
+                logger.exception(
+                    "Error flushing chat buffer %s during %s: %s",
+                    jid,
+                    reason,
+                    result,
+                )
 
     async def _flush_chat_buffer(self, chat_jid: str) -> None:
         """Flush a single chat's buffer through the full batch pipeline.
@@ -1213,15 +1240,18 @@ async def _run_health_server(
                     body_dict["error"] = error_msg
                 body = json.dumps(body_dict).encode()
                 content_type = "application/json"
+                http_status = "200 OK"
             elif path == b"/metrics" or path.startswith(b"/metrics?"):
                 body = generate_latest()
                 content_type = "text/plain; version=0.0.4"
+                http_status = "200 OK"
             else:
-                body = b"Not Found"
-                content_type = "text/plain"
+                body = json.dumps({"error": "Not Found"}).encode()
+                content_type = "application/json"
+                http_status = "404 Not Found"
 
             response = (
-                f"HTTP/1.0 200 OK\r\n"
+                f"HTTP/1.0 {http_status}\r\n"
                 f"Content-Type: {content_type}\r\n"
                 f"Content-Length: {len(body)}\r\n"
                 f"Connection: close\r\n"
