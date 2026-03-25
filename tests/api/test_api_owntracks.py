@@ -50,7 +50,7 @@ def _make_cred_store(*, token: str | None = None) -> MagicMock:
     return store
 
 
-def _make_db_manager(cred_store: MagicMock | None = None) -> MagicMock:
+def _make_db_manager() -> MagicMock:
     """Build a mock DatabaseManager."""
     pool = MagicMock()
     db_manager = MagicMock()
@@ -63,7 +63,7 @@ def _build_app(cred_store: MagicMock | None = None) -> object:
     _app = create_app(api_key="")
 
     if cred_store is not None:
-        db_manager = _make_db_manager(cred_store)
+        db_manager = _make_db_manager()
         _app.dependency_overrides[_get_db_manager] = lambda: db_manager
 
     return _app
@@ -140,6 +140,13 @@ class TestWebhookURL:
         url = _build_webhook_url("my-device.ts.net", 40083)
         assert url.startswith("https://")
 
+    def test_ipv6_localhost_uses_http_and_brackets(self):
+        """IPv6 loopback ::1 should use http and be bracketed in the URL."""
+        url = _build_webhook_url("::1", 40083)
+        assert url.startswith("http://")
+        assert "[::1]" in url
+        assert url.endswith("/owntracks/webhook")
+
 
 # ---------------------------------------------------------------------------
 # Unit tests: connection state derivation
@@ -158,12 +165,12 @@ class TestDeriveConnectionState:
         assert today == 0
 
     def test_token_configured_no_heartbeat(self):
-        """Token configured but no heartbeat → not_configured (connector not running yet)."""
+        """Token configured but no heartbeat → offline (connector not started yet)."""
         state, running, last_event, today, uptime = _derive_connection_state(
             token_configured=True,
             heartbeat_row=None,
         )
-        assert state == OwnTracksConnectionState.not_configured
+        assert state == OwnTracksConnectionState.offline
         assert running is False
 
     def test_recent_heartbeat_no_events(self):
@@ -335,7 +342,7 @@ class TestOwnTracksStatus:
         assert data["connector_running"] is False
 
     async def test_status_token_configured_no_connector(self):
-        """Token configured but no connector running → not_configured."""
+        """Token configured but no connector running → offline."""
         cred_store = _make_cred_store(token="a" * 64)
         app = _build_app(cred_store)
         with (
@@ -559,7 +566,7 @@ class TestOwnTracksConfig:
 
     async def test_config_token_masked_when_configured(self):
         """Config returns masked token when one is configured."""
-        token = "a1b2c3d4" + "00" * 28 + "e5f6g7h8"
+        token = "a1b2c3d4" + "00" * 24 + "e5f6e5f6"  # 64 valid hex chars
         cred_store = _make_cred_store(token=token)
         app = _build_app(cred_store)
         with patch(

@@ -133,15 +133,34 @@ def _make_switchboard_pool(db_manager: Any) -> Any | None:
 
 
 def _get_connector_host() -> str:
-    """Read OWNTRACKS_CONNECTOR_HOST env var or return default."""
-    return os.environ.get("OWNTRACKS_CONNECTOR_HOST", _DEFAULT_CONNECTOR_HOST).strip()
+    """Read OWNTRACKS_CONNECTOR_HOST env var or return default.
+
+    Whitespace-only values are treated as unset and fall back to the default.
+    """
+    raw = os.environ.get("OWNTRACKS_CONNECTOR_HOST")
+    if raw is None:
+        return _DEFAULT_CONNECTOR_HOST
+    host = raw.strip()
+    return host or _DEFAULT_CONNECTOR_HOST
 
 
 def _get_connector_port() -> int:
-    """Read OWNTRACKS_CONNECTOR_PORT env var or return default."""
+    """Read OWNTRACKS_CONNECTOR_PORT env var or return default.
+
+    Values that are not valid integers or are outside the range 1–65535 fall
+    back to the default.
+    """
     raw = os.environ.get("OWNTRACKS_CONNECTOR_PORT", str(_DEFAULT_CONNECTOR_PORT)).strip()
     try:
-        return int(raw)
+        port = int(raw)
+        if 1 <= port <= 65535:
+            return port
+        logger.warning(
+            "Out-of-range OWNTRACKS_CONNECTOR_PORT=%r, must be 1-65535; using default %d",
+            raw,
+            _DEFAULT_CONNECTOR_PORT,
+        )
+        return _DEFAULT_CONNECTOR_PORT
     except (ValueError, TypeError):
         logger.warning(
             "Invalid OWNTRACKS_CONNECTOR_PORT=%r, using default %d", raw, _DEFAULT_CONNECTOR_PORT
@@ -152,10 +171,14 @@ def _get_connector_port() -> int:
 def _build_webhook_url(host: str, port: int) -> str:
     """Construct the full webhook URL from host and port.
 
-    Uses https for non-localhost hosts; http for localhost/127.0.0.1.
+    Uses https for non-localhost hosts; http for localhost/127.0.0.1/::1.
+    IPv6 literals are wrapped in brackets as required by RFC 2732.
     """
-    scheme = "http" if host in ("localhost", "127.0.0.1", "::1") else "https"
-    return f"{scheme}://{host}:{port}/owntracks/webhook"
+    _LOCALHOST_HOSTS = {"localhost", "127.0.0.1", "::1"}
+    scheme = "http" if host in _LOCALHOST_HOSTS else "https"
+    # Wrap bare IPv6 literals in brackets (e.g. "::1" → "[::1]")
+    host_part = f"[{host}]" if ":" in host else host
+    return f"{scheme}://{host_part}:{port}/owntracks/webhook"
 
 
 def _mask_token(token: str | None) -> str | None:
@@ -228,8 +251,8 @@ def _derive_connection_state(
         return OwnTracksConnectionState.not_configured, False, None, 0, None
 
     if heartbeat_row is None:
-        # Token configured, no heartbeat ever received → not running yet
-        return OwnTracksConnectionState.not_configured, False, None, 0, None
+        # Token configured, no heartbeat ever received → connector offline (not started yet)
+        return OwnTracksConnectionState.offline, False, None, 0, None
 
     last_heartbeat_raw = heartbeat_row.get("last_heartbeat_at")
     uptime_s = heartbeat_row.get("uptime_s")
