@@ -234,8 +234,10 @@ async def run_health_briefing_contribution(
 
     today_dt = today_sgt()
     today_str = today_dt.isoformat()
-    today_start = datetime(today_dt.year, today_dt.month, today_dt.day, tzinfo=UTC)
-    today_end = today_start + timedelta(days=1)
+    # Compute SGT day boundaries (midnight SGT -> next midnight SGT) and convert to UTC
+    sgt_midnight = datetime(today_dt.year, today_dt.month, today_dt.day, tzinfo=SGT)
+    today_start = sgt_midnight.astimezone(UTC)
+    today_end = (sgt_midnight + timedelta(days=1)).astimezone(UTC)
 
     highlights: list[BriefingHighlight] = []
 
@@ -395,7 +397,9 @@ async def run_finance_briefing_contribution(
         )
 
     # --- Spending anomalies: 2x rolling average ---
-    # Compute per-category 30-day average and compare with last 7 days
+    # Baseline: transactions from 30-37 days ago (7-day-excluded prior period).
+    # Recent: transactions from 7 days ago to now.
+    # Divide each sum by its actual window length to get a true daily average.
     thirty_days_ago = now_utc - timedelta(days=30)
     seven_days_ago = now_utc - timedelta(days=7)
 
@@ -403,7 +407,7 @@ async def run_finance_briefing_contribution(
         """
         WITH rolling_avg AS (
             SELECT category,
-                   SUM(amount) / 30.0 AS daily_avg
+                   SUM(amount) / GREATEST(1, EXTRACT(DAY FROM $2 - $1)) AS daily_avg
             FROM transactions
             WHERE direction = 'debit'
               AND posted_at >= $1
@@ -542,15 +546,15 @@ async def run_relationship_briefing_contribution(
           )
         ORDER BY id.month, id.day, c.name
         """,
-        [d.month for d in (today_dt + timedelta(days=i) for i in range(8))],
-        [d.day for d in (today_dt + timedelta(days=i) for i in range(8))],
+        [d.month for d in (today_dt + timedelta(days=i) for i in range(7))],
+        [d.day for d in (today_dt + timedelta(days=i) for i in range(7))],
     )
 
     for row in birthday_rows:
         days_until = next(
             (
                 i
-                for i in range(8)
+                for i in range(7)
                 if (today_dt + timedelta(days=i)).month == row["month"]
                 and (today_dt + timedelta(days=i)).day == row["day"]
             ),
@@ -820,7 +824,9 @@ async def run_education_briefing_contribution(
     today_dt = today_sgt()
     today_str = today_dt.isoformat()
     now_utc = datetime.now(tz=UTC)
-    today_start = datetime(today_dt.year, today_dt.month, today_dt.day, tzinfo=UTC)
+    # Compute SGT midnight boundary and convert to UTC for timestamp comparisons
+    today_start_sgt = datetime(today_dt.year, today_dt.month, today_dt.day, tzinfo=SGT)
+    today_start = today_start_sgt.astimezone(UTC)
 
     highlights: list[BriefingHighlight] = []
 
@@ -1005,7 +1011,7 @@ async def run_home_briefing_contribution(
         )
 
     # --- Environment sensor outliers ---
-    # Check temperature sensors for values outside 18-28°C (reasonable indoor range)
+    # Check temperature sensors for values outside 16-30°C (broad indoor tolerance range)
     temp_rows = await pool.fetch(
         """
         SELECT entity_id, state, attributes
