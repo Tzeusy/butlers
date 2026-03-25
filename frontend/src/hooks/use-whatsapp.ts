@@ -83,8 +83,8 @@ export function useWhatsAppPairPoll({ enabled = true }: { enabled?: boolean } = 
  * Initiate the QR pairing flow.
  *
  * Calls POST /api/connectors/whatsapp/pair/start and returns the QR data URI.
- * On success, invalidates status so the settings card reflects the new state
- * after pairing completes.
+ * Query invalidation (status/health) is handled by the caller via the
+ * `onPaired` callback once pairing is confirmed, not by this mutation hook.
  */
 export function useWhatsAppPairStart() {
   return useMutation({

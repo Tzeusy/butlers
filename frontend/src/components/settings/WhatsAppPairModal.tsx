@@ -57,7 +57,6 @@ export function WhatsAppPairModal({
   const [qrExpiresAt, setQrExpiresAt] = useState<Date | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const startedAtRef = useRef<number | null>(null);
 
   const pairStartMutation = useWhatsAppPairStart();
 
@@ -102,12 +101,10 @@ export function WhatsAppPairModal({
         clearTimeout(timeoutRef.current);
         timeoutRef.current = null;
       }
-      startedAtRef.current = null;
       return;
     }
 
     if (modalState === "idle") {
-      startedAtRef.current = Date.now();
       // Set overall timeout
       timeoutRef.current = setTimeout(() => {
         setModalState("timeout");
@@ -161,10 +158,14 @@ export function WhatsAppPairModal({
       setTimeout(() => {
         onPaired(phone ?? null);
       }, 1200);
+    } else if (status === "expired" && modalState === "qr_ready") {
+      // Bridge reported expiry before client-side timer fired (clock skew or
+      // server-side invalidation). Transition to refreshing immediately.
+      setModalState("refreshing");
+      fetchQr();
     }
-    // 'expired' is handled by the QR expiry auto-refresh logic above
     // 'waiting' requires no action
-  }, [pollQuery.data, onPaired]);
+  }, [pollQuery.data, onPaired, modalState, fetchQr]);
 
   // ---------------------------------------------------------------------------
   // Cleanup on unmount
@@ -252,7 +253,6 @@ export function WhatsAppPairModal({
             <Button
               size="sm"
               onClick={() => {
-                startedAtRef.current = Date.now();
                 timeoutRef.current = setTimeout(() => {
                   setModalState("timeout");
                 }, PAIRING_TIMEOUT_MS);

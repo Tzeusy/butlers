@@ -130,7 +130,10 @@ async def _bridge_post(socket_path: str, path: str, body: dict | None = None) ->
 def _mask_phone(phone: str | None) -> str | None:
     """Mask a phone number for display, e.g. '+12345677890' → '+1 *** *** 7890'.
 
-    If the phone is None or cannot be parsed, returns it unchanged.
+    If the phone is None or empty, returns None.
+    If the phone has fewer than 4 digits, returns it unchanged.
+    Note: uses the first digit as the country calling code prefix; multi-digit
+    country codes (e.g. +44) will show only the first digit of the prefix.
     """
     if not phone:
         return None

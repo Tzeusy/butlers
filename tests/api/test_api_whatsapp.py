@@ -322,7 +322,7 @@ class TestPhoneMasking:
 
         assert _mask_phone(None) is None
 
-    def test_mask_empty_string_returns_empty(self):
+    def test_mask_empty_string_returns_none(self):
         from butlers.api.routers.whatsapp import _mask_phone
 
         assert _mask_phone("") is None

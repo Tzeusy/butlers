@@ -249,6 +249,7 @@ export function WhatsAppSetupCard() {
         onPaired={() => {
           setPairModalOpen(false);
           statusQuery.refetch();
+          healthQuery.refetch();
         }}
       />
 
