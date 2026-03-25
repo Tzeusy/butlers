@@ -97,7 +97,9 @@ def _jittered_backoff(attempt: int) -> float:
 async def _http_post_unix(socket_path: str, path: str) -> dict[str, Any]:
     """Issue a plain HTTP POST to *path* on the bridge Unix socket.
 
-    Returns the parsed JSON body.  Raises on network or HTTP errors.
+    Returns the parsed JSON body.  Raises on network or parse errors.
+    Note: HTTP-level error status codes (4xx/5xx) are not raised; callers must
+    inspect the returned dict for error fields from the bridge.
     """
     reader, writer = await asyncio.open_unix_connection(socket_path)
     try:
@@ -111,7 +113,7 @@ async def _http_post_unix(socket_path: str, path: str) -> dict[str, Any]:
         writer.write(request.encode())
         await writer.drain()
 
-        raw = await reader.read(65536)
+        raw = await reader.read()
     finally:
         writer.close()
         try:
@@ -127,7 +129,9 @@ async def _http_post_unix_with_body(
 ) -> dict[str, Any]:
     """Issue a plain HTTP POST with a JSON body to *path* on the bridge Unix socket.
 
-    Returns the parsed JSON body.  Raises on network or HTTP errors.
+    Returns the parsed JSON body.  Raises on network or parse errors.
+    Note: HTTP-level error status codes (4xx/5xx) are not raised; callers must
+    inspect the returned dict for error fields from the bridge.
     """
     import json
 
@@ -146,7 +150,7 @@ async def _http_post_unix_with_body(
         writer.write(encoded_body)
         await writer.drain()
 
-        raw = await reader.read(65536)
+        raw = await reader.read()
     finally:
         writer.close()
         try:
@@ -165,7 +169,7 @@ async def _http_get_unix(socket_path: str, path: str) -> dict[str, Any]:
         writer.write(request.encode())
         await writer.drain()
 
-        raw = await reader.read(65536)
+        raw = await reader.read()
     finally:
         writer.close()
         try:
