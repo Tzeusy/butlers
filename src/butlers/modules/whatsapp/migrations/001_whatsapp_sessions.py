@@ -34,11 +34,6 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE INDEX IF NOT EXISTS idx_whatsapp_sessions_phone_number
-            ON whatsapp_sessions (phone_number)
-    """)
-
-    op.execute("""
         CREATE INDEX IF NOT EXISTS idx_whatsapp_sessions_active
             ON whatsapp_sessions (active)
     """)
@@ -46,5 +41,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS idx_whatsapp_sessions_active")
-    op.execute("DROP INDEX IF EXISTS idx_whatsapp_sessions_phone_number")
     op.execute("DROP TABLE IF EXISTS whatsapp_sessions")

@@ -398,5 +398,4 @@ __all__ = [
     "build_identity_preamble",
     "create_temp_contact",
     "resolve_contact_by_channel",
-    "_extract_whatsapp_jid_phone",
 ]

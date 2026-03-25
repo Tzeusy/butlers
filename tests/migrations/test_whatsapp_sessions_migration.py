@@ -114,11 +114,13 @@ class TestUpgradeSQL:
         source = inspect.getsource(mod.upgrade)
         assert "TIMESTAMPTZ" in source
 
-    def test_creates_phone_number_index(self) -> None:
-        """Upgrade creates an index on phone_number."""
+    def test_no_redundant_phone_number_index(self) -> None:
+        """UNIQUE constraint on phone_number already creates an index; no separate index needed."""
         mod = _load_migration()
         source = inspect.getsource(mod.upgrade)
-        assert "idx_whatsapp_sessions_phone_number" in source
+        # The UNIQUE constraint on phone_number implicitly creates an index in PostgreSQL.
+        # A separate non-unique index would be redundant and add write overhead.
+        assert "idx_whatsapp_sessions_phone_number" not in source
 
     def test_creates_active_index(self) -> None:
         """Upgrade creates an index on active for efficient session queries."""
@@ -138,5 +140,7 @@ class TestDowngradeSQL:
         """Downgrade removes the custom indexes."""
         mod = _load_migration()
         source = inspect.getsource(mod.downgrade)
-        assert "idx_whatsapp_sessions_phone_number" in source
+        # Only the active index is created explicitly; phone_number index is implicit
+        # from the UNIQUE constraint and is dropped with the table.
+        assert "idx_whatsapp_sessions_phone_number" not in source
         assert "idx_whatsapp_sessions_active" in source

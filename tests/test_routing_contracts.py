@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from butlers.tools.switchboard.routing.contracts import (
     RouteInputV1,
     parse_ingest_envelope,
+    parse_notify_request,
     parse_route_envelope,
 )
 
@@ -575,3 +576,99 @@ def test_whatsapp_idempotency_key_format():
     )
     parsed = parse_ingest_envelope(envelope)
     assert parsed.control.idempotency_key == "whatsapp:1234567890:MSGID123456"
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp notify contract validations
+# ---------------------------------------------------------------------------
+
+_WHATSAPP_NOTIFY_REQUEST_CONTEXT = {
+    "request_id": "01916b9d-1234-7000-abcd-123456789abc",
+    "source_channel": "whatsapp_user_client",
+    "source_endpoint_identity": "whatsapp:1234567890",
+    "source_sender_identity": "1234567890@s.whatsapp.net",
+}
+
+
+@pytest.mark.unit
+def test_whatsapp_reply_requires_source_thread_identity():
+    """notify.v1 whatsapp reply intent must supply source_thread_identity."""
+    payload = {
+        "schema_version": "notify.v1",
+        "origin_butler": "messenger",
+        "delivery": {
+            "intent": "reply",
+            "channel": "whatsapp",
+            "message": "Hi there",
+        },
+        "request_context": {
+            **_WHATSAPP_NOTIFY_REQUEST_CONTEXT,
+            # source_thread_identity intentionally omitted
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        parse_notify_request(payload)
+    assert "thread" in str(exc_info.value).lower()
+
+
+@pytest.mark.unit
+def test_whatsapp_reply_with_thread_identity_accepted():
+    """notify.v1 whatsapp reply with source_thread_identity is valid."""
+    payload = {
+        "schema_version": "notify.v1",
+        "origin_butler": "messenger",
+        "delivery": {
+            "intent": "reply",
+            "channel": "whatsapp",
+            "message": "Hi there",
+        },
+        "request_context": {
+            **_WHATSAPP_NOTIFY_REQUEST_CONTEXT,
+            "source_thread_identity": "1234567890@s.whatsapp.net",
+        },
+    }
+    result = parse_notify_request(payload)
+    assert result.delivery.channel == "whatsapp"
+    assert result.delivery.intent == "reply"
+    assert result.request_context is not None
+    assert result.request_context.source_thread_identity == "1234567890@s.whatsapp.net"
+
+
+@pytest.mark.unit
+def test_whatsapp_react_intent_rejected():
+    """notify.v1 react intent is not supported for whatsapp channel."""
+    payload = {
+        "schema_version": "notify.v1",
+        "origin_butler": "messenger",
+        "delivery": {
+            "intent": "react",
+            "channel": "whatsapp",
+            "message": "",
+            "emoji": "👍",
+        },
+        "request_context": {
+            **_WHATSAPP_NOTIFY_REQUEST_CONTEXT,
+            "source_thread_identity": "1234567890@s.whatsapp.net",
+        },
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        parse_notify_request(payload)
+    assert "whatsapp" in str(exc_info.value).lower() or "react" in str(exc_info.value).lower()
+
+
+@pytest.mark.unit
+def test_whatsapp_send_without_thread_identity_accepted():
+    """notify.v1 whatsapp send intent does not require source_thread_identity."""
+    payload = {
+        "schema_version": "notify.v1",
+        "origin_butler": "messenger",
+        "delivery": {
+            "intent": "send",
+            "channel": "whatsapp",
+            "message": "Hello",
+            "recipient": "1234567890@s.whatsapp.net",
+        },
+    }
+    result = parse_notify_request(payload)
+    assert result.delivery.channel == "whatsapp"
+    assert result.delivery.intent == "send"

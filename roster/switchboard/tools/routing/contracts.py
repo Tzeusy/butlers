@@ -539,6 +539,13 @@ class NotifyRequestV1(BaseModel):
                 {},
             )
 
+        if self.delivery.channel == "whatsapp" and not self.request_context.source_thread_identity:
+            raise PydanticCustomError(
+                "reply_thread_required",
+                "notify.v1 whatsapp reply intent requires request_context.source_thread_identity.",
+                {},
+            )
+
         return self
 
     @model_validator(mode="after")
@@ -546,6 +553,14 @@ class NotifyRequestV1(BaseModel):
         """Validate react intent requirements."""
         if self.delivery.intent != "react":
             return self
+
+        # WhatsApp does not support react intent
+        if self.delivery.channel == "whatsapp":
+            raise PydanticCustomError(
+                "react_unsupported",
+                "notify.v1 react intent is not supported for whatsapp channel.",
+                {},
+            )
 
         # React intent requires emoji
         if not self.delivery.emoji:
