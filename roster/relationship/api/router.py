@@ -73,6 +73,8 @@ if _models_path.exists():
         CreateEntityInfoRequest = _models_module.CreateEntityInfoRequest
         CreateEntityInfoResponse = _models_module.CreateEntityInfoResponse
         UpdateEntityInfoRequest = _models_module.UpdateEntityInfoRequest
+        DunbarEntry = _models_module.DunbarEntry
+        DunbarRankingResponse = _models_module.DunbarRankingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -2321,3 +2323,174 @@ async def reveal_entity_secret(
         )
 
     return {"id": str(row["id"]), "type": row["type"], "value": row["value"]}
+
+
+# ---------------------------------------------------------------------------
+# GET /dunbar/ranking — Dunbar tier ranking for all contacts
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dunbar/ranking", response_model=DunbarRankingResponse)
+async def get_dunbar_ranking(
+    db: DatabaseManager = Depends(_get_db_manager),
+) -> DunbarRankingResponse:
+    """Return the current Dunbar tier ranking for all listed, entity-linked contacts.
+
+    Computes exponential decay scores from interaction facts and assigns
+    each contact to a Dunbar tier (5/15/50/150/500/1500). Manual tier
+    overrides are respected. Also returns the owner entity ID for centering
+    the concentric circles visualization.
+
+    This endpoint is used by the social map visualization in the entities page.
+    """
+    import math
+    import uuid as _uuid
+
+    pool = _pool(db)
+
+    lambda_ = math.log(2) / 30.0
+
+    # Compute decay scores and fetch overrides in parallel
+    scored_rows, override_rows, entity_name_rows, owner_row = await asyncio.gather(
+        pool.fetch(
+            """
+            SELECT
+                c.id          AS contact_id,
+                c.entity_id   AS entity_id,
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN f.valid_at IS NOT NULL
+                            THEN EXP(
+                                -$1::float
+                                * GREATEST(
+                                    EXTRACT(EPOCH FROM (now() - f.valid_at)) / 86400.0,
+                                    0.0
+                                )
+                            )
+                            ELSE NULL
+                        END
+                    ),
+                    0.0
+                )              AS score
+            FROM contacts c
+            LEFT JOIN facts f
+                ON  f.subject   = 'contact:' || c.id::text
+                AND f.predicate = 'interaction'
+                AND f.scope     = 'relationship'
+                AND f.validity  = 'active'
+            WHERE c.listed    = true
+              AND c.entity_id IS NOT NULL
+            GROUP BY c.id, c.entity_id
+            ORDER BY score DESC
+            """,
+            lambda_,
+        ),
+        pool.fetch(
+            """
+            SELECT entity_id, content
+            FROM facts
+            WHERE predicate = 'dunbar_tier_override'
+              AND scope     = 'relationship'
+              AND validity  = 'active'
+              AND entity_id IS NOT NULL
+            """
+        ),
+        # Fetch canonical names from shared.entities
+        pool.fetch(
+            """
+            SELECT e.id, e.canonical_name
+            FROM shared.entities e
+            WHERE e.id IN (
+                SELECT c.entity_id FROM contacts c
+                WHERE c.listed = true AND c.entity_id IS NOT NULL
+            )
+            """
+        ),
+        # Fetch owner contact entity_id
+        pool.fetchrow(
+            """
+            SELECT entity_id FROM contacts
+            WHERE 'owner' = ANY(roles) AND entity_id IS NOT NULL
+            LIMIT 1
+            """
+        ),
+    )
+
+    # Build overrides map: entity_id -> tier
+    overrides: dict[_uuid.UUID, int] = {}
+    valid_tiers = {5, 15, 50, 150, 500, 1500}
+    for row in override_rows:
+        try:
+            tier = int(row["content"])
+            if tier in valid_tiers:
+                overrides[row["entity_id"]] = tier
+        except (ValueError, TypeError):
+            pass
+
+    # Build canonical name map: entity_id -> name
+    entity_names: dict[_uuid.UUID, str] = {
+        row["id"]: row["canonical_name"] for row in entity_name_rows
+    }
+
+    # Assign tiers — scored contacts in rank order, then zero-score contacts
+    entries: list[DunbarEntry] = []
+    scored = [r for r in scored_rows if r["score"] > 0.0]
+    zero_score = [r for r in scored_rows if r["score"] <= 0.0]
+
+    def _rank_to_tier(rank: int) -> int:
+        if rank <= 5:
+            return 5
+        if rank <= 15:
+            return 15
+        if rank <= 50:
+            return 50
+        if rank <= 150:
+            return 150
+        if rank <= 500:
+            return 500
+        return 1500
+
+    for rank_0, row in enumerate(scored, start=1):
+        entity_id = row["entity_id"]
+        if entity_id in overrides:
+            tier = overrides[entity_id]
+            is_override = True
+        else:
+            tier = _rank_to_tier(rank_0)
+            is_override = False
+
+        entries.append(
+            DunbarEntry(
+                contact_id=row["contact_id"],
+                entity_id=entity_id,
+                canonical_name=entity_names.get(entity_id, "Unknown"),
+                dunbar_tier=tier,
+                dunbar_score=round(float(row["score"]), 2),
+                dunbar_tier_override=is_override,
+            )
+        )
+
+    for row in zero_score:
+        entity_id = row["entity_id"]
+        if entity_id in overrides:
+            tier = overrides[entity_id]
+            is_override = True
+        else:
+            tier = 1500
+            is_override = False
+
+        entries.append(
+            DunbarEntry(
+                contact_id=row["contact_id"],
+                entity_id=entity_id,
+                canonical_name=entity_names.get(entity_id, "Unknown"),
+                dunbar_tier=tier,
+                dunbar_score=0.0,
+                dunbar_tier_override=is_override,
+            )
+        )
+
+    owner_entity_id = owner_row["entity_id"] if owner_row else None
+
+    return DunbarRankingResponse(entries=entries, owner_entity_id=owner_entity_id)
