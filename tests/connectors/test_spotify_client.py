@@ -185,12 +185,15 @@ class TestLifecycle:
         await client.open()
         assert client._expires_at is not None
 
-    async def test_open_ignores_invalid_expires_at(self) -> None:
+    async def test_open_forces_refresh_on_invalid_expires_at(self) -> None:
+        """An unparsable SPOTIFY_TOKEN_EXPIRES_AT should force proactive refresh."""
         store = _make_credential_store(expires_at="not-a-date")
         http = AsyncMock(spec=httpx.AsyncClient)
         client = SpotifyClient(credential_store=store, http_client=http)
         await client.open()
-        assert client._expires_at is None
+        # _expires_at is set to a past datetime to trigger proactive refresh.
+        assert client._expires_at is not None
+        assert client._expires_at < datetime.now(UTC)
 
     async def test_open_handles_naive_expires_at(self) -> None:
         # A naive ISO timestamp (no timezone) should be treated as UTC
@@ -272,6 +275,16 @@ class TestGetCurrentlyPlaying:
     ) -> None:
         """HTTP 204 means nothing is currently playing."""
         http_client.get = AsyncMock(return_value=_make_response(204))
+        result = await spotify_client.get_currently_playing()
+        assert result is None
+
+    async def test_returns_none_when_item_is_null(
+        self, spotify_client: SpotifyClient, http_client: AsyncMock
+    ) -> None:
+        """HTTP 200 with item=null (e.g., private session or ads) should return None."""
+        http_client.get = AsyncMock(
+            return_value=_make_response(200, {"is_playing": False, "item": None})
+        )
         result = await spotify_client.get_currently_playing()
         assert result is None
 

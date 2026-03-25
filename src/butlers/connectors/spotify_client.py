@@ -215,10 +215,12 @@ class SpotifyClient:
                     self._expires_at = self._expires_at.replace(tzinfo=UTC)
             except ValueError:
                 logger.warning(
-                    "Could not parse SPOTIFY_TOKEN_EXPIRES_AT=%r; treating as expired",
+                    "Could not parse SPOTIFY_TOKEN_EXPIRES_AT=%r; treating as expired "
+                    "and forcing refresh",
                     expires_at_str,
                 )
-                self._expires_at = None
+                # Force proactive refresh by marking the token as already expired.
+                self._expires_at = datetime.now(UTC) - timedelta(seconds=1)
         else:
             self._expires_at = None
 
@@ -273,8 +275,18 @@ class SpotifyClient:
                 "Re-connect Spotify via dashboard settings."
             )
 
-        data: dict[str, Any] = response.json()
-        new_access_token: str = data["access_token"]
+        try:
+            data: dict[str, Any] = response.json()
+            new_access_token: str = data["access_token"]
+        except Exception as exc:
+            logger.error(
+                "Spotify token refresh returned malformed response: %r",
+                response.text[:200],
+            )
+            raise SpotifyAuthError(
+                "Spotify token refresh returned an unexpected response. "
+                "Re-connect Spotify via dashboard settings."
+            ) from exc
         # Spotify may or may not rotate the refresh token
         new_refresh_token: str = data.get("refresh_token", self._refresh_token)
         expires_in: int = data.get("expires_in", 3600)
@@ -375,7 +387,10 @@ class SpotifyClient:
                 )
 
             if response.status_code == 429:
-                retry_after_s = self._parse_retry_after(response, attempt=attempt)
+                # Always use attempt=0 for rate-limit backoff: the outer `attempt`
+                # counter tracks 401-refresh retries, not rate-limit retries, so
+                # passing it here would double the initial backoff on retry attempt 1.
+                retry_after_s = self._parse_retry_after(response, attempt=0)
                 raise SpotifyRateLimitError(retry_after_s)
 
             raise SpotifyAPIError(response.status_code, response.text[:500])
@@ -449,10 +464,18 @@ class SpotifyClient:
         SpotifyAPIError
             For other unexpected HTTP error status codes.
         """
-        return await self._get(
+        data = await self._get(
             "/me/player/currently-playing",
             params={"additional_types": "track"},
         )
+        # `_get` returns None for HTTP 204 (no content). Additionally, Spotify may
+        # return HTTP 200 with `item` set to null (e.g., private session or ads).
+        # In both cases we normalize to None to match the documented contract.
+        if data is None:
+            return None
+        if data.get("item") is None:
+            return None
+        return data
 
     async def get_recently_played(
         self,
@@ -490,7 +513,7 @@ class SpotifyClient:
         SpotifyAPIError
             For other unexpected HTTP error status codes.
         """
-        params: dict[str, Any] = {"limit": limit, "type": "track"}
+        params: dict[str, Any] = {"limit": limit}
         if after is not None:
             params["after"] = after
 
