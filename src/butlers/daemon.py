@@ -479,10 +479,10 @@ async def _run_home_device_health_check_job(
     pool: asyncpg.Pool,
     job_args: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Run device health check for the home butler.
+    """Run device health check for the home butler (delegates to stub).
 
-    Surveys all HA entities for offline status and low battery levels, stores
-    findings in memory, and sends a Telegram notification with a summary.
+    Delegates to ``butlers.jobs.home.run_device_health_check``, which is
+    currently a no-op stub pending full implementation.
     """
     del job_args
     from butlers.jobs.home import run_device_health_check
@@ -494,10 +494,10 @@ async def _run_home_environment_report_job(
     pool: asyncpg.Pool,
     job_args: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Run environment report for the home butler.
+    """Run environment report for the home butler (delegates to stub).
 
-    Reads environmental sensors per area, compares against stored comfort
-    preferences, and sends a room-by-room Telegram notification.
+    Delegates to ``butlers.jobs.home.run_environment_report``, which is
+    currently a no-op stub pending full implementation.
     """
     del job_args
     from butlers.jobs.home import run_environment_report
@@ -509,10 +509,10 @@ async def _run_home_energy_digest_job(
     pool: asyncpg.Pool,
     job_args: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Run weekly energy digest for the home butler.
+    """Run weekly energy digest for the home butler (delegates to stub).
 
-    Fetches weekly energy statistics, computes top consumers and trends vs.
-    baselines, and sends a structured Telegram digest.
+    Delegates to ``butlers.jobs.home.run_energy_digest``, which is
+    currently a no-op stub pending full implementation.
     """
     del job_args
     from butlers.jobs.home import run_energy_digest
@@ -524,16 +524,23 @@ async def _run_home_maintenance_schedule_check_job(
     pool: asyncpg.Pool,
     job_args: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Run maintenance schedule check for the home butler.
+    """Run maintenance schedule check for the home butler (delegates to stub).
 
-    Checks all maintenance items for due/overdue status and sends Telegram
-    reminders for items that need attention.
+    Delegates to ``butlers.jobs.home.run_maintenance_schedule_check``, which is
+    currently a no-op stub pending full implementation.
     """
     del job_args
     from butlers.jobs.home import run_maintenance_schedule_check
 
     return await run_maintenance_schedule_check(pool=pool)
 
+
+_HOME_DETERMINISTIC_JOB_HANDLERS: dict[str, _DeterministicScheduleJobHandler] = {
+    "device_health_check": _run_home_device_health_check_job,
+    "environment_report": _run_home_environment_report_job,
+    "energy_digest": _run_home_energy_digest_job,
+    "maintenance_schedule_check": _run_home_maintenance_schedule_check_job,
+}
 
 _DETERMINISTIC_SCHEDULE_JOB_REGISTRY: dict[str, dict[str, _DeterministicScheduleJobHandler]] = {
     "general": {
@@ -561,10 +568,7 @@ _DETERMINISTIC_SCHEDULE_JOB_REGISTRY: dict[str, dict[str, _DeterministicSchedule
     "home": {
         **_MEMORY_MAINTENANCE_JOB_HANDLERS,
         "daily_briefing_contribution": _run_daily_briefing_contribution_job,
-        "device_health_check": _run_home_device_health_check_job,
-        "environment_report": _run_home_environment_report_job,
-        "energy_digest": _run_home_energy_digest_job,
-        "maintenance_schedule_check": _run_home_maintenance_schedule_check_job,
+        **_HOME_DETERMINISTIC_JOB_HANDLERS,
     },
     "switchboard": {
         "eligibility_sweep": _run_switchboard_eligibility_sweep_job,

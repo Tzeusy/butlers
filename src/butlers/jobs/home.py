@@ -1,12 +1,18 @@
 """Deterministic job implementations for the Home butler's scheduled monitoring tasks.
 
-These handlers replace prompt-based LLM dispatch with threshold-based classification,
-memory storage, and Telegram notifications — eliminating LLM costs for formulaic
-monitoring work.
+NOTE: All functions in this module are **stubs**. They log a message and return
+zeroed summary results without performing any real monitoring, memory writes, or
+Telegram notifications. Full implementations will be added in the
+home-deterministic-jobs feature work.
 
-Jobs read current entity state from the connector-populated ``ha_entity_snapshot``
-table (or its SPO successor) and load monitoring thresholds from the state store
-(``home:thresholds:*``), falling back to HA REST API only for historical statistics.
+These handlers are intended to replace prompt-based LLM dispatch with
+threshold-based classification, memory storage, and Telegram notifications —
+eliminating LLM costs for formulaic monitoring work.
+
+When fully implemented, jobs will read current entity state from the
+connector-populated ``ha_entity_snapshot`` table (or its SPO successor) and load
+monitoring thresholds from the state store (``home:thresholds:*``), falling back
+to the HA REST API only for historical statistics.
 
 Design reference: openspec/specs/home-deterministic-jobs/spec.md
 """
@@ -27,22 +33,17 @@ logger = logging.getLogger(__name__)
 
 
 async def run_device_health_check(pool: asyncpg.Pool) -> dict[str, Any]:
-    """Survey all HA entities for offline status and low battery levels.
+    """Stub: device health check for the home butler (no-op).
 
-    Reads entity states from the connector-populated snapshot, classifies issues
-    by severity using configurable thresholds from the state store
-    (``home:thresholds:battery``, ``home:thresholds:offline_hours``), stores
-    findings in memory, and sends a Telegram notification with the results.
+    Full implementation pending (home-deterministic-jobs feature work).
+    When implemented, this will survey all HA entities for offline status and
+    low battery levels, classify issues using configurable thresholds from the
+    state store (``home:thresholds:battery``, ``home:thresholds:offline_hours``),
+    store findings in memory, and send a Telegram notification with the results.
 
-    Returns a dict with keys: ``devices_checked``, ``issues_found``,
-    ``critical_count``, ``warning_count``.
+    Returns a zeroed summary dict with keys: ``devices_checked``,
+    ``issues_found``, ``critical_count``, ``warning_count``.
     """
-    # NOTE: Full implementation is deferred to a follow-up task. This stub
-    # satisfies the job registry registration requirement so that the scheduler
-    # can dispatch to it without a RuntimeError. The actual monitoring logic
-    # (entity snapshot queries, threshold loading, memory fact storage, and
-    # Telegram notification) will be implemented in the home-deterministic-jobs
-    # feature work.
     logger.info("device_health_check: stub — full implementation pending")
     return {
         "devices_checked": 0,
@@ -58,16 +59,17 @@ async def run_device_health_check(pool: asyncpg.Pool) -> dict[str, Any]:
 
 
 async def run_environment_report(pool: asyncpg.Pool) -> dict[str, Any]:
-    """Read environmental sensors per area and send a comfort report.
+    """Stub: environment report for the home butler (no-op).
 
-    Reads temperature, humidity, CO2, and illuminance sensor readings grouped
-    by Home Assistant area from the connector-populated snapshot. Compares each
-    reading against stored comfort preferences and configurable deviation
-    thresholds (``home:thresholds:comfort_defaults``,
-    ``home:thresholds:comfort_deviation``). Stores deviations in memory and
-    sends a room-by-room Telegram notification.
+    Full implementation pending (home-deterministic-jobs feature work).
+    When implemented, this will read temperature, humidity, CO2, and illuminance
+    sensor readings grouped by Home Assistant area from the connector-populated
+    snapshot, compare against stored comfort preferences and configurable
+    deviation thresholds (``home:thresholds:comfort_defaults``,
+    ``home:thresholds:comfort_deviation``), store deviations in memory, and send
+    a room-by-room Telegram notification.
 
-    Returns a dict with keys: ``areas_checked``, ``sensors_read``,
+    Returns a zeroed summary dict with keys: ``areas_checked``, ``sensors_read``,
     ``deviations_found``.
     """
     logger.info("environment_report: stub — full implementation pending")
@@ -84,16 +86,17 @@ async def run_environment_report(pool: asyncpg.Pool) -> dict[str, Any]:
 
 
 async def run_energy_digest(pool: asyncpg.Pool) -> dict[str, Any]:
-    """Fetch weekly energy statistics and send a structured digest.
+    """Stub: weekly energy digest for the home butler (no-op).
 
-    Discovers energy-related sensor entities from the connector-populated
-    snapshot, fetches weekly historical statistics via the HA REST API
-    (``recorder/get_statistics_during_period``), computes top consumers and
-    percentage deviation from stored baselines using configurable anomaly
-    thresholds (``home:thresholds:energy``), updates baseline memory facts, and
-    sends a structured weekly digest via Telegram.
+    Full implementation pending (home-deterministic-jobs feature work).
+    When implemented, this will discover energy-related sensor entities from the
+    connector-populated snapshot, fetch weekly historical statistics via the HA
+    REST API (``recorder/get_statistics_during_period``), compute top consumers
+    and percentage deviation from stored baselines using configurable anomaly
+    thresholds (``home:thresholds:energy``), update baseline memory facts, and
+    send a structured weekly digest via Telegram.
 
-    Returns a dict with keys: ``total_kwh``, ``devices_ranked``,
+    Returns a zeroed summary dict with keys: ``total_kwh``, ``devices_ranked``,
     ``anomalies_found``, ``baseline_updated``.
     """
     logger.info("energy_digest: stub — full implementation pending")
@@ -111,13 +114,14 @@ async def run_energy_digest(pool: asyncpg.Pool) -> dict[str, Any]:
 
 
 async def run_maintenance_schedule_check(pool: asyncpg.Pool) -> dict[str, Any]:
-    """Check all maintenance items for due/overdue status and send reminders.
+    """Stub: maintenance schedule check for the home butler (no-op).
 
-    Queries all home maintenance items (stored via the ``ha_maintenance_*``
-    tools), identifies items that are due or overdue, and sends a Telegram
-    notification listing them with recommended actions.
+    Full implementation pending (home-deterministic-jobs feature work).
+    When implemented, this will query all home maintenance items (stored via the
+    ``ha_maintenance_*`` tools), identify items that are due or overdue, and send
+    a Telegram notification listing them with recommended actions.
 
-    Returns a dict with keys: ``items_checked``, ``due_count``,
+    Returns a zeroed summary dict with keys: ``items_checked``, ``due_count``,
     ``overdue_count``.
     """
     logger.info("maintenance_schedule_check: stub — full implementation pending")
