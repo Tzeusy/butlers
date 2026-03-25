@@ -96,7 +96,7 @@ function dunbarTierBadgeStyle(tier: number): React.CSSProperties {
     case 15:
       return { backgroundColor: "#c2410c", color: "#fff" }; // orange-red
     case 50:
-      return { backgroundColor: "#b45309", color: "#fff" }; // amber-brown
+      return { backgroundColor: "#92400e", color: "#fff" }; // amber-800 (~7:1 contrast, WCAG AA)
     case 150:
       return { backgroundColor: "#15803d", color: "#fff" }; // green
     case 500:
