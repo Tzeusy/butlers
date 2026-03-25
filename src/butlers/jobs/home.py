@@ -310,6 +310,7 @@ def _build_health_check_notification(
     Returns:
         Formatted text message for Telegram.
     """
+
     def _esc(text: str) -> str:
         """HTML-escape a user-supplied string for Telegram HTML parse mode."""
         return html.escape(text)
@@ -1623,8 +1624,7 @@ async def run_device_health_check(
             pool,
             subject="device-fleet",
             content=(
-                f"All {devices_checked} device(s) healthy"
-                " \u2014 no battery or connectivity issues."
+                f"All {devices_checked} device(s) healthy \u2014 no battery or connectivity issues."
             ),
             importance=3.0,
             tags=["maintenance"],
