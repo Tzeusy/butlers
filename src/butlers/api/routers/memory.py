@@ -688,7 +688,9 @@ def _sort_entity_summaries(items: list[EntitySummary]) -> list[EntitySummary]:
     Sort order (stable, ascending by key tuple):
       1. is_non_person: 0 for person entities, 1 for all others
          — person-entities always sort before non-person entities
-      2. role_priority: lower value = higher priority (owner=0, family=1, other=99)
+      2. role_priority: lower value = higher priority (owner=0, family=1, default=99)
+         — both "no roles" and "unranked roles" map to the same default rank (99);
+           they are further ordered by Dunbar score and name (keys 3 & 4)
       3. dunbar_score: descending (negated so lower key = higher score)
          — None treated as 0.0 (no interactions yet)
       4. canonical_name: ascending tiebreaker
