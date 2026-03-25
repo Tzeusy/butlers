@@ -75,7 +75,9 @@ def _parse_claude_output(
     If the output is not valid JSON-lines, we treat the entire stdout as plain
     text result.
 
-    Non-zero exit codes raise RuntimeError with the stderr content.
+    Non-zero exit codes are surfaced as an error result string
+    (e.g. ``"Error: <detail>"``) with no tool calls and ``None`` usage,
+    rather than raising an exception.
 
     Parameters
     ----------
@@ -324,45 +326,7 @@ class ClaudeCodeAdapter(RuntimeAdapter):
         import tempfile
 
         binary = self._get_binary()
-        effective_timeout = timeout or _DEFAULT_TIMEOUT_SECONDS
-
-        # Write MCP config file into a temporary directory
-        tmp_dir_obj = tempfile.TemporaryDirectory()
-        tmp_dir = Path(tmp_dir_obj.name)
-        mcp_config_path = self.build_config_file(mcp_servers=mcp_servers, tmp_dir=tmp_dir)
-
-        # Build command
-        cmd = [
-            binary,
-            "-p",
-            "--output-format",
-            "stream-json",
-            "--bare",
-            "--no-session-persistence",
-            "--permission-mode",
-            "bypassPermissions",
-            "--strict-mcp-config",
-            "--mcp-config",
-            str(mcp_config_path),
-        ]
-
-        if system_prompt:
-            cmd.extend(["--system-prompt", system_prompt])
-
-        if isinstance(model, str) and model.strip():
-            cmd.extend(["--model", model.strip()])
-
-        if runtime_args:
-            cmd.extend(runtime_args)
-
-        # Prompt is the final positional argument
-        cmd.append(prompt)
-
-        logger.debug("Invoking Claude CLI: %s", " ".join(cmd[:6]) + " ...")
-
-        # Sanitise command for logging — drop the final prompt arg which can be huge
-        cmd_for_log = " ".join(cmd[:-1]) + " ..."
-        proc = None
+        effective_timeout = _DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout
 
         # Open per-butler stderr log file for Claude CLI diagnostics
         stderr_log_file = None
@@ -383,12 +347,66 @@ class ClaudeCodeAdapter(RuntimeAdapter):
                 )
                 stderr_log_file = None
 
+        # Write MCP config file into a temporary directory.
+        # tempdir is created here so that cleanup in the finally block is guaranteed
+        # even if build_config_file raises (e.g., serialization or filesystem error).
+        tmp_dir_obj = tempfile.TemporaryDirectory()
+        proc = None
+
         try:
+            tmp_dir = Path(tmp_dir_obj.name)
+            mcp_config_path = self.build_config_file(mcp_servers=mcp_servers, tmp_dir=tmp_dir)
+
+            # Build command
+            cmd = [
+                binary,
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--bare",
+                "--no-session-persistence",
+                "--permission-mode",
+                "bypassPermissions",
+                "--strict-mcp-config",
+                "--mcp-config",
+                str(mcp_config_path),
+            ]
+
+            if system_prompt:
+                cmd.extend(["--system-prompt", system_prompt])
+
+            if isinstance(model, str) and model.strip():
+                cmd.extend(["--model", model.strip()])
+
+            if runtime_args:
+                cmd.extend(runtime_args)
+
+            # Prompt is the final positional argument
+            cmd.append(prompt)
+
+            logger.debug("Invoking Claude CLI: %s", " ".join(cmd[:6]) + " ...")
+
+            # Sanitise command for logging:
+            # - redact the value of --system-prompt (may contain sensitive data)
+            # - drop the final prompt arg which can be huge
+            sanitized_cmd: list[str] = []
+            skip_next = False
+            for token in cmd:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if token == "--system-prompt":
+                    sanitized_cmd.extend(["--system-prompt", "<redacted>"])
+                    skip_next = True
+                else:
+                    sanitized_cmd.append(token)
+            cmd_for_log = " ".join(sanitized_cmd[:-1]) + " ..."
+
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=env if env else None,
+                env=env,
                 cwd=str(cwd) if cwd else None,
             )
 
