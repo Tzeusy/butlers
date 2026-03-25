@@ -504,3 +504,74 @@ def test_route_envelope_with_empty_string_conversation_history_parses():
     parsed = parse_route_envelope(envelope)
     assert parsed.input.conversation_history == ""
     assert parsed.input.prompt == "When should I take it?"
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp channel and provider registration
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_whatsapp_user_client_channel_accepted():
+    """IngestEnvelopeV1 accepts whatsapp_user_client as a valid source channel."""
+    envelope = _build_valid_ingest_envelope(
+        channel="whatsapp_user_client",
+        provider="whatsapp",
+        endpoint_identity="whatsapp:1234567890",
+        sender_identity="1234567890@s.whatsapp.net",
+    )
+    parsed = parse_ingest_envelope(envelope)
+    assert parsed.source.channel == "whatsapp_user_client"
+    assert parsed.source.provider == "whatsapp"
+
+
+@pytest.mark.unit
+def test_whatsapp_user_client_rejects_invalid_provider():
+    """whatsapp_user_client channel rejects non-whatsapp providers."""
+    from pydantic import ValidationError
+
+    envelope = _build_valid_ingest_envelope(
+        channel="whatsapp_user_client",
+        provider="telegram",  # wrong provider
+        endpoint_identity="whatsapp:1234567890",
+        sender_identity="1234567890@s.whatsapp.net",
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        parse_ingest_envelope(envelope)
+    assert "whatsapp_user_client" in str(exc_info.value) or "telegram" in str(exc_info.value)
+
+
+@pytest.mark.unit
+def test_whatsapp_provider_rejected_for_telegram_channel():
+    """whatsapp provider is invalid for telegram_bot channel."""
+    from pydantic import ValidationError
+
+    envelope = _build_valid_ingest_envelope(
+        channel="telegram_bot",
+        provider="whatsapp",  # wrong provider for telegram_bot
+    )
+    with pytest.raises(ValidationError):
+        parse_ingest_envelope(envelope)
+
+
+@pytest.mark.unit
+def test_whatsapp_user_client_in_source_channel_literal():
+    """SourceChannel literal includes whatsapp_user_client."""
+    from butlers.tools.switchboard.routing.contracts import _ALLOWED_PROVIDERS_BY_CHANNEL
+
+    assert "whatsapp_user_client" in _ALLOWED_PROVIDERS_BY_CHANNEL
+    assert _ALLOWED_PROVIDERS_BY_CHANNEL["whatsapp_user_client"] == frozenset({"whatsapp"})
+
+
+@pytest.mark.unit
+def test_whatsapp_idempotency_key_format():
+    """IngestEnvelopeV1 accepts whatsapp-prefixed idempotency key."""
+    envelope = _build_valid_ingest_envelope(
+        channel="whatsapp_user_client",
+        provider="whatsapp",
+        endpoint_identity="whatsapp:1234567890",
+        sender_identity="1234567890@s.whatsapp.net",
+        idempotency_key="whatsapp:1234567890:MSGID123456",
+    )
+    parsed = parse_ingest_envelope(envelope)
+    assert parsed.control.idempotency_key == "whatsapp:1234567890:MSGID123456"
