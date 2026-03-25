@@ -64,16 +64,16 @@ func (s *Store) Close() error {
 func (s *Store) EnsureTable(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS whatsapp_sessions (
-			id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			phone_number TEXT NOT NULL,
 			device_id    TEXT NOT NULL DEFAULT '',
 			session_data JSONB NOT NULL DEFAULT '{}',
 			paired_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			active       BOOLEAN NOT NULL DEFAULT TRUE,
-			CONSTRAINT uq_whatsapp_sessions_active_phone
-				UNIQUE (phone_number, active)
-		)
+			active       BOOLEAN NOT NULL DEFAULT TRUE
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS uq_whatsapp_sessions_active_phone
+			ON whatsapp_sessions (phone_number) WHERE active = TRUE;
 	`)
 	return err
 }

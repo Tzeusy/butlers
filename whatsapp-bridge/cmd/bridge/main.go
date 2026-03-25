@@ -79,6 +79,10 @@ func runBridge(args []string) {
 	listenAddr := fs.String("listen", envOrDefault("WA_LISTEN", "unix:///tmp/wa-bridge.sock"), "Listen address (unix:// or tcp://)")
 	_ = fs.Parse(args)
 
+	// exitCode is set by event handlers before cancelling context, so that
+	// deferred cleanup runs before os.Exit is called.
+	exitCode := exitOK
+
 	if *dbDSN == "" {
 		log.Fatal("--db-dsn is required")
 	}
@@ -154,7 +158,10 @@ func runBridge(args []string) {
 				phone = client.Store.ID.User
 			}
 			srv.SetState(api.StateConnected, phone)
-			_ = sess.TouchLastSeen(ctx, "")
+			// Touch last_seen_at for the active session.
+			if activeSess, sErr := sess.GetAnyActive(ctx); sErr == nil {
+				_ = sess.TouchLastSeen(ctx, activeSess.ID)
+			}
 			// If pairing just completed, notify the API server.
 			if phone != "" {
 				srv.NotifyPaired(phone)
@@ -176,12 +183,11 @@ func runBridge(args []string) {
 			if sErr == nil {
 				_ = sess.MarkInactive(ctx, activeSess.ID)
 			}
-			// Emit session_invalidated event.
+			// Emit session_invalidated event synchronously before shutdown.
 			srv.PublishEvent(bridgeEvents.MapSessionInvalidated(phone))
-			// Give SSE subscribers a moment to receive the event.
-			time.Sleep(500 * time.Millisecond)
+			// Signal shutdown with the invalidated exit code; defers handle cleanup.
+			exitCode = exitInvalidated
 			cancel()
-			os.Exit(exitInvalidated)
 
 		case *waEvents.PairSuccess:
 			phone := evt.ID.User
@@ -249,7 +255,7 @@ func runBridge(args []string) {
 	<-ctx.Done()
 	log.Println("shutting down bridge")
 	client.Disconnect()
-	os.Exit(exitOK)
+	os.Exit(exitCode)
 }
 
 // ------------------------------------------------------------------

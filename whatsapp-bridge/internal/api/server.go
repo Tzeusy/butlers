@@ -89,7 +89,12 @@ func NewServer(socketPath string, shutdownFn func()) *Server {
 	mux.HandleFunc("POST /disconnect", s.handleDisconnect)
 	mux.HandleFunc("POST /pair/start", s.handlePairStart)
 	mux.HandleFunc("GET /pair/poll", s.handlePairPoll)
-	s.server = &http.Server{Handler: mux}
+	s.server = &http.Server{
+		Handler: mux,
+		// ReadHeaderTimeout guards against slow-header attacks.
+		// WriteTimeout is intentionally unset: the /events SSE stream is long-lived.
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 	return s
 }
 
@@ -249,6 +254,7 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var req struct {
 		Recipient string `json:"recipient"`
 		Text      string `json:"text"`
