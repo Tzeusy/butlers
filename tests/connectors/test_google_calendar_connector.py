@@ -754,13 +754,16 @@ class TestSyncTokenCursorLifecycle:
             "butlers.connectors.google_calendar.save_cursor",
             new_callable=AsyncMock,
         ) as mock_save:
-            await account_runtime._save_cursor("sync-token-abc")
+            await account_runtime._save_cursor(
+                "sync-token-abc",
+                cursor_key="google_calendar:user:test@example.com:primary",
+            )
 
         mock_save.assert_called_once()
         call_args = mock_save.call_args
-        # Verify connector type and endpoint identity
+        # Verify connector type and cursor key (per-account:per-calendar)
         assert call_args[0][1] == "google_calendar"
-        assert call_args[0][2] == "google_calendar:user:test@example.com"
+        assert call_args[0][2] == "google_calendar:user:test@example.com:primary"
         # Verify cursor JSON contains the sync token
         cursor_json = call_args[0][3]
         cursor = GoogleCalendarCursor.model_validate_json(cursor_json)
@@ -777,7 +780,10 @@ class TestSyncTokenCursorLifecycle:
             "butlers.connectors.google_calendar.save_cursor",
             new_callable=AsyncMock,
         ) as mock_save:
-            await runtime._save_cursor("sync-token-abc")
+            await runtime._save_cursor(
+                "sync-token-abc",
+                cursor_key="google_calendar:user:test@example.com:primary",
+            )
 
         mock_save.assert_not_called()
 
@@ -801,9 +807,15 @@ class TestSyncTokenCursorLifecycle:
             with patch.object(
                 account_runtime, "_process_event", new_callable=AsyncMock
             ) as mock_process:
-                await account_runtime._full_sync("primary", ingest_events=False)
+                await account_runtime._full_sync(
+                    "primary",
+                    cursor_key="google_calendar:user:test@example.com:primary",
+                    ingest_events=False,
+                )
 
-        mock_save.assert_called_once_with("baseline-token")
+        mock_save.assert_called_once_with(
+            "baseline-token", cursor_key="google_calendar:user:test@example.com:primary"
+        )
         # Events should NOT be processed on initial baseline sync
         mock_process.assert_not_called()
 
@@ -827,7 +839,11 @@ class TestSyncTokenCursorLifecycle:
             with patch.object(
                 account_runtime, "_process_event", new_callable=AsyncMock
             ) as mock_process:
-                await account_runtime._full_sync("primary", ingest_events=True)
+                await account_runtime._full_sync(
+                    "primary",
+                    cursor_key="google_calendar:user:test@example.com:primary",
+                    ingest_events=True,
+                )
 
         mock_process.assert_called_once_with(items[0], "primary")
 
@@ -849,10 +865,16 @@ class TestSyncTokenCursorLifecycle:
         ) as mock_process:
             with patch.object(account_runtime, "_save_cursor", new_callable=AsyncMock) as mock_save:
                 with patch.object(account_runtime, "_check_starting_soon", new_callable=AsyncMock):
-                    await account_runtime._incremental_sync("primary", "old-token")
+                    await account_runtime._incremental_sync(
+                        "primary",
+                        "old-token",
+                        cursor_key="google_calendar:user:test@example.com:primary",
+                    )
 
         mock_process.assert_called_once()
-        mock_save.assert_called_once_with("new-token")
+        mock_save.assert_called_once_with(
+            "new-token", cursor_key="google_calendar:user:test@example.com:primary"
+        )
 
     async def test_incremental_sync_handles_pagination(
         self,
@@ -876,10 +898,16 @@ class TestSyncTokenCursorLifecycle:
         ) as mock_process:
             with patch.object(account_runtime, "_save_cursor", new_callable=AsyncMock) as mock_save:
                 with patch.object(account_runtime, "_check_starting_soon", new_callable=AsyncMock):
-                    await account_runtime._incremental_sync("primary", "old-token")
+                    await account_runtime._incremental_sync(
+                        "primary",
+                        "old-token",
+                        cursor_key="google_calendar:user:test@example.com:primary",
+                    )
 
         assert mock_process.call_count == 2
-        mock_save.assert_called_once_with("final-token")
+        mock_save.assert_called_once_with(
+            "final-token", cursor_key="google_calendar:user:test@example.com:primary"
+        )
 
     async def test_poll_calendar_falls_back_on_410(
         self,
@@ -914,7 +942,11 @@ class TestSyncTokenCursorLifecycle:
                 ) as mock_full:
                     await account_runtime._poll_calendar("primary")
 
-        mock_full.assert_called_once_with("primary", ingest_events=True)
+        mock_full.assert_called_once_with(
+            "primary",
+            cursor_key="google_calendar:user:test@example.com:primary",
+            ingest_events=True,
+        )
 
 
 # ---------------------------------------------------------------------------

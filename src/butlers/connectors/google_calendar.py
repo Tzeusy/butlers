@@ -725,7 +725,8 @@ class GoogleCalendarAccountRuntime:
         Performs incremental sync if cursor exists, falls back to full sync on 410 Gone.
         """
         endpoint_identity = self._config.connector_endpoint_identity
-        cursor_key = endpoint_identity  # keyed per account (one cursor per endpoint identity)
+        # Key per (account, calendar) — each calendar has an independent syncToken namespace
+        cursor_key = f"{endpoint_identity}:{calendar_id}"
 
         # Load persisted cursor
         sync_token: str | None = None
@@ -747,11 +748,11 @@ class GoogleCalendarAccountRuntime:
 
         if sync_token is None:
             # Initial full sync — establish baseline, persist token, no ingestion
-            await self._full_sync(calendar_id, ingest_events=False)
+            await self._full_sync(calendar_id, cursor_key=cursor_key, ingest_events=False)
         else:
             # Incremental sync
             try:
-                await self._incremental_sync(calendar_id, sync_token)
+                await self._incremental_sync(calendar_id, sync_token, cursor_key=cursor_key)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code == 410:
                     # syncToken expired — recover via full sync with ingestion
@@ -760,11 +761,11 @@ class GoogleCalendarAccountRuntime:
                         " recovering via full sync",
                         self._config.user_email,
                     )
-                    await self._full_sync(calendar_id, ingest_events=True)
+                    await self._full_sync(calendar_id, cursor_key=cursor_key, ingest_events=True)
                 else:
                     raise
 
-    async def _full_sync(self, calendar_id: str, *, ingest_events: bool) -> None:
+    async def _full_sync(self, calendar_id: str, *, cursor_key: str, ingest_events: bool) -> None:
         """Execute a full events.list sync to establish (or re-establish) the cursor.
 
         When ``ingest_events=False`` (initial baseline), events are NOT submitted.
@@ -817,7 +818,7 @@ class GoogleCalendarAccountRuntime:
                 break
 
         if next_sync_token:
-            await self._save_cursor(next_sync_token)
+            await self._save_cursor(next_sync_token, cursor_key=cursor_key)
             logger.info(
                 "Google Calendar [%s]: full sync complete"
                 " (calendar=%s, events_processed=%d, ingest=%s)",
@@ -833,7 +834,9 @@ class GoogleCalendarAccountRuntime:
                 calendar_id,
             )
 
-    async def _incremental_sync(self, calendar_id: str, sync_token: str) -> None:
+    async def _incremental_sync(
+        self, calendar_id: str, sync_token: str, *, cursor_key: str
+    ) -> None:
         """Execute an incremental events.list sync using the persisted syncToken.
 
         Paginates through all changed events before advancing the cursor.
@@ -870,7 +873,7 @@ class GoogleCalendarAccountRuntime:
 
         if next_sync_token:
             # Checkpoint only after all events on all pages are processed
-            await self._save_cursor(next_sync_token)
+            await self._save_cursor(next_sync_token, cursor_key=cursor_key)
             if total_events:
                 logger.debug(
                     "Google Calendar [%s]: incremental sync: %d events, cursor advanced",
@@ -1056,20 +1059,11 @@ class GoogleCalendarAccountRuntime:
                             exc,
                         )
 
-        # Prune seen-set of past events
-        past_keys = {
-            k
-            for k in list(self._starting_soon_seen)
-            if k not in seen_key_to_start
-            # A key is "past" if we can determine its start time has passed.
-            # Here we prune keys that were not seen in the current window scan,
-            # assuming they've either started or moved out of the window.
-            # This is a conservative prune — the seen-set may grow slightly over time
-            # but is bounded by the number of upcoming events.
-        }
-        # Only prune if seen-set grows large to avoid thrashing
-        if len(self._starting_soon_seen) > 500:
-            self._starting_soon_seen -= past_keys
+        # Prune seen-set of past events: any key not seen in the current window scan
+        # has either already started or moved out of the window — safe to remove.
+        # Pruning unconditionally keeps memory bounded by the current window size.
+        past_keys = self._starting_soon_seen - set(seen_key_to_start)
+        self._starting_soon_seen -= past_keys
 
     async def _submit_starting_soon_envelope(
         self,
@@ -1124,8 +1118,12 @@ class GoogleCalendarAccountRuntime:
             lead_minutes,
         )
 
-    async def _save_cursor(self, sync_token: str) -> None:
-        """Persist the syncToken cursor to the DB."""
+    async def _save_cursor(self, sync_token: str, *, cursor_key: str) -> None:
+        """Persist the syncToken cursor to the DB.
+
+        ``cursor_key`` must be ``f"{endpoint_identity}:{calendar_id}"`` so that
+        each calendar for an account has an independent cursor record.
+        """
         if self._cursor_pool is None:
             return
 
@@ -1137,7 +1135,7 @@ class GoogleCalendarAccountRuntime:
             await save_cursor(
                 self._cursor_pool,
                 _CONNECTOR_TYPE,
-                self._config.connector_endpoint_identity,
+                cursor_key,
                 cursor.model_dump_json(),
             )
             self._last_checkpoint_save = time.time()
@@ -1295,7 +1293,6 @@ class GoogleCalendarConnectorManager:
         # State
         self._start_time = time.time()
         self._running = False
-        self._main_loop: asyncio.AbstractEventLoop | None = None
 
         # Health server
         self._health_server: uvicorn.Server | None = None
@@ -1531,7 +1528,6 @@ class GoogleCalendarConnectorManager:
     async def start(self) -> None:
         """Start the manager: discover accounts, start loops, run until cancelled."""
         self._running = True
-        self._main_loop = asyncio.get_event_loop()
 
         # Start health server
         port = self._process_config.connector_health_port
@@ -1554,7 +1550,7 @@ class GoogleCalendarConnectorManager:
         self._rescan_task = asyncio.create_task(self._rescan_loop(), name="gcal-rescan")
 
         # Install SIGTERM/SIGINT handlers
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         shutdown_event = asyncio.Event()
 
         def _handle_signal() -> None:
