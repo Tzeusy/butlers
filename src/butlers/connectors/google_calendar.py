@@ -557,7 +557,10 @@ class GCalSyncLoop:
                         "Event blocked by ingestion policy: %s",
                         idempotency_key,
                     )
-                    return False
+                    # Policy block is an intentional skip, not an ingestion failure.
+                    # Return True so that _incremental_sync treats this as accepted
+                    # for checkpointing purposes (cursor must still advance).
+                    return True
 
             start = time.monotonic()
             await self._mcp_client.call_tool("ingest", {"envelope": envelope})
@@ -602,6 +605,7 @@ class GCalSyncLoop:
         page_token: str | None = None
         next_sync_token: str | None = None
         event_count = 0
+        all_accepted = True
 
         while True:
             try:
@@ -643,7 +647,9 @@ class GCalSyncLoop:
                         self.email,
                         observed_at,
                     )
-                    await self._submit_envelope(envelope)
+                    accepted = await self._submit_envelope(envelope)
+                    if not accepted:
+                        all_accepted = False
                     event_count += 1
 
             next_sync_token = response.get("nextSyncToken")
@@ -666,6 +672,15 @@ class GCalSyncLoop:
                 calendar_id,
                 event_count,
             )
+            if not all_accepted:
+                # Some events failed to ingest — do not advance the cursor so
+                # that the next poll cycle retries from a full resync again.
+                logger.warning(
+                    "Some events failed to ingest during full sync recovery for %s; "
+                    "cursor will not advance",
+                    self.email,
+                )
+                return None
 
         return next_sync_token
 
