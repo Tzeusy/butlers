@@ -1112,6 +1112,16 @@ class MemoryModule(Module):
                     )
                 ),
             ] = None,
+            request_context: Annotated[
+                dict[str, Any] | None,
+                Field(
+                    description=(
+                        "Optional request context dict with 'tenant_id' (default 'owner') "
+                        "and 'request_id' (optional trace ID). tenant_id scopes all retrieval. "
+                        "When omitted, defaults to tenant_id='owner' and no request_id."
+                    )
+                ),
+            ] = None,
         ) -> list[dict[str, Any]]:
             """Retrieve all active user preferences for the owner entity.
 
@@ -1131,10 +1141,12 @@ class MemoryModule(Module):
 
             Returns an empty list when no active preferences exist (not an error).
             """
+            tid = (request_context or {}).get("tenant_id", "owner")
             return await _preferences.get_preferences(
                 module._get_pool(),
                 scope=scope,
                 predicate_pattern=predicate_pattern,
+                tenant_id=tid,
             )
 
         # --- Cross-butler catalog search tool ---

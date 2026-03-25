@@ -29,8 +29,12 @@ def _compute_effective_confidence(row: dict[str, Any]) -> float:
     Returns:
         Effective confidence float (0.0–1.0).
     """
-    confidence = row.get("confidence", 1.0) or 1.0
-    decay_rate = row.get("decay_rate", 0.0) or 0.0
+    confidence = row.get("confidence")
+    if confidence is None:
+        confidence = 1.0
+    decay_rate = row.get("decay_rate")
+    if decay_rate is None:
+        decay_rate = 0.0
 
     if decay_rate == 0.0:
         return confidence
@@ -49,18 +53,23 @@ async def get_preferences(
     *,
     scope: str | None = None,
     predicate_pattern: str | None = None,
+    tenant_id: str = "owner",
 ) -> list[dict[str, Any]]:
     """Retrieve all active user preferences for the owner entity.
 
     Queries facts WHERE predicate LIKE 'preferences:%' AND validity = 'active'
-    AND entity_id matches the owner entity resolved from shared.contacts.
+    AND entity_id matches the owner entity resolved from shared.entities
+    AND tenant_id matches the given tenant scope.
 
     Args:
         pool: asyncpg connection pool.
         scope: Optional filter on the scope column (exact match, e.g. 'travel').
         predicate_pattern: Optional SQL LIKE pattern for the predicate column
             (e.g. 'preferences:health_%'). Must start with 'preferences:'.
-            When omitted, defaults to 'preferences:%'.
+            When omitted, defaults to 'preferences:%'. Invalid patterns that do
+            not start with 'preferences:' are coerced to the default.
+        tenant_id: Tenant scope for multi-tenant isolation (default 'owner').
+            Filters facts by tenant_id to prevent cross-tenant data exposure.
 
     Returns:
         List of preference dicts ordered by predicate ASC. Each dict contains:
@@ -72,22 +81,28 @@ async def get_preferences(
         - effective_confidence (float) — computed via decay formula
         - updated_at (str) — ISO-8601 timestamp from created_at
     """
-    # Resolve owner entity_id from shared.contacts
+    # Resolve owner entity_id from shared.entities
     owner_entity_id = await _resolve_owner_entity_id(pool)
     if owner_entity_id is None:
         return []
 
+    # Validate and coerce predicate_pattern to enforce 'preferences:' prefix
+    effective_pattern = predicate_pattern or "preferences:%"
+    if not effective_pattern.startswith("preferences:"):
+        logger.debug(
+            "get_preferences: invalid predicate_pattern %r; coercing to default 'preferences:%%'",
+            effective_pattern,
+        )
+        effective_pattern = "preferences:%"
+
     # Build query with optional filters
-    params: list[Any] = [owner_entity_id]
+    params: list[Any] = [owner_entity_id, tenant_id, effective_pattern]
     conditions = [
         "f.entity_id = $1",
+        "f.tenant_id = $2",
         "f.validity = 'active'",
+        "f.predicate LIKE $3",
     ]
-
-    # Apply predicate LIKE filter
-    effective_pattern = predicate_pattern or "preferences:%"
-    params.append(effective_pattern)
-    conditions.append(f"f.predicate LIKE ${len(params)}")
 
     # Optional scope filter
     if scope is not None:
@@ -141,19 +156,18 @@ async def get_preferences(
 
 
 async def _resolve_owner_entity_id(pool: Pool) -> Any | None:
-    """Resolve the owner entity UUID from shared.contacts.
+    """Resolve the owner entity UUID from shared.entities.
 
-    Looks up contacts WHERE roles @> '["owner"]' and returns the entity_id
-    of the first match that has a non-null entity_id.
+    Looks up entities WHERE 'owner' = ANY(roles) and returns the id
+    of the first match.
 
     Returns:
         UUID of the owner entity, or None if not found.
     """
     sql = """
-        SELECT entity_id
-        FROM shared.contacts
-        WHERE roles @> '["owner"]'
-          AND entity_id IS NOT NULL
+        SELECT id AS entity_id
+        FROM shared.entities
+        WHERE 'owner' = ANY(roles)
         LIMIT 1
     """
     try:

@@ -153,14 +153,14 @@ class TestResolveOwnerEntityId:
         result = await _resolve_owner_entity_id(mock_pool)
         assert result is None
 
-    async def test_queries_shared_contacts_with_owner_role(
+    async def test_queries_shared_entities_with_owner_role(
         self, mock_pool: AsyncMock, owner_entity_id: uuid.UUID
     ) -> None:
         mock_pool.fetchrow = AsyncMock(return_value={"entity_id": owner_entity_id})
         await _resolve_owner_entity_id(mock_pool)
         call_args = mock_pool.fetchrow.call_args
         sql = call_args[0][0]
-        assert "shared.contacts" in sql
+        assert "shared.entities" in sql
         assert "owner" in sql
 
 
@@ -383,3 +383,39 @@ class TestGetPreferences:
 
         result = await get_preferences(mock_pool)
         assert result[0]["value"] == "no shellfish"
+
+    async def test_tenant_id_passed_to_query(
+        self, mock_pool: AsyncMock, owner_entity_id: uuid.UUID
+    ) -> None:
+        """tenant_id must be included in query params to prevent cross-tenant leakage."""
+        mock_pool.fetchrow = AsyncMock(return_value={"entity_id": owner_entity_id})
+        mock_pool.fetch = AsyncMock(return_value=[])
+
+        await get_preferences(mock_pool, tenant_id="owner")
+
+        call_args = mock_pool.fetch.call_args
+        sql = call_args[0][0]
+        params = list(call_args[0][1:])
+        assert "tenant_id" in sql
+        assert "owner" in params
+
+    async def test_invalid_predicate_pattern_coerced_to_default(
+        self, mock_pool: AsyncMock, owner_entity_id: uuid.UUID
+    ) -> None:
+        """Patterns not starting with 'preferences:' must be coerced to 'preferences:%'."""
+        mock_pool.fetchrow = AsyncMock(return_value={"entity_id": owner_entity_id})
+        mock_pool.fetch = AsyncMock(return_value=[])
+
+        await get_preferences(mock_pool, predicate_pattern="%")
+
+        call_args = mock_pool.fetch.call_args
+        params = list(call_args[0][1:])
+        # The invalid pattern '%' must be replaced with 'preferences:%'
+        assert "preferences:%" in params
+        assert "%" not in [p for p in params if p != "preferences:%"]
+
+    def test_zero_confidence_preserved_not_coerced_to_one(self) -> None:
+        """confidence=0.0 must not be coerced to 1.0 (falsy value treated as missing was a bug)."""
+        row = _make_fact_row(confidence=0.0, decay_rate=0.0)
+        result = _compute_effective_confidence(row)
+        assert result == 0.0
