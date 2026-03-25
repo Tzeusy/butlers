@@ -165,7 +165,12 @@ class TestValidateContribution:
             validate_contribution(raw)
 
     def test_missing_highlights_raises(self):
-        raw = {"butler": "health", "date": _DATE_STR_2026_03_25, "has_updates": False, "summary": ""}
+        raw = {
+            "butler": "health",
+            "date": _DATE_STR_2026_03_25,
+            "has_updates": False,
+            "summary": "",
+        }
         with pytest.raises(ValueError, match="'highlights'"):
             validate_contribution(raw)
 
@@ -413,7 +418,6 @@ class TestCollectBriefingContributionsMalformed:
 
     async def test_view_query_failure_propagates(self):
         """If querying the view raises, the exception is re-raised."""
-        date_str = _DATE_STR_2026_03_25
         pool = _make_pool()
         pool.fetch = AsyncMock(side_effect=Exception("database error"))
 
@@ -425,7 +429,6 @@ class TestCollectBriefingContributionsMalformed:
 
     async def test_job_args_are_accepted_and_ignored(self):
         """job_args is accepted but currently unused; should not raise."""
-        date_str = _DATE_STR_2026_03_25
         pool = _make_pool(fetch_rows=[])
 
         with (
