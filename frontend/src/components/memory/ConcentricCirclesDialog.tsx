@@ -324,10 +324,10 @@ function ConcentricCirclesVisualization({
           const ringR = prevR + nodeR;
 
           // For tiers 5 and 15: show all with name
-          // For tier 50: show all (initials only)
-          // For tiers 150+: show top 5 or all if expanded, with count badge
+          // For tier 50+: show top 5 or all if expanded, with count badge
+          // (tier 50 ring only fits ~22 nodes; cap to prevent overlap)
           const showName = tier <= 15;
-          const showAll = tier <= 50 || expandedTier === tier;
+          const showAll = tier <= 15 || expandedTier === tier;
           const displayEntries = showAll ? tierEntries : tierEntries.slice(0, 5);
           const hiddenCount = showAll ? 0 : tierEntries.length - 5;
 
@@ -523,14 +523,16 @@ export function ConcentricCirclesDialog() {
           )}
           {!isLoading && !isError && (
             <>
-              <ConcentricCirclesVisualization
-                entries={entries}
-                ownerEntityId={ownerEntityId}
-                ownerName={ownerName}
-                width={560}
-                height={500}
-                onNavigate={handleNavigate}
-              />
+              <div className="w-full overflow-auto">
+                <ConcentricCirclesVisualization
+                  entries={entries}
+                  ownerEntityId={ownerEntityId}
+                  ownerName={ownerName}
+                  width={560}
+                  height={500}
+                  onNavigate={handleNavigate}
+                />
+              </div>
               <TierLegend tierGroups={tierGroups} />
             </>
           )}
