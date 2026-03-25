@@ -147,7 +147,7 @@ def _extract_channel_identity(
 
     # whatsapp_send_message: recipient (phone or JID).
     # Only matched when channel is absent to avoid colliding with notify()'s channel+recipient.
-    recipient = tool_args.get("recipient")
+    # recipient was already read above for the notify() path; reuse it here.
     if (
         recipient
         and isinstance(recipient, str)

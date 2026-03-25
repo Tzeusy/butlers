@@ -257,8 +257,7 @@ class TestModuleToolRegistration:
     async def test_no_tools_registered_when_send_tools_false(self):
         """Default configuration (send_tools=false) registers no MCP tools."""
         module = WhatsAppModule()
-        _, tools = _make_mock_mcp()
-        mcp, _ = _make_mock_mcp()
+        mcp, tools = _make_mock_mcp()
 
         await module.register_tools(mcp=mcp, config=None, db=None)
 

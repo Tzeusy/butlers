@@ -74,8 +74,9 @@ print('QR saved to /tmp/wa-qr.png')
 Transfer `/tmp/wa-qr.png` to a local machine and display it, or use a terminal QR renderer:
 
 ```bash
-# Display in terminal if qrencode is available:
-cat /tmp/wa-qr.png | feh - 2>/dev/null || xdg-open /tmp/wa-qr.png 2>/dev/null
+# Render as UTF-8 QR in terminal if qrencode is available (headless-safe):
+qrencode -t UTF8 -r /tmp/wa-qr.png 2>/dev/null || \
+  echo "QR saved to /tmp/wa-qr.png — copy to a machine with a display to scan"
 ```
 
 Alternatively, poll pairing status:
@@ -138,9 +139,9 @@ If the session is expired or invalidated, re-pair using the same QR workflow:
    # Stop the connector service (bridge will also stop):
    docker compose stop connector-whatsapp-user
 
-   # Remove the old session from the database:
+   # Remove the old session from the database (use schema-qualified name):
    docker compose exec postgres psql -U butlers -c \
-     "UPDATE whatsapp_sessions SET active = false WHERE active = true;"
+     "UPDATE messenger.whatsapp_sessions SET active = false WHERE active = true;"
 
    # Restart the connector:
    docker compose up -d connector-whatsapp-user
