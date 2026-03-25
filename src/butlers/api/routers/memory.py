@@ -713,7 +713,7 @@ async def _compute_entity_dunbar_map(
     returns an empty dict if the relationship pool is unavailable or the scoring
     query fails (e.g. relationship schema not configured in this deployment).
     """
-    from butlers.tools.relationship.dunbar import compute_dunbar_scores, get_tier_ranking
+    from butlers.tools.relationship.dunbar import compute_tier_ranking
 
     try:
         rel_pool = db.pool("relationship")
@@ -721,8 +721,7 @@ async def _compute_entity_dunbar_map(
         logger.debug("Relationship pool not available; skipping Dunbar enrichment")
         return {}
     try:
-        scores = await compute_dunbar_scores(rel_pool)
-        ranked = get_tier_ranking(scores)
+        ranked = await compute_tier_ranking(rel_pool)
     except Exception:
         logger.debug("Dunbar scoring failed; skipping enrichment", exc_info=True)
         return {}

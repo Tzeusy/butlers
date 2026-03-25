@@ -1155,7 +1155,9 @@ class TestListEntitiesDunbar:
 
         general_pool = _make_pool(fetch_rows=[row], fetchval_result=1)
 
-        # Relationship pool returns one scored contact
+        # Relationship pool: compute_tier_ranking calls pool.fetch() twice —
+        # once for compute_dunbar_scores (returns scored contacts) and once for
+        # _fetch_overrides (returns tier-override facts, empty here).
         contact_uuid = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
         dunbar_row = {
             "contact_id": contact_uuid,
@@ -1163,7 +1165,7 @@ class TestListEntitiesDunbar:
             "score": 4.5,
             "last_interaction_at": None,
         }
-        rel_pool = _make_pool(fetch_rows=[dunbar_row])
+        rel_pool = _make_pool(fetch_side_effect=[[dunbar_row], []])
 
         pools_by_name = {"general": general_pool, "relationship": rel_pool}
         mock_db = MagicMock(spec=DatabaseManager)
@@ -1199,7 +1201,8 @@ class TestListEntitiesDunbar:
             entity_type="organization",
         )
 
-        # Relationship pool is present — but org should still get null dunbar fields
+        # Relationship pool is present — but org should still get null dunbar fields.
+        # compute_tier_ranking calls pool.fetch() twice: scored contacts + overrides.
         contact_uuid = uuid.UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
         dunbar_row = {
             "contact_id": contact_uuid,
@@ -1208,7 +1211,7 @@ class TestListEntitiesDunbar:
             "last_interaction_at": None,
         }
         general_pool = _make_pool(fetch_rows=[org_row], fetchval_result=1)
-        rel_pool = _make_pool(fetch_rows=[dunbar_row])
+        rel_pool = _make_pool(fetch_side_effect=[[dunbar_row], []])
 
         pools_by_name = {"general": general_pool, "relationship": rel_pool}
         mock_db = MagicMock(spec=DatabaseManager)
