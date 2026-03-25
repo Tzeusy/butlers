@@ -88,7 +88,13 @@ def _make_cred_store(
 
 
 def _make_db_manager(cred_store: MagicMock) -> MagicMock:
-    """Build a mock DatabaseManager that returns a given CredentialStore."""
+    """Build a mock DatabaseManager with a credential_shared_pool method.
+
+    Note: the pool returned by credential_shared_pool is a bare MagicMock.
+    The actual cred_store is injected by patching _make_credential_store
+    directly in each test, so the pool returned here is never used — it
+    only satisfies the code path that calls db_manager.credential_shared_pool().
+    """
     pool = MagicMock()
     db_manager = MagicMock()
     db_manager.credential_shared_pool.return_value = pool
@@ -100,8 +106,12 @@ def _make_db_manager(cred_store: MagicMock) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def _build_app(cred_store: MagicMock | None) -> tuple:
-    """Return (app, client_factory) with mocked DB dependency."""
+def _build_app(cred_store: MagicMock | None):
+    """Return an app instance with mocked DB dependency wired in.
+
+    Returns only the FastAPI app (not a tuple). Each test creates its own
+    httpx.AsyncClient via transport=httpx.ASGITransport(app=app).
+    """
     _app = create_app(api_key="")
 
     if cred_store is not None:
@@ -389,11 +399,13 @@ class TestSpotifyOAuthCallback:
         data = resp.json()
         assert data["success"] is True
         assert "expires_at" in data
-        # Verify tokens were stored
-        store_calls = [call.args[0] for call in cred_store_client_id_only.store.call_args_list]
-        assert "SPOTIFY_ACCESS_TOKEN" in store_calls
-        assert "SPOTIFY_REFRESH_TOKEN" in store_calls
-        assert "SPOTIFY_TOKEN_EXPIRES_AT" in store_calls
+        # Verify correct token values were stored (not just key names)
+        call_args = {
+            call.args[0]: call.args[1] for call in cred_store_client_id_only.store.call_args_list
+        }
+        assert call_args.get("SPOTIFY_ACCESS_TOKEN") == _FAKE_TOKENS["access_token"]
+        assert call_args.get("SPOTIFY_REFRESH_TOKEN") == _FAKE_TOKENS["refresh_token"]
+        assert "SPOTIFY_TOKEN_EXPIRES_AT" in call_args
 
     async def test_callback_redirects_when_dashboard_url_set(self, cred_store_client_id_only):
         """Callback redirects to dashboard URL when OAUTH_DASHBOARD_URL is set."""

@@ -55,7 +55,7 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -100,8 +100,16 @@ _CRED_ACCESS_TOKEN = "SPOTIFY_ACCESS_TOKEN"
 _CRED_REFRESH_TOKEN = "SPOTIFY_REFRESH_TOKEN"
 _CRED_TOKEN_EXPIRES_AT = "SPOTIFY_TOKEN_EXPIRES_AT"
 
+# All credential keys managed by this module (used for validation/cleanup).
 _ALL_CRED_KEYS = (
     _CRED_CLIENT_ID,
+    _CRED_ACCESS_TOKEN,
+    _CRED_REFRESH_TOKEN,
+    _CRED_TOKEN_EXPIRES_AT,
+)
+
+# Token-only keys that are cleared on disconnect (client_id is preserved).
+_TOKEN_CRED_KEYS = (
     _CRED_ACCESS_TOKEN,
     _CRED_REFRESH_TOKEN,
     _CRED_TOKEN_EXPIRES_AT,
@@ -110,9 +118,12 @@ _ALL_CRED_KEYS = (
 # ---------------------------------------------------------------------------
 # In-memory CSRF + PKCE state store
 # State entries expire after 10 minutes (single-worker process only).
+# Upper bound: at most _STATE_MAX_ENTRIES live entries; oldest evicted on overflow.
+# NOTE: process-local — not safe for multi-worker deployments.
 # ---------------------------------------------------------------------------
 
 _STATE_TTL_SECONDS = 600  # 10 minutes
+_STATE_MAX_ENTRIES = 256  # hard cap; each entry ~few hundred bytes
 
 
 @dataclass
@@ -158,13 +169,25 @@ def _derive_pkce_challenge(verifier: str) -> str:
 
 
 def _store_state(state: str, *, code_verifier: str, redirect_uri: str) -> None:
-    """Store a CSRF state token with its associated PKCE verifier."""
+    """Store a CSRF state token with its associated PKCE verifier.
+
+    Evicts expired entries first. If the store is still at capacity after
+    eviction, the oldest entry (by insertion order) is removed to make room.
+    """
+    _evict_expired_states()
+    if len(_state_store) >= _STATE_MAX_ENTRIES:
+        # Evict the oldest entry (dicts preserve insertion order in Python 3.7+)
+        oldest_key = next(iter(_state_store))
+        del _state_store[oldest_key]
+        logger.warning(
+            "Spotify state store at capacity (%d); evicted oldest entry to make room.",
+            _STATE_MAX_ENTRIES,
+        )
     _state_store[state] = _SpotifyStateEntry(
         expiry=time.monotonic() + _STATE_TTL_SECONDS,
         code_verifier=code_verifier,
         redirect_uri=redirect_uri,
     )
-    _evict_expired_states()
 
 
 def _validate_and_consume_state(state: str) -> _SpotifyStateEntry | None:
@@ -253,6 +276,27 @@ def _get_dashboard_url() -> str | None:
     """Read OAUTH_DASHBOARD_URL; returns None if not set."""
     val = os.environ.get("OAUTH_DASHBOARD_URL", "").strip()
     return val or None
+
+
+# ---------------------------------------------------------------------------
+# URL helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_redirect_url(base_url: str, **params: str) -> str:
+    """Build a redirect URL by safely merging query parameters into *base_url*.
+
+    Handles the case where *base_url* already contains query parameters by
+    parsing and merging (not concatenating), and URL-encodes all param values
+    to prevent query-string injection or malformed redirects.
+    """
+    parsed = urlparse(base_url)
+    existing = parse_qs(parsed.query, keep_blank_values=True)
+    # Merge: new params overwrite existing ones with the same name
+    merged = {k: v[0] if len(v) == 1 else v for k, v in existing.items()}
+    merged.update(params)
+    new_query = urlencode(merged, doseq=True)
+    return urlunparse(parsed._replace(query=new_query))
 
 
 # ---------------------------------------------------------------------------
@@ -400,8 +444,8 @@ async def start_spotify_oauth(
     server-side state store alongside a CSRF token, and returns the full
     Spotify authorization URL.
 
-    Raises HTTP 503 when the credential database is unavailable or when
-    client_id has not been configured yet.
+    Raises HTTP 503 when the credential database is unavailable, and
+    HTTP 400 when the Spotify client_id has not been configured yet.
     """
     cred_store = _make_credential_store(db_manager)
     if cred_store is None:
@@ -477,7 +521,7 @@ async def spotify_oauth_callback(
         logger.warning("Spotify OAuth returned error: %s", error)
         if dashboard_url:
             return RedirectResponse(
-                url=f"{dashboard_url}?spotify_error={error}",
+                url=_build_redirect_url(dashboard_url, spotify_error=error),
                 status_code=302,
             )
         raise HTTPException(
@@ -584,7 +628,10 @@ async def spotify_oauth_callback(
     )
 
     if dashboard_url:
-        return RedirectResponse(url=f"{dashboard_url}?spotify_connected=1", status_code=302)
+        return RedirectResponse(
+            url=_build_redirect_url(dashboard_url, spotify_connected="1"),
+            status_code=302,
+        )
 
     return JSONResponse(
         content={
@@ -681,7 +728,7 @@ async def disconnect_spotify(
         )
 
     deleted_count = 0
-    for key in (_CRED_ACCESS_TOKEN, _CRED_REFRESH_TOKEN, _CRED_TOKEN_EXPIRES_AT):
+    for key in _TOKEN_CRED_KEYS:
         if await cred_store.delete(key):
             deleted_count += 1
 
