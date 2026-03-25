@@ -184,7 +184,7 @@ async def delete_old_contributions(pool: asyncpg.Pool, *, today: str) -> int:
         "SELECT key FROM state WHERE key LIKE $1",
         f"{CONTRIBUTION_KEY_PREFIX}%",
     )
-    deleted = 0
+    expired_keys = []
     for row in rows:
         key: str = row["key"]
         date_suffix = key[len(CONTRIBUTION_KEY_PREFIX) :]
@@ -193,10 +193,15 @@ async def delete_old_contributions(pool: asyncpg.Pool, *, today: str) -> int:
         except ValueError:
             continue
         if entry_date < cutoff:
-            await pool.execute("DELETE FROM state WHERE key = $1", key)
-            deleted += 1
+            expired_keys.append(key)
 
-    return deleted
+    if expired_keys:
+        await pool.execute(
+            "DELETE FROM state WHERE key = ANY($1::text[])",
+            expired_keys,
+        )
+
+    return len(expired_keys)
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +254,7 @@ async def collect_briefing_contributions(
     del job_args  # reserved for future parameterisation
 
     date_str = today_sgt()
-    key_prefix = f"{CONTRIBUTION_KEY_PREFIX}{date_str}"
+    contribution_state_key = contribution_key(date_str)
 
     # ---------------------------------------------------------------------------
     # Query the cross-schema view for today's contributions
@@ -261,7 +266,7 @@ async def collect_briefing_contributions(
             FROM general.v_briefing_contributions
             WHERE key = $1
             """,
-            key_prefix,
+            contribution_state_key,
         )
     except Exception:
         logger.exception(
@@ -280,6 +285,14 @@ async def collect_briefing_contributions(
     for row in rows:
         source_butler: str = row["butler"]
         raw_value = row["value"]
+
+        # Only aggregate contributions from known specialist butlers
+        if source_butler not in SPECIALIST_BUTLERS:
+            logger.warning(
+                "Briefing contribution from unexpected butler=%s; skipping (not in SPECIALIST_BUTLERS)",  # noqa: E501
+                source_butler,
+            )
+            continue
 
         # Decode JSON if returned as string
         if isinstance(raw_value, str):
@@ -308,6 +321,17 @@ async def collect_briefing_contributions(
                 "skipping (possible data tampering or misconfiguration)",
                 source_butler,
                 contribution["butler"],
+            )
+            continue
+
+        # Cross-check: contribution date must match aggregation date
+        if contribution["date"] != date_str:
+            logger.warning(
+                "Briefing contribution date mismatch for butler=%s: payload date=%r, expected=%r; "
+                "skipping",
+                source_butler,
+                contribution["date"],
+                date_str,
             )
             continue
 
@@ -354,3 +378,11 @@ async def collect_briefing_contributions(
         "missing_butlers": missing_butlers,
         "state_key": state_key,
     }
+
+
+async def run_collect_briefing_contributions(*, pool: asyncpg.Pool) -> dict[str, Any]:
+    """Compat shim: daemon registry calls this keyword-only form.
+
+    Delegates to ``collect_briefing_contributions`` with ``job_args=None``.
+    """
+    return await collect_briefing_contributions(pool, None)
