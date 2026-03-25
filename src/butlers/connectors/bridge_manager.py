@@ -122,6 +122,41 @@ async def _http_post_unix(socket_path: str, path: str) -> dict[str, Any]:
     return _parse_http_json(raw)
 
 
+async def _http_post_unix_with_body(
+    socket_path: str, path: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    """Issue a plain HTTP POST with a JSON body to *path* on the bridge Unix socket.
+
+    Returns the parsed JSON body.  Raises on network or HTTP errors.
+    """
+    import json
+
+    encoded_body = json.dumps(body).encode()
+    reader, writer = await asyncio.open_unix_connection(socket_path)
+    try:
+        request = (
+            f"POST {path} HTTP/1.0\r\n"
+            f"Host: localhost\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(encoded_body)}\r\n"
+            f"Connection: close\r\n"
+            f"\r\n"
+        )
+        writer.write(request.encode())
+        writer.write(encoded_body)
+        await writer.drain()
+
+        raw = await reader.read(65536)
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+    return _parse_http_json(raw)
+
+
 async def _http_get_unix(socket_path: str, path: str) -> dict[str, Any]:
     """Issue a plain HTTP GET to *path* on the bridge Unix socket."""
     reader, writer = await asyncio.open_unix_connection(socket_path)
