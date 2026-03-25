@@ -87,83 +87,71 @@ class CombinedBriefingPayload(TypedDict):
 # ---------------------------------------------------------------------------
 
 
-def today_sgt() -> str:
-    """Return today's date string (YYYY-MM-DD) in SGT (UTC+8)."""
-    return datetime.now(tz=SGT).date().isoformat()
+def today_sgt() -> date_cls:
+    """Return today's date in SGT (UTC+8)."""
+    return datetime.now(tz=SGT).date()
 
 
 def contribution_key(date: str) -> str:
-    """Return the state store key for a contribution on *date*."""
+    """Return the state store key for a contribution on *date* (YYYY-MM-DD string)."""
     return f"{CONTRIBUTION_KEY_PREFIX}{date}"
 
 
 def combined_key(date: str) -> str:
-    """Return the state store key for the combined briefing on *date*."""
+    """Return the state store key for the combined briefing on *date* (YYYY-MM-DD string)."""
     return f"{COMBINED_KEY_PREFIX}{date}"
 
 
-def validate_contribution(raw: Any) -> BriefingContribution | None:
-    """Validate and return a typed contribution dict, or None if malformed.
+def validate_contribution(raw: Any) -> BriefingContribution:
+    """Validate and return a typed contribution dict.
 
-    Required fields: ``butler``, ``date``, ``has_updates``.
-    Optional (with safe defaults): ``highlights`` (empty list), ``summary`` ("").
+    Required fields: ``butler``, ``date``, ``has_updates``, ``highlights``, ``summary``.
 
-    Returns None and logs a warning for any validation failure.
+    Raises:
+        ValueError: if required fields are missing or have wrong types.
+
+    Returns:
+        The validated envelope (same object, typed).
     """
     if not isinstance(raw, dict):
-        logger.warning("Briefing contribution is not a dict: %r", type(raw).__name__)
-        return None
+        raise ValueError(f"Contribution envelope must be a dict, got {type(raw).__name__}")
 
-    missing = [f for f in ("butler", "date", "has_updates") if f not in raw]
-    if missing:
-        logger.warning(
-            "Briefing contribution missing required fields %s (got keys: %s)",
-            missing,
-            sorted(raw.keys()),
+    required_str_fields = ("butler", "date", "summary")
+    for field in required_str_fields:
+        if field not in raw:
+            raise ValueError(f"Contribution envelope missing required field: {field!r}")
+        if not isinstance(raw[field], str):
+            raise ValueError(
+                f"Contribution envelope field {field!r} must be str, "
+                f"got {type(raw[field]).__name__}"
+            )
+
+    if "has_updates" not in raw:
+        raise ValueError("Contribution envelope missing required field: 'has_updates'")
+    if not isinstance(raw["has_updates"], bool):
+        raise ValueError(
+            f"Contribution envelope field 'has_updates' must be bool, "
+            f"got {type(raw['has_updates']).__name__}"
         )
-        return None
 
-    butler = raw.get("butler")
-    date = raw.get("date")
-    has_updates = raw.get("has_updates")
-
-    if not isinstance(butler, str) or not butler:
-        logger.warning("Briefing contribution 'butler' must be a non-empty string, got: %r", butler)
-        return None
-    if not isinstance(date, str) or not date:
-        logger.warning("Briefing contribution 'date' must be a non-empty string, got: %r", date)
-        return None
-    if not isinstance(has_updates, bool):
-        logger.warning(
-            "Briefing contribution 'has_updates' must be a bool, got: %r",
-            type(has_updates).__name__,
+    if "highlights" not in raw:
+        raise ValueError("Contribution envelope missing required field: 'highlights'")
+    if not isinstance(raw["highlights"], list):
+        raise ValueError(
+            f"Contribution envelope field 'highlights' must be list, "
+            f"got {type(raw['highlights']).__name__}"
         )
-        return None
 
-    highlights: list[BriefingHighlight] = []
-    raw_highlights = raw.get("highlights", [])
-    if isinstance(raw_highlights, list):
-        for h in raw_highlights:
-            if isinstance(h, dict) and "category" in h and "text" in h and "priority" in h:
-                highlights.append(
-                    BriefingHighlight(
-                        category=str(h["category"]),
-                        text=str(h["text"]),
-                        priority=str(h["priority"]),
-                    )
-                )
+    for i, h in enumerate(raw["highlights"]):
+        if not isinstance(h, dict):
+            raise ValueError(f"Highlight[{i}] must be a dict, got {type(h).__name__}")
+        for hf in ("category", "text", "priority"):
+            if hf not in h:
+                raise ValueError(f"Highlight[{i}] missing required field: {hf!r}")
+            if not isinstance(h[hf], str):
+                raise ValueError(f"Highlight[{i}].{hf} must be str, got {type(h[hf]).__name__}")
 
-    summary = raw.get("summary", "")
-    if not isinstance(summary, str):
-        summary = str(summary)
-
-    return BriefingContribution(
-        butler=butler,
-        date=date,
-        has_updates=has_updates,
-        highlights=highlights,
-        summary=summary,
-    )
+    return raw  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +175,7 @@ async def delete_old_contributions(pool: asyncpg.Pool, *, today: str) -> int:
     old_keys: list[str] = await state_list(pool, prefix=CONTRIBUTION_KEY_PREFIX)  # type: ignore[assignment]
     expired_keys = []
     for key in old_keys:
-        date_suffix = key[len(CONTRIBUTION_KEY_PREFIX):]
+        date_suffix = key[len(CONTRIBUTION_KEY_PREFIX) :]
         try:
             entry_date = date_cls.fromisoformat(date_suffix)
         except ValueError:
@@ -244,8 +232,8 @@ async def run_health_briefing_contribution(
     """
     del job_args
 
-    today_str = today_sgt()
-    today_dt = date_cls.fromisoformat(today_str)
+    today_dt = today_sgt()
+    today_str = today_dt.isoformat()
     today_start = datetime(today_dt.year, today_dt.month, today_dt.day, tzinfo=UTC)
     today_end = today_start + timedelta(days=1)
 
@@ -375,8 +363,8 @@ async def run_finance_briefing_contribution(
     """
     del job_args
 
-    today_str = today_sgt()
-    today_dt = date_cls.fromisoformat(today_str)
+    today_dt = today_sgt()
+    today_str = today_dt.isoformat()
     now_utc = datetime.now(tz=UTC)
     cutoff_48h = today_dt + timedelta(days=2)
     week_ahead = today_dt + timedelta(days=7)
@@ -534,8 +522,8 @@ async def run_relationship_briefing_contribution(
     """
     del job_args
 
-    today_str = today_sgt()
-    today_dt = date_cls.fromisoformat(today_str)
+    today_dt = today_sgt()
+    today_str = today_dt.isoformat()
     now_utc = datetime.now(tz=UTC)
 
     highlights: list[BriefingHighlight] = []
@@ -690,7 +678,7 @@ async def run_travel_briefing_contribution(
     """
     del job_args
 
-    today_str = today_sgt()
+    today_str = today_sgt().isoformat()
     now_utc = datetime.now(tz=UTC)
     cutoff_48h = now_utc + timedelta(hours=48)
 
@@ -829,8 +817,8 @@ async def run_education_briefing_contribution(
     """
     del job_args
 
-    today_str = today_sgt()
-    today_dt = date_cls.fromisoformat(today_str)
+    today_dt = today_sgt()
+    today_str = today_dt.isoformat()
     now_utc = datetime.now(tz=UTC)
     today_start = datetime(today_dt.year, today_dt.month, today_dt.day, tzinfo=UTC)
 
@@ -980,7 +968,7 @@ async def run_home_briefing_contribution(
     """
     del job_args
 
-    today_str = today_sgt()
+    today_str = today_sgt().isoformat()
 
     highlights: list[BriefingHighlight] = []
 
@@ -1125,7 +1113,7 @@ async def collect_briefing_contributions(
     """
     del job_args  # reserved for future parameterisation
 
-    date_str = today_sgt()
+    date_str = today_sgt().isoformat()
     contribution_state_key = contribution_key(date_str)
 
     # ---------------------------------------------------------------------------
@@ -1178,11 +1166,13 @@ async def collect_briefing_contributions(
                 continue
 
         # Validate the envelope
-        contribution = validate_contribution(raw_value)
-        if contribution is None:
+        try:
+            contribution = validate_contribution(raw_value)
+        except ValueError as exc:
             logger.warning(
-                "Briefing contribution from butler=%s failed validation; skipping",
+                "Briefing contribution from butler=%s failed validation; skipping: %s",
                 source_butler,
+                exc,
             )
             continue
 
