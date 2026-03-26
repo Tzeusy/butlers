@@ -237,8 +237,6 @@ def _args_match_constraints(tool_args: dict[str, Any], constraints: dict[str, An
             if ctype == "exact":
                 if actual != constraint.get("value"):
                     return False
-            elif constraint == "*":
-                continue
         elif constraint == "*":
             continue
         else:

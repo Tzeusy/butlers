@@ -653,7 +653,9 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
 
     created_at = _get("created_at")
     created_at_str = (
-        created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at or "")
+        created_at.isoformat()
+        if hasattr(created_at, "isoformat")
+        else (str(created_at) if created_at else None)
     )
     decided_at_str = (
         decided_at.isoformat()
