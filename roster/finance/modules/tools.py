@@ -32,11 +32,19 @@ def register_tools(mcp: Any, module: Any) -> None:
     from butlers.tools.finance import transactions as _transactions
 
     def _try_import(module_path: str) -> Any:
-        """Attempt to import a finance sub-module; return None if not yet implemented."""
+        """Attempt to import a finance sub-module; return None if not yet implemented.
+
+        Only suppresses ModuleNotFoundError for the target module itself — missing
+        module means it's not yet staged.  Errors raised *inside* an existing module
+        (broken dependency, syntax error, etc.) are re-raised so they surface instead
+        of silently disabling tools.
+        """
         try:
             return importlib.import_module(module_path)
-        except (ImportError, ModuleNotFoundError):
-            return None
+        except ModuleNotFoundError as exc:
+            if exc.name == module_path:
+                return None
+            raise
 
     _data_import = _try_import("butlers.tools.finance.data_import")
     _pattern_recognition = _try_import("butlers.tools.finance.pattern_recognition")

@@ -236,7 +236,7 @@ consult the `memory-classification` skill. Key rules:
 ### Scheduled Tasks
 
 - **`upcoming-bills-check`** — Scheduled task: daily bills digest (urgency-ranked, `intent=send`)
-- **`subscription-renewal-alerts`** — Scheduled task: daily renewal scan for subscriptions within 7 days; includes price change detection via `detect_price_changes()` (`intent=send`)
+- **`subscription-renewal-alerts`** — Scheduled task: daily renewal scan for subscriptions within 7 days (`intent=send`)
 - **`monthly-spending-summary`** — Scheduled task: 1st-of-month spending digest with prior-month comparison, trend data, budget status, anomaly count, subscription audit summary, and net worth update (`intent=send`)
 - **`anomaly-digest`** — Scheduled task: daily anomaly scan via `anomaly_scan(days_back=1)`; notifies via Telegram if anomalies found (`intent=send`)
 - **`budget-status-check`** — Scheduled task: weekly budget status check via `budget_status()`; notifies via Telegram if any category is in warning or exceeded state (`intent=send`)
