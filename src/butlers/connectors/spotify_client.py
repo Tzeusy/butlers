@@ -349,13 +349,26 @@ class SpotifyClient:
     # Internal request helper
     # ------------------------------------------------------------------
 
-    async def _get(
+    @staticmethod
+    def _parse_retry_after(response: httpx.Response, *, attempt: int) -> float:
+        """Parse the ``Retry-After`` header or compute exponential backoff."""
+        header = response.headers.get("Retry-After")
+        if header is not None:
+            try:
+                return max(0.0, float(header))
+            except ValueError:
+                pass
+        return _jittered_backoff(attempt, initial=_BACKOFF_INITIAL_S, maximum=_BACKOFF_MAX_S)
+
+    async def _request(
         self,
+        method: str,
         path: str,
         *,
         params: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
-        """Perform an authenticated GET request against the Spotify Web API.
+        json: dict[str, Any] | None = None,
+    ) -> Any:
+        """Perform an authenticated HTTP request against the Spotify Web API.
 
         Handles:
         - Proactive token refresh before expiry window.
@@ -367,38 +380,45 @@ class SpotifyClient:
 
         Parameters
         ----------
+        method:
+            HTTP method (e.g. ``"GET"``, ``"PUT"``, ``"POST"``, ``"DELETE"``).
         path:
             API path (e.g. ``"/me/player/currently-playing"``).
         params:
             Optional query string parameters.
+        json:
+            Optional JSON body payload (ignored for GET requests).
 
         Returns
         -------
-        dict or None
-            Parsed JSON response, or ``None`` for empty-body responses.
+        Any
+            Parsed JSON response (dict or list), or ``None`` for empty-body responses.
         """
         assert self._http_client is not None, "HTTP client not initialized; call open() first"
 
         # Proactive refresh
         if self._token_needs_refresh():
-            logger.debug("Proactive token refresh triggered for path=%r", path)
+            logger.debug("Proactive token refresh triggered for %s path=%r", method.upper(), path)
             await self._refresh_access_token()
 
         url = f"{_SPOTIFY_API_BASE}{path}"
         for attempt in range(2):  # first attempt + one retry after 401
             headers = {"Authorization": f"Bearer {self._access_token}"}
-            response = await self._http_client.get(url, headers=headers, params=params)
+            response = await self._http_client.request(
+                method, url, headers=headers, params=params, json=json
+            )
 
-            if response.status_code == 200:
+            if response.status_code in (200, 201):
                 return response.json()  # type: ignore[no-any-return]
 
             if response.status_code == 204:
-                return None  # No content — valid for currently-playing when nothing is playing
+                return None  # No content — valid for many Spotify endpoints
 
             if response.status_code == 401:
                 if attempt == 0:
                     logger.info(
-                        "Received 401 from Spotify; refreshing token and retrying path=%r",
+                        "Received 401 from Spotify; refreshing token and retrying %s path=%r",
+                        method.upper(),
                         path,
                     )
                     await self._refresh_access_token()
@@ -421,16 +441,31 @@ class SpotifyClient:
         # Should be unreachable
         raise SpotifyAuthError("Unexpected auth loop exit")  # pragma: no cover
 
-    @staticmethod
-    def _parse_retry_after(response: httpx.Response, *, attempt: int) -> float:
-        """Parse the ``Retry-After`` header or compute exponential backoff."""
-        header = response.headers.get("Retry-After")
-        if header is not None:
-            try:
-                return max(0.0, float(header))
-            except ValueError:
-                pass
-        return _jittered_backoff(attempt, initial=_BACKOFF_INITIAL_S, maximum=_BACKOFF_MAX_S)
+    async def _get(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> Any:
+        """Perform an authenticated GET request against the Spotify Web API.
+
+        Thin wrapper around :meth:`_request` for GET calls.
+
+        Returns ``None`` for HTTP 204 (No Content — valid Spotify empty response).
+
+        Parameters
+        ----------
+        path:
+            API path (e.g. ``"/me/player/currently-playing"``).
+        params:
+            Optional query string parameters.
+
+        Returns
+        -------
+        Any
+            Parsed JSON response (dict or list), or ``None`` for empty-body responses.
+        """
+        return await self._request("GET", path, params=params)
 
     async def _put(
         self,
@@ -438,11 +473,10 @@ class SpotifyClient:
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> Any:
         """Perform an authenticated PUT request against the Spotify Web API.
 
-        Handles proactive token refresh, automatic 401 retry, rate limiting, and
-        other error status codes — mirrors the ``_get`` contract exactly.
+        Thin wrapper around :meth:`_request` for PUT calls.
 
         Returns ``None`` for HTTP 204 (No Content).
 
@@ -457,46 +491,10 @@ class SpotifyClient:
 
         Returns
         -------
-        dict or None
+        Any
             Parsed JSON response, or ``None`` for empty-body responses.
         """
-        assert self._http_client is not None, "HTTP client not initialized; call open() first"
-
-        if self._token_needs_refresh():
-            logger.debug("Proactive token refresh triggered for PUT path=%r", path)
-            await self._refresh_access_token()
-
-        url = f"{_SPOTIFY_API_BASE}{path}"
-        for attempt in range(2):
-            headers = {"Authorization": f"Bearer {self._access_token}"}
-            response = await self._http_client.put(url, headers=headers, params=params, json=json)
-
-            if response.status_code in (200, 201):
-                return response.json()  # type: ignore[no-any-return]
-
-            if response.status_code == 204:
-                return None
-
-            if response.status_code == 401:
-                if attempt == 0:
-                    logger.info(
-                        "Received 401 from Spotify; refreshing token and retrying PUT path=%r",
-                        path,
-                    )
-                    await self._refresh_access_token()
-                    continue
-                raise SpotifyAuthError(
-                    "Spotify API returned 401 after token refresh. "
-                    "Spotify authorization expired. Re-connect via dashboard settings."
-                )
-
-            if response.status_code == 429:
-                retry_after_s = self._parse_retry_after(response, attempt=0)
-                raise SpotifyRateLimitError(retry_after_s)
-
-            raise SpotifyAPIError(response.status_code, response.text[:500])
-
-        raise SpotifyAuthError("Unexpected auth loop exit")  # pragma: no cover
+        return await self._request("PUT", path, params=params, json=json)
 
     async def _post(
         self,
@@ -504,11 +502,10 @@ class SpotifyClient:
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> Any:
         """Perform an authenticated POST request against the Spotify Web API.
 
-        Handles proactive token refresh, automatic 401 retry, rate limiting, and
-        other error status codes — mirrors the ``_get`` contract exactly.
+        Thin wrapper around :meth:`_request` for POST calls.
 
         Returns ``None`` for HTTP 204 (No Content).
 
@@ -523,46 +520,10 @@ class SpotifyClient:
 
         Returns
         -------
-        dict or None
+        Any
             Parsed JSON response, or ``None`` for empty-body responses.
         """
-        assert self._http_client is not None, "HTTP client not initialized; call open() first"
-
-        if self._token_needs_refresh():
-            logger.debug("Proactive token refresh triggered for POST path=%r", path)
-            await self._refresh_access_token()
-
-        url = f"{_SPOTIFY_API_BASE}{path}"
-        for attempt in range(2):
-            headers = {"Authorization": f"Bearer {self._access_token}"}
-            response = await self._http_client.post(url, headers=headers, params=params, json=json)
-
-            if response.status_code in (200, 201):
-                return response.json()  # type: ignore[no-any-return]
-
-            if response.status_code == 204:
-                return None
-
-            if response.status_code == 401:
-                if attempt == 0:
-                    logger.info(
-                        "Received 401 from Spotify; refreshing token and retrying POST path=%r",
-                        path,
-                    )
-                    await self._refresh_access_token()
-                    continue
-                raise SpotifyAuthError(
-                    "Spotify API returned 401 after token refresh. "
-                    "Spotify authorization expired. Re-connect via dashboard settings."
-                )
-
-            if response.status_code == 429:
-                retry_after_s = self._parse_retry_after(response, attempt=0)
-                raise SpotifyRateLimitError(retry_after_s)
-
-            raise SpotifyAPIError(response.status_code, response.text[:500])
-
-        raise SpotifyAuthError("Unexpected auth loop exit")  # pragma: no cover
+        return await self._request("POST", path, params=params, json=json)
 
     async def _delete(
         self,
@@ -570,11 +531,10 @@ class SpotifyClient:
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> Any:
         """Perform an authenticated DELETE request against the Spotify Web API.
 
-        Handles proactive token refresh, automatic 401 retry, rate limiting, and
-        other error status codes — mirrors the ``_get`` contract exactly.
+        Thin wrapper around :meth:`_request` for DELETE calls.
 
         Returns ``None`` for HTTP 204 (No Content).
 
@@ -589,48 +549,10 @@ class SpotifyClient:
 
         Returns
         -------
-        dict or None
+        Any
             Parsed JSON response, or ``None`` for empty-body responses.
         """
-        assert self._http_client is not None, "HTTP client not initialized; call open() first"
-
-        if self._token_needs_refresh():
-            logger.debug("Proactive token refresh triggered for DELETE path=%r", path)
-            await self._refresh_access_token()
-
-        url = f"{_SPOTIFY_API_BASE}{path}"
-        for attempt in range(2):
-            headers = {"Authorization": f"Bearer {self._access_token}"}
-            response = await self._http_client.delete(
-                url, headers=headers, params=params, json=json
-            )
-
-            if response.status_code in (200, 201):
-                return response.json()  # type: ignore[no-any-return]
-
-            if response.status_code == 204:
-                return None
-
-            if response.status_code == 401:
-                if attempt == 0:
-                    logger.info(
-                        "Received 401 from Spotify; refreshing token and retrying DELETE path=%r",
-                        path,
-                    )
-                    await self._refresh_access_token()
-                    continue
-                raise SpotifyAuthError(
-                    "Spotify API returned 401 after token refresh. "
-                    "Spotify authorization expired. Re-connect via dashboard settings."
-                )
-
-            if response.status_code == 429:
-                retry_after_s = self._parse_retry_after(response, attempt=0)
-                raise SpotifyRateLimitError(retry_after_s)
-
-            raise SpotifyAPIError(response.status_code, response.text[:500])
-
-        raise SpotifyAuthError("Unexpected auth loop exit")  # pragma: no cover
+        return await self._request("DELETE", path, params=params, json=json)
 
     # ------------------------------------------------------------------
     # Public API methods
@@ -1533,6 +1455,5 @@ class SpotifyClient:
         result = await self._get("/me/tracks/contains", params=params)
         if result is None:
             return [False] * len(ids)
-        # Spotify returns a JSON array, not a dict; _get types it as dict but
-        # the actual value at runtime is a list[bool].
-        return result  # type: ignore[return-value]
+        # Spotify returns a JSON array (list[bool]), not a dict.
+        return result
