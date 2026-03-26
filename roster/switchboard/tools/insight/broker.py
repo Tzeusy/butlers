@@ -595,6 +595,89 @@ async def cleanup_old_rows(
     )
 
 
+_AUTO_OFF_MESSAGE = (
+    "I've paused proactive insights since you haven't found them useful. "
+    "You can re-enable them anytime."
+)
+
+
+async def check_total_disengagement_auto_off(
+    pool: asyncpg.Pool,
+    *,
+    now: datetime | None = None,
+    notify_fn: Any | None = None,
+) -> bool:
+    """Check for total disengagement (0% engagement for 14 consecutive days).
+
+    Per spec: if engagement_rate == 0.0 for 14 consecutive days with at least
+    1 insight delivered per day, auto-downgrade verbosity to 'off' and deliver
+    a final notification.
+
+    Returns True if auto-off was triggered, False otherwise.
+    """
+    if now is None:
+        now = datetime.now(UTC)
+
+    # Query daily engagement data for the last 14 days
+    window_start = now - timedelta(days=14)
+    rows = await pool.fetch(
+        """
+        SELECT
+            DATE_TRUNC('day', delivered_at) AS day,
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE engaged = TRUE) AS engaged_count
+        FROM insight_engagement
+        WHERE delivered_at >= $1 AND delivered_at <= $2
+        GROUP BY DATE_TRUNC('day', delivered_at)
+        ORDER BY day ASC
+        """,
+        window_start,
+        now,
+    )
+
+    if not rows:
+        return False
+
+    # Must have at least 14 days of data with deliveries
+    if len(rows) < 14:
+        return False
+
+    # All 14 days must have zero engagement
+    for row in rows:
+        if int(row["total"]) == 0:
+            return False
+        if int(row["engaged_count"]) > 0:
+            return False
+
+    # Total disengagement detected — auto-downgrade to off
+    logger.warning(
+        "insight-delivery-cycle: total disengagement detected over 14 days, "
+        "auto-downgrading verbosity to off"
+    )
+    # Ensure the settings row exists (created lazily) before updating
+    await pool.execute("""
+        INSERT INTO insight_settings (id, verbosity)
+        VALUES (1, 'minimal')
+        ON CONFLICT (id) DO NOTHING
+    """)
+    await pool.execute(
+        """
+        UPDATE insight_settings SET verbosity = 'off', updated_at = $1
+        WHERE id = 1
+        """,
+        now,
+    )
+
+    # Deliver final notification via direct notify (not through the pipeline)
+    if notify_fn is not None:
+        try:
+            await notify_fn(_AUTO_OFF_MESSAGE, {"intent": "insight", "auto_off": True})
+        except Exception:
+            logger.exception("insight-delivery-cycle: failed to deliver auto-off notification")
+
+    return True
+
+
 def _format_standalone(candidate: dict[str, Any]) -> str:
     """Format a single candidate as a standalone delivery message."""
     butler = candidate.get("origin_butler", "")
@@ -792,8 +875,35 @@ async def delivery_cycle(
 
         # Step 9: Record engagement
         await record_engagement_rows(pool, selected_ids, delivered_at=delivered_at)
+    else:
+        # Delivery failed — increment attempt counter; filter candidates that have
+        # reached the 3-consecutive-failure threshold
+        await pool.execute(
+            """
+            UPDATE insight_candidates
+            SET delivery_attempt_count = delivery_attempt_count + 1
+            WHERE id = ANY($1::uuid[])
+            """,
+            selected_ids,
+        )
+        # Filter candidates that have now failed 3 or more times
+        await pool.execute(
+            """
+            UPDATE insight_candidates
+            SET status = 'filtered'
+            WHERE id = ANY($1::uuid[]) AND delivery_attempt_count >= 3
+            """,
+            selected_ids,
+        )
+        logger.warning(
+            "insight-delivery-cycle: delivery failed for %d candidates; incremented attempt counts",
+            len(selected_ids),
+        )
 
     # Step 10: Cleanup
     await cleanup_old_rows(pool, now=now)
+
+    # Auto-off check: total disengagement over 14 consecutive days
+    await check_total_disengagement_auto_off(pool, now=now, notify_fn=notify_fn)
 
     return result
