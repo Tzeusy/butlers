@@ -1475,6 +1475,77 @@ class TestDeliveryAttemptTracking:
         assert row["delivery_attempt_count"] == 0
         assert row["status"] == "delivered"
 
+    async def test_notify_fn_none_skips_delivery_without_marking_candidates(self, insight_pool):
+        """When notify_fn=None, delivery_cycle skips delivery; candidates stay pending.
+
+        Previously, a None notify_fn caused deliver_success to remain True
+        (since no notify was called to set it False), silently marking
+        candidates as delivered without sending anything.  The fix returns
+        early with skipped=True so no candidates are consumed.
+        """
+        from butlers.tools.switchboard.insight.broker import delivery_cycle
+
+        await insight_pool.execute("UPDATE insight_settings SET verbosity = 'normal' WHERE id = 1")
+
+        await insight_pool.execute(
+            """
+            INSERT INTO insight_candidates
+                (origin_butler, priority, category, dedup_key, expires_at, message, status)
+            VALUES ('health', 80, 'health', 'health:bp:none-fn:2026', $1,
+                    'Blood pressure check', 'pending')
+            """,
+            _future(),
+        )
+
+        result = await delivery_cycle(insight_pool, notify_fn=None)
+
+        assert result["skipped"] is True
+        assert result["delivered"] == []
+
+        row = await insight_pool.fetchrow(
+            "SELECT status, delivery_attempt_count FROM insight_candidates "
+            "WHERE dedup_key = 'health:bp:none-fn:2026'"
+        )
+        # Candidate must remain pending — not silently consumed
+        assert row["status"] == "pending"
+        assert row["delivery_attempt_count"] == 0
+
+    async def test_delivery_attempt_count_reset_on_success_after_prior_failures(self, insight_pool):
+        """Successful delivery resets delivery_attempt_count to 0.
+
+        Previously, a candidate that failed twice then succeeded on the
+        third attempt would retain count=2.  A subsequent failure would
+        push it to count=3 and trigger filtering even though only 1
+        consecutive failure had occurred.  The fix resets the counter on
+        every successful delivery.
+        """
+        from butlers.tools.switchboard.insight.broker import delivery_cycle
+
+        await insight_pool.execute("UPDATE insight_settings SET verbosity = 'minimal' WHERE id = 1")
+
+        # Pre-seed with 2 prior failures (mimics fail-fail history)
+        await insight_pool.execute(
+            """
+            INSERT INTO insight_candidates
+                (origin_butler, priority, category, dedup_key, expires_at, message,
+                 status, delivery_attempt_count)
+            VALUES ('health', 80, 'health', 'health:bp:reset-test:2026', $1,
+                    'Blood pressure reset', 'pending', 2)
+            """,
+            _future(),
+        )
+
+        notify_mock = AsyncMock(return_value={"status": "ok"})
+        await delivery_cycle(insight_pool, notify_fn=notify_mock)
+
+        row = await insight_pool.fetchrow(
+            "SELECT status, delivery_attempt_count FROM insight_candidates "
+            "WHERE dedup_key = 'health:bp:reset-test:2026'"
+        )
+        assert row["status"] == "delivered"
+        # Counter must be reset to 0, not left at 2
+        assert row["delivery_attempt_count"] == 0
+
 
 # ===========================================================================
 # Category: Auto-off on total disengagement [bu-a3wr]
@@ -1495,11 +1566,24 @@ class TestAutoOffTotalDisengagement:
         insights_per_day: int = 1,
         reference_now: datetime | None = None,
     ) -> None:
-        """Insert engagement rows for num_days days, each with insights_per_day rows."""
+        """Insert engagement rows for num_days complete past days.
+
+        Each row is anchored to midnight-based day boundaries so the data
+        falls reliably within the check_total_disengagement_auto_off window,
+        which uses midnight-anchored boundaries with an exclusive upper bound.
+
+        Days are placed at day -1, -2, ..., -num_days (yesterday and earlier),
+        never on today (which is excluded by the window's < today_midnight bound).
+        """
         if reference_now is None:
             reference_now = datetime.now(UTC)
+        # Anchor to today's midnight so offsets map to complete calendar days
+        today_midnight = reference_now.replace(hour=0, minute=0, second=0, microsecond=0)
         for day_offset in range(num_days):
-            delivered_at = reference_now - timedelta(days=num_days - day_offset - 1, hours=12)
+            # Place data at 01:00 on day -(num_days - day_offset), working
+            # from the earliest day forward. All days are in the past (>= day -num_days
+            # and <= day -1), safely below the exclusive window_end (today_midnight).
+            day_ts = today_midnight - timedelta(days=num_days - day_offset) + timedelta(hours=1)
             for _ in range(insights_per_day):
                 insight_id = str(uuid.uuid4())
                 await pool.execute(
@@ -1508,7 +1592,7 @@ class TestAutoOffTotalDisengagement:
                     VALUES ($1::uuid, $2, $3)
                     """,
                     insight_id,
-                    delivered_at,
+                    day_ts,
                     engaged,
                 )
 
@@ -1544,11 +1628,13 @@ class TestAutoOffTotalDisengagement:
         )
 
         now = datetime.now(UTC)
-        # 13 days no engagement
+        # 13 days of zero engagement (fills days -14 through -2)
         await self._insert_daily_engagement(
-            insight_pool, num_days=13, engaged=False, reference_now=now - timedelta(days=1)
+            insight_pool, num_days=13, engaged=False, reference_now=now
         )
-        # 1 day with engagement
+        # 1 day with engagement, placed yesterday (day -1 = inside the window)
+        # to ensure it falls within the midnight-anchored window boundary.
+        today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         engaged_id = str(uuid.uuid4())
         await insight_pool.execute(
             """
@@ -1556,7 +1642,7 @@ class TestAutoOffTotalDisengagement:
             VALUES ($1::uuid, $2, TRUE)
             """,
             engaged_id,
-            now - timedelta(hours=6),
+            today_midnight - timedelta(hours=12),  # yesterday noon — in window
         )
 
         triggered = await check_total_disengagement_auto_off(insight_pool, now=now)
@@ -1629,6 +1715,92 @@ class TestAutoOffTotalDisengagement:
         assert triggered is True
         settings = await get_insight_settings(insight_pool)
         assert settings["verbosity"] == "off"
+
+    async def test_auto_off_excludes_today_partial_day(self, insight_pool):
+        """Window boundary excludes today's partial day to prevent premature auto-off.
+
+        Previously the window used an inclusive end (delivered_at <= now), which
+        could produce 15 day buckets (days -14 through 0) instead of 14.  If today
+        had 0 engagement rows it could push the row count to 14+ and trigger
+        auto-off prematurely.  The fix uses an exclusive upper bound (< midnight
+        today) so exactly 14 complete day buckets are checked.
+        """
+        from butlers.tools.switchboard.insight.broker import (
+            check_total_disengagement_auto_off,
+            get_insight_settings,
+        )
+
+        now = datetime.now(UTC)
+        today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Insert 14 days of zero engagement in complete past days (days -14 to -1)
+        await self._insert_daily_engagement(
+            insight_pool, num_days=14, engaged=False, reference_now=now
+        )
+
+        # Also insert a zero-engagement row for TODAY — this is the partial day
+        # that should be excluded from the window.
+        today_insight_id = str(uuid.uuid4())
+        await insight_pool.execute(
+            """
+            INSERT INTO insight_engagement (insight_id, delivered_at, engaged)
+            VALUES ($1::uuid, $2, FALSE)
+            """,
+            today_insight_id,
+            today_midnight + timedelta(hours=1),  # today at 01:00
+        )
+
+        # With the old inclusive boundary, today's row would be included,
+        # giving 15 buckets; with the new exclusive boundary it's excluded.
+        # Either way, auto-off should fire here because 14 complete days have
+        # zero engagement — the key assertion is that today's partial data
+        # does NOT block auto-off when 14 full days already qualify.
+        triggered = await check_total_disengagement_auto_off(insight_pool, now=now)
+
+        assert triggered is True
+        settings = await get_insight_settings(insight_pool)
+        assert settings["verbosity"] == "off"
+
+    async def test_auto_off_not_triggered_when_only_15_days_span_including_today(
+        self, insight_pool
+    ):
+        """13 complete past days plus today's partial row do not trigger auto-off.
+
+        Regression guard: with an inclusive window (old behaviour), data spanning
+        days -13 through 0 could fill 14 buckets and trigger falsely.  The fix
+        uses an exclusive upper bound, so today's row is excluded and only 13
+        complete-day buckets remain, which is < 14 → no auto-off.
+        """
+        from butlers.tools.switchboard.insight.broker import (
+            check_total_disengagement_auto_off,
+            get_insight_settings,
+        )
+
+        now = datetime.now(UTC)
+        today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # 13 complete past days of zero engagement (days -13 to -1)
+        await self._insert_daily_engagement(
+            insight_pool, num_days=13, engaged=False, reference_now=now
+        )
+
+        # Today's partial row — should be excluded by the new boundary
+        today_insight_id = str(uuid.uuid4())
+        await insight_pool.execute(
+            """
+            INSERT INTO insight_engagement (insight_id, delivered_at, engaged)
+            VALUES ($1::uuid, $2, FALSE)
+            """,
+            today_insight_id,
+            today_midnight + timedelta(hours=2),  # today at 02:00
+        )
+
+        triggered = await check_total_disengagement_auto_off(insight_pool, now=now)
+
+        # Only 13 complete days visible in window (today excluded) → not triggered
+        assert triggered is False
+        settings = await get_insight_settings(insight_pool)
+        assert settings["verbosity"] != "off"
 
 
 # ===========================================================================

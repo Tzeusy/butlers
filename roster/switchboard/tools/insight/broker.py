@@ -618,8 +618,14 @@ async def check_total_disengagement_auto_off(
     if now is None:
         now = datetime.now(UTC)
 
-    # Query daily engagement data for the last 14 days
-    window_start = now - timedelta(days=14)
+    # Query daily engagement data for the last 14 complete days.
+    # Anchor the window to midnight boundaries so DATE_TRUNC grouping yields
+    # exactly 14 day buckets (days D-14 through D-1 relative to today).
+    # Use an exclusive upper bound (<) to exclude today's partial day, which
+    # would otherwise inflate bucket count to 15 with an inclusive (<=) end.
+    today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    window_start = today_midnight - timedelta(days=14)
+    window_end = today_midnight  # exclusive: don't include today's partial day
     rows = await pool.fetch(
         """
         SELECT
@@ -627,12 +633,12 @@ async def check_total_disengagement_auto_off(
             COUNT(*) AS total,
             COUNT(*) FILTER (WHERE engaged = TRUE) AS engaged_count
         FROM insight_engagement
-        WHERE delivered_at >= $1 AND delivered_at <= $2
+        WHERE delivered_at >= $1 AND delivered_at < $2
         GROUP BY DATE_TRUNC('day', delivered_at)
         ORDER BY day ASC
         """,
         window_start,
-        now,
+        window_end,
     )
 
     if not rows:
@@ -828,6 +834,19 @@ async def delivery_cycle(
         return result
 
     # Step 7: Deliver
+    # Guard: if no notify function is wired, skip delivery entirely rather than
+    # silently marking candidates as delivered without sending anything.
+    if notify_fn is None:
+        logger.warning(
+            "insight-delivery-cycle: notify_fn not wired — skipping delivery of %d candidates; "
+            "no candidates will be marked delivered or consumed",
+            len(selected),
+        )
+        result["skipped"] = True
+        # Still run cleanup so the cycle doesn't accumulate stale rows
+        await cleanup_old_rows(pool, now=now)
+        return result
+
     deliver_count = len(selected)
     if deliver_count == 1:
         delivery_message = _format_standalone(selected[0])
@@ -843,26 +862,26 @@ async def delivery_cycle(
         "intent": "insight",
     }
 
+    # notify_fn is guaranteed non-None here (None case returns early above)
     deliver_success = True
-    if notify_fn is not None:
-        try:
-            notify_result = await notify_fn(delivery_message, notify_metadata)
-            if isinstance(notify_result, dict) and notify_result.get("status") == "error":
-                deliver_success = False
-                logger.error(
-                    "insight-delivery-cycle: notify failed: %s",
-                    notify_result.get("error"),
-                )
-        except Exception:
+    try:
+        notify_result = await notify_fn(delivery_message, notify_metadata)
+        if isinstance(notify_result, dict) and notify_result.get("status") == "error":
             deliver_success = False
-            logger.exception("insight-delivery-cycle: notify raised exception")
+            logger.error(
+                "insight-delivery-cycle: notify failed: %s",
+                notify_result.get("error"),
+            )
+    except Exception:
+        deliver_success = False
+        logger.exception("insight-delivery-cycle: notify raised exception")
 
     if deliver_success:
-        # Mark candidates as delivered
+        # Mark candidates as delivered and reset consecutive-failure counter
         await pool.execute(
             """
             UPDATE insight_candidates
-            SET status = 'delivered', delivered_at = $1
+            SET status = 'delivered', delivered_at = $1, delivery_attempt_count = 0
             WHERE id = ANY($2::uuid[])
             """,
             delivered_at,

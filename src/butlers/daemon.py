@@ -378,8 +378,11 @@ async def _run_switchboard_insight_delivery_cycle_job(
     Orchestrates the full 10-step insight delivery pipeline:
     quiet-hours check, expiry, cooldown filter, dedup, budget computation,
     top-B selection, delivery, cooldown recording, engagement tracking,
-    and cleanup. Passes ``notify_fn=None`` — actual channel delivery is
-    wired separately once the Switchboard notify path is fully integrated.
+    and cleanup.
+
+    Passes ``notify_fn=None`` — delivery_cycle will skip the actual delivery
+    step and return ``skipped=True`` until the Switchboard notify path is
+    fully integrated. No candidates are consumed or marked delivered.
     """
     del job_args
     from butlers.tools.switchboard.insight.broker import delivery_cycle
