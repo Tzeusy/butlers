@@ -290,7 +290,7 @@ async def load_ha_checkpoint(
 
     try:
         checkpoint = HACheckpoint.from_json(raw)
-    except Exception:
+    except ValueError:
         logger.exception(
             "ha-connector: malformed checkpoint for endpoint=%s; starting fresh",
             endpoint_identity,
