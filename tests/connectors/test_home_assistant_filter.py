@@ -189,7 +189,7 @@ class TestHAFullPayload:
         ext_id = payload["event"]["external_event_id"]
         assert ext_id.startswith(f"ha:{_ENTITY_ID_TEMP}:")
         # The trailing part must be a numeric timestamp in milliseconds
-        _, _, ts_part = ext_id.rsplit(":", 2)[-1], None, ext_id.split(":")[-1]
+        ts_part = ext_id.rsplit(":", 1)[-1]
         assert ts_part.isdigit()
 
     def test_event_observed_at_equals_time_fired(self) -> None:

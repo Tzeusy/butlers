@@ -59,6 +59,7 @@ Usage in the HA connector::
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -76,6 +77,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 CONNECTOR_TYPE = "home_assistant"
+# NOTE: When the HA connector wires up replay via drain_replay_pending → submit_fn →
+# Switchboard ingest, "home_assistant" must be added to SourceChannel and SourceProvider
+# in roster/switchboard/tools/routing/contracts.py, and _ALLOWED_PROVIDERS_BY_CHANNEL
+# updated accordingly, otherwise ingest.v1 Pydantic validation will reject replayed rows.
 CONNECTOR_CHANNEL = "home_assistant"
 CONNECTOR_PROVIDER = "home_assistant"
 
@@ -190,7 +195,11 @@ def ha_full_payload(
             dt = dt.replace(tzinfo=UTC)
         time_ms = int(dt.timestamp() * 1000)
     except Exception:
-        time_ms = 0
+        # Fallback: derive a deterministic suffix from the raw time_fired string
+        # so that unparseable timestamps don't collapse to the same ID.
+        time_ms = int(hashlib.md5(f"{entity_id}:{time_fired}".encode()).hexdigest(), 16) % (  # noqa: S324
+            10**13
+        )
     external_event_id = f"ha:{entity_id}:{time_ms}"
 
     return FilteredEventBuffer.full_payload(
