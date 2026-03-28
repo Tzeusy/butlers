@@ -734,6 +734,7 @@ async def _tick_deadline_pass(
     stagger_key: str | None = None,
     max_stagger_seconds: int = _DEFAULT_MAX_STAGGER_SECONDS,
     metrics: ButlerMetrics | None = None,
+    active_seasons: list[dict[str, Any]] | None = None,
 ) -> tuple[int, int]:
     """Evaluate deadline tasks: fire due thresholds and handle expiry.
 
@@ -852,6 +853,11 @@ async def _tick_deadline_pass(
             f"fired_threshold={threshold}, "
             f"all_thresholds={alert_thresholds}]"
         )
+        # Prepend seasonal context when active seasons exist (mirrors cron pass behaviour).
+        if active_seasons:
+            season_names = ", ".join(s["name"] for s in active_seasons)
+            seasonal_prefix = f"[Seasonal context: active periods: {season_names}]"
+            augmented_prompt = f"{seasonal_prefix}\n\n{augmented_prompt}"
         try:
             await dispatch_fn(
                 prompt=augmented_prompt,
@@ -1316,6 +1322,22 @@ async def tick(
         # A single check here avoids redundant information_schema round-trips per tick.
         _has_task_type_col = await _has_column(pool, "scheduled_tasks", "task_type")
 
+        # ------------------------------------------------------------------
+        # Seasonal context — queried once per tick, injected into ALL dispatches
+        # (both deadline pass and cron pass).  Must be queried before Pass 1 so
+        # that deadline dispatches receive the same seasonal prefix as cron tasks.
+        # ------------------------------------------------------------------
+        active_seasons: list[dict[str, Any]] = []
+        if butler_name:
+            try:
+                active_seasons = await _get_active_seasons(pool, butler_name)
+            except Exception:
+                logger.warning(
+                    "Failed to query active seasons for butler %r; skipping seasonal context",
+                    butler_name,
+                    exc_info=True,
+                )
+
         # --- Pass 1: Deadline evaluation (before cron dispatch) ---
         deadlines_evaluated, deadline_dispatched = await _tick_deadline_pass(
             pool,
@@ -1325,6 +1347,7 @@ async def tick(
             stagger_key=stagger_key,
             max_stagger_seconds=max_stagger_seconds,
             metrics=metrics,
+            active_seasons=active_seasons,
         )
         span.set_attribute("deadlines_evaluated", deadlines_evaluated)
         span.set_attribute("deadline_dispatched", deadline_dispatched)
@@ -1351,20 +1374,6 @@ async def tick(
 
         tasks_due = len(rows)
         span.set_attribute("tasks_due", tasks_due)
-
-        # ------------------------------------------------------------------
-        # Seasonal context — queried once per tick, injected into dispatches.
-        # ------------------------------------------------------------------
-        active_seasons: list[dict[str, Any]] = []
-        if butler_name:
-            try:
-                active_seasons = await _get_active_seasons(pool, butler_name)
-            except Exception:
-                logger.warning(
-                    "Failed to query active seasons for butler %r; skipping seasonal context",
-                    butler_name,
-                    exc_info=True,
-                )
 
         dispatched = 0
         for row in rows:
