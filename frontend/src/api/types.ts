@@ -2763,7 +2763,7 @@ export type SteamAccountStatus = "active" | "suspended" | "revoked";
 /** A single connected Steam account. */
 export interface SteamAccountResponse {
   id: string;
-  steam_id: number;
+  steam_id: string;
   display_name: string | null;
   profile_url: string | null;
   avatar_url: string | null;
@@ -2780,7 +2780,7 @@ export interface SteamAccountListResponse {
 
 /** Request body for POST /api/steam/accounts */
 export interface SteamConnectRequest {
-  steam_id: number;
+  steam_id: string;
   api_key: string;
   display_name?: string | null;
 }
@@ -2810,7 +2810,7 @@ export interface SteamGamePlaytime {
 /** Response from GET /api/steam/playtime */
 export interface SteamPlaytimeAnalytics {
   account_id: string;
-  steam_id: number;
+  steam_id: string;
   display_name: string | null;
   total_games: number;
   total_playtime_minutes: number;

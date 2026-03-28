@@ -19,13 +19,6 @@ import type { SteamAccountResponse } from "@/api/index.ts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -89,7 +82,7 @@ function ConnectSteamForm({ onSuccess }: { onSuccess: () => void }) {
     try {
       await connectMutation.mutateAsync({
         api_key: apiKey.trim(),
-        steam_id: parseInt(steamId.trim(), 10),
+        steam_id: steamId.trim(),
         display_name: displayName.trim() || null,
       });
       toast.success("Steam account connected");
@@ -512,139 +505,3 @@ export function SteamSection() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// SteamSetupCard — main component (standalone card)
-// ---------------------------------------------------------------------------
-
-export function SteamSetupCard() {
-  const accountsQuery = useSteamAccounts();
-  const disconnectMutation = useSteamDisconnect();
-
-  const [showConnectForm, setShowConnectForm] = useState(false);
-  const [disconnectTarget, setDisconnectTarget] = useState<SteamAccountResponse | null>(null);
-
-  const accounts = accountsQuery.data?.accounts ?? [];
-  const activeAccounts = accounts.filter((a) => a.status !== "revoked");
-  const primaryAccount = activeAccounts.find((a) => a.is_primary) ?? activeAccounts[0];
-
-  async function handleDisconnectConfirm() {
-    if (!disconnectTarget) return;
-    try {
-      await disconnectMutation.mutateAsync(disconnectTarget.id);
-      toast.success("Steam account disconnected");
-      setDisconnectTarget(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to disconnect Steam account";
-      toast.error(message);
-    }
-  }
-
-  if (accountsQuery.isLoading) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Steam</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="h-16 w-full" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (accountsQuery.isError) {
-    return (
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Steam</CardTitle>
-            </div>
-            <Badge variant="destructive">Error</Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-destructive">
-            Failed to fetch Steam accounts. Please refresh to try again.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <>
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Steam</CardTitle>
-              <CardDescription className="mt-1">
-                Connect your Steam account to let butlers track your game library and playtime.
-                Read-only — butlers will not modify your account.
-              </CardDescription>
-            </div>
-            {activeAccounts.length > 0 ? (
-              <Badge variant="default">
-                {activeAccounts.length === 1 ? "1 account" : `${activeAccounts.length} accounts`}
-              </Badge>
-            ) : (
-              <Badge variant="outline">Not configured</Badge>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Accounts list */}
-          {activeAccounts.length > 0 && (
-            <div className="divide-y divide-border rounded-md border">
-              {activeAccounts.map((account) => (
-                <div key={account.id} className="px-3">
-                  <AccountRow account={account} onDisconnect={setDisconnectTarget} />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Connect form */}
-          {showConnectForm && (
-            <ConnectSteamForm
-              onSuccess={() => setShowConnectForm(false)}
-            />
-          )}
-
-          {/* Action buttons */}
-          <div className="flex flex-wrap items-center gap-2">
-            {!showConnectForm && (
-              <Button size="sm" variant="outline" onClick={() => setShowConnectForm(true)}>
-                {activeAccounts.length === 0 ? "Connect Steam" : "Add account"}
-              </Button>
-            )}
-            {showConnectForm && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-muted-foreground"
-                onClick={() => setShowConnectForm(false)}
-              >
-                Cancel
-              </Button>
-            )}
-          </div>
-
-          {/* Playtime analytics for the primary account */}
-          {primaryAccount && !showConnectForm && (
-            <PlaytimePanel primaryAccountId={primaryAccount.id} />
-          )}
-        </CardContent>
-      </Card>
-
-      <DisconnectDialog
-        open={disconnectTarget !== null}
-        account={disconnectTarget}
-        onOpenChange={(open) => { if (!open) setDisconnectTarget(null); }}
-        onConfirm={handleDisconnectConfirm}
-        isPending={disconnectMutation.isPending}
-      />
-    </>
-  );
-}
