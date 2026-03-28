@@ -376,7 +376,7 @@ class TestRecurringGroupsTableColumns:
     def test_subscription_id_fk_to_subscriptions(self):
         src = self._src()
         assert "subscription_id" in src
-        assert "subscriptions" in src
+        assert "REFERENCES subscriptions" in src
 
     def test_is_subscription_boolean(self):
         assert "is_subscription" in self._src()
@@ -1010,10 +1010,12 @@ class TestDowngrade:
     def test_drops_uq_txn_source_dedupe(self):
         src = self._src()
         assert "uq_txn_source_dedupe" in src
+        assert "DROP INDEX" in src
 
     def test_drops_uq_txn_composite_dedupe(self):
         src = self._src()
         assert "uq_txn_composite_dedupe" in src
+        assert "DROP INDEX" in src
 
     # Dependency order: tables with FKs to other tables must be dropped first
     def test_recurring_groups_dropped_before_subscriptions_dependency(self):
