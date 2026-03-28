@@ -55,6 +55,28 @@ _TAX_DISCLAIMER = (
     "with a qualified tax professional before claiming any deductions."
 )
 
+# Pre-compiled patterns for _infer_account_type — module-level to avoid per-call overhead.
+_CHECKING_RE = re.compile(r"\bchecking\b")
+# Credit-card and payment-network markers; bare "credit" is intentionally excluded
+# to avoid misclassifying "credit union" accounts.
+_CREDIT_RE = re.compile(
+    r"\bcard\b"  # "Credit Card", "Debit Card"
+    r"|\bcc\b"  # common abbreviation for credit card
+    r"|\bvisa\b"
+    r"|\bmastercard\b"
+    r"|\bamex\b"
+    r"|\bcredit\s+card\b"  # explicit two-word phrase
+)
+_SAVINGS_RE = re.compile(r"\bsavings\b|\bsave\b|\bhsa\b")
+_INVESTMENT_RE = re.compile(
+    r"\binvest(?:ment|ing)?\b"  # "investment", "investing" — bounded to avoid "investigation"
+    r"|\bira\b"
+    r"|\b401k\b"
+    r"|\bbrokerage\b"
+    r"|\broth\b"
+    r"|\bfidelity\b"
+)
+
 
 def _today() -> date:
     return datetime.now(UTC).date()
@@ -84,41 +106,19 @@ def _infer_account_type(name: str, default: str = "checking") -> str:
 
     # 1. "checking" — checked first so that "Credit Union Checking" resolves
     #    to checking before the credit-card patterns fire.
-    if re.search(r"\bchecking\b", lower):
+    if _CHECKING_RE.search(lower):
         return "checking"
 
-    # 2. Credit-card and payment-network markers.  The bare keyword "credit"
-    #    is intentionally excluded here; only compound phrases or brand names
-    #    are matched to avoid misclassifying "credit union" accounts.
-    if any(
-        re.search(pattern, lower)
-        for pattern in (
-            r"\bcard\b",  # "Credit Card", "Debit Card"
-            r"\bcc\b",  # common abbreviation for credit card
-            r"\bvisa\b",
-            r"\bmastercard\b",
-            r"\bamex\b",
-            r"\bcredit\s+card\b",  # explicit two-word phrase
-        )
-    ):
+    # 2. Credit-card and payment-network markers.
+    if _CREDIT_RE.search(lower):
         return "credit"
 
     # 3. Savings / HSA.
-    if any(re.search(p, lower) for p in (r"\bsavings\b", r"\bsave\b", r"\bhsa\b")):
+    if _SAVINGS_RE.search(lower):
         return "savings"
 
     # 4. Investment / brokerage.
-    if any(
-        re.search(p, lower)
-        for p in (
-            r"\binvest",  # "investment", "investing"
-            r"\bira\b",
-            r"\b401k\b",
-            r"\bbrokerage\b",
-            r"\broth\b",
-            r"\bfidelity\b",
-        )
-    ):
+    if _INVESTMENT_RE.search(lower):
         return "investment"
 
     return default
