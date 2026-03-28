@@ -413,8 +413,9 @@ export function SteamSection() {
       await disconnectMutation.mutateAsync(disconnectTarget.id);
       toast.success("Steam account disconnected");
       setDisconnectTarget(null);
-    } catch {
-      toast.error("Failed to disconnect Steam account");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to disconnect Steam account";
+      toast.error(message);
     }
   }
 
@@ -532,8 +533,9 @@ export function SteamSetupCard() {
       await disconnectMutation.mutateAsync(disconnectTarget.id);
       toast.success("Steam account disconnected");
       setDisconnectTarget(null);
-    } catch {
-      toast.error("Failed to disconnect Steam account");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to disconnect Steam account";
+      toast.error(message);
     }
   }
 
