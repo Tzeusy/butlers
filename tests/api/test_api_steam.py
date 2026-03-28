@@ -489,23 +489,6 @@ class TestDisconnectSteamAccount:
         # Must call disconnect with hard_delete=False by default
         mock_disconnect.assert_called_once_with(pool, _ACCOUNT_ID, hard_delete=False)
 
-    async def test_default_is_soft_delete(self):
-        """DELETE /api/steam/accounts/{id} defaults to hard_delete=False when param omitted."""
-        pool = _make_pool_with_key()
-        app = _build_app(pool)
-
-        with (
-            patch(_GET_SHARED_POOL_PATCH, return_value=pool),
-            patch(_DISCONNECT_ACCOUNT_PATCH) as mock_disconnect,
-        ):
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                resp = await client.delete(f"/api/steam/accounts/{_ACCOUNT_ID}")
-
-        assert resp.status_code == 200
-        mock_disconnect.assert_called_once_with(pool, _ACCOUNT_ID, hard_delete=False)
-
     async def test_hard_delete_true_passes_flag(self):
         """DELETE /api/steam/accounts/{id}?hard_delete=true passes hard_delete=True."""
         pool = _make_pool_with_key()
