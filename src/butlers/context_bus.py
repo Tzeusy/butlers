@@ -281,7 +281,8 @@ async def set_context(
     Raises
     ------
     ValueError
-        If *signal_type* is not a valid ``ContextSignal`` member.
+        If *signal_type* is not a valid ``ContextSignal`` member, or if
+        *confidence* is outside [0.0, 1.0].
     PermissionError
         If *butler_name* is not authorized to write *signal_type*.
     """

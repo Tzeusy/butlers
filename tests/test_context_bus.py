@@ -539,12 +539,14 @@ class TestSetContext:
         pool = AsyncMock()
         with pytest.raises(ValueError, match="confidence must be in"):
             await set_context(pool, "general", "meeting", confidence=-0.1)
+        pool.execute.assert_not_called()
 
     async def test_confidence_above_one_raises_value_error(self):
         """confidence > 1.0 must raise ValueError."""
         pool = AsyncMock()
         with pytest.raises(ValueError, match="confidence must be in"):
             await set_context(pool, "general", "meeting", confidence=1.1)
+        pool.execute.assert_not_called()
 
     async def test_confidence_zero_is_valid(self):
         """confidence = 0.0 is at the boundary and must succeed."""
