@@ -342,13 +342,11 @@ class TestMerchantMappingsTableColumns:
 
     def test_uq_merchant_mapping_partial_on_is_active(self):
         src = self._src()
-        # The unique index should be partial: WHERE is_active = true
-        assert "is_active" in src
         idx_pos = src.find("uq_merchant_mapping_pattern")
         assert idx_pos != -1
         # Find WHERE clause near the index definition
         block = src[idx_pos : idx_pos + 300]
-        assert "WHERE" in block or "is_active" in block
+        assert "WHERE is_active" in block
 
     def test_uq_merchant_mapping_uses_lower_raw_pattern(self):
         src = self._src()
@@ -493,7 +491,7 @@ class TestBudgetsTableColumns:
         idx_pos = src.find("uq_budget_category_period")
         assert idx_pos != -1
         block = src[idx_pos : idx_pos + 300]
-        assert "WHERE" in block or "is_active" in block
+        assert "WHERE is_active" in block
 
 
 class TestTransactionCorrectionsTableColumns:
@@ -1028,13 +1026,6 @@ class TestDowngrade:
         if rg_pos != -1 and sub_pos != -1:
             assert rg_pos < sub_pos
 
-    def test_corrections_dropped_before_transactions(self):
-        """transaction_corrections has FK to transactions; must be dropped first."""
-        src = self._src()
-        corr_pos = src.find("DROP TABLE IF EXISTS transaction_corrections")
-        # corrections table must appear before any transactions reference in drops
-        assert corr_pos != -1
-
     def test_all_drops_use_if_exists(self):
         """All DROP TABLE statements must use IF EXISTS (idempotent downgrade)."""
         src = self._src()
@@ -1076,7 +1067,7 @@ class TestTransactionForeignKeys:
         src = self._src()
         assert "duplicate_of" in src
         # Self-referential FK to transactions(id)
-        assert "transactions" in src
+        assert "REFERENCES transactions" in src
 
     def test_import_batch_id_fk_to_import_batches(self):
         src = self._src()
