@@ -4618,13 +4618,13 @@ class ButlerDaemon:
                     }
 
             # Priority validation
-            _VALID_PRIORITIES = {"high", "medium", "low"}
-            if priority not in _VALID_PRIORITIES:
+            from butlers.core.temporal.delivery_db import _VALID_PRIORITIES as _VP
+            if priority not in _VP:
                 return {
                     "status": "error",
                     "error": (
                         f"Invalid priority {priority!r}. "
-                        f"Allowed values: {', '.join(sorted(_VALID_PRIORITIES))}"
+                        f"Allowed values: {', '.join(sorted(_VP))}"
                     ),
                 }
 
@@ -4645,9 +4645,12 @@ class ButlerDaemon:
                 )
 
                 try:
-                    _prefs = await get_delivery_preferences(_notify_pool)
+                    _prefs = await get_delivery_preferences(_notify_pool, butler_name)
                 except Exception:
                     # Table may not exist yet or pool unavailable; deliver immediately
+                    logger.exception(
+                        "notify() failed to fetch delivery preferences; delivering immediately"
+                    )
                     _prefs = None
                 if _prefs is not None:
                     _tz_name = _prefs.get("timezone", "UTC")
@@ -5090,7 +5093,7 @@ class ButlerDaemon:
             _db_pool = daemon.db.pool if daemon.db is not None else None
             if _db_pool is None:
                 return {"status": "error", "error": "Database not available."}
-            prefs = await get_delivery_preferences(_db_pool)
+            prefs = await get_delivery_preferences(_db_pool, butler_name)
             if prefs is None:
                 return {
                     "status": "ok",

@@ -40,8 +40,13 @@ def validate_timezone(tz_name: str) -> str:
 
 async def get_delivery_preferences(
     pool: asyncpg.Pool,
+    butler_name: str,
 ) -> dict[str, Any] | None:
     """Fetch delivery preferences for the current butler schema.
+
+    Args:
+        pool: asyncpg connection pool.
+        butler_name: The butler's canonical name (used as the lookup key).
 
     Returns a dict of preference fields, or None if no row exists.
     """
@@ -51,8 +56,9 @@ async def get_delivery_preferences(
                batch_low_priority, batch_delivery_time, override_channels,
                created_at, updated_at
         FROM delivery_preferences
-        LIMIT 1
-        """
+        WHERE butler_name = $1
+        """,
+        butler_name,
     )
     if row is None:
         return None

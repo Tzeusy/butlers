@@ -1,7 +1,7 @@
 """temporal_intelligence: delivery_preferences and deferred_notifications tables
 
-Revision ID: core_011
-Revises: core_010
+Revision ID: core_012
+Revises: core_011
 Create Date: 2026-03-27 00:00:00.000000
 
 Creates per-butler tables for the temporal intelligence feature
@@ -23,8 +23,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "core_011"
-down_revision = "core_010"
+revision = "core_012"
+down_revision = "core_011"
 branch_labels = None
 depends_on = None
 

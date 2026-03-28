@@ -130,6 +130,32 @@ class TestNotifyPriorityDefaultsMedium:
             prefs=prefs,
         )
 
+    def test_batch_low_priority_false_delivers_immediately(self):
+        """When batch_low_priority=False, medium/low notifications deliver immediately."""
+        from datetime import time
+
+        from butlers.core.temporal.delivery import should_defer_notification
+
+        prefs = {
+            "quiet_hours_start": "22:00",
+            "quiet_hours_end": "07:00",
+            "timezone": "UTC",
+            "batch_low_priority": False,
+            "batch_delivery_time": "07:00",
+            "override_channels": None,
+        }
+        # Inside quiet hours but batch_low_priority=False → no deferral
+        assert not should_defer_notification(
+            priority="medium",
+            current_time=time(23, 30),
+            prefs=prefs,
+        )
+        assert not should_defer_notification(
+            priority="low",
+            current_time=time(2, 0),
+            prefs=prefs,
+        )
+
 
 # ---------------------------------------------------------------------------
 # §10 — DB-backed tests (require Docker/asyncpg)
@@ -214,7 +240,7 @@ class TestDeliveryPreferencesDB:
         """get_delivery_preferences returns None when no row exists."""
         from butlers.core.temporal.delivery_db import get_delivery_preferences
 
-        result = await get_delivery_preferences(pool)
+        result = await get_delivery_preferences(pool, "nonexistent-butler")
         assert result is None
 
     # §10.1 — upsert_delivery_preferences creates row on first call
@@ -261,7 +287,7 @@ class TestDeliveryPreferencesDB:
         assert row_count == 1
 
         # Timezone should be updated
-        prefs = await get_delivery_preferences(pool)
+        prefs = await get_delivery_preferences(pool, "test-butler-update")
         assert prefs is not None
         assert prefs["timezone"] == "Europe/London"
 
@@ -292,7 +318,7 @@ class TestDeliveryPreferencesDB:
             quiet_hours_start="23:00",
             quiet_hours_end="06:00",
         )
-        prefs = await get_delivery_preferences(pool)
+        prefs = await get_delivery_preferences(pool, "test-butler-get")
         assert prefs is not None
         assert prefs["timezone"] == "Asia/Tokyo"
         assert prefs["quiet_hours_start"] == "23:00"
@@ -555,7 +581,7 @@ class TestDeliveryPreferencesDB:
             override_channels=overrides,
         )
 
-        prefs = await get_delivery_preferences(pool)
+        prefs = await get_delivery_preferences(pool, "butler-overrides")
         assert prefs is not None
         assert prefs["override_channels"] is not None
         assert "email" in prefs["override_channels"]
