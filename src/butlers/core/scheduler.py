@@ -1089,6 +1089,7 @@ async def tick(
     stagger_key: str | None = None,
     max_stagger_seconds: int = _DEFAULT_MAX_STAGGER_SECONDS,
     metrics: ButlerMetrics | None = None,
+    butler_name: str | None = None,
 ) -> int:
     """Evaluate due tasks and dispatch them.
 
@@ -1113,13 +1114,23 @@ async def tick(
       - ``chains_fired`` — count of event chains fired
       - ``deferred_flushed`` — count of deferred notifications delivered/expired
 
+    When *butler_name* is provided, ``get_active_seasons()`` is queried once
+    per tick and the result is injected into every prompt-mode dispatch as
+    ``active_seasons`` context.  This allows butlers to adjust behaviour based
+    on which seasonal periods are currently active.  Job-mode dispatches are
+    unaffected (job_args are not modified).
+
     Args:
         pool: asyncpg connection pool.
         dispatch_fn: Async callable matching ``Spawner.trigger`` signature.
+        butler_name: Butler instance name used to query ``seasonal_periods``.
+            When ``None`` (default), seasonal context injection is skipped.
 
     Returns:
         The number of tasks successfully dispatched (cron + deadline).
     """
+    from butlers.core.seasonal import get_active_seasons as _get_active_seasons
+
     tracer = trace.get_tracer("butlers")
     with tracer.start_as_current_span("butler.tick") as span:
         now = datetime.now(UTC)
@@ -1163,6 +1174,20 @@ async def tick(
         tasks_due = len(rows)
         span.set_attribute("tasks_due", tasks_due)
 
+        # ------------------------------------------------------------------
+        # Seasonal context — queried once per tick, injected into dispatches.
+        # ------------------------------------------------------------------
+        active_seasons: list[dict[str, Any]] = []
+        if butler_name:
+            try:
+                active_seasons = await _get_active_seasons(pool, butler_name)
+            except Exception:
+                logger.warning(
+                    "Failed to query active seasons for butler %r; skipping seasonal context",
+                    butler_name,
+                    exc_info=True,
+                )
+
         dispatched = 0
         for row in rows:
             task_id = row["id"]
@@ -1179,10 +1204,15 @@ async def tick(
             result_json: str | None = None
             try:
                 if dispatch_mode == _DISPATCH_MODE_PROMPT:
+                    # Build extra context kwargs when active seasons exist.
+                    extra_kwargs: dict[str, Any] = {}
+                    if active_seasons:
+                        extra_kwargs["active_seasons"] = active_seasons
                     result = await dispatch_fn(
                         prompt=prompt,
                         trigger_source=f"schedule:{name}",
                         complexity=task_complexity,
+                        **extra_kwargs,
                     )
                 elif dispatch_mode == _DISPATCH_MODE_JOB:
                     result = await dispatch_fn(
