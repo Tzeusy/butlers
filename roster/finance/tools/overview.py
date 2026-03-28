@@ -592,7 +592,7 @@ async def subscription_audit(
             LEFT JOIN transactions t
                 ON lower(t.merchant) LIKE lower('%' || s.service || '%')
             WHERE s.status IN ('active', 'paused')
-            GROUP BY s.id, s.service, s.amount, s.currency, s.frequency, s.status, s.next_renewal, s.updated_at
+            GROUP BY s.id
             ORDER BY s.service ASC
             """
         )
