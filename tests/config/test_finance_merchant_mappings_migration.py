@@ -134,14 +134,14 @@ class TestMerchantMappingsTable:
         assert "category" in src
 
     def test_merchant_mappings_has_confidence_numeric(self):
-        """merchant_mappings table must have confidence NUMERIC column."""
+        """merchant_mappings table must have confidence NUMERIC(5, 4) column."""
         src = self._source()
         assert "confidence" in src
-        assert "NUMERIC(4, 3)" in src
+        assert "NUMERIC(5, 4)" in src
 
-    def test_merchant_mappings_confidence_default_1_0(self):
-        """merchant_mappings confidence must default to 1.0."""
-        assert "DEFAULT 1.0" in self._source()
+    def test_merchant_mappings_confidence_default_0_5(self):
+        """merchant_mappings confidence must default to 0.5, matching application code."""
+        assert "DEFAULT 0.5" in self._source()
 
     def test_merchant_mappings_has_sample_count_integer(self):
         """merchant_mappings table must have sample_count INTEGER column."""
@@ -237,24 +237,19 @@ class TestDowngrade:
         """downgrade() must drop merchant_mappings table."""
         assert "DROP TABLE IF EXISTS merchant_mappings" in self._source()
 
-    def test_downgrade_drops_pg_trgm_extension(self):
-        """downgrade() must drop pg_trgm extension."""
-        assert "DROP EXTENSION IF EXISTS pg_trgm" in self._source()
+    def test_downgrade_does_not_drop_pg_trgm_extension(self):
+        """downgrade() must NOT drop the pg_trgm extension.
+
+        pg_trgm is a shared, system-level extension also used by the memory
+        module (predicate_registry GIN trigram index). Dropping it here would
+        break other features on downgrade.
+        """
+        assert "DROP EXTENSION" not in self._source()
 
     def test_downgrade_uses_if_exists(self):
-        """All DROP statements in downgrade() must use IF EXISTS."""
+        """The DROP TABLE statement in downgrade() must use IF EXISTS."""
         src = self._source()
-        assert "DROP TABLE IF EXISTS" in src
-        assert "DROP EXTENSION IF EXISTS" in src
-
-    def test_downgrade_drops_table_before_extension(self):
-        """downgrade() must drop table before extension."""
-        src = self._source()
-        table_pos = src.find("DROP TABLE IF EXISTS merchant_mappings")
-        extension_pos = src.find("DROP EXTENSION IF EXISTS pg_trgm")
-        assert table_pos != -1, "DROP TABLE not found"
-        assert extension_pos != -1, "DROP EXTENSION not found"
-        assert table_pos < extension_pos, "Table must be dropped before extension"
+        assert "DROP TABLE IF EXISTS merchant_mappings" in src
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +288,11 @@ class TestDataIntegrityRules:
         assert table_creations == if_not_exists_creations
 
     def test_numeric_precision_for_confidence(self):
-        """Confidence column must use NUMERIC(4, 3) for proper precision."""
+        """Confidence column must use NUMERIC(5, 4) for proper precision.
+
+        NUMERIC(5, 4) stores values like 0.0000–9.9999 with 4 decimal places,
+        matching the application code in pattern_recognition.py which uses
+        NUMERIC(5, 4) and inserts values in [0.5, 0.99].
+        """
         src = self._source()
-        # Should be NUMERIC(4, 3) which allows values like 0.123 to 9.999
-        assert "NUMERIC(4, 3)" in src
+        assert "NUMERIC(5, 4)" in src

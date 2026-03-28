@@ -27,7 +27,7 @@ def upgrade() -> None:
             id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             merchant             TEXT NOT NULL,
             category             TEXT NOT NULL,
-            confidence           NUMERIC(4, 3) NOT NULL DEFAULT 1.0,
+            confidence           NUMERIC(5, 4) NOT NULL DEFAULT 0.5,
             sample_count         INTEGER NOT NULL DEFAULT 1,
             is_active            BOOLEAN NOT NULL DEFAULT true,
             created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -65,4 +65,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS merchant_mappings")
-    op.execute("DROP EXTENSION IF EXISTS pg_trgm")
+    # NOTE: pg_trgm extension is intentionally NOT dropped here.
+    # It is a shared, system-level extension also used by the memory module
+    # (predicate_registry GIN trigram index). Dropping it here would break
+    # other features. Extensions created with IF NOT EXISTS are shared resources;
+    # only the objects that specifically depend on this migration are removed.
