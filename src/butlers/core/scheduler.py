@@ -1115,10 +1115,12 @@ async def tick(
       - ``deferred_flushed`` — count of deferred notifications delivered/expired
 
     When *butler_name* is provided, ``get_active_seasons()`` is queried once
-    per tick and the result is injected into every prompt-mode dispatch as
-    ``active_seasons`` context.  This allows butlers to adjust behaviour based
-    on which seasonal periods are currently active.  Job-mode dispatches are
-    unaffected (job_args are not modified).
+    per tick.  If active seasonal periods exist, their names are prepended to
+    the prompt text as a ``[Seasonal context: ...]`` prefix for every
+    prompt-mode dispatch.  This allows butlers to adjust behaviour based on
+    which seasonal periods are currently active without requiring any change to
+    the ``dispatch_fn`` signature.  Job-mode dispatches are unaffected (prompt
+    is not used for job dispatch).
 
     Args:
         pool: asyncpg connection pool.
@@ -1204,15 +1206,21 @@ async def tick(
             result_json: str | None = None
             try:
                 if dispatch_mode == _DISPATCH_MODE_PROMPT:
-                    # Build extra context kwargs when active seasons exist.
-                    extra_kwargs: dict[str, Any] = {}
+                    # Prepend seasonal context to the prompt when active seasons exist.
+                    # We prepend as a prompt prefix rather than passing a separate kwarg
+                    # so that dispatch_fn (Spawner.trigger / _dispatch_scheduled_task)
+                    # does not need to be aware of seasonal periods.
+                    dispatched_prompt = prompt
                     if active_seasons:
-                        extra_kwargs["active_seasons"] = active_seasons
+                        season_names = ", ".join(s["name"] for s in active_seasons)
+                        seasonal_prefix = (
+                            f"[Seasonal context: active periods: {season_names}]"
+                        )
+                        dispatched_prompt = f"{seasonal_prefix}\n\n{prompt}"
                     result = await dispatch_fn(
-                        prompt=prompt,
+                        prompt=dispatched_prompt,
                         trigger_source=f"schedule:{name}",
                         complexity=task_complexity,
-                        **extra_kwargs,
                     )
                 elif dispatch_mode == _DISPATCH_MODE_JOB:
                     result = await dispatch_fn(

@@ -474,10 +474,14 @@ async def seasonal_period_update(
         _add("name", name)
     if period_type is not None:
         _add("period_type", period_type)
-    _add("start_month", final_start_month)
-    _add("start_day", final_start_day)
-    _add("end_month", final_end_month)
-    _add("end_day", final_end_day)
+    if start_month is not None:
+        _add("start_month", final_start_month)
+    if start_day is not None:
+        _add("start_day", final_start_day)
+    if end_month is not None:
+        _add("end_month", final_end_month)
+    if end_day is not None:
+        _add("end_day", final_end_day)
     if timezone is not None:
         _add("timezone", timezone)
     if metadata is not None:

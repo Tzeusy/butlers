@@ -7,7 +7,7 @@ Tests:
 - seasonal_period_list: is_active field, disabled periods
 - seasonal_period_delete: removal, not-found, butler scoping
 - seasonal_period_create_preset: all presets, unknown preset, duplicate
-- tick() seasonal context injection: active seasons injected / not injected
+- tick() seasonal context injection: seasonal prefix prepended to prompt / not injected
 """
 
 from __future__ import annotations
@@ -479,6 +479,37 @@ async def test_update_scoped_to_butler(pool):
     assert found is False
 
 
+async def test_update_unspecified_date_fields_preserved(pool):
+    """Partial update preserves date fields that are not explicitly provided.
+
+    Regression guard for the bug where the SET clause unconditionally included
+    all four date fields even when the caller did not supply them.
+    """
+    from butlers.core.seasonal import (
+        seasonal_period_create,
+        seasonal_period_list,
+        seasonal_period_update,
+    )
+
+    butler = "butler-partial-upd"
+    period_id = await seasonal_period_create(
+        pool, butler, "my-period", "annual",
+        start_month=3, start_day=5, end_month=6, end_day=20,
+    )
+
+    # Only update `enabled` — all date fields must remain unchanged.
+    await seasonal_period_update(pool, butler, period_id=period_id, enabled=False)
+
+    periods = await seasonal_period_list(pool, butler)
+    assert len(periods) == 1
+    p = periods[0]
+    assert p["start_month"] == 3
+    assert p["start_day"] == 5
+    assert p["end_month"] == 6
+    assert p["end_day"] == 20
+    assert p["enabled"] is False
+
+
 # ---------------------------------------------------------------------------
 # seasonal_period_list
 # ---------------------------------------------------------------------------
@@ -681,7 +712,12 @@ class _Dispatch:
 
 
 async def test_tick_injects_active_seasons(scheduler_pool):
-    """tick() injects active_seasons into prompt-mode dispatch when seasons are active."""
+    """tick() prepends seasonal context to the prompt when seasons are active.
+
+    The seasonal prefix is added directly to the prompt string rather than
+    passed as a separate kwarg, keeping dispatch_fn (Spawner.trigger) signature
+    unchanged.
+    """
     from butlers.core.scheduler import tick
     from butlers.core.seasonal import seasonal_period_create
 
@@ -703,14 +739,15 @@ async def test_tick_injects_active_seasons(scheduler_pool):
 
     assert len(dispatch.calls) == 1
     call = dispatch.calls[0]
-    assert "active_seasons" in call
-    seasons = call["active_seasons"]
-    assert len(seasons) == 1
-    assert seasons[0]["name"] == "year-round"
+    # Seasonal context is prepended to the prompt, not passed as a separate kwarg
+    assert "active_seasons" not in call
+    assert "year-round" in call["prompt"]
+    assert "Seasonal context" in call["prompt"]
+    assert "Do something" in call["prompt"]
 
 
-async def test_tick_no_active_seasons_no_injection(scheduler_pool):
-    """tick() does not inject active_seasons when no seasons are active."""
+async def test_tick_no_active_seasons_prompt_unchanged(scheduler_pool):
+    """tick() does not modify the prompt when no seasons are active."""
     from butlers.core.scheduler import tick
 
     butler = "tick-butler2"
@@ -726,11 +763,11 @@ async def test_tick_no_active_seasons_no_injection(scheduler_pool):
 
     assert len(dispatch.calls) == 1
     call = dispatch.calls[0]
-    assert "active_seasons" not in call
+    assert call["prompt"] == "Do something"
 
 
 async def test_tick_no_butler_name_no_injection(scheduler_pool):
-    """tick() without butler_name does not inject seasonal context."""
+    """tick() without butler_name does not modify the prompt."""
     from butlers.core.scheduler import tick
     from butlers.core.seasonal import seasonal_period_create
 
@@ -752,11 +789,12 @@ async def test_tick_no_butler_name_no_injection(scheduler_pool):
 
     assert len(dispatch.calls) == 1
     call = dispatch.calls[0]
-    assert "active_seasons" not in call
+    # No seasonal prefix when butler_name is not provided
+    assert call["prompt"] == "Do something"
 
 
 async def test_tick_job_mode_no_seasonal_injection(scheduler_pool):
-    """tick() does not inject active_seasons into job-mode dispatches."""
+    """tick() does not modify job-mode dispatches (prompt is not involved)."""
     from butlers.core.scheduler import tick
     from butlers.core.seasonal import seasonal_period_create
 
@@ -777,4 +815,5 @@ async def test_tick_job_mode_no_seasonal_injection(scheduler_pool):
 
     assert len(dispatch.calls) == 1
     call = dispatch.calls[0]
-    assert "active_seasons" not in call
+    # Job-mode dispatch does not include a prompt field
+    assert "prompt" not in call
