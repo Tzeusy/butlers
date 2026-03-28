@@ -1215,8 +1215,10 @@ class GDriveAccountLoop:
                 pass
         try:
             await self._mcp_client.aclose()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Drive: error closing MCP client for email=%s: %s", self.email, exc, exc_info=True
+            )
         logger.info("Drive account loop stopped: email=%s", self.email)
 
     @property
