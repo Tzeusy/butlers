@@ -341,6 +341,20 @@ def _dict_to_jsonb(value: dict[str, Any] | None) -> str | None:
     return json.dumps(value, default=str)
 
 
+def _prepend_seasonal_context(prompt: str, active_seasons: list[dict[str, Any]] | None) -> str:
+    """Prepend a seasonal context prefix to *prompt* when active seasons exist.
+
+    Returns the original prompt unchanged when *active_seasons* is empty/None.
+    Used by both the deadline dispatch pass and the cron dispatch pass so that
+    the prefix format stays consistent across all prompt-mode dispatches.
+    """
+    if not active_seasons:
+        return prompt
+    season_names = ", ".join(s["name"] for s in active_seasons)
+    seasonal_prefix = f"[Seasonal context: active periods: {season_names}]"
+    return f"{seasonal_prefix}\n\n{prompt}"
+
+
 def _jsonb_to_dict(value: Any, *, context: str) -> dict[str, Any] | None:
     """Normalize JSONB payloads that may come back as dicts or JSON strings."""
     if value is None:
@@ -854,10 +868,7 @@ async def _tick_deadline_pass(
             f"all_thresholds={alert_thresholds}]"
         )
         # Prepend seasonal context when active seasons exist (mirrors cron pass behaviour).
-        if active_seasons:
-            season_names = ", ".join(s["name"] for s in active_seasons)
-            seasonal_prefix = f"[Seasonal context: active periods: {season_names}]"
-            augmented_prompt = f"{seasonal_prefix}\n\n{augmented_prompt}"
+        augmented_prompt = _prepend_seasonal_context(augmented_prompt, active_seasons)
         try:
             await dispatch_fn(
                 prompt=augmented_prompt,
@@ -1395,11 +1406,7 @@ async def tick(
                     # We prepend as a prompt prefix rather than passing a separate kwarg
                     # so that dispatch_fn (Spawner.trigger / _dispatch_scheduled_task)
                     # does not need to be aware of seasonal periods.
-                    dispatched_prompt = prompt
-                    if active_seasons:
-                        season_names = ", ".join(s["name"] for s in active_seasons)
-                        seasonal_prefix = f"[Seasonal context: active periods: {season_names}]"
-                        dispatched_prompt = f"{seasonal_prefix}\n\n{prompt}"
+                    dispatched_prompt = _prepend_seasonal_context(prompt, active_seasons)
                     result = await dispatch_fn(
                         prompt=dispatched_prompt,
                         trigger_source=f"schedule:{name}",
