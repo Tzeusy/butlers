@@ -1329,6 +1329,7 @@ async def _main() -> None:
                 min_size=1,
                 max_size=2,
                 command_timeout=5,
+                server_settings={"search_path": "shared,public"},
             )
             try:
                 cred_store = CredentialStore(pool)
@@ -1338,8 +1339,10 @@ async def _main() -> None:
                     ha_access_token = await cred_store.load("home_assistant:access_token") or ""
             finally:
                 await pool.close()
-        except Exception as exc:
-            logger.error("HAConnector: failed to load credentials from CredentialStore: %s", exc)
+        except Exception:
+            logger.error(
+                "HAConnector: failed to load credentials from CredentialStore", exc_info=True
+            )
 
     if not ha_base_url:
         logger.error(
