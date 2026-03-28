@@ -148,8 +148,20 @@ function TierNode({ entry, x, y, tier, showName, radius, onNavigate }: TierNodeP
               strokeWidth={entry.dunbar_tier_override ? 2 : 1}
               strokeDasharray={entry.dunbar_tier_override ? "3,2" : undefined}
             />
-            {showAvatar ? (
-              /* Avatar image — clipped to circle, initials shown if image fails */
+            {/* Initials text — always rendered; avatar overlays it when loaded */}
+            <text
+              x={x}
+              y={y}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={radius * 0.85}
+              fontWeight="600"
+              fill={color}
+            >
+              {initials}
+            </text>
+            {/* Avatar image — overlaid on top of initials so initials show on load failure */}
+            {showAvatar && (
               <image
                 href={entry.avatar_url!}
                 x={x - radius}
@@ -159,19 +171,6 @@ function TierNode({ entry, x, y, tier, showName, radius, onNavigate }: TierNodeP
                 clipPath={`url(#${clipId})`}
                 preserveAspectRatio="xMidYMid slice"
               />
-            ) : (
-              /* Initials fallback */
-              <text
-                x={x}
-                y={y}
-                textAnchor="middle"
-                dominantBaseline="central"
-                fontSize={radius * 0.85}
-                fontWeight="600"
-                fill={color}
-              >
-                {initials}
-              </text>
             )}
             {/* Pin icon indicator for overrides */}
             {entry.dunbar_tier_override && (
