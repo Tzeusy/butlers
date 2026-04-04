@@ -37,60 +37,39 @@ docker_available = shutil.which("docker") is not None
 
 
 @pytest.mark.unit
-def test_quota_status_dataclass_fields() -> None:
-    """QuotaStatus dataclass exposes the required fields with correct values."""
-    # allowed=True variant
+async def test_quota_unit_behaviors() -> None:
+    """QuotaStatus fields; fail-open on DB error; record_token_usage best-effort."""
+    # QuotaStatus fields
     qs = QuotaStatus(allowed=True, usage_24h=100, limit_24h=500, usage_30d=200, limit_30d=None)
-    assert qs.allowed is True
-    assert qs.usage_24h == 100
-    assert qs.limit_24h == 500
-    assert qs.usage_30d == 200
-    assert qs.limit_30d is None
-
-    # allowed=False variant
+    assert qs.allowed is True and qs.usage_24h == 100 and qs.limit_24h == 500
+    assert qs.usage_30d == 200 and qs.limit_30d is None
     qs2 = QuotaStatus(allowed=False, usage_24h=1000, limit_24h=500, usage_30d=0, limit_30d=None)
-    assert qs2.allowed is False
-    assert qs2.usage_24h == 1000
-    assert qs2.limit_24h == 500
+    assert qs2.allowed is False and qs2.usage_24h == 1000
 
-
-@pytest.mark.unit
-async def test_check_token_quota_fail_open_on_db_error() -> None:
-    """check_token_quota returns allowed=True and logs a warning on DB error."""
+    # check_token_quota: fail-open on DB error
     pool = MagicMock()
     pool.fetchrow = AsyncMock(side_effect=RuntimeError("connection refused"))
     entry_id = uuid.uuid4()
-
     with patch("butlers.core.model_routing.logger") as mock_logger:
         result = await check_token_quota(pool, entry_id)
-
     assert result.allowed is True
-    assert result.usage_24h == 0
-    assert result.limit_24h is None
-    assert result.usage_30d == 0
-    assert result.limit_30d is None
+    assert result.usage_24h == 0 and result.limit_24h is None
+    assert result.usage_30d == 0 and result.limit_30d is None
     mock_logger.warning.assert_called_once()
 
-
-@pytest.mark.unit
-async def test_record_token_usage_best_effort_on_error() -> None:
-    """record_token_usage does not raise when the INSERT fails."""
-    pool = MagicMock()
-    pool.execute = AsyncMock(side_effect=RuntimeError("missing partition"))
-    entry_id = uuid.uuid4()
-
-    with patch("butlers.core.model_routing.logger") as mock_logger:
-        # Must not raise
+    # record_token_usage: best-effort (does not raise on INSERT error)
+    pool2 = MagicMock()
+    pool2.execute = AsyncMock(side_effect=RuntimeError("missing partition"))
+    with patch("butlers.core.model_routing.logger") as mock_logger2:
         await record_token_usage(
-            pool,
-            catalog_entry_id=entry_id,
+            pool2,
+            catalog_entry_id=uuid.uuid4(),
             butler_name="test-butler",
             session_id=None,
             input_tokens=100,
             output_tokens=50,
         )
-
-    mock_logger.warning.assert_called_once()
+    mock_logger2.warning.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
