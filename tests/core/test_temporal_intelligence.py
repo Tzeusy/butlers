@@ -264,8 +264,8 @@ def test_event_chain_depth_exceeded_logs_warning(caplog):
     from butlers.core.temporal.event_chains import should_fire_chain
 
     with caplog.at_level(logging.WARNING, logger="butlers.core.temporal.event_chains"):
-        should_fire_chain(chain_depth=3, chain_name="cascade-chain")
-
+        result = should_fire_chain(chain_depth=3, chain_name="cascade-chain")
+    assert result is False
     assert "cascade-chain" in caplog.text or "depth" in caplog.text.lower()
 
 
