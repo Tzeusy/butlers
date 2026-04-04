@@ -30,20 +30,14 @@ from butlers.core.qa.sources.session_records import SessionRecordsSource
 # ---------------------------------------------------------------------------
 
 
-def test_session_records_implements_protocol():
-    """SessionRecordsSource implements the DiscoverySource protocol."""
-    mock_pool = MagicMock()
-    source = SessionRecordsSource(pool=mock_pool)
-    assert isinstance(source, DiscoverySource)
-    assert source.name == "session_records"
-
-
-def test_session_records_discover_is_async():
-    """discover() is an async method."""
+def test_session_records_protocol_and_discover_is_async():
+    """SessionRecordsSource implements DiscoverySource; discover() is async."""
     import inspect
 
     mock_pool = MagicMock()
     source = SessionRecordsSource(pool=mock_pool)
+    assert isinstance(source, DiscoverySource)
+    assert source.name == "session_records"
     assert inspect.iscoroutinefunction(source.discover)
 
 
@@ -204,39 +198,28 @@ async def test_finding_uses_existing_healing_fingerprint():
 
 
 @pytest.mark.asyncio
-async def test_finding_computes_fingerprint_when_healing_fingerprint_absent():
-    """When healing_fingerprint is None, a fresh fingerprint is computed."""
+async def test_finding_computes_fingerprint_when_healing_fingerprint_absent_or_invalid():
+    """When healing_fingerprint is None or wrong length, a fresh 64-char fingerprint is computed."""
     pool = AsyncMock(spec=asyncpg.Pool)
     pool.execute = AsyncMock(return_value=None)
 
+    # None case
     row = _make_asyncpg_record(healing_fingerprint=None, error="ValueError: test")
     pool.fetch = AsyncMock(return_value=[row])
-
-    source = SessionRecordsSource(pool=pool)
-    findings = await source.discover(lookback_minutes=15)
-
-    assert len(findings) == 1
-    fp = findings[0].fingerprint
-    assert len(fp) == 64
-    # Should be deterministic for same input
-    findings2 = await source.discover(lookback_minutes=15)
-    assert findings2[0].fingerprint == fp
-
-
-@pytest.mark.asyncio
-async def test_finding_computes_fingerprint_when_healing_fingerprint_invalid():
-    """When healing_fingerprint is wrong length, a fresh fingerprint is computed."""
-    pool = AsyncMock(spec=asyncpg.Pool)
-    pool.execute = AsyncMock(return_value=None)
-
-    row = _make_asyncpg_record(healing_fingerprint="short", error="test error")
-    pool.fetch = AsyncMock(return_value=[row])
-
     source = SessionRecordsSource(pool=pool)
     findings = await source.discover(lookback_minutes=15)
     assert len(findings) == 1
-    # Should be 64 chars (not "short")
     assert len(findings[0].fingerprint) == 64
+
+    # Invalid (too short) case
+    pool2 = AsyncMock(spec=asyncpg.Pool)
+    pool2.execute = AsyncMock(return_value=None)
+    row2 = _make_asyncpg_record(healing_fingerprint="short", error="test error")
+    pool2.fetch = AsyncMock(return_value=[row2])
+    source2 = SessionRecordsSource(pool=pool2)
+    findings2 = await source2.discover(lookback_minutes=15)
+    assert len(findings2) == 1
+    assert len(findings2[0].fingerprint) == 64
 
 
 # ---------------------------------------------------------------------------
@@ -244,30 +227,24 @@ async def test_finding_computes_fingerprint_when_healing_fingerprint_invalid():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "status,expected_type",
+    [
+        ("timeout", "SessionTimeoutError"),
+        ("crash", "SessionCrashError"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_timeout_status_maps_to_session_timeout_error():
-    """Session with status='timeout' maps to SessionTimeoutError exception_type."""
+async def test_status_maps_to_exception_type(status, expected_type):
+    """Session status is mapped to the correct synthetic exception_type."""
     pool = AsyncMock(spec=asyncpg.Pool)
     pool.execute = AsyncMock(return_value=None)
-    row = _make_asyncpg_record(status="timeout", error=None, healing_fingerprint=None)
+    row = _make_asyncpg_record(status=status, error=None, healing_fingerprint=None)
     pool.fetch = AsyncMock(return_value=[row])
 
     source = SessionRecordsSource(pool=pool)
     findings = await source.discover(lookback_minutes=15)
-    assert findings[0].exception_type == "SessionTimeoutError"
-
-
-@pytest.mark.asyncio
-async def test_crash_status_maps_to_session_crash_error():
-    """Session with status='crash' maps to SessionCrashError exception_type."""
-    pool = AsyncMock(spec=asyncpg.Pool)
-    pool.execute = AsyncMock(return_value=None)
-    row = _make_asyncpg_record(status="crash", error=None, healing_fingerprint=None)
-    pool.fetch = AsyncMock(return_value=[row])
-
-    source = SessionRecordsSource(pool=pool)
-    findings = await source.discover(lookback_minutes=15)
-    assert findings[0].exception_type == "SessionCrashError"
+    assert findings[0].exception_type == expected_type
 
 
 # ---------------------------------------------------------------------------

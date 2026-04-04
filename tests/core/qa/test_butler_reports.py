@@ -13,6 +13,7 @@ Covers:
 
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import UTC, datetime
 
@@ -43,22 +44,15 @@ async def _accept(source: ButlerReportsSource, i: int = 0) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Protocol compliance
+# Protocol compliance and finding fields
 # ---------------------------------------------------------------------------
 
 
-def test_butler_reports_implements_protocol():
-    """ButlerReportsSource implements the DiscoverySource protocol."""
+def test_butler_reports_protocol_and_discover_is_async():
+    """ButlerReportsSource implements DiscoverySource; discover() is async."""
     source = ButlerReportsSource()
     assert isinstance(source, DiscoverySource)
     assert source.name == "butler_reports"
-
-
-def test_butler_reports_discover_is_async():
-    """discover() is an async method."""
-    import inspect
-
-    source = ButlerReportsSource()
     assert inspect.iscoroutinefunction(source.discover)
 
 
@@ -76,11 +70,14 @@ async def test_empty_buffer_returns_empty_list():
 
 
 @pytest.mark.asyncio
-async def test_accept_then_discover():
-    """Finding enqueued via accept() is returned by discover()."""
+async def test_accept_then_discover_finding_fields():
+    """Finding enqueued via accept() has correct fields; buffer drains; timestamps populated."""
     source = ButlerReportsSource()
+    before = datetime.now(UTC)
     await _accept(source, i=0)
+    after = datetime.now(UTC)
 
+    assert source.buffer_size == 1
     findings = await source.discover(lookback_minutes=15)
     assert len(findings) == 1
     f = findings[0]
@@ -89,19 +86,12 @@ async def test_accept_then_discover():
     assert f.exception_type == "Error0"
     assert f.source_butler == "butler0"
     assert f.occurrence_count == 1
+    assert before <= f.first_seen <= after
+    assert before <= f.last_seen <= after
+    assert before <= f.timestamp <= after
 
-
-@pytest.mark.asyncio
-async def test_discover_drains_buffer():
-    """Buffer is empty after discover()."""
-    source = ButlerReportsSource()
-    await _accept(source, i=0)
-    await _accept(source, i=1)
-
-    findings1 = await source.discover(lookback_minutes=15)
-    assert len(findings1) == 2
-
-    # Buffer should now be empty
+    # Buffer is now empty
+    assert source.buffer_size == 0
     findings2 = await source.discover(lookback_minutes=15)
     assert len(findings2) == 0
 
@@ -113,6 +103,7 @@ async def test_multiple_accepts_all_returned():
     for i in range(5):
         await _accept(source, i=i)
 
+    assert source.buffer_size == 5
     findings = await source.discover(lookback_minutes=15)
     assert len(findings) == 5
     fps = {f.fingerprint for f in findings}
@@ -189,9 +180,11 @@ async def test_overflow_successive_drops():
 
 
 @pytest.mark.asyncio
-async def test_context_stored_in_finding():
-    """Context parameter is stored in the QaFinding.context field."""
+async def test_context_field():
+    """Context parameter is stored in finding; None when not provided."""
     source = ButlerReportsSource()
+
+    # With context
     await source.accept(
         fingerprint=_fp(0),
         exception_type="ValueError",
@@ -205,61 +198,7 @@ async def test_context_stored_in_finding():
     assert len(findings) == 1
     assert findings[0].context == "agent reasoning context here"
 
-
-@pytest.mark.asyncio
-async def test_context_none_when_not_provided():
-    """Context is None when not passed."""
-    source = ButlerReportsSource()
-    await _accept(source, i=0)
-    findings = await source.discover(lookback_minutes=15)
-    assert findings[0].context is None
-
-
-# ---------------------------------------------------------------------------
-# buffer_size property
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_buffer_size_property():
-    """buffer_size reflects the current number of buffered findings."""
-    source = ButlerReportsSource()
-    assert source.buffer_size == 0
-
-    await _accept(source, i=0)
-    assert source.buffer_size == 1
-
+    # Without context
     await _accept(source, i=1)
-    assert source.buffer_size == 2
-
-    await source.discover(lookback_minutes=15)
-    assert source.buffer_size == 0
-
-
-# ---------------------------------------------------------------------------
-# Finding fields
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_finding_has_correct_source_type():
-    """Finding source_type is 'butler_reports'."""
-    source = ButlerReportsSource()
-    await _accept(source, i=0)
-    findings = await source.discover(lookback_minutes=15)
-    assert findings[0].source_type == "butler_reports"
-
-
-@pytest.mark.asyncio
-async def test_finding_timestamps_are_populated():
-    """QaFinding first_seen, last_seen, and timestamp are set."""
-    source = ButlerReportsSource()
-    before = datetime.now(UTC)
-    await _accept(source, i=0)
-    after = datetime.now(UTC)
-
-    findings = await source.discover(lookback_minutes=15)
-    f = findings[0]
-    assert before <= f.first_seen <= after
-    assert before <= f.last_seen <= after
-    assert before <= f.timestamp <= after
+    findings2 = await source.discover(lookback_minutes=15)
+    assert findings2[0].context is None

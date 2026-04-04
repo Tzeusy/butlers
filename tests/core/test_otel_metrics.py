@@ -135,16 +135,13 @@ def _make_message_ref(request_id: str = "r1") -> _MessageRef:
 class TestInitMetrics:
     """init_metrics behavior with and without OTEL endpoint."""
 
-    def test_returns_meter_when_endpoint_not_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """init_metrics returns a Meter even without OTEL_EXPORTER_OTLP_ENDPOINT."""
+    def test_meter_returned_and_usable_without_endpoint(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """init_metrics returns a usable no-op meter even without OTEL_EXPORTER_OTLP_ENDPOINT."""
         monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
         meter = init_metrics("butler-test")
         assert meter is not None
-
-    def test_meter_is_usable_for_no_op_recording(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Meters returned without an endpoint are no-op and don't raise."""
-        monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
-        meter = init_metrics("butler-test")
         counter = meter.create_counter("test.counter")
         counter.add(1, {"key": "val"})  # must not raise
 
@@ -169,8 +166,6 @@ class TestButlerMetrics:
     def _metrics_map(self) -> dict[str, Any]:
         return _collect_metrics(self._reader)
 
-    # --- ensure_registered ---
-
     def test_ensure_registered_creates_zero_series(self) -> None:
         m = ButlerMetrics("idle-butler")
         m.ensure_registered()
@@ -185,140 +180,89 @@ class TestButlerMetrics:
         dp2 = data["butlers.spawner.queued_triggers"][0]
         assert dp2.value == 0
 
-    # --- spawner metrics ---
-
-    def test_spawner_active_sessions_inc_dec(self) -> None:
+    def test_spawner_metrics_inc_dec_and_duration(self) -> None:
+        """active_sessions, queued_triggers, session_duration_ms all record correctly."""
         m = ButlerMetrics("spawner-butler")
+
+        # active_sessions: 2 inc - 1 dec = 1
         m.spawner_active_sessions_inc()
         m.spawner_active_sessions_inc()
         m.spawner_active_sessions_dec()
 
-        data = self._metrics_map()
-        assert "butlers.spawner.active_sessions" in data
-        dp = data["butlers.spawner.active_sessions"][0]
-        assert dp.value == 1  # 2 inc - 1 dec
-        assert dp.attributes == {"butler": "spawner-butler"}
-
-    def test_spawner_queued_triggers_inc_dec(self) -> None:
-        m = ButlerMetrics("q-butler")
+        # queued_triggers: 2 inc - 1 dec = 1
         m.spawner_queued_triggers_inc()
         m.spawner_queued_triggers_inc()
         m.spawner_queued_triggers_dec()
 
-        data = self._metrics_map()
-        assert "butlers.spawner.queued_triggers" in data
-        dp = data["butlers.spawner.queued_triggers"][0]
-        assert dp.value == 1
-
-    def test_spawner_session_duration_ms(self) -> None:
-        m = ButlerMetrics("dur-butler")
+        # session_duration histogram
         m.record_session_duration(1234)
 
         data = self._metrics_map()
-        assert "butlers.spawner.session_duration_ms" in data
-        dp = data["butlers.spawner.session_duration_ms"][0]
-        assert dp.count == 1
-        assert dp.sum == 1234
+        assert data["butlers.spawner.active_sessions"][0].value == 1
+        assert data["butlers.spawner.active_sessions"][0].attributes == {"butler": "spawner-butler"}
+        assert data["butlers.spawner.queued_triggers"][0].value == 1
+        assert data["butlers.spawner.session_duration_ms"][0].count == 1
+        assert data["butlers.spawner.session_duration_ms"][0].sum == 1234
 
-    # --- buffer metrics ---
-
-    def test_buffer_queue_depth_inc_dec(self) -> None:
+    def test_buffer_metrics(self) -> None:
+        """queue_depth, enqueue_total (hot/cold), backpressure, scanner_recovered all correct."""
         m = ButlerMetrics("buf-butler")
+
+        # queue_depth: 2 inc - 1 dec = 1
         m.buffer_queue_depth_inc()
         m.buffer_queue_depth_inc()
         m.buffer_queue_depth_dec()
 
-        data = self._metrics_map()
-        assert "butlers.buffer.queue_depth" in data
-        dp = data["butlers.buffer.queue_depth"][0]
-        assert dp.value == 1
-
-    def test_buffer_enqueue_hot_label(self) -> None:
-        m = ButlerMetrics("buf-butler")
+        # enqueue_total: 2 hot + 1 cold
         m.buffer_enqueue_hot()
         m.buffer_enqueue_hot()
-
-        data = self._metrics_map()
-        assert "butlers.buffer.enqueue_total" in data
-        # Find the data point with path=hot
-        hot_dps = [
-            dp for dp in data["butlers.buffer.enqueue_total"] if dp.attributes.get("path") == "hot"
-        ]
-        assert len(hot_dps) == 1
-        assert hot_dps[0].value == 2
-
-    def test_buffer_enqueue_cold_label(self) -> None:
-        m = ButlerMetrics("buf-butler")
         m.buffer_enqueue_cold()
 
-        data = self._metrics_map()
-        assert "butlers.buffer.enqueue_total" in data
-        cold_dps = [
-            dp for dp in data["butlers.buffer.enqueue_total"] if dp.attributes.get("path") == "cold"
-        ]
-        assert len(cold_dps) == 1
-        assert cold_dps[0].value == 1
-
-    def test_buffer_backpressure(self) -> None:
-        m = ButlerMetrics("buf-butler")
+        # counters
         m.buffer_backpressure()
         m.buffer_backpressure()
-
-        data = self._metrics_map()
-        assert "butlers.buffer.backpressure_total" in data
-        dp = data["butlers.buffer.backpressure_total"][0]
-        assert dp.value == 2
-
-    def test_buffer_scanner_recovered(self) -> None:
-        m = ButlerMetrics("buf-butler")
         m.buffer_scanner_recovered()
 
-        data = self._metrics_map()
-        assert "butlers.buffer.scanner_recovered_total" in data
-        dp = data["butlers.buffer.scanner_recovered_total"][0]
-        assert dp.value == 1
-
-    def test_buffer_process_latency_ms(self) -> None:
-        m = ButlerMetrics("buf-butler")
+        # histogram
         m.record_buffer_process_latency(42.5)
 
         data = self._metrics_map()
-        assert "butlers.buffer.process_latency_ms" in data
-        dp = data["butlers.buffer.process_latency_ms"][0]
-        assert dp.count == 1
-        assert dp.sum == pytest.approx(42.5, rel=1e-3)
+        assert data["butlers.buffer.queue_depth"][0].value == 1
 
-    # --- route metrics ---
+        hot_dps = [
+            dp for dp in data["butlers.buffer.enqueue_total"] if dp.attributes.get("path") == "hot"
+        ]
+        cold_dps = [
+            dp for dp in data["butlers.buffer.enqueue_total"] if dp.attributes.get("path") == "cold"
+        ]
+        assert hot_dps[0].value == 2
+        assert cold_dps[0].value == 1
 
-    def test_route_accept_latency_ms(self) -> None:
+        assert data["butlers.buffer.backpressure_total"][0].value == 2
+        assert data["butlers.buffer.scanner_recovered_total"][0].value == 1
+        dp_lat = data["butlers.buffer.process_latency_ms"][0]
+        assert dp_lat.count == 1
+        assert dp_lat.sum == pytest.approx(42.5, rel=1e-3)
+
+    def test_route_metrics(self) -> None:
+        """accept_latency_ms, queue_depth, process_latency_ms record correctly."""
         m = ButlerMetrics("route-butler")
+
         m.record_route_accept_latency(15.0)
-
-        data = self._metrics_map()
-        assert "butlers.route.accept_latency_ms" in data
-        dp = data["butlers.route.accept_latency_ms"][0]
-        assert dp.count == 1
-        assert dp.sum == pytest.approx(15.0, rel=1e-3)
-
-    def test_route_queue_depth_inc_dec(self) -> None:
-        m = ButlerMetrics("route-butler")
         m.route_queue_depth_inc()
         m.route_queue_depth_inc()
         m.route_queue_depth_dec()
-
-        data = self._metrics_map()
-        assert "butlers.route.queue_depth" in data
-        dp = data["butlers.route.queue_depth"][0]
-        assert dp.value == 1
-
-    def test_route_process_latency_ms(self) -> None:
-        m = ButlerMetrics("route-butler")
         m.record_route_process_latency(100.0)
 
         data = self._metrics_map()
-        assert "butlers.route.process_latency_ms" in data
-        dp = data["butlers.route.process_latency_ms"][0]
-        assert dp.count == 1
+        dp_accept = data["butlers.route.accept_latency_ms"][0]
+        assert dp_accept.count == 1
+        assert dp_accept.sum == pytest.approx(15.0, rel=1e-3)
+
+        assert data["butlers.route.queue_depth"][0].value == 1
+
+        dp_proc = data["butlers.route.process_latency_ms"][0]
+        assert dp_proc.count == 1
 
     def test_butler_label_in_attributes(self) -> None:
         """All data points carry the correct butler label."""
@@ -358,8 +302,8 @@ class TestSpawnerMetrics:
     def _metrics_map(self) -> dict[str, Any]:
         return _collect_metrics(self._reader)
 
-    async def test_active_sessions_zero_after_trigger(self, tmp_path: Path) -> None:
-        """After a successful trigger, active_sessions returns to 0."""
+    async def test_spawner_trigger_updates_all_metrics(self, tmp_path: Path) -> None:
+        """After trigger: active_sessions=0, queued_triggers=0, session_duration recorded."""
         config = _make_butler_config(name="metrics-spawner-test")
         (tmp_path / "CLAUDE.md").write_text("# test")
         spawner = Spawner(config=config, config_dir=tmp_path, runtime=MockAdapter())
@@ -367,36 +311,17 @@ class TestSpawnerMetrics:
         await spawner.trigger(prompt="hello", trigger_source="tick")
 
         data = self._metrics_map()
-        active_dps = data.get("butlers.spawner.active_sessions", [])
-        total = sum(dp.value for dp in active_dps)
-        assert total == 0  # incremented then decremented
 
-    async def test_session_duration_recorded(self, tmp_path: Path) -> None:
-        """session_duration_ms histogram has count=1 after a single trigger."""
-        config = _make_butler_config(name="duration-test-butler")
-        (tmp_path / "CLAUDE.md").write_text("# test")
-        spawner = Spawner(config=config, config_dir=tmp_path, runtime=MockAdapter())
+        active_total = sum(dp.value for dp in data.get("butlers.spawner.active_sessions", []))
+        assert active_total == 0
 
-        await spawner.trigger(prompt="hello", trigger_source="tick")
+        queued_total = sum(dp.value for dp in data.get("butlers.spawner.queued_triggers", []))
+        assert queued_total == 0
 
-        data = self._metrics_map()
         assert "butlers.spawner.session_duration_ms" in data
         dp = data["butlers.spawner.session_duration_ms"][0]
         assert dp.count == 1
         assert dp.sum >= 0
-
-    async def test_queued_triggers_zero_after_completion(self, tmp_path: Path) -> None:
-        """queued_triggers decrements back to 0 after trigger completes."""
-        config = _make_butler_config(name="queue-test-butler")
-        (tmp_path / "CLAUDE.md").write_text("# test")
-        spawner = Spawner(config=config, config_dir=tmp_path, runtime=MockAdapter())
-
-        await spawner.trigger(prompt="hello", trigger_source="tick")
-
-        data = self._metrics_map()
-        queued_dps = data.get("butlers.spawner.queued_triggers", [])
-        total = sum(dp.value for dp in queued_dps)
-        assert total == 0
 
 
 # ---------------------------------------------------------------------------
