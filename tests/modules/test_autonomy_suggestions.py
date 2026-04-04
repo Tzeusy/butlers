@@ -12,6 +12,8 @@ Covers:
 
 from __future__ import annotations
 
+import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -93,9 +95,9 @@ class TestApprovalCount:
         class _FakeAction:
             tool_name = "email_send"
             tool_args = {"to": "alice@example.com"}
-            id = "00000000-0000-0000-0000-000000000001"
-            requested_at = None
-            decided_at = None
+            id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+            requested_at = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+            decided_at = datetime(2026, 1, 1, 12, 0, 30, tzinfo=UTC)
 
         await record_approval(pool, _FakeAction())
         count = await get_approval_count(pool, fp)
