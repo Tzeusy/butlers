@@ -52,33 +52,25 @@ def test_credential_redaction(text, not_in, tag):
     assert tag in result
 
 
-def test_jwt_redacted():
+def test_token_redaction():
+    """JWT, Telegram bot token, Bearer token (case-insensitive) all redacted."""
     jwt = (
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
         ".eyJzdWIiOiIxMjM0NTY3ODkwIn0"
         ".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
     )
-    result = anonymize(f"token: {jwt}", REPO_ROOT)
-    assert jwt not in result
-    assert "[REDACTED-JWT]" in result
+    r = anonymize(f"token: {jwt}", REPO_ROOT)
+    assert jwt not in r and "[REDACTED-JWT]" in r
 
+    tg_url = "url: https://api.telegram.org/bot123456789:AAHabcXYZ-_tokenValue/sendMessage"
+    r2 = anonymize(tg_url, REPO_ROOT)
+    assert "AAHabcXYZ-_tokenValue" not in r2 and "/bot[REDACTED]/" in r2
 
-def test_telegram_bot_token_redacted():
-    text = "url: https://api.telegram.org/bot123456789:AAHabcXYZ-_tokenValue/sendMessage"
-    result = anonymize(text, REPO_ROOT)
-    assert "AAHabcXYZ-_tokenValue" not in result
-    assert "/bot[REDACTED]/" in result
+    r3 = anonymize("Authorization: Bearer eyABCDEF1234567890", REPO_ROOT)
+    assert "eyABCDEF1234567890" not in r3 and "Bearer [REDACTED]" in r3
 
-
-def test_bearer_token_redacted():
-    result = anonymize("Authorization: Bearer eyABCDEF1234567890", REPO_ROOT)
-    assert "eyABCDEF1234567890" not in result
-    assert "Bearer [REDACTED]" in result
-
-
-def test_bearer_token_case_insensitive():
-    result = anonymize("authorization: bearer MySecretToken12345", REPO_ROOT)
-    assert "MySecretToken12345" not in result
+    r4 = anonymize("authorization: bearer MySecretToken12345", REPO_ROOT)
+    assert "MySecretToken12345" not in r4
 
 
 # ---------------------------------------------------------------------------
@@ -129,17 +121,16 @@ def test_multiple_emails_all_scrubbed():
 # ---------------------------------------------------------------------------
 
 
-def test_repo_path_normalized_to_relative():
+def test_path_normalization_and_redaction():
+    """Repo paths normalized to relative; external paths redacted."""
     abs_path = str(REPO_ROOT / "src/butlers/core/spawner.py")
     result = anonymize(f"Error at {abs_path}", REPO_ROOT)
     assert str(REPO_ROOT) not in result
     assert "src/butlers/core/spawner.py" in result
 
-
-def test_non_repo_path_redacted():
-    result = anonymize("Config file: /etc/passwd", REPO_ROOT)
-    assert "/etc/passwd" not in result
-    assert "[REDACTED-PATH]" in result
+    result2 = anonymize("Config file: /etc/passwd", REPO_ROOT)
+    assert "/etc/passwd" not in result2
+    assert "[REDACTED-PATH]" in result2
 
 
 # ---------------------------------------------------------------------------
@@ -147,16 +138,11 @@ def test_non_repo_path_redacted():
 # ---------------------------------------------------------------------------
 
 
-def test_internal_hostname_scrubbed():
-    result = anonymize("Cannot reach db.internal.example.local", REPO_ROOT)
-    assert "db.internal.example.local" not in result
-    assert "[REDACTED-HOST]" in result
-
-
-def test_public_domain_not_scrubbed():
-    result = anonymize("Connecting to github.com", REPO_ROOT)
-    assert "github.com" in result
-    assert "[REDACTED-HOST]" not in result
+def test_hostname_scrubbing():
+    """Internal hostnames redacted; public domains preserved."""
+    assert "[REDACTED-HOST]" in anonymize("Cannot reach db.internal.example.local", REPO_ROOT)
+    r2 = anonymize("Connecting to github.com", REPO_ROOT)
+    assert "github.com" in r2 and "[REDACTED-HOST]" not in r2
 
 
 # ---------------------------------------------------------------------------
