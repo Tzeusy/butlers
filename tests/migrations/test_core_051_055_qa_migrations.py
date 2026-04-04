@@ -432,3 +432,39 @@ class TestCore055VQaRecentFailures:
         # View FQN is in a module-level constant _VIEW_FQN
         src = inspect.getsource(self._mod)
         assert "public.v_qa_recent_failures" in src
+
+    # ---- bu-hcoz3: GRANT USAGE ON SCHEMA public fix ---
+
+    def test_upgrade_grants_usage_on_public_schema_to_qa_role(self) -> None:
+        """butler_qa_rw is not in _ROLE_SCHEMAS and must be explicitly granted
+        GRANT USAGE ON SCHEMA public so it can resolve public.v_qa_recent_failures."""
+        src = inspect.getsource(self._mod.upgrade)
+        assert "GRANT USAGE ON SCHEMA public" in src or (
+            "_grant_schema_usage_best_effort" in src and "public" in src
+        ), (
+            "upgrade() must grant USAGE on the public schema to butler_qa_rw; "
+            "without it the role cannot access public.v_qa_recent_failures"
+        )
+
+    def test_upgrade_schema_usage_helper_targets_qa_role(self) -> None:
+        """The schema-usage grant helper must reference butler_qa_rw."""
+        src = inspect.getsource(self._mod)
+        assert "GRANT USAGE ON SCHEMA" in src
+        assert "butler_qa_rw" in src
+
+    def test_downgrade_revokes_public_schema_usage_from_qa_role(self) -> None:
+        """Downgrade must revoke the public schema USAGE to fully undo upgrade."""
+        src = inspect.getsource(self._mod.downgrade)
+        assert "REVOKE USAGE ON SCHEMA public" in src or (
+            "_revoke_schema_usage_best_effort" in src and "public" in src
+        ), "downgrade() must revoke USAGE on the public schema from butler_qa_rw"
+
+    def test_schema_usage_helpers_tolerate_missing_role(self) -> None:
+        """Schema USAGE grant/revoke helpers must use best-effort DO blocks."""
+        src = inspect.getsource(self._mod._grant_schema_usage_best_effort)
+        assert "DO $$" in src
+        assert "EXCEPTION" in src
+
+    def test_revoke_schema_usage_helper_defined(self) -> None:
+        """_revoke_schema_usage_best_effort must be defined in the migration."""
+        assert callable(self._mod._revoke_schema_usage_best_effort)
