@@ -960,12 +960,12 @@ async def _get_status_fn(butler_dir, patches, *, registry=None):
     return daemon, status_fn
 
 
-async def test_status_tool_fields(butler_dir: Path) -> None:
-    """status() returns correct butler info and module names."""
+async def test_status_tool(butler_dir: Path, butler_dir_with_modules: Path) -> None:
+    """status() returns correct info fields; with modules lists their names and active status."""
+    # No modules
     patches = _patch_infra()
-    daemon, status_fn = await _get_status_fn(butler_dir, patches)
+    _, status_fn = await _get_status_fn(butler_dir, patches)
     assert status_fn is not None
-
     result = await status_fn()
     assert result["name"] == "test-butler"
     assert result["description"] == "A test butler"
@@ -974,17 +974,14 @@ async def test_status_tool_fields(butler_dir: Path) -> None:
     assert result["health"] == "ok"
     assert isinstance(result["uptime_seconds"], float)
 
-
-async def test_status_tool_includes_module_names(butler_dir_with_modules: Path) -> None:
-    """status() lists loaded module names."""
+    # With modules
     registry = _make_registry(StubModuleA, StubModuleB)
-    patches = _patch_infra()
-    daemon, status_fn = await _get_status_fn(butler_dir_with_modules, patches, registry=registry)
-    assert status_fn is not None
-
-    result = await status_fn()
-    assert set(result["modules"].keys()) == {"stub_a", "stub_b"}
-    assert all(v["status"] == "active" for v in result["modules"].values())
+    patches2 = _patch_infra()
+    _, status_fn2 = await _get_status_fn(butler_dir_with_modules, patches2, registry=registry)
+    assert status_fn2 is not None
+    result2 = await status_fn2()
+    assert set(result2["modules"].keys()) == {"stub_a", "stub_b"}
+    assert all(v["status"] == "active" for v in result2["modules"].values())
 
 
 @pytest.mark.parametrize(
@@ -1649,14 +1646,11 @@ async def test_runtime_binary_check(butler_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_switchboard_client_initially_none(butler_dir: Path) -> None:
-    """switchboard_client is None before start() is called."""
-    daemon = ButlerDaemon(butler_dir)
-    assert daemon.switchboard_client is None
-
-
-async def test_connect_switchboard_skips_when_url_is_none(tmp_path: Path) -> None:
-    """_connect_switchboard skips connection when switchboard_url is None."""
+async def test_connect_switchboard_skips_when_url_is_none(
+    butler_dir: Path, tmp_path: Path
+) -> None:
+    """switchboard_client is None before start; connection skipped when switchboard_url is None."""
+    assert ButlerDaemon(butler_dir).switchboard_client is None
     toml = """\
 [butler]
 name = "switchboard"
@@ -1722,8 +1716,9 @@ async def test_connect_switchboard_success_and_disconnect(butler_dir: Path) -> N
     assert daemon.switchboard_client is None
 
 
-async def test_connect_switchboard_failure_non_fatal(butler_dir: Path) -> None:
-    """Connection failure should not prevent butler startup; client stays None."""
+async def test_switchboard_connection_errors_non_fatal(butler_dir: Path) -> None:
+    """Connect failure and disconnect error are both non-fatal; client stays/becomes None."""
+    # Connect failure: startup still succeeds
     patches = _patch_infra()
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(side_effect=RuntimeError("Connection refused"))
@@ -1744,37 +1739,33 @@ async def test_connect_switchboard_failure_non_fatal(butler_dir: Path) -> None:
     ):
         daemon = ButlerDaemon(butler_dir)
         await daemon.start()
-
     assert daemon.switchboard_client is None
     assert daemon._started_at is not None
 
-
-async def test_disconnect_switchboard_error_non_fatal(butler_dir: Path) -> None:
-    """Error closing Switchboard client should not prevent shutdown; client set to None."""
-    patches = _patch_infra()
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(side_effect=OSError("connection reset"))
+    # Disconnect error: shutdown still completes; client set to None
+    patches2 = _patch_infra()
+    mock_client2 = AsyncMock()
+    mock_client2.__aenter__ = AsyncMock(return_value=mock_client2)
+    mock_client2.__aexit__ = AsyncMock(side_effect=OSError("connection reset"))
 
     with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["start_mcp_server"],
-        patch("butlers.daemon.MCPClient", return_value=mock_client),
+        patches2["db_from_env"],
+        patches2["run_migrations"],
+        patches2["validate_credentials"],
+        patches2["validate_module_credentials"],
+        patches2["init_telemetry"],
+        patches2["sync_schedules"],
+        patches2["FastMCP"],
+        patches2["Spawner"],
+        patches2["get_adapter"],
+        patches2["shutil_which"],
+        patches2["start_mcp_server"],
+        patch("butlers.daemon.MCPClient", return_value=mock_client2),
     ):
-        daemon = ButlerDaemon(butler_dir)
-        await daemon.start()
-
-    await daemon.shutdown()
-    assert daemon.switchboard_client is None
+        daemon2 = ButlerDaemon(butler_dir)
+        await daemon2.start()
+    await daemon2.shutdown()
+    assert daemon2.switchboard_client is None
 
 
 async def test_switchboard_url_from_config(tmp_path: Path) -> None:
