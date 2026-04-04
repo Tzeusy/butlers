@@ -144,7 +144,7 @@ async def run_subscription_renewal_alerts(db_pool: asyncpg.Pool) -> dict:
     logger.info("Running subscription renewal alerts job")
 
     async with db_pool.acquire() as conn:
-        today = date.today()
+        today = datetime.now(UTC).date()
         horizon = today + timedelta(days=7)
         rows = await conn.fetch(
             """

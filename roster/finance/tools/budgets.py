@@ -86,7 +86,7 @@ def _budget_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
 
 
 def _today_utc() -> date:
-    return date.today()
+    return datetime.now(UTC).date()
 
 
 def _month_start(d: date) -> date:

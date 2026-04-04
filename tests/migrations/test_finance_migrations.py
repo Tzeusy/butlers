@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 import asyncpg
 import pytest
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
