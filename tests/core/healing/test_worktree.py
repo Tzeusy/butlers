@@ -51,33 +51,24 @@ def _make_fingerprint(prefix: str = "a" * 12) -> str:
 
 
 class TestBranchNameFormat:
-    def test_branch_name_uses_first_12_hex_chars(self) -> None:
+    def test_branch_name_format(self) -> None:
+        """Branch name: self-healing/<butler>/<12hex>-<epoch>; path derived correctly."""
+        before = int(time.time())
         fp = _make_fingerprint("abc123def456")
         name = _branch_name("email", fp)
+        after = int(time.time())
+
         parts = name.split("/")
         assert parts[0] == "self-healing"
         assert parts[1] == "email"
-        epoch_part = parts[2]
-        short, epoch_str = epoch_part.rsplit("-", 1)
+        short, epoch_str = parts[2].rsplit("-", 1)
         assert short == "abc123def456"
         assert epoch_str.isdigit()
+        assert before <= int(epoch_str) <= after + 1
 
-    def test_branch_name_prefix_is_self_healing(self) -> None:
-        fp = _make_fingerprint()
-        name = _branch_name("mybutler", fp)
-        assert name.startswith("self-healing/mybutler/")
-
-    def test_branch_name_epoch_is_recent(self) -> None:
-        before = int(time.time())
-        fp = _make_fingerprint()
-        name = _branch_name("b", fp)
-        after = int(time.time())
-        epoch = int(name.rsplit("-", 1)[1])
-        assert before <= epoch <= after + 1
-
-    def test_worktree_path_derived_from_branch(self, tmp_path: Path) -> None:
+        # Path derived from branch
         branch = "self-healing/email/abc123def456-1710700000"
-        wt = _worktree_path(tmp_path, branch)
+        wt = _worktree_path(tmp_path := Path("/tmp/wt"), branch)
         expected = (
             tmp_path / ".healing-worktrees" / "self-healing" / "email" / "abc123def456-1710700000"
         )
@@ -547,31 +538,22 @@ class TestGitignore:
 
 
 class TestBranchNameFormatWithPrefix:
-    def test_branch_name_default_prefix_is_self_healing(self) -> None:
+    def test_branch_name_prefix_variants(self) -> None:
+        """Default prefix is self-healing; custom prefix replaces it; structure preserved."""
         fp = _make_fingerprint("abc123def456")
-        name = _branch_name("email", fp)
-        assert name.startswith("self-healing/")
+        assert _branch_name("email", fp).startswith("self-healing/")
 
-    def test_branch_name_custom_prefix_qa(self) -> None:
-        fp = _make_fingerprint("abc123def456")
-        name = _branch_name("email", fp, prefix="qa")
-        assert name.startswith("qa/email/abc123def456-")
+        qa_name = _branch_name("email", fp, prefix="qa")
+        assert qa_name.startswith("qa/email/abc123def456-")
 
-    def test_branch_name_qa_prefix_structure(self) -> None:
-        fp = _make_fingerprint("deadbeef0000")
-        name = _branch_name("travel", fp, prefix="qa")
-        parts = name.split("/")
-        assert len(parts) == 3
-        assert parts[0] == "qa"
-        assert parts[1] == "travel"
+        fp2 = _make_fingerprint("deadbeef0000")
+        parts = _branch_name("travel", fp2, prefix="qa").split("/")
+        assert parts[0] == "qa" and parts[1] == "travel"
         short, epoch_str = parts[2].rsplit("-", 1)
-        assert short == "deadbeef0000"
-        assert epoch_str.isdigit()
+        assert short == "deadbeef0000" and epoch_str.isdigit()
 
-    def test_branch_name_arbitrary_prefix(self) -> None:
-        fp = _make_fingerprint("aabbccddeeff")
-        name = _branch_name("general", fp, prefix="custom-prefix")
-        assert name.startswith("custom-prefix/general/")
+        custom = _branch_name("general", fp, prefix="custom-prefix")
+        assert custom.startswith("custom-prefix/general/")
 
 
 # ---------------------------------------------------------------------------
