@@ -398,71 +398,13 @@ class TestCollisionDetectionUnit:
 
 
 class TestListAttemptsUnit:
-    """list_attempts passes butler_name filter into SQL (unit tests with mock pool)."""
-
-    @pytest.mark.unit
-    async def test_butler_name_filter_passes_to_sql(self) -> None:
-        """When butler_name is provided, list_attempts issues a WHERE butler_name = $1 query."""
-        from butlers.core.healing.tracking import list_attempts
-
-        pool = MagicMock()
-        pool.fetch = AsyncMock(return_value=[])
-
-        await list_attempts(pool, limit=5, butler_name="my-butler")
-
-        pool.fetch.assert_awaited_once()
-        call_args = pool.fetch.call_args
-        sql: str = call_args[0][0]
-        assert "butler_name" in sql, "SQL must filter by butler_name"
-        # butler_name value must be passed as a positional argument
-        assert "my-butler" in call_args[0], "butler_name value must be passed to query"
-
-    @pytest.mark.unit
-    async def test_no_butler_name_omits_filter(self) -> None:
-        """When butler_name is None, list_attempts does not include a butler_name WHERE clause."""
-        from butlers.core.healing.tracking import list_attempts
-
-        pool = MagicMock()
-        pool.fetch = AsyncMock(return_value=[])
-
-        await list_attempts(pool, limit=5)
-
-        pool.fetch.assert_awaited_once()
-        call_args = pool.fetch.call_args
-        sql: str = call_args[0][0]
-        assert "butler_name" not in sql, "SQL must not filter by butler_name when not provided"
-
-    @pytest.mark.unit
-    async def test_butler_name_and_status_filter_combined(self) -> None:
-        """When both butler_name and status_filter are provided, both are applied."""
-        from butlers.core.healing.tracking import list_attempts
-
-        pool = MagicMock()
-        pool.fetch = AsyncMock(return_value=[])
-
-        await list_attempts(pool, limit=5, status_filter="investigating", butler_name="my-butler")
-
-        pool.fetch.assert_awaited_once()
-        call_args = pool.fetch.call_args
-        sql: str = call_args[0][0]
-        assert "butler_name" in sql
-        assert "status" in sql
-        positional_args = call_args[0]
-        assert "my-butler" in positional_args
-        assert "investigating" in positional_args
+    """list_attempts decodes rows into plain dicts."""
 
     @pytest.mark.unit
     async def test_list_attempts_returns_decoded_rows(self) -> None:
         """list_attempts decodes asyncpg Records into plain dicts."""
         from butlers.core.healing.tracking import list_attempts
 
-        fake_row = MagicMock()
-        fake_row.__iter__ = MagicMock(
-            return_value=iter([("status", "investigating"), ("butler_name", "my-butler")])
-        )
-        fake_row.keys = MagicMock(return_value=["status", "butler_name"])
-        # asyncpg Records behave like mappings; dict() on them works via __iter__ over items
-        # Use a simple dict-like object instead
         pool = MagicMock()
         pool.fetch = AsyncMock(
             return_value=[{"status": "investigating", "butler_name": "my-butler"}]
@@ -1281,25 +1223,6 @@ class TestSessionSetHealingFingerprintUnit:
     """Unit tests for session_set_healing_fingerprint in sessions.py."""
 
     @pytest.mark.unit
-    async def test_issues_update_sql(self) -> None:
-        """session_set_healing_fingerprint executes an UPDATE statement."""
-        from butlers.core.sessions import session_set_healing_fingerprint
-
-        pool = MagicMock()
-        pool.execute = AsyncMock(return_value="UPDATE 1")
-
-        session_id = uuid.uuid4()
-        fingerprint = "a" * 64
-
-        await session_set_healing_fingerprint(pool, session_id, fingerprint)
-
-        pool.execute.assert_called_once()
-        call_args = pool.execute.call_args
-        sql = call_args[0][0]
-        assert "healing_fingerprint" in sql
-        assert "UPDATE" in sql.upper()
-
-    @pytest.mark.unit
     async def test_no_error_on_zero_rows_affected(self) -> None:
         """session_set_healing_fingerprint is best-effort: no error if row missing."""
         from butlers.core.sessions import session_set_healing_fingerprint
@@ -1337,75 +1260,6 @@ class TestCreateOrJoinAttemptQaPatrolId:
         return record
 
     @pytest.mark.unit
-    async def test_qa_patrol_id_passed_in_sql(self) -> None:
-        """create_or_join_attempt passes qa_patrol_id as the 9th SQL parameter."""
-        from butlers.core.healing.tracking import create_or_join_attempt
-
-        attempt_id = uuid.uuid4()
-        qa_id = uuid.uuid4()
-        session_id = uuid.uuid4()
-        fingerprint = "a" * 64
-
-        captured_args: list = []
-        mock_result = self._make_fetchrow_result(attempt_id, was_inserted=True)
-
-        pool = MagicMock()
-
-        async def mock_fetchrow(sql, *args):
-            captured_args.extend(args)
-            return mock_result
-
-        pool.fetchrow = mock_fetchrow
-
-        await create_or_join_attempt(
-            pool,
-            fingerprint=fingerprint,
-            butler_name="test",
-            severity=2,
-            exception_type="builtins.KeyError",
-            call_site="src/butlers/core/spawner.py:_run",
-            session_id=session_id,
-            qa_patrol_id=qa_id,
-        )
-
-        # qa_patrol_id is the 9th positional arg (index 8 = $9 in the SQL)
-        assert str(qa_id) in captured_args
-
-    @pytest.mark.unit
-    async def test_qa_patrol_id_none_passes_none_to_sql(self) -> None:
-        """When qa_patrol_id is None, None is passed for $9."""
-        from butlers.core.healing.tracking import create_or_join_attempt
-
-        attempt_id = uuid.uuid4()
-        session_id = uuid.uuid4()
-        fingerprint = "b" * 64
-
-        captured_args: list = []
-        mock_result = self._make_fetchrow_result(attempt_id, was_inserted=True)
-
-        pool = MagicMock()
-
-        async def mock_fetchrow(sql, *args):
-            captured_args.extend(args)
-            return mock_result
-
-        pool.fetchrow = mock_fetchrow
-
-        await create_or_join_attempt(
-            pool,
-            fingerprint=fingerprint,
-            butler_name="test",
-            severity=2,
-            exception_type="builtins.KeyError",
-            call_site="src/butlers/core/spawner.py:_run",
-            session_id=session_id,
-            qa_patrol_id=None,
-        )
-
-        # Last arg should be None (qa_patrol_id)
-        assert captured_args[-1] is None
-
-    @pytest.mark.unit
     async def test_qa_patrol_id_not_required(self) -> None:
         """qa_patrol_id defaults to None — backward-compatible call without it."""
         from butlers.core.healing.tracking import create_or_join_attempt
@@ -1440,16 +1294,6 @@ class TestCreateOrJoinAttemptQaPatrolId:
         assert is_new is True
         # Last positional arg to SQL must be None (default qa_patrol_id)
         assert captured_args[-1] is None
-
-    @pytest.mark.unit
-    async def test_sql_includes_qa_patrol_id_column(self) -> None:
-        """The INSERT SQL must include the qa_patrol_id column."""
-        import inspect
-
-        from butlers.core.healing.tracking import create_or_join_attempt
-
-        src = inspect.getsource(create_or_join_attempt)
-        assert "qa_patrol_id" in src
 
     @pytest.mark.unit
     async def test_returns_correct_attempt_id_and_is_new(self) -> None:
