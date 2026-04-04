@@ -277,23 +277,16 @@ def _patch_infra():
 class TestShutdownTimeoutConfig:
     """Verify shutdown_timeout_s is parsed from butler.toml."""
 
-    def test_default_timeout(self, tmp_path: Path) -> None:
-        """Default shutdown_timeout_s should be 30.0 when not specified."""
+    def test_shutdown_timeout_config(self, tmp_path: Path) -> None:
+        """Default 30.0; custom value parsed; zero accepted."""
         _make_butler_toml(tmp_path)
-        config = load_config(tmp_path)
-        assert config.shutdown_timeout_s == 30.0
+        assert load_config(tmp_path).shutdown_timeout_s == 30.0
 
-    def test_custom_timeout(self, tmp_path: Path) -> None:
-        """Custom shutdown_timeout_s should be parsed from [butler.shutdown]."""
         _make_butler_toml(tmp_path, shutdown_timeout_s=10.0)
-        config = load_config(tmp_path)
-        assert config.shutdown_timeout_s == 10.0
+        assert load_config(tmp_path).shutdown_timeout_s == 10.0
 
-    def test_zero_timeout(self, tmp_path: Path) -> None:
-        """Zero timeout should be accepted."""
         _make_butler_toml(tmp_path, shutdown_timeout_s=0)
-        config = load_config(tmp_path)
-        assert config.shutdown_timeout_s == 0.0
+        assert load_config(tmp_path).shutdown_timeout_s == 0.0
 
 
 # ---------------------------------------------------------------------------
