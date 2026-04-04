@@ -29,7 +29,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from butlers.core.healing.anonymizer import anonymize
-from butlers.core.healing.fingerprint import _compute_hash, _sanitize_message, _score_severity
+from butlers.core.healing.fingerprint import (
+    _compute_hash,
+    _extract_call_site_from_str,
+    _sanitize_message,
+    _score_severity,
+)
 from butlers.core.qa.models import QaFinding
 
 logger = logging.getLogger(__name__)
@@ -288,8 +293,6 @@ def _extract_call_site(entry: LogEntry) -> str:
     """
     if entry.traceback:
         # Try to extract from traceback string
-        from butlers.core.healing.fingerprint import _extract_call_site_from_str
-
         cs = _extract_call_site_from_str(entry.traceback)
         if cs != "<unknown>:<unknown>":
             return cs
@@ -409,12 +412,15 @@ class LogScannerSource:
                     exception_type = entry.exception or "unknown"
                     call_site = _extract_call_site(entry)
 
-                    # Sanitize and anonymize event summary (strip PII)
+                    # Fingerprint on the full sanitized event (up to fingerprint.py's 500-char
+                    # internal cap) so this source stays compatible with canonical paths.
+                    # Store a shorter anonymized summary for display/storage only.
+                    sanitized_event_for_fp = _sanitize_message(entry.event)
                     raw_summary = entry.event[:_MAX_SUMMARY_LEN]
                     sanitized_summary = _sanitize_message(raw_summary)
                     anon_summary = anonymize(sanitized_summary, self._repo_root)
 
-                    fingerprint = _compute_hash(exception_type, call_site, sanitized_summary)
+                    fingerprint = _compute_hash(exception_type, call_site, sanitized_event_for_fp)
 
                     if fingerprint not in aggregated:
                         if len(aggregated) >= self._max_findings:
@@ -450,7 +456,7 @@ class LogScannerSource:
         if truncated_entries:
             logger.warning(
                 "LogScannerSource: truncated at %d entries (max_entries_per_scan=%d)",
-                self._max_entries,
+                entries_processed,
                 self._max_entries,
             )
         if truncated_findings:

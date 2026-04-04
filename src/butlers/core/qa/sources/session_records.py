@@ -14,6 +14,7 @@ openspec/changes/qa-staffer/specs/staffer-qa/spec.md (V1 Discovery Sources)
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -185,8 +186,12 @@ class SessionRecordsSource:
         # Extract call site from error traceback (if present in error text)
         call_site = _extract_call_site_from_str(error_text or "")
 
-        # Sanitize event summary (strip PII)
-        raw_summary = (error_text or f"session {status}")[:_MAX_SUMMARY_LEN]
+        # Fingerprint on the full sanitized error text (up to fingerprint.py's 500-char
+        # internal cap) so this source stays compatible with canonical paths.
+        # Store a shorter anonymized summary for display/storage only.
+        full_error_text = error_text or f"session {status}"
+        sanitized_event_for_fp = _sanitize_message(full_error_text)
+        raw_summary = full_error_text[:_MAX_SUMMARY_LEN]
         sanitized_summary = _sanitize_message(raw_summary)
         anon_summary = anonymize(sanitized_summary, self._repo_root)
 
@@ -194,7 +199,7 @@ class SessionRecordsSource:
         if healing_fingerprint and len(healing_fingerprint) == 64:
             fingerprint = healing_fingerprint
         else:
-            fingerprint = _compute_hash(exception_type, call_site, sanitized_summary)
+            fingerprint = _compute_hash(exception_type, call_site, sanitized_event_for_fp)
 
         severity = _score_severity(exception_type, call_site)
 
@@ -227,8 +232,6 @@ def _status_to_exception_type(status: str, error_text: str | None) -> str:
     # status == "error": try to extract exception class from the error text
     if error_text:
         # Look for "ExceptionName: ..." pattern at start of lines
-        import re
-
         match = re.search(
             r"^([A-Za-z][A-Za-z0-9_.]+Error|[A-Za-z][A-Za-z0-9_.]+Exception)",
             error_text,

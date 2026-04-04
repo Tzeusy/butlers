@@ -435,12 +435,20 @@ async def test_different_errors_produce_different_fingerprints(tmp_path):
     assert len(fps) == 2
 
 
-def test_compute_fingerprint_from_log_entry_compatible_with_log_scanner(tmp_path):
-    """compute_fingerprint_from_log_entry produces same fingerprint as log scanner."""
+@pytest.mark.asyncio
+async def test_compute_fingerprint_from_log_entry_compatible_with_log_scanner(tmp_path):
+    """compute_fingerprint_from_log_entry produces same fingerprint as log scanner.
+
+    Verifies that both the public API function and the internal scanner logic
+    produce identical fingerprints for the same log entry — including for events
+    longer than _MAX_SUMMARY_LEN (200 chars) to catch truncation mismatches.
+    """
     now = datetime.now(UTC)
+    # Use a long event that exceeds the 200-char display truncation limit
+    long_event = "DB connection failed: " + "x" * 250  # 272 chars total, > 200
     entry_dict = {
         "level": "error",
-        "event": "DB connection failed",
+        "event": long_event,
         "timestamp": now.isoformat(),
         "butler_name": "finance",
         "logger": "butlers.core.db",
@@ -451,6 +459,16 @@ def test_compute_fingerprint_from_log_entry_compatible_with_log_scanner(tmp_path
     assert len(result.fingerprint) == 64
     assert result.exception_type == "asyncpg.PostgresConnectionError"
     assert result.call_site == "butlers.core.db"
+
+    # Also verify against the scanner's own fingerprint for the same entry
+    butlers_dir = tmp_path / "butlers"
+    import json as _json
+
+    _make_log_file(butlers_dir / "finance.log", [_json.dumps(entry_dict)])
+    source = LogScannerSource(log_root=tmp_path)
+    findings = await source.discover(lookback_minutes=15)
+    assert len(findings) == 1
+    assert findings[0].fingerprint == result.fingerprint
 
 
 def test_compute_fingerprint_from_log_entry_uses_traceback_for_call_site():
