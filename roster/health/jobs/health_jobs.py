@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import statistics
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import asyncpg
@@ -412,7 +412,7 @@ async def run_insight_scan(db_pool: asyncpg.Pool) -> dict[str, Any]:
             continue
 
         # Compute current streak: count consecutive days from today backward
-        today_date = now_utc.date()
+        today_date = date.today()
         logged_days = {row["day"] for row in streak_rows}
 
         streak_count = 0

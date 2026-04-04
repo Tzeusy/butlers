@@ -79,9 +79,9 @@ async def _resolve_account_id(pool: asyncpg.Pool, raw: str | None) -> str | None
     return str(row["id"])
 
 
-# Module-level cache for _has_column results: (table, column) -> bool
-# Avoids repeated information_schema queries within a process lifetime.
-_column_existence_cache: dict[tuple[str, str], bool] = {}
+# Module-level cache for _has_column results: (pool_id, table, column) -> bool
+# Keyed by pool identity so tests using different schemas don't pollute each other.
+_column_existence_cache: dict[tuple[str, str, str], bool] = {}
 
 
 async def _mirror_to_spo(
@@ -284,7 +284,7 @@ async def _has_column(pool: asyncpg.Pool, table: str, column: str) -> bool:
     Results are cached for the lifetime of the process to avoid repeated
     ``information_schema`` queries on every deduplication call.
     """
-    cache_key = (table, column)
+    cache_key = (str(id(pool)), table, column)
     if cache_key in _column_existence_cache:
         return _column_existence_cache[cache_key]
     count = await pool.fetchval(

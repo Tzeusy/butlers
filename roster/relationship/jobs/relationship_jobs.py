@@ -110,7 +110,7 @@ async def run_insight_scan(db_pool: asyncpg.Pool) -> dict[str, Any]:
 
     logger.info("Running relationship insight scan job")
 
-    today = datetime.now(UTC).date()
+    today = date.today()
     now_utc = datetime.now(UTC)
 
     stats: dict[str, Any] = {

@@ -72,7 +72,7 @@ async def run_upcoming_travel_check(db_pool: asyncpg.Pool) -> dict[str, Any]:
     """
     logger.info("Running upcoming travel check job")
 
-    today = datetime.now(UTC).date()
+    today = date.today()
     window_end = today + timedelta(days=7)
 
     async with db_pool.acquire() as conn:
@@ -234,7 +234,7 @@ async def run_trip_document_expiry(db_pool: asyncpg.Pool) -> dict[str, Any]:
     """
     logger.info("Running trip document expiry check job")
 
-    today = datetime.now(UTC).date()
+    today = date.today()
     window_end = today + timedelta(days=_EXPIRY_INFO_DAYS)
 
     async with db_pool.acquire() as conn:
@@ -365,7 +365,7 @@ async def run_insight_scan(db_pool: asyncpg.Pool) -> dict[str, Any]:
 
     logger.info("Running travel insight scan job")
 
-    today = datetime.now(UTC).date()
+    today = date.today()
     now_utc = datetime.now(UTC)
     stats: dict[str, Any] = {
         "candidates_proposed": 0,
