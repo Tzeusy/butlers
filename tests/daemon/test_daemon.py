@@ -666,10 +666,10 @@ async def test_shutdown_stops_mcp_server(butler_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_start_mcp_server_creates_uvicorn_server(butler_dir: Path) -> None:
-    """_start_mcp_server should build streamable HTTP + SSE routes and start uvicorn."""
+async def test_start_mcp_server(butler_dir: Path) -> None:
+    """_start_mcp_server: builds correct routes, runs as background task, raises on port conflict."""
+    # Part 1: correct routes, uvicorn config, socket setup
     patches = _patch_infra()
-
     mock_mcp = MagicMock()
     streamable_app = FastAPI()
     streamable_app.add_api_route("/mcp", endpoint=lambda: None, methods=["GET", "POST", "DELETE"])
@@ -704,7 +704,6 @@ async def test_start_mcp_server_creates_uvicorn_server(butler_dir: Path) -> None
             call(path="/mcp", transport="streamable-http"),
             call(path="/sse", transport="sse"),
         ]
-
         mock_config_cls.assert_called_once()
         args, kwargs = mock_config_cls.call_args
         wrapped_app = args[0]
@@ -721,104 +720,91 @@ async def test_start_mcp_server_creates_uvicorn_server(butler_dir: Path) -> None
             "log_level": "warning",
             "timeout_graceful_shutdown": 0,
         }
-
         mock_sock.setsockopt.assert_called_once_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         mock_sock.bind.assert_called_once_with(("0.0.0.0", 9100))
         mock_uvicorn_server.serve.assert_called_once_with(sockets=[mock_sock])
 
     assert daemon._server is mock_uvicorn_server
     assert daemon._server_task is not None
-
     daemon._server_task.cancel()
     try:
         await daemon._server_task
     except asyncio.CancelledError:
         pass
 
-
-async def test_start_mcp_server_runs_as_background_task(butler_dir: Path) -> None:
-    """The server should run as an asyncio background task, not block start()."""
-    patches = _patch_infra()
-    serve_started = asyncio.Event()
+    # Part 2: server runs as background task (does not block start())
+    patches2 = _patch_infra()
 
     async def mock_serve(sockets=None):
-        serve_started.set()
         await asyncio.sleep(999)
 
-    mock_mcp = MagicMock()
-    streamable_app = FastAPI()
-    streamable_app.add_api_route("/mcp", endpoint=lambda: None, methods=["GET", "POST"])
-    sse_app = FastAPI()
-    sse_app.add_api_route("/sse", endpoint=lambda: None, methods=["GET"])
-    sse_app.mount("/messages", app=FastAPI())
-    mock_mcp.http_app.side_effect = [streamable_app, sse_app]
-
-    mock_uvicorn_server = MagicMock()
-    mock_uvicorn_server.serve = mock_serve
-    mock_sock = MagicMock()
+    mock_mcp2 = MagicMock()
+    streamable_app2 = FastAPI()
+    streamable_app2.add_api_route("/mcp", endpoint=lambda: None, methods=["GET", "POST"])
+    sse_app2 = FastAPI()
+    sse_app2.add_api_route("/sse", endpoint=lambda: None, methods=["GET"])
+    sse_app2.mount("/messages", app=FastAPI())
+    mock_mcp2.http_app.side_effect = [streamable_app2, sse_app2]
+    mock_uvicorn2 = MagicMock()
+    mock_uvicorn2.serve = mock_serve
 
     with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patch("butlers.daemon.FastMCP", return_value=mock_mcp),
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
+        patches2["db_from_env"],
+        patches2["run_migrations"],
+        patches2["validate_credentials"],
+        patches2["validate_module_credentials"],
+        patches2["init_telemetry"],
+        patches2["sync_schedules"],
+        patch("butlers.daemon.FastMCP", return_value=mock_mcp2),
+        patches2["Spawner"],
+        patches2["get_adapter"],
+        patches2["shutil_which"],
         patch("butlers.daemon.uvicorn.Config"),
-        patch("butlers.daemon.uvicorn.Server", return_value=mock_uvicorn_server),
-        patch("butlers.daemon.socket.socket", return_value=mock_sock),
+        patch("butlers.daemon.uvicorn.Server", return_value=mock_uvicorn2),
+        patch("butlers.daemon.socket.socket", return_value=MagicMock()),
     ):
-        daemon = ButlerDaemon(butler_dir)
-        await daemon.start()
+        daemon2 = ButlerDaemon(butler_dir)
+        await daemon2.start()
 
-    assert daemon._server_task is not None
-    assert not daemon._server_task.done()
-    assert daemon._started_at is not None
-
-    daemon._server_task.cancel()
+    assert daemon2._server_task is not None
+    assert not daemon2._server_task.done()
+    assert daemon2._started_at is not None
+    daemon2._server_task.cancel()
     try:
-        await daemon._server_task
+        await daemon2._server_task
     except asyncio.CancelledError:
         pass
 
-
-async def test_start_mcp_server_port_in_use_raises_oserror(butler_dir: Path) -> None:
-    """When the port is already bound, _start_mcp_server raises OSError."""
-    patches = _patch_infra()
-
-    mock_mcp = MagicMock()
-    streamable_app = FastAPI()
-    streamable_app.add_api_route("/mcp", endpoint=lambda: None, methods=["GET", "POST"])
-    sse_app = FastAPI()
-    sse_app.add_api_route("/sse", endpoint=lambda: None, methods=["GET"])
-    sse_app.mount("/messages", app=FastAPI())
-    mock_mcp.http_app.side_effect = [streamable_app, sse_app]
-
-    mock_sock = MagicMock()
-    mock_sock.bind.side_effect = OSError(98, "address already in use")
+    # Part 3: port already in use raises OSError
+    patches3 = _patch_infra()
+    mock_mcp3 = MagicMock()
+    streamable_app3 = FastAPI()
+    streamable_app3.add_api_route("/mcp", endpoint=lambda: None, methods=["GET", "POST"])
+    sse_app3 = FastAPI()
+    sse_app3.add_api_route("/sse", endpoint=lambda: None, methods=["GET"])
+    sse_app3.mount("/messages", app=FastAPI())
+    mock_mcp3.http_app.side_effect = [streamable_app3, sse_app3]
+    mock_sock3 = MagicMock()
+    mock_sock3.bind.side_effect = OSError(98, "address already in use")
 
     with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patch("butlers.daemon.FastMCP", return_value=mock_mcp),
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
+        patches3["db_from_env"],
+        patches3["run_migrations"],
+        patches3["validate_credentials"],
+        patches3["validate_module_credentials"],
+        patches3["init_telemetry"],
+        patches3["sync_schedules"],
+        patch("butlers.daemon.FastMCP", return_value=mock_mcp3),
+        patches3["Spawner"],
+        patches3["get_adapter"],
+        patches3["shutil_which"],
         patch("butlers.daemon.uvicorn.Config"),
         patch("butlers.daemon.uvicorn.Server"),
-        patch("butlers.daemon.socket.socket", return_value=mock_sock),
+        patch("butlers.daemon.socket.socket", return_value=mock_sock3),
     ):
-        daemon = ButlerDaemon(butler_dir)
+        daemon3 = ButlerDaemon(butler_dir)
         with pytest.raises(OSError, match="address already in use"):
-            await daemon.start()
+            await daemon3.start()
 
 
 def test_build_mcp_http_app_routes_and_health() -> None:
@@ -961,9 +947,10 @@ async def _get_status_fn(butler_dir, patches, *, registry=None):
 
 
 async def test_status_tool(butler_dir: Path, butler_dir_with_modules: Path) -> None:
-    """status() returns correct info fields; with modules lists their names and active status."""
-    # No modules
+    """status() returns correct info fields; with modules lists their names; health=ok on SELECT 1."""
+    # No modules: basic fields + health=ok
     patches = _patch_infra()
+    patches["mock_pool"].fetchval = AsyncMock(return_value=1)
     _, status_fn = await _get_status_fn(butler_dir, patches)
     assert status_fn is not None
     result = await status_fn()
@@ -973,8 +960,9 @@ async def test_status_tool(butler_dir: Path, butler_dir_with_modules: Path) -> N
     assert result["modules"] == {}
     assert result["health"] == "ok"
     assert isinstance(result["uptime_seconds"], float)
+    patches["mock_pool"].fetchval.assert_awaited_with("SELECT 1")
 
-    # With modules
+    # With modules: module names and active statuses returned
     registry = _make_registry(StubModuleA, StubModuleB)
     patches2 = _patch_infra()
     _, status_fn2 = await _get_status_fn(butler_dir_with_modules, patches2, registry=registry)
@@ -1019,20 +1007,6 @@ async def test_health_degraded(butler_dir: Path, setup_pool) -> None:
     if setup_pool not in ("db_is_none",):
         assert result["name"] == "test-butler"
         assert result["port"] == 9100
-
-
-async def test_health_ok_when_pool_healthy(butler_dir: Path) -> None:
-    """status() returns health=ok when DB pool responds to SELECT 1."""
-    patches = _patch_infra()
-    mock_pool = patches["mock_pool"]
-    mock_pool.fetchval = AsyncMock(return_value=1)
-
-    daemon, status_fn = await _get_status_fn(butler_dir, patches)
-    assert status_fn is not None
-
-    result = await status_fn()
-    assert result["health"] == "ok"
-    mock_pool.fetchval.assert_awaited_once_with("SELECT 1")
 
 
 # ---------------------------------------------------------------------------
@@ -1139,9 +1113,12 @@ async def test_schedules_synced(butler_dir: Path) -> None:
 
 
 async def test_module_creds_validated_separately(butler_dir_with_modules: Path) -> None:
-    """validate_module_credentials_async receives module creds; core validate is separate."""
+    """Module creds validated separately from core; CredentialStore passed to validator."""
+    from butlers.credential_store import CredentialStore
+
     registry = _make_registry(StubModuleA, StubModuleB)
     patches = _patch_infra()
+    received_args: list[object] = []
 
     with (
         patches["db_from_env"],
@@ -1159,45 +1136,6 @@ async def test_module_creds_validated_separately(butler_dir_with_modules: Path) 
         patches["create_audit_pool"],
         patches["recover_route_inbox"],
     ):
-        daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
-        await daemon.start()
-
-    mock_validate.assert_called_once()
-    assert "module_credentials" not in mock_validate.call_args.kwargs
-
-    mock_mod_validate.assert_called_once()
-    mod_creds_arg = mock_mod_validate.call_args[0][0]
-    assert "stub_a" in mod_creds_arg
-    assert "STUB_A_TOKEN" in mod_creds_arg["stub_a"]
-
-
-async def test_credential_store_passed_to_module_validation(
-    butler_dir_with_modules: Path,
-) -> None:
-    """validate_module_credentials_async receives a CredentialStore instance."""
-    from butlers.credential_store import CredentialStore
-
-    registry = _make_registry(StubModuleA, StubModuleB)
-    patches = _patch_infra()
-    received_args: list[object] = []
-
-    with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"] as mock_mod_validate,
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["start_mcp_server"],
-        patches["connect_switchboard"],
-        patches["create_audit_pool"],
-        patches["recover_route_inbox"],
-    ):
-
         async def _capture(*args: object, **kwargs: object) -> dict:
             received_args.extend(args)
             return {}
@@ -1206,7 +1144,15 @@ async def test_credential_store_passed_to_module_validation(
         daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
         await daemon.start()
 
+    # Core validate does not receive module credentials
+    mock_validate.assert_called_once()
+    assert "module_credentials" not in mock_validate.call_args.kwargs
+
+    # Module validate receives module env list and CredentialStore
     assert len(received_args) >= 2
+    mod_creds_arg = received_args[0]
+    assert "stub_a" in mod_creds_arg
+    assert "STUB_A_TOKEN" in mod_creds_arg["stub_a"]
     assert isinstance(received_args[1], CredentialStore)
 
 
@@ -1260,8 +1206,11 @@ async def test_toml_credentials_override(
     assert "STUB_A_TOKEN" not in module_creds.get("stub_a", [])
 
 
-async def test_class_credentials_fallback(butler_dir_with_modules: Path) -> None:
-    """When TOML does not declare credentials_env, fall back to class property."""
+async def test_class_credentials_fallback_and_spawner_forwarding(
+    butler_dir_with_modules: Path, tmp_path: Path
+) -> None:
+    """Class creds used as fallback; TOML creds override and are forwarded to Spawner."""
+    # Class fallback: no TOML credentials_env → class property used
     registry = _make_registry(StubModuleA, StubModuleB)
     patches = _patch_infra()
 
@@ -1289,38 +1238,36 @@ async def test_class_credentials_fallback(butler_dir_with_modules: Path) -> None
     assert module_creds["stub_a"] == ["STUB_A_TOKEN"]
     assert "stub_b" not in module_creds
 
-
-async def test_toml_credentials_passed_to_spawner(tmp_path: Path) -> None:
-    """TOML-declared credentials are forwarded to Spawner."""
-    butler_dir = _make_butler_toml(
-        tmp_path,
+    # TOML override forwarded to Spawner
+    (tmp_path / "toml_spawner").mkdir(exist_ok=True)
+    butler_dir2 = _make_butler_toml(
+        tmp_path / "toml_spawner",
         modules={"stub_a": {"credentials_env": ["TOML_KEY"]}},
     )
-    registry = _make_registry(StubModuleA)
-    patches = _patch_infra()
+    registry2 = _make_registry(StubModuleA)
+    patches2 = _patch_infra()
 
     with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"] as mock_spawner_cls,
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["socket"],
-        patches["connect_switchboard"],
-        patches["create_audit_pool"],
-        patches["recover_route_inbox"],
+        patches2["db_from_env"],
+        patches2["run_migrations"],
+        patches2["validate_credentials"],
+        patches2["validate_module_credentials"],
+        patches2["init_telemetry"],
+        patches2["sync_schedules"],
+        patches2["FastMCP"],
+        patches2["Spawner"] as mock_spawner_cls,
+        patches2["get_adapter"],
+        patches2["shutil_which"],
+        patches2["socket"],
+        patches2["connect_switchboard"],
+        patches2["create_audit_pool"],
+        patches2["recover_route_inbox"],
     ):
-        daemon = ButlerDaemon(butler_dir, registry=registry)
-        await daemon.start()
+        daemon2 = ButlerDaemon(butler_dir2, registry=registry2)
+        await daemon2.start()
 
     mock_spawner_cls.assert_called_once()
-    spawner_kwargs = mock_spawner_cls.call_args.kwargs
-    assert spawner_kwargs["module_credentials_env"] == {"stub_a": ["TOML_KEY"]}
+    assert mock_spawner_cls.call_args.kwargs["module_credentials_env"] == {"stub_a": ["TOML_KEY"]}
 
 
 async def test_identity_scoped_credentials_are_collected(tmp_path: Path) -> None:
@@ -1637,45 +1584,36 @@ async def test_runtime_binary_check(butler_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_connect_switchboard_skips_when_url_is_none(
-    butler_dir: Path, tmp_path: Path
-) -> None:
-    """switchboard_client is None before start; connection skipped when switchboard_url is None."""
+async def test_switchboard_client_lifecycle(butler_dir: Path, tmp_path: Path) -> None:
+    """Client None pre-start; no-URL skips; connect/disconnect lifecycle; errors non-fatal."""
+    # Before start: client is always None
     assert ButlerDaemon(butler_dir).switchboard_client is None
-    toml = """\
-[butler]
-name = "switchboard"
-port = 41100
 
-[butler.db]
-name = "butlers"
-schema = "switchboard"
-"""
-    (tmp_path / "butler.toml").write_text(toml)
-    patches = _patch_infra()
-
+    # switchboard_url=None → client remains None after start
+    no_url_dir = tmp_path / "no_url"
+    no_url_dir.mkdir()
+    (no_url_dir / "butler.toml").write_text(
+        "[butler]\nname = \"switchboard\"\nport = 41100\n\n[butler.db]\nname = \"butlers\"\nschema = \"switchboard\"\n"
+    )
+    patches_no_url = _patch_infra()
     with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["start_mcp_server"],
-        # Do NOT mock _connect_switchboard — let it run
+        patches_no_url["db_from_env"],
+        patches_no_url["run_migrations"],
+        patches_no_url["validate_credentials"],
+        patches_no_url["validate_module_credentials"],
+        patches_no_url["init_telemetry"],
+        patches_no_url["sync_schedules"],
+        patches_no_url["FastMCP"],
+        patches_no_url["Spawner"],
+        patches_no_url["get_adapter"],
+        patches_no_url["shutil_which"],
+        patches_no_url["start_mcp_server"],
+        # Do NOT mock _connect_switchboard — let it see switchboard_url=None
     ):
-        daemon = ButlerDaemon(tmp_path)
-        await daemon.start()
+        daemon_no_url = ButlerDaemon(no_url_dir)
+        await daemon_no_url.start()
+    assert daemon_no_url.switchboard_client is None
 
-    assert daemon.switchboard_client is None
-
-
-async def test_switchboard_client_lifecycle(butler_dir: Path) -> None:
-    """Connection sets client; shutdown closes it; connect/disconnect errors are non-fatal."""
     # Successful connect → client set; shutdown → client cleared
     patches = _patch_infra()
     mock_client = AsyncMock()
@@ -1750,10 +1688,10 @@ async def test_switchboard_client_lifecycle(butler_dir: Path) -> None:
     await daemon3.shutdown()
     assert daemon3.switchboard_client is None
 
-
-async def test_switchboard_url_from_config(tmp_path: Path) -> None:
-    """Switchboard URL comes from butler config; name passed to MCPClient."""
-    toml = """\
+    # Custom URL from config forwarded to MCPClient with correct butler name
+    custom_dir = tmp_path / "custom_url"
+    custom_dir.mkdir()
+    (custom_dir / "butler.toml").write_text("""\
 [butler]
 name = "health"
 port = 41103
@@ -1764,34 +1702,33 @@ schema = "health"
 
 [butler.switchboard]
 url = "http://custom-switchboard:9000/sse"
-"""
-    (tmp_path / "butler.toml").write_text(toml)
-    patches = _patch_infra()
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    client_init_args = []
+""")
+    patches4 = _patch_infra()
+    mock_client4 = AsyncMock()
+    mock_client4.__aenter__ = AsyncMock(return_value=mock_client4)
+    mock_client4.__aexit__ = AsyncMock(return_value=False)
+    client_init_args: list = []
 
     def capture_client_init(url, **kwargs):
         client_init_args.append((url, kwargs))
-        return mock_client
+        return mock_client4
 
     with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["start_mcp_server"],
+        patches4["db_from_env"],
+        patches4["run_migrations"],
+        patches4["validate_credentials"],
+        patches4["validate_module_credentials"],
+        patches4["init_telemetry"],
+        patches4["sync_schedules"],
+        patches4["FastMCP"],
+        patches4["Spawner"],
+        patches4["get_adapter"],
+        patches4["shutil_which"],
+        patches4["start_mcp_server"],
         patch("butlers.daemon.MCPClient", side_effect=capture_client_init),
     ):
-        daemon = ButlerDaemon(tmp_path)
-        await daemon.start()
+        daemon4 = ButlerDaemon(custom_dir)
+        await daemon4.start()
 
     assert len(client_init_args) == 1
     assert client_init_args[0][0] == "http://custom-switchboard:9000/sse"
@@ -1887,13 +1824,13 @@ async def test_notify_registered_and_schema_contract(butler_dir: Path) -> None:
     assert "source_thread_identity" in rc_json
 
 
-async def test_notify_channel_and_switchboard_errors(butler_dir: Path) -> None:
-    """Unsupported channel returns channel error; valid channels fail on missing switchboard."""
+async def test_notify_channels_and_delivery(butler_dir: Path) -> None:
+    """Unsupported channel errors; missing switchboard errors; successful delivery payload correct."""
     patches = _patch_infra()
     daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
     assert notify_fn is not None
 
-    # Unsupported channel
+    # Unsupported channel → channel error
     result = await notify_fn(channel="sms", message="Hello")
     assert result["status"] == "error"
     assert "sms" in result["error"]
@@ -1905,17 +1842,10 @@ async def test_notify_channel_and_switchboard_errors(butler_dir: Path) -> None:
         assert result["status"] == "error"
         assert "Switchboard is not connected" in result["error"]
 
-
-async def test_notify_successful_delivery(butler_dir: Path) -> None:
-    """notify returns success; payload structure correct; recipient forwarded or omitted."""
-    patches = _patch_infra()
-    daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
-    assert notify_fn is not None
-
+    # Successful delivery: payload structure, source_butler, schema_version
     mock_call_result = MagicMock()
     mock_call_result.is_error = False
     mock_call_result.data = {"notification_id": "abc-123", "status": "sent"}
-
     mock_client = AsyncMock()
     mock_client.call_tool = AsyncMock(return_value=mock_call_result)
     daemon.switchboard_client = mock_client
@@ -2004,12 +1934,13 @@ async def test_notify_telegram_owner_resolution(
         mock_client.call_tool.assert_not_awaited()
 
 
-async def test_notify_delivery_level_failure(butler_dir: Path) -> None:
-    """notify surfaces delivery-level failures (status=failed in payload)."""
+async def test_notify_failure_modes(butler_dir: Path) -> None:
+    """notify: delivery failures surfaced; empty/whitespace rejected; timeout returns error."""
     patches = _patch_infra()
     daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
     assert notify_fn is not None
 
+    # Delivery-level failure (status=failed in payload)
     mock_call_result = MagicMock()
     mock_call_result.is_error = False
     mock_call_result.data = {
@@ -2019,18 +1950,46 @@ async def test_notify_delivery_level_failure(butler_dir: Path) -> None:
         "error_class": "validation_error",
         "retryable": False,
     }
-
     mock_client = AsyncMock()
     mock_client.call_tool = AsyncMock(return_value=mock_call_result)
     daemon.switchboard_client = mock_client
 
     result = await notify_fn(channel="email", message="Hello")
-
     assert result["status"] == "error"
     assert "source_thread_identity" in result["error"]
     assert result["error_class"] == "validation_error"
     assert result["retryable"] is False
     assert result["notification_id"] == "a9f943ce-8800-47dc-9190-cb50f3bbb8b6"
+
+    # Empty/whitespace messages rejected
+    for msg in ("", "   \t\n  "):
+        result = await notify_fn(channel="telegram", message=msg)
+        assert result["status"] == "error"
+        assert "empty" in result["error"].lower() or "whitespace" in result["error"].lower()
+
+    # Timeout returns error
+    _orphaned_coros: list = []
+
+    async def slow_call(*args, **kwargs):
+        await asyncio.sleep(999)  # pragma: no cover
+
+    def _tracking_slow_call(*args, **kwargs):
+        coro = slow_call(*args, **kwargs)
+        _orphaned_coros.append(coro)
+        return coro
+
+    mock_client2 = AsyncMock()
+    mock_client2.call_tool = _tracking_slow_call
+    daemon.switchboard_client = mock_client2
+
+    with patch("butlers.daemon.asyncio.wait_for", side_effect=TimeoutError()):
+        result = await notify_fn(channel="email", message="Hello")
+
+    for coro in _orphaned_coros:
+        coro.close()
+
+    assert result["status"] == "error"
+    assert "timed out" in result["error"].lower()
 
 
 @pytest.mark.parametrize(
@@ -2062,43 +2021,6 @@ async def test_notify_error_cases(butler_dir: Path, side_effect, expected_in_err
     result = await notify_fn(channel="email", message="Hello")
     assert result["status"] == "error"
     assert expected_in_error.lower() in result["error"].lower()
-
-
-async def test_notify_empty_message_and_timeout(butler_dir: Path) -> None:
-    """notify rejects empty/whitespace messages; returns timeout error when call hangs."""
-    patches = _patch_infra()
-    daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
-    assert notify_fn is not None
-
-    # Empty/whitespace message
-    for msg in ("", "   \t\n  "):
-        result = await notify_fn(channel="telegram", message=msg)
-        assert result["status"] == "error"
-        assert "empty" in result["error"].lower() or "whitespace" in result["error"].lower()
-
-    # Timeout
-    _orphaned_coros: list = []
-
-    async def slow_call(*args, **kwargs):
-        await asyncio.sleep(999)  # pragma: no cover
-
-    def _tracking_slow_call(*args, **kwargs):
-        coro = slow_call(*args, **kwargs)
-        _orphaned_coros.append(coro)
-        return coro
-
-    mock_client = AsyncMock()
-    mock_client.call_tool = _tracking_slow_call
-    daemon.switchboard_client = mock_client
-
-    with patch("butlers.daemon.asyncio.wait_for", side_effect=TimeoutError()):
-        result = await notify_fn(channel="email", message="Hello")
-
-    for coro in _orphaned_coros:
-        coro.close()
-
-    assert result["status"] == "error"
-    assert "timed out" in result["error"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -2156,12 +2078,13 @@ async def _start_daemon_with_route_execute(butler_dir: Path, patches: dict):
     return daemon, route_execute_fn
 
 
-async def test_route_execute_missing_notify_request(tmp_path: Path) -> None:
-    """route.execute returns validation_error when notify_request is missing."""
+async def test_route_execute_messenger_scenarios(tmp_path: Path) -> None:
+    """route.execute: missing notify_request errors; success delivers; origin mismatch rejected."""
+    # Missing notify_request → validation_error
+    m1 = tmp_path / "m1"
+    m1.mkdir()
     patches = _patch_infra()
-    butler_dir = _make_butler_toml(
-        tmp_path, butler_name="messenger", modules={"telegram": {}, "email": {}}
-    )
+    butler_dir = _make_butler_toml(m1, butler_name="messenger", modules={"telegram": {}, "email": {}})
     _, fn = await _start_daemon_with_route_execute(butler_dir, patches)
     assert fn is not None
 
@@ -2170,27 +2093,23 @@ async def test_route_execute_missing_notify_request(tmp_path: Path) -> None:
         request_context=_route_request_context(),
         input={"prompt": "Deliver.", "context": {}},
     )
-
     assert result["schema_version"] == "route_response.v1"
     assert result["status"] == "error"
     assert result["error"]["class"] == "validation_error"
     assert result["error"]["retryable"] is False
     assert result["result"]["notify_response"]["error"]["class"] == "validation_error"
 
-
-async def test_route_execute_success(tmp_path: Path) -> None:
-    """route.execute success returns normalized notify_response."""
-    patches = _patch_infra()
-    butler_dir = _make_butler_toml(
-        tmp_path, butler_name="messenger", modules={"telegram": {}, "email": {}}
-    )
-    daemon, fn = await _start_daemon_with_route_execute(butler_dir, patches)
-    assert fn is not None
-
-    telegram_module = next(m for m in daemon._modules if m.name == "telegram")
+    # Success: delivery proceeds; notify_response normalized
+    m2 = tmp_path / "m2"
+    m2.mkdir()
+    patches2 = _patch_infra()
+    butler_dir2 = _make_butler_toml(m2, butler_name="messenger", modules={"telegram": {}, "email": {}})
+    daemon2, fn2 = await _start_daemon_with_route_execute(butler_dir2, patches2)
+    assert fn2 is not None
+    telegram_module = next(m for m in daemon2._modules if m.name == "telegram")
     telegram_module._send_message = AsyncMock(return_value={"result": {"message_id": 321}})
 
-    result = await fn(
+    result2 = await fn2(
         schema_version="route.v1",
         request_context=_route_request_context(),
         input={
@@ -2209,31 +2128,25 @@ async def test_route_execute_success(tmp_path: Path) -> None:
             },
         },
     )
+    telegram_module._send_message.assert_awaited_once_with("12345", "[health] Take your medication.")
+    assert result2["status"] == "ok"
+    nr = result2["result"]["notify_response"]
+    assert nr["schema_version"] == "notify_response.v1"
+    assert nr["status"] == "ok"
+    assert nr["delivery"]["channel"] == "telegram"
+    assert nr["delivery"]["delivery_id"] == "321"
 
-    telegram_module._send_message.assert_awaited_once_with(
-        "12345", "[health] Take your medication."
-    )
-    assert result["status"] == "ok"
-    notify_response = result["result"]["notify_response"]
-    assert notify_response["schema_version"] == "notify_response.v1"
-    assert notify_response["status"] == "ok"
-    assert notify_response["delivery"]["channel"] == "telegram"
-    assert notify_response["delivery"]["delivery_id"] == "321"
+    # Origin mismatch → validation_error; delivery not attempted
+    m3 = tmp_path / "m3"
+    m3.mkdir()
+    patches3 = _patch_infra()
+    butler_dir3 = _make_butler_toml(m3, butler_name="messenger", modules={"telegram": {}, "email": {}})
+    daemon3, fn3 = await _start_daemon_with_route_execute(butler_dir3, patches3)
+    assert fn3 is not None
+    telegram3 = next(m for m in daemon3._modules if m.name == "telegram")
+    telegram3._send_message = AsyncMock()
 
-
-async def test_route_execute_origin_mismatch(tmp_path: Path) -> None:
-    """route.execute rejects when origin_butler does not match source_sender_identity."""
-    patches = _patch_infra()
-    butler_dir = _make_butler_toml(
-        tmp_path, butler_name="messenger", modules={"telegram": {}, "email": {}}
-    )
-    daemon, fn = await _start_daemon_with_route_execute(butler_dir, patches)
-    assert fn is not None
-
-    telegram_module = next(m for m in daemon._modules if m.name == "telegram")
-    telegram_module._send_message = AsyncMock()
-
-    result = await fn(
+    result3 = await fn3(
         schema_version="route.v1",
         request_context=_route_request_context(),
         input={
@@ -2252,11 +2165,10 @@ async def test_route_execute_origin_mismatch(tmp_path: Path) -> None:
             },
         },
     )
-
-    telegram_module._send_message.assert_not_awaited()
-    assert result["status"] == "error"
-    assert result["error"]["class"] == "validation_error"
-    assert result["result"]["notify_response"]["error"]["class"] == "validation_error"
+    telegram3._send_message.assert_not_awaited()
+    assert result3["status"] == "error"
+    assert result3["error"]["class"] == "validation_error"
+    assert result3["result"]["notify_response"]["error"]["class"] == "validation_error"
 
 
 @pytest.mark.parametrize(
