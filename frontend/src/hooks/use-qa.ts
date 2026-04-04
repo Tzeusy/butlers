@@ -83,12 +83,16 @@ export function useQaPatrolFindings(
 // ---------------------------------------------------------------------------
 
 /** Fetch known issues grouped by fingerprint. */
-export function useQaKnownIssues(params?: QaKnownIssuesParams) {
+export function useQaKnownIssues(
+  params?: QaKnownIssuesParams,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: ["qa-known-issues", params],
     queryFn: () => getQaKnownIssues(params),
     staleTime: STALE_TIME,
     refetchInterval: STALE_TIME,
+    enabled: options?.enabled ?? true,
   });
 }
 

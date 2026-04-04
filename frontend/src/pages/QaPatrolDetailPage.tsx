@@ -45,13 +45,14 @@ function formatDuration(start: string, end: string | null | undefined): string {
 // ---------------------------------------------------------------------------
 
 function SeverityBadge({ severity }: { severity: number }) {
-  const labels: Record<number, string> = { 0: "critical", 1: "high", 2: "medium", 3: "low" };
+  const labels: Record<number, string> = { 0: "critical", 1: "high", 2: "medium", 3: "low", 4: "info" };
   const label = labels[severity] ?? String(severity);
   const classNames: Record<number, string> = {
     0: "bg-red-600 text-white hover:bg-red-600/90",
     1: "bg-orange-500 text-white hover:bg-orange-500/90",
     2: "bg-yellow-500 text-white hover:bg-yellow-500/90",
     3: "bg-slate-400 text-white hover:bg-slate-400/90",
+    4: "bg-sky-400 text-white hover:bg-sky-400/90",
   };
   return <Badge className={classNames[severity] ?? ""}>{label}</Badge>;
 }

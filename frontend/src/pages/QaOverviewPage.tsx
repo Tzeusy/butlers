@@ -57,13 +57,14 @@ function formatRelative(iso: string | null | undefined): string {
 // ---------------------------------------------------------------------------
 
 function SeverityBadge({ severity }: { severity: number }) {
-  const labels: Record<number, string> = { 0: "critical", 1: "high", 2: "medium", 3: "low" };
+  const labels: Record<number, string> = { 0: "critical", 1: "high", 2: "medium", 3: "low", 4: "info" };
   const label = labels[severity] ?? String(severity);
   const classNames: Record<number, string> = {
     0: "bg-red-600 text-white hover:bg-red-600/90",
     1: "bg-orange-500 text-white hover:bg-orange-500/90",
     2: "bg-yellow-500 text-white hover:bg-yellow-500/90",
     3: "bg-slate-400 text-white hover:bg-slate-400/90",
+    4: "bg-sky-400 text-white hover:bg-sky-400/90",
   };
   return <Badge className={classNames[severity] ?? ""}>{label}</Badge>;
 }
@@ -203,7 +204,11 @@ function RecentPatrolsTable({ patrols }: { patrols: QaPatrolSummary[] }) {
 // ---------------------------------------------------------------------------
 
 function KnownIssuesPanel() {
-  const { data: response, isLoading } = useQaKnownIssues({ dismissed: false, limit: 50 });
+  const [showDismissed, setShowDismissed] = useState(false);
+  const { data: response, isLoading, isError } = useQaKnownIssues({
+    dismissed: showDismissed ? undefined : false,
+    limit: 50,
+  });
   const dismissMutation = useDismissQaIssue();
   const undismissMutation = useUndismissQaIssue();
   const [dismissingFp, setDismissingFp] = useState<string | null>(null);
@@ -219,10 +224,10 @@ function KnownIssuesPanel() {
     );
   }
 
-  if (issues.length === 0) {
+  if (isError) {
     return (
-      <div className="text-muted-foreground py-8 text-center text-sm">
-        No known issues. System is clean.
+      <div className="text-destructive py-8 text-center text-sm">
+        Failed to load known issues.
       </div>
     );
   }
@@ -240,69 +245,90 @@ function KnownIssuesPanel() {
     undismissMutation.mutate(issue.fingerprint, { onSettled: () => setDismissingFp(null) });
   }
 
+  const isDismissed = (issue: QaKnownIssue): boolean =>
+    issue.dismissal !== null &&
+    new Date(issue.dismissal.dismissed_until) > new Date();
+
   return (
     <div className="space-y-3">
-      {issues.map((issue) => (
-        <div
-          key={issue.fingerprint}
-          className={`rounded-md border p-3 text-sm ${
-            issue.dismissal ? "opacity-50" : ""
-          }`}
+      <div className="flex items-center justify-between">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowDismissed((v) => !v)}
         >
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0 flex-1 space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <SeverityBadge severity={issue.severity} />
-                <SourceTypeBadge sourceType={issue.source_type} />
-                <Badge variant="outline" className="font-mono text-xs">
-                  {issue.source_butler}
-                </Badge>
-                <code className="text-muted-foreground text-xs">
-                  {issue.fingerprint.slice(0, 12)}
-                </code>
-              </div>
-              <p className="text-muted-foreground truncate text-xs">{issue.exception_type}</p>
-              <p className="truncate text-xs">{issue.event_summary}</p>
-              <div className="text-muted-foreground text-xs">
-                {issue.occurrence_count} occurrence{issue.occurrence_count !== 1 ? "s" : ""} across{" "}
-                {issue.patrol_count} patrol{issue.patrol_count !== 1 ? "s" : ""} · last seen{" "}
-                {formatRelative(issue.last_seen)}
-              </div>
-              {issue.healing_attempt_id && (
-                <div className="text-xs">
-                  <Link
-                    to={`/qa/investigations/${issue.healing_attempt_id}`}
-                    className="text-primary underline-offset-4 hover:underline"
-                  >
-                    View investigation
-                  </Link>
+          {showDismissed ? "Hide dismissed" : "Show dismissed"}
+        </Button>
+      </div>
+
+      {issues.length === 0 && (
+        <div className="text-muted-foreground py-8 text-center text-sm">
+          {showDismissed ? "No known issues." : "No active issues. System is clean."}
+        </div>
+      )}
+
+      {issues.map((issue) => {
+        const dismissed = isDismissed(issue);
+        return (
+          <div
+            key={issue.fingerprint}
+            className={`rounded-md border p-3 text-sm ${dismissed ? "opacity-50" : ""}`}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <SeverityBadge severity={issue.severity} />
+                  <SourceTypeBadge sourceType={issue.source_type} />
+                  <Badge variant="outline" className="font-mono text-xs">
+                    {issue.source_butler}
+                  </Badge>
+                  <code className="text-muted-foreground text-xs">
+                    {issue.fingerprint.slice(0, 12)}
+                  </code>
                 </div>
-              )}
-            </div>
-            <div className="flex shrink-0 gap-1">
-              {issue.dismissal ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={dismissingFp === issue.fingerprint}
-                  onClick={() => handleUndismiss(issue)}
-                >
-                  Restore
-                </Button>
-              ) : (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={dismissingFp === issue.fingerprint}
-                  onClick={() => handleDismiss(issue)}
-                >
-                  Dismiss
-                </Button>
-              )}
+                <p className="text-muted-foreground truncate text-xs">{issue.exception_type}</p>
+                <p className="truncate text-xs">{issue.event_summary}</p>
+                <div className="text-muted-foreground text-xs">
+                  {issue.occurrence_count} occurrence{issue.occurrence_count !== 1 ? "s" : ""} across{" "}
+                  {issue.patrol_count} patrol{issue.patrol_count !== 1 ? "s" : ""} · last seen{" "}
+                  {formatRelative(issue.last_seen)}
+                </div>
+                {issue.healing_attempt_id && (
+                  <div className="text-xs">
+                    <Link
+                      to={`/qa/investigations/${issue.healing_attempt_id}`}
+                      className="text-primary underline-offset-4 hover:underline"
+                    >
+                      View investigation
+                    </Link>
+                  </div>
+                )}
+              </div>
+              <div className="flex shrink-0 gap-1">
+                {dismissed ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={dismissingFp === issue.fingerprint}
+                    onClick={() => handleUndismiss(issue)}
+                  >
+                    Restore
+                  </Button>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={dismissingFp === issue.fingerprint}
+                    onClick={() => handleDismiss(issue)}
+                  >
+                    Dismiss
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -315,8 +341,8 @@ const PAGE_SIZE = 20;
 
 export default function QaOverviewPage() {
   const [page, setPage] = useState(0);
-  const { data: summaryResponse, isLoading: summaryLoading } = useQaSummary();
-  const { data: patrolsResponse, isLoading: patrolsLoading } = useQaPatrols({
+  const { data: summaryResponse, isLoading: summaryLoading, isError: summaryError } = useQaSummary();
+  const { data: patrolsResponse, isLoading: patrolsLoading, isError: patrolsError } = useQaPatrols({
     offset: page * PAGE_SIZE,
     limit: PAGE_SIZE,
   });
@@ -351,6 +377,12 @@ export default function QaOverviewPage() {
             </Card>
           ))}
         </div>
+      ) : summaryError ? (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <p className="text-destructive text-sm">Failed to load QA summary.</p>
+          </CardContent>
+        </Card>
       ) : (
         <>
           {/* Last patrol banner */}
@@ -456,6 +488,8 @@ export default function QaOverviewPage() {
                 <Skeleton key={i} className="h-10 w-full" />
               ))}
             </div>
+          ) : patrolsError ? (
+            <p className="text-destructive py-4 text-center text-sm">Failed to load patrols.</p>
           ) : (
             <RecentPatrolsTable patrols={patrols} />
           )}

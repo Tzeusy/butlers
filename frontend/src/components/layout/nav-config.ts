@@ -76,7 +76,7 @@ export const navSections: NavSection[] = [
       { path: '/timeline', label: 'Timeline' },
       { path: '/notifications', label: 'Notifications' },
       { path: '/issues', label: 'Issues' },
-      { path: '/qa', label: 'QA', butler: 'qa', badgeKey: 'qa-active-investigations' },
+      { path: '/qa', label: 'QA', butler: 'qa', badgeKey: 'qa-known-issues' },
       { path: '/audit-log', label: 'Audit Log' },
     ],
   },

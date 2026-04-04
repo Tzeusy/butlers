@@ -49,7 +49,7 @@ function StatsCard({
 // ---------------------------------------------------------------------------
 
 function QaWidget() {
-  const { data: summaryResponse, isLoading } = useQaSummary();
+  const { data: summaryResponse, isLoading, isError } = useQaSummary();
   const summary = summaryResponse?.data;
 
   return (
@@ -74,6 +74,8 @@ function QaWidget() {
             <div className="h-4 w-full animate-pulse rounded bg-muted" />
             <div className="h-4 w-2/3 animate-pulse rounded bg-muted" />
           </div>
+        ) : isError ? (
+          <p className="text-destructive text-sm">Failed to load QA status.</p>
         ) : !summary?.last_patrol ? (
           <p className="text-muted-foreground text-sm">QA Staffer not active.</p>
         ) : (
