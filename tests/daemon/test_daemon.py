@@ -1040,10 +1040,10 @@ async def test_health_ok_when_pool_healthy(butler_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_credential_failure_stops_startup(butler_dir: Path) -> None:
-    """If validate_credentials raises, DB is never provisioned."""
+async def test_startup_failure_propagation(butler_dir: Path) -> None:
+    """Credential failure prevents DB; DB provision failure prevents migrations."""
+    # Credential failure: DB never provisioned
     patches = _patch_infra()
-
     with (
         patches["db_from_env"] as mock_from_env,
         patches["run_migrations"],
@@ -1065,35 +1065,30 @@ async def test_credential_failure_stops_startup(butler_dir: Path) -> None:
         daemon = ButlerDaemon(butler_dir)
         with pytest.raises(CredentialError, match="missing PG_DSN"):
             await daemon.start()
-
     mock_from_env.assert_not_called()
 
-
-async def test_db_provision_failure_stops_startup(butler_dir: Path) -> None:
-    """If DB provisioning fails, migrations should not run."""
-    patches = _patch_infra()
-    patches["mock_db"].provision.side_effect = ConnectionRefusedError("no pg")
-
+    # DB provision failure: migrations not run
+    patches2 = _patch_infra()
+    patches2["mock_db"].provision.side_effect = ConnectionRefusedError("no pg")
     with (
-        patches["db_from_env"],
-        patches["run_migrations"] as mock_migrations,
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["start_mcp_server"],
-        patches["connect_switchboard"],
-        patches["create_audit_pool"],
-        patches["recover_route_inbox"],
+        patches2["db_from_env"],
+        patches2["run_migrations"] as mock_migrations,
+        patches2["validate_credentials"],
+        patches2["validate_module_credentials"],
+        patches2["init_telemetry"],
+        patches2["sync_schedules"],
+        patches2["FastMCP"],
+        patches2["Spawner"],
+        patches2["get_adapter"],
+        patches2["shutil_which"],
+        patches2["start_mcp_server"],
+        patches2["connect_switchboard"],
+        patches2["create_audit_pool"],
+        patches2["recover_route_inbox"],
     ):
-        daemon = ButlerDaemon(butler_dir)
+        daemon2 = ButlerDaemon(butler_dir)
         with pytest.raises(ConnectionRefusedError):
-            await daemon.start()
-
+            await daemon2.start()
     mock_migrations.assert_not_awaited()
 
 
@@ -1396,10 +1391,11 @@ password_env = "BOT_EMAIL_PASSWORD"
 # ---------------------------------------------------------------------------
 
 
-async def test_detect_secrets_warns_on_suspicious_config(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+async def test_detect_secrets(
+    butler_dir: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Secret detection should log warnings for suspicious config values."""
+    """Suspicious config values warn; clean config produces no warnings."""
+    # Suspicious config warns on detected fields
     toml_content = """
 [butler]
 name = "test-butler"
@@ -1437,30 +1433,25 @@ name = "ghp_1234567890abcdefghij1234567890abcdef"
     assert any("butler.description" in w for w in warnings)
     assert any("butler.db.name" in w for w in warnings)
 
-
-async def test_detect_secrets_clean_config_no_warnings(
-    butler_dir: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """Clean config produces no secret warnings; env lists and credentials_env are exempt."""
-    patches = _patch_infra()
-
+    # Clean config produces no secret warnings; env lists and credentials_env are exempt
+    caplog.clear()
+    patches2 = _patch_infra()
     with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["socket"],
+        patches2["db_from_env"],
+        patches2["run_migrations"],
+        patches2["validate_credentials"],
+        patches2["validate_module_credentials"],
+        patches2["init_telemetry"],
+        patches2["sync_schedules"],
+        patches2["FastMCP"],
+        patches2["Spawner"],
+        patches2["get_adapter"],
+        patches2["shutil_which"],
+        patches2["socket"],
         caplog.at_level(logging.WARNING, logger="butlers.daemon"),
     ):
-        daemon = ButlerDaemon(butler_dir)
-        await daemon.start()
-
+        daemon2 = ButlerDaemon(butler_dir)
+        await daemon2.start()
     assert not any("may contain an inline secret" in rec.message for rec in caplog.records)
 
 
@@ -1683,13 +1674,13 @@ schema = "switchboard"
     assert daemon.switchboard_client is None
 
 
-async def test_connect_switchboard_success_and_disconnect(butler_dir: Path) -> None:
-    """Successful connection sets switchboard_client; shutdown closes it."""
+async def test_switchboard_client_lifecycle(butler_dir: Path) -> None:
+    """Connection sets client; shutdown closes it; connect/disconnect errors are non-fatal."""
+    # Successful connect → client set; shutdown → client cleared
     patches = _patch_infra()
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
-
     with (
         patches["db_from_env"],
         patches["run_migrations"],
@@ -1706,48 +1697,16 @@ async def test_connect_switchboard_success_and_disconnect(butler_dir: Path) -> N
     ):
         daemon = ButlerDaemon(butler_dir)
         await daemon.start()
-
     assert daemon.switchboard_client is mock_client
     mock_client.__aenter__.assert_awaited_once()
-
     await daemon.shutdown()
-
     mock_client.__aexit__.assert_awaited_once_with(None, None, None)
     assert daemon.switchboard_client is None
 
-
-async def test_switchboard_connection_errors_non_fatal(butler_dir: Path) -> None:
-    """Connect failure and disconnect error are both non-fatal; client stays/becomes None."""
-    # Connect failure: startup still succeeds
-    patches = _patch_infra()
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(side_effect=RuntimeError("Connection refused"))
-
-    with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["start_mcp_server"],
-        patch("butlers.daemon.MCPClient", return_value=mock_client),
-    ):
-        daemon = ButlerDaemon(butler_dir)
-        await daemon.start()
-    assert daemon.switchboard_client is None
-    assert daemon._started_at is not None
-
-    # Disconnect error: shutdown still completes; client set to None
+    # Connect failure: startup still succeeds, client stays None
     patches2 = _patch_infra()
     mock_client2 = AsyncMock()
-    mock_client2.__aenter__ = AsyncMock(return_value=mock_client2)
-    mock_client2.__aexit__ = AsyncMock(side_effect=OSError("connection reset"))
-
+    mock_client2.__aenter__ = AsyncMock(side_effect=RuntimeError("Connection refused"))
     with (
         patches2["db_from_env"],
         patches2["run_migrations"],
@@ -1764,8 +1723,32 @@ async def test_switchboard_connection_errors_non_fatal(butler_dir: Path) -> None
     ):
         daemon2 = ButlerDaemon(butler_dir)
         await daemon2.start()
-    await daemon2.shutdown()
     assert daemon2.switchboard_client is None
+    assert daemon2._started_at is not None
+
+    # Disconnect error: shutdown still completes; client set to None
+    patches3 = _patch_infra()
+    mock_client3 = AsyncMock()
+    mock_client3.__aenter__ = AsyncMock(return_value=mock_client3)
+    mock_client3.__aexit__ = AsyncMock(side_effect=OSError("connection reset"))
+    with (
+        patches3["db_from_env"],
+        patches3["run_migrations"],
+        patches3["validate_credentials"],
+        patches3["validate_module_credentials"],
+        patches3["init_telemetry"],
+        patches3["sync_schedules"],
+        patches3["FastMCP"],
+        patches3["Spawner"],
+        patches3["get_adapter"],
+        patches3["shutil_which"],
+        patches3["start_mcp_server"],
+        patch("butlers.daemon.MCPClient", return_value=mock_client3),
+    ):
+        daemon3 = ButlerDaemon(butler_dir)
+        await daemon3.start()
+    await daemon3.shutdown()
+    assert daemon3.switchboard_client is None
 
 
 async def test_switchboard_url_from_config(tmp_path: Path) -> None:
@@ -1924,7 +1907,7 @@ async def test_notify_channel_and_switchboard_errors(butler_dir: Path) -> None:
 
 
 async def test_notify_successful_delivery(butler_dir: Path) -> None:
-    """notify returns success when Switchboard delivers successfully."""
+    """notify returns success; payload structure correct; recipient forwarded or omitted."""
     patches = _patch_infra()
     daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
     assert notify_fn is not None
@@ -1938,10 +1921,8 @@ async def test_notify_successful_delivery(butler_dir: Path) -> None:
     daemon.switchboard_client = mock_client
 
     result = await notify_fn(channel="email", message="Hello world")
-
     assert result["status"] == "ok"
     assert result["result"] == {"notification_id": "abc-123", "status": "sent"}
-
     call_args = mock_client.call_tool.await_args
     assert call_args.args[0] == "deliver"
     payload = call_args.args[1]
@@ -1953,22 +1934,7 @@ async def test_notify_successful_delivery(butler_dir: Path) -> None:
         "message": "Hello world",
     }
 
-
-async def test_notify_recipient_forwarding(butler_dir: Path) -> None:
-    """notify with recipient forwards it; without recipient omits field."""
-    patches = _patch_infra()
-    daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
-    assert notify_fn is not None
-
-    mock_call_result = MagicMock()
-    mock_call_result.is_error = False
-    mock_call_result.data = {"notification_id": "def-456", "status": "sent"}
-
-    mock_client = AsyncMock()
-    mock_client.call_tool = AsyncMock(return_value=mock_call_result)
-    daemon.switchboard_client = mock_client
-
-    # With recipient
+    # With recipient: forwarded in delivery
     from butlers.identity import ResolvedContact
 
     known = ResolvedContact(
@@ -1977,27 +1943,26 @@ async def test_notify_recipient_forwarding(butler_dir: Path) -> None:
         roles=["owner"],
         entity_id=None,
     )
+    mock_client.call_tool = AsyncMock(return_value=mock_call_result)
     with patch(
         "butlers.identity.resolve_contact_by_channel",
         new=AsyncMock(return_value=known),
     ):
-        result = await notify_fn(
+        result2 = await notify_fn(
             channel="email", message="Weekly report", recipient="user@example.com"
         )
-    assert result["status"] == "ok"
+    assert result2["status"] == "ok"
     delivery = mock_client.call_tool.await_args.args[1]["notify_request"]["delivery"]
     assert delivery["recipient"] == "user@example.com"
 
-    # Without recipient
-    mock_call_result2 = MagicMock()
-    mock_call_result2.is_error = False
-    mock_call_result2.data = {"notification_id": "ghi-789", "status": "sent"}
-    mock_client.call_tool = AsyncMock(return_value=mock_call_result2)
-
-    result2 = await notify_fn(channel="email", message="Alert")
-    assert result2["status"] == "ok"
-    deliver_args = mock_client.call_tool.call_args[0][1]
-    assert "recipient" not in deliver_args
+    # Without recipient: field omitted
+    mock_call_result3 = MagicMock()
+    mock_call_result3.is_error = False
+    mock_call_result3.data = {"notification_id": "ghi-789", "status": "sent"}
+    mock_client.call_tool = AsyncMock(return_value=mock_call_result3)
+    result3 = await notify_fn(channel="email", message="Alert")
+    assert result3["status"] == "ok"
+    assert "recipient" not in mock_client.call_tool.call_args[0][1]
 
 
 @pytest.mark.parametrize(
@@ -2362,10 +2327,24 @@ async def test_route_execute_error_scenarios(
 
 
 async def test_non_fatal_module_failures(tmp_path: Path) -> None:
-    """Failed modules are marked as failed/cascade_failed; butler still starts."""
+    """Failed modules marked failed/cascade_failed; on_startup failures degrade health/tools."""
+    # Credentials failure: stub_a fails, stub_b cascade_fails; butler still starts
     butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}, "stub_b": {}})
     registry = _make_registry(StubModuleA, StubModuleB)
     patches = _patch_infra()
+    status_fn = None
+    mock_mcp = MagicMock()
+
+    def tool_decorator(*_decorator_args, **_decorator_kwargs):
+        def decorator(fn):
+            nonlocal status_fn
+            if fn.__name__ == "status":
+                status_fn = fn
+            return fn
+
+        return decorator
+
+    mock_mcp.tool = tool_decorator
 
     with (
         patches["db_from_env"],
@@ -2378,7 +2357,7 @@ async def test_non_fatal_module_failures(tmp_path: Path) -> None:
         ),
         patches["init_telemetry"],
         patches["sync_schedules"],
-        patches["FastMCP"],
+        patch("butlers.daemon.FastMCP", return_value=mock_mcp),
         patches["Spawner"],
         patches["get_adapter"],
         patches["shutil_which"],
@@ -2395,114 +2374,7 @@ async def test_non_fatal_module_failures(tmp_path: Path) -> None:
     assert daemon._module_statuses["stub_a"].phase == "credentials"
     assert daemon._module_statuses["stub_b"].status == "cascade_failed"
     assert "stub_a" in daemon._module_statuses["stub_b"].error
-
-
-async def test_module_startup_failure_non_fatal(tmp_path: Path) -> None:
-    """Butler starts when a module's on_startup raises; failed module skipped in tools/shutdown."""
-    butler_dir = _make_butler_toml(tmp_path, modules={"stub_fail": {}, "stub_a": {}})
-    registry = _make_registry(StubModuleFailStartup, StubModuleA)
-    patches = _patch_infra()
-    status_fn = None
-    mock_mcp = MagicMock()
-
-    def tool_decorator(*_decorator_args, **_decorator_kwargs):
-        def decorator(fn):
-            nonlocal status_fn
-            if fn.__name__ == "status":
-                status_fn = fn
-            return fn
-
-        return decorator
-
-    mock_mcp.tool = tool_decorator
-
-    with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patch("butlers.daemon.FastMCP", return_value=mock_mcp),
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["start_mcp_server"],
-        patches["connect_switchboard"],
-        patches["create_audit_pool"],
-        patches["recover_route_inbox"],
-    ):
-        daemon = ButlerDaemon(butler_dir, registry=registry)
-        await daemon.start()
-
-    assert daemon._started_at is not None
-
-    # Module status: failed module marked, active module healthy
-    assert daemon._module_statuses["stub_fail"].status == "failed"
-    assert daemon._module_statuses["stub_fail"].phase == "startup"
-    assert daemon._module_statuses["stub_a"].status == "active"
-
-    # Failed module tools NOT registered; active module tools ARE registered
-    fail_mod = next(m for m in daemon._modules if m.name == "stub_fail")
-    active_mod = next(m for m in daemon._modules if m.name == "stub_a")
-    assert not fail_mod.tools_registered
-    assert active_mod.tools_registered
-
-    # Health is degraded; status reports details
-    assert status_fn is not None
-    result = await status_fn()
-    assert result["health"] == "degraded"
-    assert result["modules"]["stub_fail"]["status"] == "failed"
-    assert result["modules"]["stub_a"]["status"] == "active"
-
-    # Failed module not shutdown; active module is
-    await daemon.shutdown()
-    assert not fail_mod.shutdown_called
-    assert active_mod.shutdown_called
-
-
-async def test_status_reports_module_failure_details(tmp_path: Path) -> None:
-    """status() includes phase and error for failed modules; cascade_failed shown for dependents."""
-    butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}, "stub_b": {}})
-    registry = _make_registry(StubModuleA, StubModuleB)
-    patches = _patch_infra()
-    status_fn = None
-    mock_mcp = MagicMock()
-
-    def tool_decorator(*_decorator_args, **_decorator_kwargs):
-        def decorator(fn):
-            nonlocal status_fn
-            if fn.__name__ == "status":
-                status_fn = fn
-            return fn
-
-        return decorator
-
-    mock_mcp.tool = tool_decorator
-
-    with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patch(
-            "butlers.daemon.validate_module_credentials_async",
-            new_callable=AsyncMock,
-            return_value={"stub_a": ["STUB_A_TOKEN"]},
-        ),
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patch("butlers.daemon.FastMCP", return_value=mock_mcp),
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["start_mcp_server"],
-        patches["connect_switchboard"],
-        patches["create_audit_pool"],
-        patches["recover_route_inbox"],
-    ):
-        daemon = ButlerDaemon(butler_dir, registry=registry)
-        await daemon.start()
-
+    # status() reports phase+error for failed, cascade_failed for dependents
     assert status_fn is not None
     result = await status_fn()
     stub_a_info = result["modules"]["stub_a"]
@@ -2511,28 +2383,80 @@ async def test_status_reports_module_failure_details(tmp_path: Path) -> None:
     assert "STUB_A_TOKEN" in stub_a_info["error"]
     assert result["modules"]["stub_b"]["status"] == "cascade_failed"
 
+    # on_startup failure: failed module skipped in tools/shutdown; active module healthy
+    fail_subdir = tmp_path / "fail"
+    fail_subdir.mkdir()
+    butler_dir2 = _make_butler_toml(fail_subdir, modules={"stub_fail": {}, "stub_a": {}})
+    registry2 = _make_registry(StubModuleFailStartup, StubModuleA)
+    patches2 = _patch_infra()
+    status_fn2 = None
+    mock_mcp2 = MagicMock()
+
+    def tool_decorator2(*_decorator_args, **_decorator_kwargs):
+        def decorator(fn):
+            nonlocal status_fn2
+            if fn.__name__ == "status":
+                status_fn2 = fn
+            return fn
+
+        return decorator
+
+    mock_mcp2.tool = tool_decorator2
+
+    with (
+        patches2["db_from_env"],
+        patches2["run_migrations"],
+        patches2["validate_credentials"],
+        patches2["validate_module_credentials"],
+        patches2["init_telemetry"],
+        patches2["sync_schedules"],
+        patch("butlers.daemon.FastMCP", return_value=mock_mcp2),
+        patches2["Spawner"],
+        patches2["get_adapter"],
+        patches2["shutil_which"],
+        patches2["start_mcp_server"],
+        patches2["connect_switchboard"],
+        patches2["create_audit_pool"],
+        patches2["recover_route_inbox"],
+    ):
+        daemon2 = ButlerDaemon(butler_dir2, registry=registry2)
+        await daemon2.start()
+
+    assert daemon2._started_at is not None
+    assert daemon2._module_statuses["stub_fail"].status == "failed"
+    assert daemon2._module_statuses["stub_fail"].phase == "startup"
+    assert daemon2._module_statuses["stub_a"].status == "active"
+    fail_mod = next(m for m in daemon2._modules if m.name == "stub_fail")
+    active_mod = next(m for m in daemon2._modules if m.name == "stub_a")
+    assert not fail_mod.tools_registered
+    assert active_mod.tools_registered
+    assert status_fn2 is not None
+    r2 = await status_fn2()
+    assert r2["health"] == "degraded"
+    assert r2["modules"]["stub_fail"]["status"] == "failed"
+    assert r2["modules"]["stub_a"]["status"] == "active"
+    await daemon2.shutdown()
+    assert not fail_mod.shutdown_called
+    assert active_mod.shutdown_called
+
 
 # ---------------------------------------------------------------------------
 # Switchboard heartbeat
 # ---------------------------------------------------------------------------
 
 
-async def test_heartbeat_cancelled_on_shutdown(butler_dir: Path) -> None:
-    """shutdown() cancels the heartbeat task."""
+async def test_heartbeat_lifecycle(butler_dir: Path, tmp_path: Path) -> None:
+    """Heartbeat task created on start, cleared on shutdown; switchboard butler has none."""
+    # Normal butler: heartbeat created and cleared on shutdown
     patches = _patch_infra()
     daemon = await _start_daemon(butler_dir, patches)
-
     assert daemon._switchboard_heartbeat_task is not None
     heartbeat_task = daemon._switchboard_heartbeat_task
-
     await daemon.shutdown()
-
     assert daemon._switchboard_heartbeat_task is None
     assert heartbeat_task.cancelled() or heartbeat_task.done()
 
-
-async def test_no_heartbeat_for_switchboard_butler(tmp_path: Path) -> None:
-    """Switchboard butler (switchboard_url=None) should not get a heartbeat task."""
+    # Switchboard butler (switchboard_url=None): no heartbeat task
     toml = """\
 [butler]
 name = "switchboard"
@@ -2548,62 +2472,68 @@ cron = "0 9 * * *"
 prompt = "Do the daily check"
 """
     (tmp_path / "butler.toml").write_text(toml)
-    patches = _patch_infra()
-
+    patches2 = _patch_infra()
     with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["start_mcp_server"],
+        patches2["db_from_env"],
+        patches2["run_migrations"],
+        patches2["validate_credentials"],
+        patches2["validate_module_credentials"],
+        patches2["init_telemetry"],
+        patches2["sync_schedules"],
+        patches2["FastMCP"],
+        patches2["Spawner"],
+        patches2["get_adapter"],
+        patches2["shutil_which"],
+        patches2["start_mcp_server"],
         # Don't mock _connect_switchboard — let it see switchboard_url=None
     ):
-        daemon = ButlerDaemon(tmp_path)
-        await daemon.start()
+        daemon2 = ButlerDaemon(tmp_path)
+        await daemon2.start()
+    assert daemon2._switchboard_heartbeat_task is None
+    await daemon2.shutdown()
 
-    assert daemon._switchboard_heartbeat_task is None
-    await daemon.shutdown()
 
+async def test_heartbeat_reconnect_behavior(butler_dir: Path) -> None:
+    """Heartbeat reconnects on dead connection; healthy connection requires no reconnect."""
 
-async def test_heartbeat_dead_connection_reconnects(butler_dir: Path) -> None:
-    """Heartbeat disconnects + reconnects when list_tools() fails."""
-    patches = _patch_infra()
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.list_tools = AsyncMock(side_effect=ConnectionError("dead"))
+    def _make_client(list_tools_side_effect=None, list_tools_return=None):
+        client = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        if list_tools_side_effect:
+            client.list_tools = AsyncMock(side_effect=list_tools_side_effect)
+        else:
+            client.list_tools = AsyncMock(return_value=list_tools_return or [])
+        return client
 
-    with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["start_mcp_server"],
-        patch("butlers.daemon.MCPClient", return_value=mock_client),
-    ):
-        daemon = ButlerDaemon(butler_dir)
-        await daemon.start()
+    async def _start_with_client(mock_client):
+        p = _patch_infra()
+        with (
+            p["db_from_env"],
+            p["run_migrations"],
+            p["validate_credentials"],
+            p["validate_module_credentials"],
+            p["init_telemetry"],
+            p["sync_schedules"],
+            p["FastMCP"],
+            p["Spawner"],
+            p["get_adapter"],
+            p["shutil_which"],
+            p["start_mcp_server"],
+            patch("butlers.daemon.MCPClient", return_value=mock_client),
+        ):
+            d = ButlerDaemon(butler_dir)
+            await d.start()
+        d._switchboard_heartbeat_task.cancel()
+        try:
+            await d._switchboard_heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        return d
 
-    assert daemon.switchboard_client is mock_client
-
-    daemon._switchboard_heartbeat_task.cancel()
-    try:
-        await daemon._switchboard_heartbeat_task
-    except asyncio.CancelledError:
-        pass
-
+    # Dead connection → disconnects and reconnects
+    dead_client = _make_client(list_tools_side_effect=ConnectionError("dead"))
+    daemon = await _start_with_client(dead_client)
     disconnect_called = False
     connect_called = False
 
@@ -2629,49 +2559,20 @@ async def test_heartbeat_dead_connection_reconnects(butler_dir: Path) -> None:
     assert disconnect_called
     assert connect_called
 
+    # Healthy connection → no reconnect
+    healthy_client = _make_client(list_tools_return=[])
+    daemon2 = await _start_with_client(healthy_client)
+    disconnect_called2 = False
 
-async def test_heartbeat_healthy_connection_no_reconnect(butler_dir: Path) -> None:
-    """Heartbeat does not reconnect when list_tools() succeeds."""
-    patches = _patch_infra()
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.list_tools = AsyncMock(return_value=[])
+    async def fake_disconnect2(self_daemon):
+        nonlocal disconnect_called2
+        disconnect_called2 = True
 
-    with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["start_mcp_server"],
-        patch("butlers.daemon.MCPClient", return_value=mock_client),
-    ):
-        daemon = ButlerDaemon(butler_dir)
-        await daemon.start()
+    with patch.object(ButlerDaemon, "_disconnect_switchboard", new=fake_disconnect2):
+        await asyncio.wait_for(daemon2.switchboard_client.list_tools(), timeout=5.0)
 
-    daemon._switchboard_heartbeat_task.cancel()
-    try:
-        await daemon._switchboard_heartbeat_task
-    except asyncio.CancelledError:
-        pass
-
-    disconnect_called = False
-
-    async def fake_disconnect(self_daemon):
-        nonlocal disconnect_called
-        disconnect_called = True
-
-    with patch.object(ButlerDaemon, "_disconnect_switchboard", new=fake_disconnect):
-        await asyncio.wait_for(daemon.switchboard_client.list_tools(), timeout=5.0)
-
-    assert not disconnect_called
-    assert daemon.switchboard_client is mock_client
+    assert not disconnect_called2
+    assert daemon2.switchboard_client is healthy_client
 
 
 # ---------------------------------------------------------------------------
