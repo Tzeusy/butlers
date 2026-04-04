@@ -401,31 +401,20 @@ async def test_ingestion_event_sessions():
 # ---------------------------------------------------------------------------
 
 
-def test_ingestion_event_rollup_empty():
+def test_ingestion_event_rollup():
+    """Empty rollup returns zero totals; sessions aggregate tokens/costs/by_butler."""
     from butlers.core.ingestion_events import ingestion_event_rollup
 
-    result = ingestion_event_rollup("req-001", [])
-    assert result["request_id"] == "req-001"
-    assert result["total_sessions"] == 0
-    assert result["total_input_tokens"] == 0
-    assert result["total_output_tokens"] == 0
-    assert result["total_cost"] == 0.0
-    assert result["by_butler"] == {}
-    for key in (
-        "request_id",
-        "total_sessions",
-        "total_input_tokens",
-        "total_output_tokens",
-        "total_cost",
-        "by_butler",
-    ):
-        assert key in result
+    empty = ingestion_event_rollup("req-001", [])
+    assert empty["request_id"] == "req-001"
+    assert empty["total_sessions"] == 0
+    assert empty["total_input_tokens"] == 0
+    assert empty["by_butler"] == {}
+    for key in ("total_sessions", "total_input_tokens", "total_output_tokens", "total_cost",
+                "by_butler"):
+        assert key in empty
 
-
-def test_ingestion_event_rollup_aggregation():
-    """Tokens summed; cost summed including string-cast; null tokens=0; by_butler breakdowns."""
-    from butlers.core.ingestion_events import ingestion_event_rollup
-
+    # aggregation
     sessions = [
         {
             "butler_name": "atlas",

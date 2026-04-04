@@ -105,30 +105,28 @@ def test_sanitization_edge_cases():
 # ---------------------------------------------------------------------------
 
 
-def test_exception_type_fully_qualified():
+def test_exception_type_and_call_site_extraction():
+    """Fully qualified type; outermost in chain; no-tb → unknown site; different sites differ."""
+    # Fully qualified type
     exc = ValueError("invalid literal")
     result = compute_fingerprint(exc, _tb_for_exc(exc))
     assert result.exception_type == "builtins.ValueError"
 
-
-def test_chained_exception_uses_outermost():
+    # Chained exception uses outermost
     try:
         try:
             raise ConnectionRefusedError("port 5432")
         except ConnectionRefusedError as cause:
             raise RuntimeError("failed") from cause
-    except RuntimeError as exc:
-        result = compute_fingerprint(exc, sys.exc_info()[2])
-    assert "RuntimeError" in result.exception_type
-    assert "ConnectionRefusedError" not in result.exception_type
+    except RuntimeError as exc2:
+        chained = compute_fingerprint(exc2, sys.exc_info()[2])
+    assert "RuntimeError" in chained.exception_type
+    assert "ConnectionRefusedError" not in chained.exception_type
 
+    # No traceback → unknown call site
+    assert compute_fingerprint(ValueError("test"), None).call_site == "<unknown>:<unknown>"
 
-def test_no_traceback_returns_unknown_call_site():
-    result = compute_fingerprint(ValueError("test"), None)
-    assert result.call_site == "<unknown>:<unknown>"
-
-
-def test_different_call_sites_different_fingerprints():
+    # Different call sites → different fingerprints
     r1 = compute_fingerprint_from_report("builtins.ValueError", "err", "file_a.py:fn_a", None)
     r2 = compute_fingerprint_from_report("builtins.ValueError", "err", "file_b.py:fn_b", None)
     assert r1.fingerprint != r2.fingerprint

@@ -176,26 +176,13 @@ async def test_route_to_butler_status_mapping(
         assert check_field in result.get("error", "")
 
 
-async def test_route_to_butler_accepted_not_mapped_to_ok(tmp_path: Path) -> None:
-    """'accepted' must NOT be downgraded to 'ok' — they are distinct statuses."""
-    patches = _patch_infra()
-    butler_dir = _make_switchboard_dir(tmp_path)
-    mock_route = AsyncMock(return_value={"result": {"status": "accepted"}})
-    _, fn = await _start_switchboard_and_capture_route_to_butler(
-        butler_dir, patches, mock_route=mock_route
-    )
-    result = await fn(butler="relationship", prompt="call Mom")
-    assert result["status"] != "ok"
-    assert result["status"] == "accepted"
-
-
 # ---------------------------------------------------------------------------
 # Request context / UUID7 normalization
 # ---------------------------------------------------------------------------
 
 
-async def test_route_to_butler_serializes_uuid7_when_context_missing(tmp_path: Path) -> None:
-    """Missing routing context should not emit non-UUID request_context.request_id."""
+async def test_route_to_butler_uuid7_context_normalization(tmp_path: Path) -> None:
+    """Missing context generates uuid7; invalid context request_id is rewritten to uuid7."""
     patches = _patch_infra()
     butler_dir = _make_switchboard_dir(tmp_path)
     captured: dict[str, Any] = {}
@@ -207,26 +194,15 @@ async def test_route_to_butler_serializes_uuid7_when_context_missing(tmp_path: P
     _, fn = await _start_switchboard_and_capture_route_to_butler(
         butler_dir, patches, mock_route=AsyncMock(side_effect=_capture)
     )
+
+    # Missing context: generates uuid7
     result = await fn(butler="general", prompt="hello")
     assert result["status"] == "accepted"
     payload = {k: v for k, v in captured.items() if k != "__switchboard_route_context"}
     assert parse_route_envelope(payload).request_context.request_id.version == 7
 
-
-async def test_route_to_butler_rewrites_invalid_context_request_id(tmp_path: Path) -> None:
-    """Invalid request_id values in routing context are normalized to uuid7."""
-    patches = _patch_infra()
-    butler_dir = _make_switchboard_dir(tmp_path)
-    captured: dict[str, Any] = {}
-
-    async def _capture(*_args, **kwargs):
-        captured.update(kwargs["args"])
-        return {"result": {"status": "accepted"}}
-
-    _, fn = await _start_switchboard_and_capture_route_to_butler(
-        butler_dir, patches, mock_route=AsyncMock(side_effect=_capture)
-    )
-
+    # Invalid request_id: rewritten to uuid7
+    captured.clear()
     token = _routing_ctx_var.set(
         {
             "source_metadata": {"channel": "telegram_bot", "identity": "user-123"},
@@ -235,13 +211,13 @@ async def test_route_to_butler_rewrites_invalid_context_request_id(tmp_path: Pat
         }
     )
     try:
-        result = await fn(butler="general", prompt="hello")
+        result2 = await fn(butler="general", prompt="hello")
     finally:
         _routing_ctx_var.reset(token)
 
-    assert result["status"] == "accepted"
-    payload = {k: v for k, v in captured.items() if k != "__switchboard_route_context"}
-    parsed = parse_route_envelope(payload)
+    assert result2["status"] == "accepted"
+    payload2 = {k: v for k, v in captured.items() if k != "__switchboard_route_context"}
+    parsed = parse_route_envelope(payload2)
     assert parsed.request_context.request_id.version == 7
     assert captured["request_context"]["request_id"] != "unknown"
 

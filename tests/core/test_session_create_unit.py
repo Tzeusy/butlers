@@ -29,8 +29,8 @@ class _FakePool:
         return self._return_id
 
 
-async def test_session_create_request_id_none_raises_value_error() -> None:
-    """session_create raises ValueError when request_id=None, before any DB call."""
+async def test_session_create_validation_and_return() -> None:
+    """None request_id raises before DB call; valid call returns pool UUID."""
     from butlers.core.sessions import session_create
 
     pool = _FakePool()
@@ -42,6 +42,12 @@ async def test_session_create_request_id_none_raises_value_error() -> None:
             request_id=None,  # type: ignore[arg-type]
         )
     assert pool.fetchval_calls == []
+
+    expected_id = uuid.uuid4()
+    pool2 = _FakePool(return_id=expected_id)
+    result = await session_create(pool2, prompt="Test", trigger_source="tick",
+                                  request_id=str(uuid.uuid4()))
+    assert result == expected_id
 
 
 @pytest.mark.parametrize(
@@ -86,17 +92,3 @@ async def test_session_create_accepts_valid_trigger_sources(trigger_source: str)
     assert pool.fetchval_calls
 
 
-async def test_session_create_returns_uuid() -> None:
-    """session_create returns the UUID provided by the pool."""
-    from butlers.core.sessions import session_create
-
-    expected_id = uuid.uuid4()
-    pool = _FakePool(return_id=expected_id)
-
-    result = await session_create(
-        pool,
-        prompt="Test",
-        trigger_source="tick",
-        request_id=str(uuid.uuid4()),
-    )
-    assert result == expected_id
