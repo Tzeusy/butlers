@@ -612,12 +612,14 @@ async def test_shutdown_sequence(butler_dir_with_modules: Path) -> None:
     for mod in daemon._modules:
         original = mod.on_shutdown
         if mod.name == "stub_b":
+
             async def failing_shutdown():
                 shutdown_order.append("stub_b")
                 raise RuntimeError("shutdown failed")
 
             mod.on_shutdown = failing_shutdown
         else:
+
             async def make_tracker(name=mod.name, orig=original):
                 shutdown_order.append(name)
                 await orig()
@@ -670,9 +672,7 @@ async def test_start_mcp_server_creates_uvicorn_server(butler_dir: Path) -> None
 
     mock_mcp = MagicMock()
     streamable_app = FastAPI()
-    streamable_app.add_api_route(
-        "/mcp", endpoint=lambda: None, methods=["GET", "POST", "DELETE"]
-    )
+    streamable_app.add_api_route("/mcp", endpoint=lambda: None, methods=["GET", "POST", "DELETE"])
     sse_app = FastAPI()
     sse_app.add_api_route("/sse", endpoint=lambda: None, methods=["GET"])
     sse_app.mount("/messages", app=FastAPI())
@@ -893,8 +893,8 @@ async def test_sse_disconnect_guard_suppresses_messages_post(
 @pytest.mark.parametrize(
     "exc_type,path,should_bubble",
     [
-        (RuntimeError, "/messages/", True),         # non-disconnect on /messages/ bubbles
-        (ClientDisconnect, "/health", True),         # disconnect on other path bubbles
+        (RuntimeError, "/messages/", True),  # non-disconnect on /messages/ bubbles
+        (ClientDisconnect, "/health", True),  # disconnect on other path bubbles
     ],
 )
 async def test_sse_disconnect_guard_bubbles(exc_type, path, should_bubble) -> None:
@@ -1602,9 +1602,10 @@ async def test_message_pipeline_wiring(tmp_path: Path) -> None:
 
 
 async def test_runtime_binary_check(butler_dir: Path) -> None:
-    """Missing binary raises RuntimeBinaryNotFoundError; Spawner is not created."""
+    """Missing binary raises RuntimeBinaryNotFoundError; found binary allows startup."""
     patches = _patch_infra()
 
+    # Missing binary → raises, Spawner not created
     with (
         patches["db_from_env"],
         patches["run_migrations"],
@@ -1620,32 +1621,27 @@ async def test_runtime_binary_check(butler_dir: Path) -> None:
         daemon = ButlerDaemon(butler_dir)
         with pytest.raises(RuntimeBinaryNotFoundError, match="'claude'"):
             await daemon.start()
-
     mock_spawner_cls.assert_not_called()
 
-
-async def test_runtime_binary_found_allows_startup(butler_dir: Path) -> None:
-    """When binary is found, startup proceeds normally."""
-    patches = _patch_infra()
-
+    # Found binary → startup proceeds
+    patches2 = _patch_infra()
     with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"] as mock_which,
-        patches["socket"],
+        patches2["db_from_env"],
+        patches2["run_migrations"],
+        patches2["validate_credentials"],
+        patches2["validate_module_credentials"],
+        patches2["init_telemetry"],
+        patches2["sync_schedules"],
+        patches2["FastMCP"],
+        patches2["Spawner"],
+        patches2["get_adapter"],
+        patches2["shutil_which"] as mock_which,
+        patches2["socket"],
     ):
-        daemon = ButlerDaemon(butler_dir)
-        await daemon.start()
-
+        daemon2 = ButlerDaemon(butler_dir)
+        await daemon2.start()
     mock_which.assert_called_once_with("claude")
-    assert daemon._started_at is not None
+    assert daemon2._started_at is not None
 
 
 # ---------------------------------------------------------------------------
@@ -1967,8 +1963,8 @@ async def test_notify_successful_delivery(butler_dir: Path) -> None:
     }
 
 
-async def test_notify_with_recipient(butler_dir: Path) -> None:
-    """notify with explicit recipient forwards it to Switchboard."""
+async def test_notify_recipient_forwarding(butler_dir: Path) -> None:
+    """notify with recipient forwards it; without recipient omits field."""
     patches = _patch_infra()
     daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
     assert notify_fn is not None
@@ -1981,6 +1977,7 @@ async def test_notify_with_recipient(butler_dir: Path) -> None:
     mock_client.call_tool = AsyncMock(return_value=mock_call_result)
     daemon.switchboard_client = mock_client
 
+    # With recipient
     from butlers.identity import ResolvedContact
 
     known = ResolvedContact(
@@ -1996,30 +1993,18 @@ async def test_notify_with_recipient(butler_dir: Path) -> None:
         result = await notify_fn(
             channel="email", message="Weekly report", recipient="user@example.com"
         )
-
     assert result["status"] == "ok"
-    call_args = mock_client.call_tool.await_args
-    delivery = call_args.args[1]["notify_request"]["delivery"]
+    delivery = mock_client.call_tool.await_args.args[1]["notify_request"]["delivery"]
     assert delivery["recipient"] == "user@example.com"
 
+    # Without recipient
+    mock_call_result2 = MagicMock()
+    mock_call_result2.is_error = False
+    mock_call_result2.data = {"notification_id": "ghi-789", "status": "sent"}
+    mock_client.call_tool = AsyncMock(return_value=mock_call_result2)
 
-async def test_notify_without_recipient_omits_field(butler_dir: Path) -> None:
-    """notify without recipient does not include recipient in deliver args."""
-    patches = _patch_infra()
-    daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
-    assert notify_fn is not None
-
-    mock_call_result = MagicMock()
-    mock_call_result.is_error = False
-    mock_call_result.data = {"notification_id": "ghi-789", "status": "sent"}
-
-    mock_client = AsyncMock()
-    mock_client.call_tool = AsyncMock(return_value=mock_call_result)
-    daemon.switchboard_client = mock_client
-
-    result = await notify_fn(channel="email", message="Alert")
-    assert result["status"] == "ok"
-
+    result2 = await notify_fn(channel="email", message="Alert")
+    assert result2["status"] == "ok"
     deliver_args = mock_client.call_tool.call_args[0][1]
     assert "recipient" not in deliver_args
 
@@ -2123,24 +2108,19 @@ async def test_notify_error_cases(butler_dir: Path, side_effect, expected_in_err
     assert expected_in_error.lower() in result["error"].lower()
 
 
-async def test_notify_empty_message_returns_error(butler_dir: Path) -> None:
-    """notify with empty or whitespace-only message returns error."""
+async def test_notify_empty_message_and_timeout(butler_dir: Path) -> None:
+    """notify rejects empty/whitespace messages; returns timeout error when call hangs."""
     patches = _patch_infra()
     daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
     assert notify_fn is not None
 
+    # Empty/whitespace message
     for msg in ("", "   \t\n  "):
         result = await notify_fn(channel="telegram", message=msg)
         assert result["status"] == "error"
         assert "empty" in result["error"].lower() or "whitespace" in result["error"].lower()
 
-
-async def test_notify_timeout(butler_dir: Path) -> None:
-    """notify returns timeout-specific error when call_tool hangs."""
-    patches = _patch_infra()
-    daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
-    assert notify_fn is not None
-
+    # Timeout
     _orphaned_coros: list = []
 
     async def slow_call(*args, **kwargs):
@@ -2820,9 +2800,7 @@ async def test_briefing_schedule_inclusion(
         ("staffer", "staffer"),
     ],
 )
-async def test_heartbeat_payload_includes_type(
-    tmp_path: Path, butler_type, expected_type
-) -> None:
+async def test_heartbeat_payload_includes_type(tmp_path: Path, butler_type, expected_type) -> None:
     """Liveness reporter payload includes correct type field."""
     if butler_type == "staffer":
         butler_dir = _make_staffer_toml(tmp_path, with_briefing_schedule=False)
