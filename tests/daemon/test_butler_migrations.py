@@ -40,8 +40,8 @@ pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 
 
-def test_build_alembic_config_accepts_percent_encoded_db_url() -> None:
-    """DB URLs with libpq options must not fail ConfigParser interpolation."""
+def test_build_alembic_config() -> None:
+    """Percent-encoded URLs preserved; schema options set; invalid schema raises."""
     db_url = (
         "postgresql://butlers:butlers@localhost:54320/butlers"
         "?options=-csearch_path%3Dswitchboard%2Cpublic"
@@ -49,20 +49,14 @@ def test_build_alembic_config_accepts_percent_encoded_db_url() -> None:
     config = _build_alembic_config(db_url, chains=["core"])
     assert config.get_main_option("sqlalchemy.url") == db_url
 
-
-def test_build_alembic_config_sets_schema_options() -> None:
-    """Schema-scoped runs should set target + version table schema options."""
-    config = _build_alembic_config(
+    config2 = _build_alembic_config(
         "postgresql://butlers:butlers@localhost:54320/butlers",
         chains=["core"],
         target_schema="switchboard",
     )
-    assert config.get_main_option("butlers.target_schema") == "switchboard"
-    assert config.get_main_option("version_table_schema") == "switchboard"
+    assert config2.get_main_option("butlers.target_schema") == "switchboard"
+    assert config2.get_main_option("version_table_schema") == "switchboard"
 
-
-def test_build_alembic_config_rejects_invalid_schema() -> None:
-    """Invalid schema names should fail fast."""
     with pytest.raises(ValueError, match="Invalid migration schema name"):
         _build_alembic_config(
             "postgresql://butlers:butlers@localhost:54320/butlers",
@@ -122,19 +116,13 @@ def test_has_butler_chain(tmp_path, setup, expected):
         assert has_butler_chain("my-butler") is expected
 
 
-def test_has_butler_chain_real_roster() -> None:
-    """The real roster has known and missing chains."""
-    assert has_butler_chain("relationship") is True
-    assert has_butler_chain("does-not-exist-butler-xyz") is False
-
-
 # ---------------------------------------------------------------------------
 # _discover_butler_chains / _discover_module_chains
 # ---------------------------------------------------------------------------
 
 
 def test_discover_butler_chains(tmp_path) -> None:
-    """Returns sorted list of butlers with .py migrations; skips empty/missing."""
+    """Returns sorted list of butlers with .py migrations; real roster includes known butlers."""
     for name in ["zeta", "alpha"]:
         mig_dir = tmp_path / name / "migrations"
         mig_dir.mkdir(parents=True)
@@ -143,19 +131,18 @@ def test_discover_butler_chains(tmp_path) -> None:
 
     with patch("butlers.migrations.ROSTER_DIR", tmp_path):
         chains = _discover_butler_chains()
-
     assert chains == ["alpha", "zeta"]
 
-
-def test_discover_butler_chains_real_roster() -> None:
-    """Real roster should include known butlers."""
-    chains = _discover_butler_chains()
+    # Real roster
+    assert has_butler_chain("relationship") is True
+    assert has_butler_chain("does-not-exist-butler-xyz") is False
+    real_chains = _discover_butler_chains()
     for expected in ["general", "health", "relationship", "switchboard"]:
-        assert expected in chains
+        assert expected in real_chains
 
 
 def test_discover_module_chains(tmp_path) -> None:
-    """Returns sorted list of modules with .py migrations; skips missing dirs."""
+    """Returns sorted list of modules with .py migrations; real modules include known chains."""
     for name in ["zeta", "alpha"]:
         mig_dir = tmp_path / name / "migrations"
         mig_dir.mkdir(parents=True)
@@ -163,15 +150,12 @@ def test_discover_module_chains(tmp_path) -> None:
 
     with patch("butlers.migrations.MODULES_DIR", tmp_path):
         chains = _discover_module_chains()
-
     assert chains == ["alpha", "zeta"]
 
-
-def test_discover_module_chains_real_modules() -> None:
-    """Real modules should include known chains."""
-    chains = _discover_module_chains()
+    # Real modules
+    real_chains = _discover_module_chains()
     for expected in ["approvals", "mailbox", "memory"]:
-        assert expected in chains
+        assert expected in real_chains
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +190,7 @@ def test_resolve_chain_dir(tmp_path) -> None:
 
 
 def test_get_all_chains(tmp_path) -> None:
-    """Returns shared chains first, then module chains, then butler chains."""
+    """Shared chains first, then modules, then butlers; real list includes known chains."""
     alembic_dir = tmp_path / "alembic"
     modules_dir = tmp_path / "modules"
     butlers_dir = tmp_path / "butlers"
@@ -223,17 +207,12 @@ def test_get_all_chains(tmp_path) -> None:
         patch("butlers.migrations.ROSTER_DIR", butlers_dir),
     ):
         chains = get_all_chains()
-
     assert chains == ["core", "mailbox", "my-butler"]
 
-
-def test_get_all_chains_real() -> None:
-    """Real chain list includes core, mailbox, approvals, memory."""
-    chains = get_all_chains()
-    assert "core" in chains
-    assert "mailbox" in chains
-    assert "approvals" in chains
-    assert "memory" in chains
+    # Real chain list
+    real_chains = get_all_chains()
+    for expected in ["core", "mailbox", "approvals", "memory"]:
+        assert expected in real_chains
 
 
 # ---------------------------------------------------------------------------
