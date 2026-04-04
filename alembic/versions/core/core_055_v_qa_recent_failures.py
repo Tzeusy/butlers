@@ -187,7 +187,7 @@ def _grant_schema_usage_best_effort(schema: str, role: str) -> None:
         DO $$
         BEGIN
             IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN
-                EXECUTE 'GRANT USAGE ON SCHEMA {schema} TO "{role}"';
+                EXECUTE 'GRANT USAGE ON SCHEMA "{schema}" TO "{role}"';
             END IF;
         EXCEPTION
             WHEN insufficient_privilege THEN NULL;
@@ -206,7 +206,7 @@ def _revoke_schema_usage_best_effort(schema: str, role: str) -> None:
         DO $$
         BEGIN
             IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN
-                EXECUTE 'REVOKE USAGE ON SCHEMA {schema} FROM "{role}"';
+                EXECUTE 'REVOKE USAGE ON SCHEMA "{schema}" FROM "{role}"';
             END IF;
         EXCEPTION
             WHEN insufficient_privilege THEN NULL;
