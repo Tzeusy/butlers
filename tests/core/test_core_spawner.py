@@ -41,71 +41,39 @@ pytestmark = pytest.mark.unit
 _FAKE_CATALOG_ID = uuid.UUID("00000000-0000-0000-0000-000000000099")
 
 
-def test_append_runtime_session_query_adds_param():
+def test_append_runtime_session_query():
+    """Adds param to clean URL; preserves existing query params."""
     url = _append_runtime_session_query("http://localhost:9100/mcp", "sess-123")
     assert url == "http://localhost:9100/mcp?runtime_session_id=sess-123"
-
-
-def test_append_runtime_session_query_preserves_existing_query():
-    url = _append_runtime_session_query("http://localhost:9100/mcp?x=1", "sess-123")
-    assert url in (
+    url2 = _append_runtime_session_query("http://localhost:9100/mcp?x=1", "sess-123")
+    assert url2 in (
         "http://localhost:9100/mcp?x=1&runtime_session_id=sess-123",
         "http://localhost:9100/mcp?runtime_session_id=sess-123&x=1",
     )
 
 
-def test_merge_tool_call_records_dedupes_same_name_and_payload():
+def test_merge_tool_call_records():
+    """Dedupes same name+payload; preserves failed-then-retried sequence."""
+    # Dedup: executed has two calls with same name/input as parsed; result = both unique entries
     parsed = [{"name": "route_to_butler", "input": {"butler": "relationship"}}]
     executed = [
         {"name": "route_to_butler", "input": {"butler": "relationship"}},
         {"name": "route_to_butler", "input": {"butler": "health"}},
     ]
-    merged = _merge_tool_call_records(parsed, executed)
-    assert merged == [
+    assert _merge_tool_call_records(parsed, executed) == [
         {"name": "route_to_butler", "input": {"butler": "relationship"}},
         {"name": "route_to_butler", "input": {"butler": "health"}},
     ]
 
-
-def test_merge_tool_call_records_preserves_failed_then_retried_sequence():
-    parsed = [
-        {
-            "id": "tool_1",
-            "name": "route_to_butler",
-            "input": {"butler": "relationship"},
-        }
+    # Failed-then-retried sequence preserved
+    parsed2 = [{"id": "tool_1", "name": "route_to_butler", "input": {"butler": "relationship"}}]
+    executed2 = [
+        {"name": "route_to_butler", "input": {"butler": "relationship"}, "outcome": "error", "error": "TimeoutError: target unavailable"},
+        {"name": "route_to_butler", "input": {"butler": "relationship"}, "outcome": "success", "result": {"status": "accepted", "butler": "relationship"}},
     ]
-    executed = [
-        {
-            "name": "route_to_butler",
-            "input": {"butler": "relationship"},
-            "outcome": "error",
-            "error": "TimeoutError: target unavailable",
-        },
-        {
-            "name": "route_to_butler",
-            "input": {"butler": "relationship"},
-            "outcome": "success",
-            "result": {"status": "accepted", "butler": "relationship"},
-        },
-    ]
-
-    merged = _merge_tool_call_records(parsed, executed)
-
-    assert merged == [
-        {
-            "id": "tool_1",
-            "name": "route_to_butler",
-            "input": {"butler": "relationship"},
-            "outcome": "error",
-            "error": "TimeoutError: target unavailable",
-        },
-        {
-            "name": "route_to_butler",
-            "input": {"butler": "relationship"},
-            "outcome": "success",
-            "result": {"status": "accepted", "butler": "relationship"},
-        },
+    assert _merge_tool_call_records(parsed2, executed2) == [
+        {"id": "tool_1", "name": "route_to_butler", "input": {"butler": "relationship"}, "outcome": "error", "error": "TimeoutError: target unavailable"},
+        {"name": "route_to_butler", "input": {"butler": "relationship"}, "outcome": "success", "result": {"status": "accepted", "butler": "relationship"}},
     ]
 
 
@@ -635,17 +603,13 @@ class TestCredentialPassthrough:
     # Env-only path (no credential_store — backwards compatibility)
     # ------------------------------------------------------------------
 
-    async def test_env_var_passthrough(self):
-        """PATH and declared required/optional vars passed; undeclared vars not leaked."""
+    async def test_env_path_passthrough_and_optional_exclusion(self):
+        """PATH and declared required/optional vars passed; undeclared not leaked;
+        optional absent → excluded; module credentials included."""
         config = _make_config(env_required=["MY_SECRET"], env_optional=["OPT_VAR"])
         with patch.dict(
             os.environ,
-            {
-                "PATH": "/tmp/node-bin",
-                "MY_SECRET": "s3cret",
-                "OPT_VAR": "opt-val",
-                "UNDECLARED_SECRET": "should-not-leak",
-            },
+            {"PATH": "/tmp/node-bin", "MY_SECRET": "s3cret", "OPT_VAR": "opt-val", "UNDECLARED_SECRET": "should-not-leak"},
             clear=False,
         ):
             env = await _build_env(config)
@@ -654,102 +618,54 @@ class TestCredentialPassthrough:
             assert env["OPT_VAR"] == "opt-val"
             assert "UNDECLARED_SECRET" not in env
 
-    async def test_optional_env_vars_excluded_when_absent(self):
-        config = _make_config(env_optional=["MISSING_OPT"])
+        # Optional absent → excluded
+        config2 = _make_config(env_optional=["MISSING_OPT"])
         os.environ.pop("MISSING_OPT", None)
-        env = await _build_env(config)
-        assert "MISSING_OPT" not in env
+        env2 = await _build_env(config2)
+        assert "MISSING_OPT" not in env2
 
-    async def test_module_credentials_included(self):
-        config = _make_config()
-        module_creds = {"email": ["SMTP_PASSWORD", "IMAP_TOKEN"]}
-        with patch.dict(
-            os.environ,
-            {
-                "SMTP_PASSWORD": "pw123",
-                "IMAP_TOKEN": "tok456",
-            },
-            clear=False,
-        ):
-            env = await _build_env(config, module_credentials_env=module_creds)
-            assert env["SMTP_PASSWORD"] == "pw123"
-            assert env["IMAP_TOKEN"] == "tok456"
+        # Module credentials included
+        config3 = _make_config()
+        with patch.dict(os.environ, {"SMTP_PASSWORD": "pw123", "IMAP_TOKEN": "tok456"}, clear=False):
+            env3 = await _build_env(config3, module_credentials_env={"email": ["SMTP_PASSWORD", "IMAP_TOKEN"]})
+            assert env3["SMTP_PASSWORD"] == "pw123"
+            assert env3["IMAP_TOKEN"] == "tok456"
 
-    # ------------------------------------------------------------------
-    # DB-first resolution path (with mocked CredentialStore)
-    # ------------------------------------------------------------------
-
-    async def test_db_resolution(self):
-        """Module and butler-level credentials resolved from DB; missing key excluded."""
+    async def test_db_credential_resolution(self):
+        """DB-first path: module and butler creds resolved; missing key excluded."""
         config = _make_config(env_required=["MY_SECRET"])
-        module_creds = {"email": ["SMTP_PASSWORD", "IMAP_TOKEN"]}
         store = AsyncMock()
-        resolved = {
-            "SMTP_PASSWORD": "db-smtp-pw",
-            "IMAP_TOKEN": "db-imap-tok",
-            "MY_SECRET": "db-secret-value",
-        }
+        resolved = {"SMTP_PASSWORD": "db-smtp-pw", "IMAP_TOKEN": "db-imap-tok", "MY_SECRET": "db-secret-value"}
         store.resolve = AsyncMock(side_effect=lambda key: resolved.get(key))
-        env = await _build_env(config, module_credentials_env=module_creds, credential_store=store)
+        env = await _build_env(config, module_credentials_env={"email": ["SMTP_PASSWORD", "IMAP_TOKEN"]}, credential_store=store)
         assert env["SMTP_PASSWORD"] == "db-smtp-pw"
         assert env["IMAP_TOKEN"] == "db-imap-tok"
         assert env["MY_SECRET"] == "db-secret-value"
 
-    async def test_db_resolution_missing_key_excluded(self):
-        """When DB and env have no value for a key, it is excluded from env dict."""
-        config = _make_config(env_required=["MISSING_KEY"])
-        store = AsyncMock()
-        store.resolve = AsyncMock(return_value=None)  # Nothing found anywhere
-        env = await _build_env(config, credential_store=store)
-        assert "MISSING_KEY" not in env
+        # Missing key excluded
+        config2 = _make_config(env_required=["MISSING_KEY"])
+        store2 = AsyncMock()
+        store2.resolve = AsyncMock(return_value=None)
+        env2 = await _build_env(config2, credential_store=store2)
+        assert "MISSING_KEY" not in env2
 
-    async def test_env_passed_to_adapter(self, tmp_path: Path):
-        """Verify the env dict is passed through to the adapter."""
+    async def test_env_and_db_creds_passed_to_adapter(self, tmp_path: Path):
+        """Env creds and DB creds both reach the adapter via trigger()."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
-        config = _make_config(env_required=["BUTLER_SECRET"])
 
+        # Env path
         adapter = MockAdapter(result_text="", capture=True)
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-        )
+        with patch.dict(os.environ, {"BUTLER_SECRET": "s3cret"}, clear=False):
+            await Spawner(config=_make_config(env_required=["BUTLER_SECRET"]), config_dir=config_dir, runtime=adapter).trigger("test env", "tick")
+        assert adapter.calls[0]["env"]["BUTLER_SECRET"] == "s3cret"
 
-        with patch.dict(
-            os.environ,
-            {"BUTLER_SECRET": "s3cret"},
-            clear=False,
-        ):
-            await spawner.trigger("test env", "tick")
-
-        assert len(adapter.calls) == 1
-        passed_env = adapter.calls[0]["env"]
-        assert passed_env["BUTLER_SECRET"] == "s3cret"
-
-    async def test_spawner_with_credential_store_passes_db_values_to_adapter(self, tmp_path: Path):
-        """Spawner with credential_store resolves credentials from DB for spawned instances."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config(env_required=["MY_API_KEY"])
-
+        # DB path
         store = AsyncMock()
-        resolved = {"MY_API_KEY": "db-my-api-key"}
-        store.resolve = AsyncMock(side_effect=lambda key: resolved.get(key))
-
-        adapter = MockAdapter(result_text="", capture=True)
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-            credential_store=store,
-        )
-
-        await spawner.trigger("test db creds", "tick")
-
-        assert len(adapter.calls) == 1
-        passed_env = adapter.calls[0]["env"]
-        assert passed_env["MY_API_KEY"] == "db-my-api-key"
+        store.resolve = AsyncMock(side_effect=lambda key: {"MY_API_KEY": "db-my-api-key"}.get(key))
+        adapter2 = MockAdapter(result_text="", capture=True)
+        await Spawner(config=_make_config(env_required=["MY_API_KEY"]), config_dir=config_dir, runtime=adapter2, credential_store=store).trigger("test db creds", "tick")
+        assert adapter2.calls[0]["env"]["MY_API_KEY"] == "db-my-api-key"
 
 
 # ---------------------------------------------------------------------------
@@ -1016,83 +932,48 @@ class TestSemaphoreConcurrencyPool:
 class TestSessionLogging:
     """Session logging is wired to session_create and session_complete."""
 
-    async def test_session_created_and_completed_on_success(self, tmp_path: Path):
+    async def test_session_logging_on_success_and_error(self, tmp_path: Path):
+        """session_create/complete called on success (with result data) and error (with error info)."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
-
         mock_pool = AsyncMock()
-        mock_pool.fetchval = AsyncMock(return_value="00000000-0000-0000-0000-000000000001")
 
+        # Success path
         with (
             patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
             patch("butlers.core.spawner.session_complete", new_callable=AsyncMock) as mock_complete,
         ):
             fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
             mock_create.return_value = fake_session_id
-
-            adapter = MockAdapter(result_text="Hello from mock!")
-            spawner = Spawner(
-                config=config,
-                config_dir=config_dir,
-                pool=mock_pool,
-                runtime=adapter,
-            )
-
-            await spawner.trigger("log me", "schedule")
-
-            # session_create called with correct args
+            await Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=MockAdapter(result_text="Hello from mock!")).trigger("log me", "schedule")
             mock_create.assert_called_once()
             create_args, create_kwargs = mock_create.call_args
             assert create_args[0] is mock_pool
             assert create_args[1] == "log me"
             assert create_args[2] == "schedule"
             assert create_kwargs.get("model") == "claude-haiku-4-5-20251001"
-
-            # session_complete called with result data
             mock_complete.assert_called_once()
             args, kwargs = mock_complete.call_args
-            assert args[0] is mock_pool
-            assert args[1] == fake_session_id
+            assert args[0] is mock_pool and args[1] == fake_session_id
             assert kwargs["output"] == "Hello from mock!"
             assert isinstance(kwargs["tool_calls"], list)
-            assert kwargs["duration_ms"] >= 0
-            assert kwargs["success"] is True
+            assert kwargs["duration_ms"] >= 0 and kwargs["success"] is True
 
-    async def test_session_completed_on_error(self, tmp_path: Path):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-
-        mock_pool = AsyncMock()
-
+        # Error path
         with (
-            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
-            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock) as mock_complete,
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create2,
+            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock) as mock_complete2,
         ):
-            fake_session_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
-            mock_create.return_value = fake_session_id
-
-            adapter = MockAdapter(error="adapter connection failed")
-            spawner = Spawner(
-                config=config,
-                config_dir=config_dir,
-                pool=mock_pool,
-                runtime=adapter,
-            )
-
-            result = await spawner.trigger("fail", "tick")
+            fake_session_id2 = uuid.UUID("00000000-0000-0000-0000-000000000002")
+            mock_create2.return_value = fake_session_id2
+            result = await Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=MockAdapter(error="adapter connection failed")).trigger("fail", "tick")
             assert result.error is not None
-
-            # session_complete called with error info
-            mock_complete.assert_called_once()
-            args, kwargs = mock_complete.call_args
-            assert args[0] is mock_pool
-            assert args[1] == fake_session_id
-            assert kwargs["output"] is None
-            assert kwargs["tool_calls"] == []
-            assert kwargs["success"] is False
-            assert "RuntimeError" in kwargs["error"]
+            mock_complete2.assert_called_once()
+            args2, kwargs2 = mock_complete2.call_args
+            assert args2[0] is mock_pool and args2[1] == fake_session_id2
+            assert kwargs2["output"] is None and kwargs2["tool_calls"] == []
+            assert kwargs2["success"] is False and "RuntimeError" in kwargs2["error"]
 
     async def test_session_create_failure_preserves_original_error(self, tmp_path: Path):
         """Errors before runtime invocation should not be masked by t0 handling."""
@@ -1499,26 +1380,34 @@ class TestTokenUsageCapture:
         assert result6.input_tokens == 0
         assert result6.output_tokens == 0
 
-    async def test_token_counts_none_on_error(self, tmp_path: Path):
-        """SpawnerResult has None tokens when adapter raises an error."""
+    async def test_token_counts_on_error_and_sequence(self, tmp_path: Path):
+        """Error: tokens None; after error, success returns tokens; tokens passed to session_complete."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
 
-        result = await Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=MockAdapter(error="adapter failed"),
-        ).trigger("fail", "tick")
+        # Error path: tokens None
+        result = await Spawner(config=config, config_dir=config_dir, runtime=MockAdapter(error="adapter failed")).trigger("fail", "tick")
         assert result.error is not None
-        assert result.input_tokens is None
-        assert result.output_tokens is None
+        assert result.input_tokens is None and result.output_tokens is None
+
+        # Sequence: error then success recovers tokens
+        adapter = SequenceMockAdapter(
+            sequence=[
+                {"error": "first fails"},
+                {"result_text": "second works", "tool_calls": [], "usage": {"input_tokens": 42, "output_tokens": 84}},
+            ]
+        )
+        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
+        r1 = await spawner.trigger("first", "tick")
+        assert r1.error is not None and r1.input_tokens is None
+        r2 = await spawner.trigger("second", "tick")
+        assert r2.error is None and r2.input_tokens == 42 and r2.output_tokens == 84
 
     async def test_token_counts_passed_to_session_complete(self, tmp_path: Path):
-        """Token counts are passed to session_complete on success; None on error path."""
+        """Token counts are passed to session_complete on success."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
-        config = _make_config()
         mock_pool = AsyncMock()
 
         with (
@@ -1526,53 +1415,12 @@ class TestTokenUsageCapture:
             patch("butlers.core.spawner.session_complete", new_callable=AsyncMock) as mock_complete,
         ):
             mock_create.return_value = uuid.UUID("00000000-0000-0000-0000-000000000010")
-
             await Spawner(
-                config=config,
-                config_dir=config_dir,
-                pool=mock_pool,
-                runtime=MockAdapter(
-                    result_text="With tokens!",
-                    usage={"input_tokens": 500, "output_tokens": 1000},
-                ),
+                config=_make_config(), config_dir=config_dir, pool=mock_pool,
+                runtime=MockAdapter(result_text="With tokens!", usage={"input_tokens": 500, "output_tokens": 1000}),
             ).trigger("test", "tick")
-
-            mock_complete.assert_called_once()
             _, kwargs = mock_complete.call_args
-            assert kwargs["input_tokens"] == 500
-            assert kwargs["output_tokens"] == 1000
-
-    async def test_sequence_first_error_then_tokens(self, tmp_path: Path):
-        """After an error (no tokens), a successful call returns tokens correctly."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-
-        adapter = SequenceMockAdapter(
-            sequence=[
-                {"error": "first fails"},
-                {
-                    "result_text": "second works",
-                    "tool_calls": [],
-                    "usage": {"input_tokens": 42, "output_tokens": 84},
-                },
-            ]
-        )
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-        )
-
-        result1 = await spawner.trigger("first", "tick")
-        assert result1.error is not None
-        assert result1.input_tokens is None
-        assert result1.output_tokens is None
-
-        result2 = await spawner.trigger("second", "tick")
-        assert result2.error is None
-        assert result2.input_tokens == 42
-        assert result2.output_tokens == 84
+            assert kwargs["input_tokens"] == 500 and kwargs["output_tokens"] == 1000
 
 
 # ---------------------------------------------------------------------------
