@@ -516,33 +516,47 @@ async def list_known_issues(
 
     now = datetime.now(tz=UTC)
 
-    # Build base conditions for the aggregation query
-    having_clauses: list[str] = []
+    # Build WHERE conditions shared by both count and aggregation queries.
+    # source_butler and severity are per-row column values (not aggregated),
+    # so WHERE filters are correct and allow the same clause to be reused for
+    # the count query.
+    where_clauses: list[str] = []
     filter_args: list[Any] = []
     idx = 1
 
     if source_butler is not None:
-        having_clauses.append(f"MAX(f.source_butler) = ${idx}")
+        where_clauses.append(f"f.source_butler = ${idx}")
         filter_args.append(source_butler)
         idx += 1
 
     if severity is not None:
-        having_clauses.append(f"MAX(f.severity) = ${idx}")
+        where_clauses.append(f"f.severity = ${idx}")
         filter_args.append(severity)
         idx += 1
 
-    # Dismissal filter applied as join condition below
-    having_sql = (" HAVING " + " AND ".join(having_clauses)) if having_clauses else ""
+    # Dismissal filter is expressed as a condition fragment using a $N placeholder
+    # for `now`.  Its placeholder index starts at `idx` (after filter_args).
+    dismissed_condition = _build_dismissed_condition(dismissed, idx)
+    dismissed_extra: list[Any] = [now] if dismissed is not None else []
 
-    # Count total distinct fingerprints (respecting filters)
+    # Combine all WHERE conditions into a single clause used by both queries.
+    all_where_clauses = where_clauses[:]
+    if dismissed_condition:
+        all_where_clauses.append(dismissed_condition)
+    where_sql = ("WHERE " + " AND ".join(all_where_clauses)) if all_where_clauses else ""
+
+    # All args: filter_args then optional now, then offset/limit for data query.
+    base_args: list[Any] = filter_args + dismissed_extra
+    pagination_idx = idx + len(dismissed_extra)
+
+    # Count total distinct fingerprints (respecting all filters)
     count_sql = f"""
         SELECT COUNT(DISTINCT f.fingerprint)
         FROM public.qa_findings f
         LEFT JOIN public.qa_dismissals d ON d.fingerprint = f.fingerprint
-        {_build_dismissed_where(dismissed, now, idx)}
+        {where_sql}
     """
-    dismissed_args = _build_dismissed_args(dismissed, now, filter_args, idx)
-    total = int(await pool.fetchval(count_sql, *dismissed_args) or 0)
+    total = int(await pool.fetchval(count_sql, *base_args) or 0)
 
     # Aggregate query: one row per fingerprint
     agg_sql = f"""
@@ -561,13 +575,12 @@ async def list_known_issues(
             MAX(f.healing_attempt_id::text) AS healing_attempt_id
         FROM public.qa_findings f
         LEFT JOIN public.qa_dismissals d ON d.fingerprint = f.fingerprint
-        {_build_dismissed_where(dismissed, now, idx)}
+        {where_sql}
         GROUP BY f.fingerprint
-        {having_sql}
         ORDER BY MAX(f.last_seen) DESC
-        OFFSET ${idx + len(filter_args)} LIMIT ${idx + len(filter_args) + 1}
+        OFFSET ${pagination_idx} LIMIT ${pagination_idx + 1}
     """
-    agg_args = _build_dismissed_args(dismissed, now, filter_args, idx) + [offset, limit]
+    agg_args = base_args + [offset, limit]
     rows = await pool.fetch(agg_sql, *agg_args)
 
     if not rows:
@@ -623,22 +636,17 @@ async def list_known_issues(
     )
 
 
-def _build_dismissed_where(dismissed: bool | None, now: datetime, next_idx: int) -> str:
-    """Build WHERE clause fragment for dismissal filtering."""
+def _build_dismissed_condition(dismissed: bool | None, next_idx: int) -> str:
+    """Return a bare SQL condition fragment (no WHERE keyword) for dismissal filtering.
+
+    Returns an empty string when no dismissal filter is requested.
+    The caller is responsible for incorporating this into a WHERE clause.
+    """
     if dismissed is True:
-        return f"WHERE d.fingerprint IS NOT NULL AND d.dismissed_until > ${next_idx}"
+        return f"d.fingerprint IS NOT NULL AND d.dismissed_until > ${next_idx}"
     elif dismissed is False:
-        return f"WHERE (d.fingerprint IS NULL OR d.dismissed_until <= ${next_idx})"
+        return f"(d.fingerprint IS NULL OR d.dismissed_until <= ${next_idx})"
     return ""
-
-
-def _build_dismissed_args(
-    dismissed: bool | None, now: datetime, extra_args: list[Any], next_idx: int
-) -> list[Any]:
-    """Build argument list for dismissal-filtered queries."""
-    if dismissed is not None:
-        return extra_args + [now]
-    return list(extra_args)
 
 
 # ---------------------------------------------------------------------------
@@ -669,7 +677,7 @@ async def dismiss_known_issue(
         # Indefinite dismissal: far future
         dismissed_until = datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC)
 
-    dismissed_by = body.dismissed_by or "dashboard_user"
+    dismissed_by = body.dismissed_by if body.dismissed_by not in (None, "") else "dashboard_user"
 
     row = await pool.fetchrow(
         """

@@ -590,6 +590,169 @@ class TestListKnownIssues:
         assert body["data"][0]["dismissal"]["fingerprint"] == fp
         assert body["data"][0]["dismissal"]["dismissed_by"] == "dashboard_user"
 
+    async def test_source_butler_filter_accepted(self) -> None:
+        """source_butler filter must be forwarded to the DB and reflected in results."""
+        fp = "l" * 64
+        agg_row: dict[str, Any] = {
+            "fingerprint": fp,
+            "source_butler": "finance",
+            "source_type": "log_scanner",
+            "severity": 2,
+            "exception_type": "ValueError",
+            "event_summary": "bad",
+            "call_site": "src/x.py:y",
+            "occurrence_count": 3,
+            "first_seen": _NOW,
+            "last_seen": _NOW,
+            "patrol_count": 1,
+            "healing_attempt_id": None,
+        }
+        app, mock_pool = _build_app(
+            fetchval_result=1,
+            fetch_side_effect=[
+                [_mock_record(agg_row)],
+                [],  # dismissals
+            ],
+        )
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/qa/known-issues", params={"source_butler": "finance"})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["data"]) == 1
+        assert body["data"][0]["source_butler"] == "finance"
+        # Verify the DB was called with "finance" as a parameter
+        call_args = mock_pool.fetchval.call_args
+        assert "finance" in call_args.args or "finance" in str(call_args)
+
+    async def test_severity_filter_accepted(self) -> None:
+        """severity filter must be forwarded to the DB and reflected in results."""
+        fp = "m" * 64
+        agg_row: dict[str, Any] = {
+            "fingerprint": fp,
+            "source_butler": "general",
+            "source_type": "log_scanner",
+            "severity": 1,
+            "exception_type": "TypeError",
+            "event_summary": "type mismatch",
+            "call_site": "src/a.py:b",
+            "occurrence_count": 2,
+            "first_seen": _NOW,
+            "last_seen": _NOW,
+            "patrol_count": 1,
+            "healing_attempt_id": None,
+        }
+        app, mock_pool = _build_app(
+            fetchval_result=1,
+            fetch_side_effect=[
+                [_mock_record(agg_row)],
+                [],  # dismissals
+            ],
+        )
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/qa/known-issues", params={"severity": 1})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["data"][0]["severity"] == 1
+        # Verify the DB was called with severity 1 as a parameter
+        call_args = mock_pool.fetchval.call_args
+        assert 1 in call_args.args or 1 in str(call_args)
+
+    async def test_dismissed_true_filter_accepted(self) -> None:
+        """dismissed=true filter should return only dismissed issues."""
+        fp = "n" * 64
+        agg_row: dict[str, Any] = {
+            "fingerprint": fp,
+            "source_butler": "general",
+            "source_type": "log_scanner",
+            "severity": 2,
+            "exception_type": "RuntimeError",
+            "event_summary": "runtime error",
+            "call_site": "src/c.py:d",
+            "occurrence_count": 4,
+            "first_seen": _NOW,
+            "last_seen": _NOW,
+            "patrol_count": 1,
+            "healing_attempt_id": None,
+        }
+        dismissal = _make_dismissal_row(fingerprint=fp)
+        app, _ = _build_app(
+            fetchval_result=1,
+            fetch_side_effect=[
+                [_mock_record(agg_row)],
+                [_mock_record(dismissal)],
+            ],
+        )
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/qa/known-issues", params={"dismissed": "true"})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["data"]) == 1
+        assert body["data"][0]["dismissal"] is not None
+
+    async def test_dismissed_false_filter_accepted(self) -> None:
+        """dismissed=false filter should return only active (non-dismissed) issues."""
+        fp = "o" * 64
+        agg_row: dict[str, Any] = {
+            "fingerprint": fp,
+            "source_butler": "general",
+            "source_type": "log_scanner",
+            "severity": 3,
+            "exception_type": "OSError",
+            "event_summary": "file not found",
+            "call_site": "src/e.py:f",
+            "occurrence_count": 1,
+            "first_seen": _NOW,
+            "last_seen": _NOW,
+            "patrol_count": 1,
+            "healing_attempt_id": None,
+        }
+        app, _ = _build_app(
+            fetchval_result=1,
+            fetch_side_effect=[
+                [_mock_record(agg_row)],
+                [],  # no dismissals
+            ],
+        )
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/qa/known-issues", params={"dismissed": "false"})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["data"]) == 1
+        assert body["data"][0]["dismissal"] is None
+
+    async def test_pagination_meta_reflects_total(self) -> None:
+        """meta.total must reflect the count query, not just the page size."""
+        app, _ = _build_app(
+            fetchval_result=42,
+            fetch_side_effect=[[], []],
+        )
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/qa/known-issues", params={"limit": 10, "offset": 0})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["meta"]["total"] == 42
+        assert body["meta"]["limit"] == 10
+
 
 # ---------------------------------------------------------------------------
 # POST /api/qa/known-issues/{fingerprint}/dismiss
@@ -599,7 +762,8 @@ class TestListKnownIssues:
 class TestDismissKnownIssue:
     async def test_creates_dismissal_with_indefinite_expiry(self) -> None:
         fp = "f" * 64
-        dismissal = _make_dismissal_row(fingerprint=fp)
+        # Mock returns what the DB would persist — use the provided dismissed_by
+        dismissal = _make_dismissal_row(fingerprint=fp, dismissed_by="owner")
         app, _ = _build_app(fetchrow_result=dismissal)
 
         async with httpx.AsyncClient(
@@ -613,7 +777,7 @@ class TestDismissKnownIssue:
         assert response.status_code == 200
         body = response.json()
         assert body["data"]["fingerprint"] == fp
-        assert body["data"]["dismissed_by"] == "dashboard_user"
+        assert body["data"]["dismissed_by"] == "owner"
 
     async def test_creates_dismissal_with_explicit_expiry(self) -> None:
         fp = "g" * 64
