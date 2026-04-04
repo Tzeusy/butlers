@@ -93,41 +93,20 @@ def _make_pool(
 
 
 @corrections_required
-async def test_create_correction_returns_id_and_is_append_only():
-    """create_correction inserts a correction row and returns a UUID id.
-
-    The corrections table is append-only; re-calling for the same session
-    creates a new row, not an update.
-    """
-    session_id = uuid.uuid4()
-    pool = _make_pool(session_row={"id": session_id})
-
-    result = await create_correction(
-        pool,
-        correction_type=CorrectionType.DATA_CORRECTION,
-        target_session_id=session_id,
-        correcting_session_id=uuid.uuid4(),
-        description="Fix stored preference",
-        status="applied",
-        summary="Updated preference key",
-    )
-    assert result is not None  # returns a correction ID
-
-
-@corrections_required
-async def test_create_correction_records_failed_status():
-    """create_correction can record a failed correction attempt."""
-    pool = _make_pool(session_row={"id": uuid.uuid4()})
-    result = await create_correction(
-        pool,
-        correction_type=CorrectionType.DATA_CORRECTION,
-        target_session_id=uuid.uuid4(),
-        correcting_session_id=uuid.uuid4(),
-        description="Attempt failed",
-        status="failed",
-        summary="Session not found",
-    )
-    assert result is not None
+async def test_create_correction_returns_id():
+    """create_correction returns a non-None ID for both applied and failed statuses."""
+    for status in ("applied", "failed"):
+        pool = _make_pool(session_row={"id": uuid.uuid4()})
+        result = await create_correction(
+            pool,
+            correction_type=CorrectionType.DATA_CORRECTION,
+            target_session_id=uuid.uuid4(),
+            correcting_session_id=uuid.uuid4(),
+            description="Test correction",
+            status=status,
+            summary="Summary",
+        )
+        assert result is not None
 
 
 # ---------------------------------------------------------------------------
@@ -232,19 +211,13 @@ async def test_corrections_audit_queries_return_lists():
         ("memory_wrong", CorrectionType.MEMORY_DELETION),
         ("wrong_butler", CorrectionType.MISROUTE),
         ("action_mistake", CorrectionType.ACTION_REVERSAL),
+        ("something_weird", None),
     ],
 )
 def test_decision_tree_maps_situations_to_types(situation, expected_type):
-    """get_correction_type_for_situation returns the correct CorrectionType."""
+    """get_correction_type_for_situation returns the correct CorrectionType or None."""
     result = get_correction_type_for_situation(situation)
     assert result == expected_type
-
-
-@corrections_required
-def test_decision_tree_returns_none_for_unknown():
-    """get_correction_type_for_situation returns None for unrecognized situations."""
-    result = get_correction_type_for_situation("something_weird")
-    assert result is None
 
 
 # ---------------------------------------------------------------------------
