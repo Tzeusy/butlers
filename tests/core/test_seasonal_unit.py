@@ -89,15 +89,12 @@ def test_is_date_in_range_cross_year(month, day, active):
 # ---------------------------------------------------------------------------
 
 
-def test_all_presets_present_with_valid_dates_and_context_hints():
-    from butlers.core.seasonal import SEASONAL_PRESETS, validate_month_day
+def test_seasonal_presets():
+    """Presets have correct set of keys, valid dates, context_hints, and year-boundary wrapping."""
+    from butlers.core.seasonal import SEASONAL_PRESETS, _is_date_in_range, validate_month_day
 
     expected = {
-        "us-tax-season",
-        "year-end-holidays",
-        "back-to-school",
-        "spring-semester",
-        "fall-semester",
+        "us-tax-season", "year-end-holidays", "back-to-school", "spring-semester", "fall-semester"
     }
     assert set(SEASONAL_PRESETS.keys()) == expected
 
@@ -107,21 +104,12 @@ def test_all_presets_present_with_valid_dates_and_context_hints():
         hint = preset.get("metadata", {}).get("context_hint", "").strip()
         assert hint, f"Preset {name!r} missing context_hint"
 
+    tax = SEASONAL_PRESETS["us-tax-season"]
+    assert (tax["start_month"], tax["start_day"]) == (1, 1)
+    assert (tax["end_month"], tax["end_day"]) == (4, 15)
 
-def test_us_tax_season_dates():
-    from butlers.core.seasonal import SEASONAL_PRESETS
-
-    p = SEASONAL_PRESETS["us-tax-season"]
-    assert (p["start_month"], p["start_day"]) == (1, 1)
-    assert (p["end_month"], p["end_day"]) == (4, 15)
-
-
-def test_year_end_holidays_wraps_year():
-    from butlers.core.seasonal import SEASONAL_PRESETS, _is_date_in_range
-
-    p = SEASONAL_PRESETS["year-end-holidays"]
-    assert p["start_month"] == 12 and p["end_month"] == 1
-    assert _is_date_in_range(12, 25, p["start_month"], p["start_day"], p["end_month"], p["end_day"])
-    assert not _is_date_in_range(
-        3, 1, p["start_month"], p["start_day"], p["end_month"], p["end_day"]
-    )
+    ye = SEASONAL_PRESETS["year-end-holidays"]
+    assert ye["start_month"] == 12 and ye["end_month"] == 1
+    sm, sd, em, ed = ye["start_month"], ye["start_day"], ye["end_month"], ye["end_day"]
+    assert _is_date_in_range(12, 25, sm, sd, em, ed)
+    assert not _is_date_in_range(3, 1, sm, sd, em, ed)
