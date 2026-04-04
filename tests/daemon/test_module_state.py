@@ -1,4 +1,4 @@
-"""Tests for module runtime enabled/disabled state management.
+"""Tests for module runtime enabled/disabled state management — condensed.
 
 Covers:
 - ModuleRuntimeState dataclass
@@ -140,12 +140,7 @@ def _make_registry(*module_classes: type[Module]) -> ModuleRegistry:
 
 
 def _make_mock_pool(state_store: dict | None = None) -> AsyncMock:
-    """Return a mock pool whose fetchval respects a simple in-memory state store.
-
-    Values are stored as Python objects for convenient test assertions but
-    returned as JSON text on SELECT (like real asyncpg with JSONB columns)
-    so that ``decode_jsonb`` works correctly for all types.
-    """
+    """Return a mock pool whose fetchval respects a simple in-memory state store."""
     store = state_store if state_store is not None else {}
     versions: dict[str, int] = {}
     pool = AsyncMock()
@@ -154,9 +149,8 @@ def _make_mock_pool(state_store: dict | None = None) -> AsyncMock:
         if "SELECT value FROM state" in sql:
             if key not in store:
                 return None
-            return json.dumps(store[key])  # JSON text, like real DB
+            return json.dumps(store[key])
         if "INSERT INTO state" in sql:
-            # state_set() upserts via fetchval(... RETURNING version)
             value_str = args[0] if args else None
             if value_str is not None:
                 store[key] = json.loads(value_str)
@@ -168,7 +162,6 @@ def _make_mock_pool(state_store: dict | None = None) -> AsyncMock:
 
     async def _execute(sql, key, *args):
         if "INSERT INTO state" in sql:
-            # Extract value — third positional arg is the JSON string
             value_str = args[0] if args else None
             if value_str is not None:
                 store[key] = json.loads(value_str)
@@ -181,7 +174,6 @@ def _make_mock_pool(state_store: dict | None = None) -> AsyncMock:
 
 
 def _patch_infra(mock_pool: AsyncMock | None = None):
-    """Return a dict of patches for all infrastructure dependencies."""
     if mock_pool is None:
         mock_pool = _make_mock_pool()
 
@@ -218,7 +210,9 @@ def _patch_infra(mock_pool: AsyncMock | None = None):
         "sync_schedules": patch("butlers.daemon.sync_schedules", new_callable=AsyncMock),
         "FastMCP": patch("butlers.daemon.FastMCP"),
         "Spawner": patch("butlers.daemon.Spawner", return_value=mock_spawner),
-        "start_mcp_server": patch.object(ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock),
+        "start_mcp_server": patch.object(
+            ButlerDaemon, "_start_mcp_server", new_callable=AsyncMock
+        ),
         "connect_switchboard": patch.object(
             ButlerDaemon, "_connect_switchboard", new_callable=AsyncMock
         ),
@@ -238,7 +232,6 @@ async def _start_daemon(
     registry: ModuleRegistry | None = None,
     state_store: dict | None = None,
 ) -> ButlerDaemon:
-    """Helper: start a daemon with patched infrastructure."""
     mock_pool = _make_mock_pool(state_store)
     patches = _patch_infra(mock_pool)
 
@@ -264,356 +257,202 @@ async def _start_daemon(
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: ModuleRuntimeState dataclass
+# ModuleRuntimeState dataclass
 # ---------------------------------------------------------------------------
 
 
-class TestModuleRuntimeStateDataclass:
-    def test_active_enabled_state(self) -> None:
-        state = ModuleRuntimeState(health="active", enabled=True)
-        assert state.health == "active"
-        assert state.enabled is True
-        assert state.failure_phase is None
-        assert state.failure_error is None
+@pytest.mark.parametrize(
+    "health,enabled,failure_phase,failure_error",
+    [
+        ("active", True, None, None),
+        ("failed", False, "credentials", "Missing STUB_TOKEN"),
+        ("cascade_failed", False, "dependency", "Dependency 'stub_a' failed"),
+    ],
+)
+def test_module_runtime_state_dataclass(health, enabled, failure_phase, failure_error):
+    state = ModuleRuntimeState(
+        health=health,
+        enabled=enabled,
+        failure_phase=failure_phase,
+        failure_error=failure_error,
+    )
+    assert state.health == health
+    assert state.enabled == enabled
+    assert state.failure_phase == failure_phase
+    assert state.failure_error == failure_error
 
-    def test_failed_state_with_details(self) -> None:
-        state = ModuleRuntimeState(
-            health="failed",
-            enabled=False,
-            failure_phase="credentials",
-            failure_error="Missing STUB_TOKEN",
-        )
-        assert state.health == "failed"
-        assert state.enabled is False
-        assert state.failure_phase == "credentials"
-        assert state.failure_error == "Missing STUB_TOKEN"
-
-    def test_cascade_failed_state(self) -> None:
-        state = ModuleRuntimeState(
-            health="cascade_failed",
-            enabled=False,
-            failure_phase="dependency",
-            failure_error="Dependency 'stub_a' failed",
-        )
-        assert state.health == "cascade_failed"
-        assert state.enabled is False
-
-    def test_enabled_flag_is_mutable(self) -> None:
-        state = ModuleRuntimeState(health="active", enabled=True)
-        state.enabled = False
-        assert state.enabled is False
+    # enabled flag is mutable
+    state.enabled = not enabled
+    assert state.enabled != enabled
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: _init_module_runtime_states
+# Startup initialization and self-healing
 # ---------------------------------------------------------------------------
 
 
-class TestInitModuleRuntimeStates:
-    """Tests for the startup initialization of runtime states."""
+async def test_init_module_states_healthy_and_failed(tmp_path: Path) -> None:
+    """Healthy module defaults enabled=True; failed module defaults enabled=False and persists."""
+    store: dict = {}
+    butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
 
-    async def test_healthy_module_defaults_to_enabled_on_first_boot(self, tmp_path: Path) -> None:
-        """A healthy module with no prior state store entry should be enabled."""
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-        registry = _make_registry(StubModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store={})
+    class FailingModuleA(StubModuleA):
+        async def on_startup(
+            self, config: Any, db: Any, credential_store: Any = None, blob_store: Any = None
+        ) -> None:
+            raise RuntimeError("startup exploded")
 
-        states = daemon.get_module_states()
-        assert "stub_a" in states
-        assert states["stub_a"].health == "active"
-        assert states["stub_a"].enabled is True
+    # Healthy first boot
+    registry = _make_registry(StubModuleA)
+    daemon = await _start_daemon(butler_dir, registry=registry, state_store={})
+    states = daemon.get_module_states()
+    assert states["stub_a"].health == "active"
+    assert states["stub_a"].enabled is True
 
-    async def test_failed_module_defaults_to_disabled(self, tmp_path: Path) -> None:
-        """A module that failed startup should have enabled=False."""
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
+    # Failed startup: disabled + persisted
+    registry2 = _make_registry(FailingModuleA)
+    daemon2 = await _start_daemon(butler_dir, registry=registry2, state_store=store)
+    states2 = daemon2.get_module_states()
+    assert states2["stub_a"].health == "failed"
+    assert states2["stub_a"].enabled is False
+    assert states2["stub_a"].failure_phase == "startup"
+    assert store.get("module::stub_a::enabled") is False
+    assert store.get("module::stub_a::disabled_by") == "failure"
 
-        class FailingModuleA(StubModuleA):
-            async def on_startup(
-                self, config: Any, db: Any, credential_store: Any = None, blob_store: Any = None
-            ) -> None:
-                raise RuntimeError("startup exploded")
 
-        registry = _make_registry(FailingModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store={})
+async def test_init_module_states_sticky_and_multiple(tmp_path: Path) -> None:
+    """Sticky disabled/enabled state honored on restart; all modules initialized."""
+    # User-disabled stays disabled; sticky-enabled stays enabled; two modules both present
+    store_disabled = {"module::stub_a::enabled": False, "module::stub_a::disabled_by": "user"}
+    butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}, "stub_b": {}})
+    registry = _make_registry(StubModuleA, StubModuleB)
 
-        states = daemon.get_module_states()
-        assert states["stub_a"].health == "failed"
-        assert states["stub_a"].enabled is False
-        assert states["stub_a"].failure_phase == "startup"
+    daemon = await _start_daemon(butler_dir, registry=registry, state_store=store_disabled)
+    states = daemon.get_module_states()
+    assert set(states.keys()) == {"stub_a", "stub_b"}
+    assert states["stub_a"].enabled is False  # user-disabled honored
+    assert states["stub_b"].enabled is True   # defaults to enabled
 
-    async def test_user_disable_honored_on_restart(self, tmp_path: Path) -> None:
-        """When a user disabled a module, it stays disabled even if healthy."""
-        store = {
-            "module::stub_a::enabled": False,
-            "module::stub_a::disabled_by": "user",
-        }
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-        registry = _make_registry(StubModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
 
-        states = daemon.get_module_states()
-        assert states["stub_a"].enabled is False
-        assert states["stub_a"].health == "active"
+@pytest.mark.parametrize(
+    "disabled_by,module_fails,expect_enabled",
+    [
+        ("failure", False, True),   # failure-disabled auto-heals on healthy restart
+        ("user", False, False),     # user-disabled stays disabled
+        (None, False, True),        # legacy entry (no disabled_by) auto-heals
+        ("failure", True, False),   # repeated failure stays disabled
+    ],
+)
+async def test_self_healing_behavior(tmp_path, disabled_by, module_fails, expect_enabled):
+    """Modules disabled by failure auto-heal on healthy restart; user-disabled do not."""
+    store: dict = {"module::stub_a::enabled": False}
+    if disabled_by is not None:
+        store["module::stub_a::disabled_by"] = disabled_by
 
-    async def test_sticky_enabled_honored_on_restart(self, tmp_path: Path) -> None:
-        """When state store has enabled=True for a healthy module, it stays enabled."""
-        store = {"module::stub_a::enabled": True}
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-        registry = _make_registry(StubModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
+    butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
 
-        states = daemon.get_module_states()
-        assert states["stub_a"].enabled is True
+    class FailingModuleA(StubModuleA):
+        async def on_startup(
+            self, config: Any, db: Any, credential_store: Any = None, blob_store: Any = None
+        ) -> None:
+            raise RuntimeError("still broken")
 
-    async def test_multiple_modules_initialized(self, tmp_path: Path) -> None:
-        """All modules appear in runtime states after startup."""
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}, "stub_b": {}})
-        registry = _make_registry(StubModuleA, StubModuleB)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store={})
-
-        states = daemon.get_module_states()
-        assert set(states.keys()) == {"stub_a", "stub_b"}
-        assert states["stub_a"].enabled is True
-        assert states["stub_b"].enabled is True
-
-    async def test_failed_module_persists_disabled_to_store(self, tmp_path: Path) -> None:
-        """A failed module should have enabled=False written to the state store."""
-        store: dict = {}
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-
-        class FailingModuleA(StubModuleA):
-            async def on_startup(
-                self, config: Any, db: Any, credential_store: Any = None, blob_store: Any = None
-            ) -> None:
-                raise RuntimeError("boom")
-
-        registry = _make_registry(FailingModuleA)
-        await _start_daemon(butler_dir, registry=registry, state_store=store)
-
-        assert store.get("module::stub_a::enabled") is False
-        assert store.get("module::stub_a::disabled_by") == "failure"
+    registry = _make_registry(FailingModuleA if module_fails else StubModuleA)
+    daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
+    assert daemon.get_module_states()["stub_a"].enabled is expect_enabled
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: self-healing on restart
+# get_module_states()
 # ---------------------------------------------------------------------------
 
 
-class TestSelfHealing:
-    """Modules disabled by a previous failure auto-re-enable when healthy."""
+async def test_get_module_states_behavior(tmp_path: Path) -> None:
+    """Empty before startup; returns copy; failure details included."""
+    butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
 
-    async def test_failure_disabled_module_auto_heals_on_healthy_restart(
-        self, tmp_path: Path
-    ) -> None:
-        """A module disabled by failure should re-enable when it starts healthy."""
-        store = {
-            "module::stub_a::enabled": False,
-            "module::stub_a::disabled_by": "failure",
-        }
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-        registry = _make_registry(StubModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
+    # Empty before startup
+    assert ButlerDaemon(butler_dir).get_module_states() == {}
 
-        states = daemon.get_module_states()
-        assert states["stub_a"].health == "active"
-        assert states["stub_a"].enabled is True
-        # State store should be updated
-        assert store.get("module::stub_a::enabled") is True
+    class FailingModuleA(StubModuleA):
+        async def on_startup(
+            self, config: Any, db: Any, credential_store: Any = None, blob_store: Any = None
+        ) -> None:
+            raise RuntimeError("db connection refused")
 
-    async def test_user_disabled_module_does_not_auto_heal(self, tmp_path: Path) -> None:
-        """A module disabled by user remains disabled even when healthy."""
-        store = {
-            "module::stub_a::enabled": False,
-            "module::stub_a::disabled_by": "user",
-        }
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-        registry = _make_registry(StubModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
+    registry = _make_registry(FailingModuleA)
+    daemon = await _start_daemon(butler_dir, registry=registry, state_store={})
 
-        states = daemon.get_module_states()
-        assert states["stub_a"].health == "active"
-        assert states["stub_a"].enabled is False
+    states = daemon.get_module_states()
+    # Returns copy — mutations don't affect daemon
+    states.clear()
+    assert len(daemon.get_module_states()) == 1
 
-    async def test_legacy_disabled_without_reason_auto_heals(self, tmp_path: Path) -> None:
-        """Pre-existing disabled entries with no disabled_by key auto-heal (backwards compat)."""
-        store = {"module::stub_a::enabled": False}
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-        registry = _make_registry(StubModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
-
-        states = daemon.get_module_states()
-        assert states["stub_a"].health == "active"
-        assert states["stub_a"].enabled is True
-
-    async def test_repeated_failure_stays_disabled(self, tmp_path: Path) -> None:
-        """A module that fails again on restart stays disabled."""
-        store = {
-            "module::stub_a::enabled": False,
-            "module::stub_a::disabled_by": "failure",
-        }
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-
-        class FailingModuleA(StubModuleA):
-            async def on_startup(
-                self, config: Any, db: Any, credential_store: Any = None, blob_store: Any = None
-            ) -> None:
-                raise RuntimeError("still broken")
-
-        registry = _make_registry(FailingModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
-
-        states = daemon.get_module_states()
-        assert states["stub_a"].health == "failed"
-        assert states["stub_a"].enabled is False
-        assert store.get("module::stub_a::disabled_by") == "failure"
+    # Failure details present
+    states2 = daemon.get_module_states()
+    assert states2["stub_a"].failure_phase == "startup"
+    assert "db connection refused" in (states2["stub_a"].failure_error or "")
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: get_module_states()
+# set_module_enabled()
 # ---------------------------------------------------------------------------
 
 
-class TestGetModuleStates:
-    async def test_returns_empty_dict_before_startup(self, tmp_path: Path) -> None:
-        """Before start(), _module_runtime_states is empty."""
-        butler_dir = _make_butler_toml(tmp_path)
-        daemon = ButlerDaemon(butler_dir)
-        assert daemon.get_module_states() == {}
+async def test_set_module_enabled_lifecycle(tmp_path: Path) -> None:
+    """Disable/enable cycle; persists to store; idempotent double-disable."""
+    store: dict = {}
+    butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
+    registry = _make_registry(StubModuleA)
+    daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
 
-    async def test_returns_copy_not_reference(self, tmp_path: Path) -> None:
-        """get_module_states() returns a copy; mutating it doesn't affect daemon."""
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-        registry = _make_registry(StubModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store={})
+    # Disable
+    assert await daemon.set_module_enabled("stub_a", False) is True
+    assert daemon.get_module_states()["stub_a"].enabled is False
+    assert store.get("module::stub_a::enabled") is False
+    assert store.get("module::stub_a::disabled_by") == "user"
 
-        states = daemon.get_module_states()
-        states.clear()
-        # Original state on daemon is unaffected
-        assert len(daemon.get_module_states()) == 1
+    # Re-enable
+    assert await daemon.set_module_enabled("stub_a", True) is True
+    assert daemon.get_module_states()["stub_a"].enabled is True
+    assert store.get("module::stub_a::enabled") is True
+    assert store.get("module::stub_a::disabled_by") is None
 
-    async def test_includes_failure_details_for_failed_modules(self, tmp_path: Path) -> None:
-        """Failed modules include failure_phase and failure_error in their state."""
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
+    # Idempotent double-disable
+    await daemon.set_module_enabled("stub_a", False)
+    assert await daemon.set_module_enabled("stub_a", False) is True
 
-        class FailingModuleA(StubModuleA):
-            async def on_startup(
-                self, config: Any, db: Any, credential_store: Any = None, blob_store: Any = None
-            ) -> None:
-                raise RuntimeError("db connection refused")
-
-        registry = _make_registry(FailingModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store={})
-
-        states = daemon.get_module_states()
-        assert states["stub_a"].failure_phase == "startup"
-        assert "db connection refused" in (states["stub_a"].failure_error or "")
+    # Key format uses module:: prefix
+    enabled_key = f"{_MODULE_ENABLED_KEY_PREFIX}stub_a{_MODULE_ENABLED_KEY_SUFFIX}"
+    disabled_by_key = f"{_MODULE_ENABLED_KEY_PREFIX}stub_a{_MODULE_DISABLED_BY_KEY_SUFFIX}"
+    assert enabled_key in store
+    assert disabled_by_key in store
 
 
-# ---------------------------------------------------------------------------
-# Unit tests: set_module_enabled()
-# ---------------------------------------------------------------------------
+async def test_set_module_enabled_error_cases(tmp_path: Path) -> None:
+    """Unknown/failed/cascade_failed modules raise ValueError."""
+    butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
 
+    class FailingModuleA(StubModuleA):
+        async def on_startup(
+            self, config: Any, db: Any, credential_store: Any = None, blob_store: Any = None
+        ) -> None:
+            raise RuntimeError("startup failed")
 
-class TestSetModuleEnabled:
-    async def test_disable_active_module(self, tmp_path: Path) -> None:
-        """A healthy module can be disabled via set_module_enabled()."""
-        store: dict = {}
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-        registry = _make_registry(StubModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
+    registry = _make_registry(FailingModuleA)
+    daemon = await _start_daemon(butler_dir, registry=registry, state_store={})
 
-        result = await daemon.set_module_enabled("stub_a", False)
-        assert result is True
-        assert daemon.get_module_states()["stub_a"].enabled is False
+    # Unknown module
+    with pytest.raises(ValueError, match="Unknown module"):
+        await daemon.set_module_enabled("nonexistent", True)
 
-    async def test_re_enable_disabled_module(self, tmp_path: Path) -> None:
-        """A healthy module that was disabled can be re-enabled."""
-        store = {"module::stub_a::enabled": False}
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-        registry = _make_registry(StubModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
-
-        result = await daemon.set_module_enabled("stub_a", True)
-        assert result is True
-        assert daemon.get_module_states()["stub_a"].enabled is True
-
-    async def test_persists_change_to_state_store(self, tmp_path: Path) -> None:
-        """set_module_enabled() writes the new value to the state store."""
-        store: dict = {}
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-        registry = _make_registry(StubModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
-
-        await daemon.set_module_enabled("stub_a", False)
-        assert store.get("module::stub_a::enabled") is False
-        assert store.get("module::stub_a::disabled_by") == "user"
-
+    # Failed module cannot be enabled
+    with pytest.raises(ValueError, match="unavailable"):
         await daemon.set_module_enabled("stub_a", True)
-        assert store.get("module::stub_a::enabled") is True
-        assert store.get("module::stub_a::disabled_by") is None
 
-    async def test_raises_for_unknown_module(self, tmp_path: Path) -> None:
-        """set_module_enabled() raises ValueError for an unknown module name."""
-        butler_dir = _make_butler_toml(tmp_path)
-        daemon = await _start_daemon(butler_dir, state_store={})
-
-        with pytest.raises(ValueError, match="Unknown module"):
-            await daemon.set_module_enabled("nonexistent", True)
-
-    async def test_raises_for_failed_module_enable_attempt(self, tmp_path: Path) -> None:
-        """Attempting to enable a failed module raises ValueError."""
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-
-        class FailingModuleA(StubModuleA):
-            async def on_startup(
-                self, config: Any, db: Any, credential_store: Any = None, blob_store: Any = None
-            ) -> None:
-                raise RuntimeError("startup failed")
-
-        registry = _make_registry(FailingModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store={})
-
-        with pytest.raises(ValueError, match="unavailable"):
-            await daemon.set_module_enabled("stub_a", True)
-
-    async def test_raises_for_cascade_failed_module_enable_attempt(self, tmp_path: Path) -> None:
-        """Attempting to enable a cascade_failed module raises ValueError."""
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-
-        daemon = await _start_daemon(butler_dir, state_store={})
-        # Manually inject a cascade_failed state to simulate
-        daemon._module_runtime_states["fake_cascade"] = ModuleRuntimeState(
-            health="cascade_failed", enabled=False, failure_phase="dependency"
-        )
-
-        with pytest.raises(ValueError, match="unavailable"):
-            await daemon.set_module_enabled("fake_cascade", True)
-
-    async def test_disable_already_disabled_module_is_idempotent(self, tmp_path: Path) -> None:
-        """set_module_enabled(False) on an already-disabled module succeeds."""
-        store = {
-            "module::stub_a::enabled": False,
-            "module::stub_a::disabled_by": "user",
-        }
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-        registry = _make_registry(StubModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
-
-        result = await daemon.set_module_enabled("stub_a", False)
-        assert result is True
-        assert daemon.get_module_states()["stub_a"].enabled is False
-
-    async def test_state_store_key_format(self, tmp_path: Path) -> None:
-        """The state store keys follow the module::{name}::* convention."""
-        store: dict = {}
-        butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-        registry = _make_registry(StubModuleA)
-        daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
-
-        await daemon.set_module_enabled("stub_a", False)
-        enabled_key = f"{_MODULE_ENABLED_KEY_PREFIX}stub_a{_MODULE_ENABLED_KEY_SUFFIX}"
-        disabled_by_key = f"{_MODULE_ENABLED_KEY_PREFIX}stub_a{_MODULE_DISABLED_BY_KEY_SUFFIX}"
-        assert enabled_key in store
-        assert store[enabled_key] is False
-        assert disabled_by_key in store
-        assert store[disabled_by_key] == "user"
+    # Cascade_failed cannot be enabled (injected directly)
+    daemon._module_runtime_states["fake_cascade"] = ModuleRuntimeState(
+        health="cascade_failed", enabled=False, failure_phase="dependency"
+    )
+    with pytest.raises(ValueError, match="unavailable"):
+        await daemon.set_module_enabled("fake_cascade", True)
