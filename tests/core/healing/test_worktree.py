@@ -455,7 +455,11 @@ class TestReapStaleWorktrees:
         async def mock_run_git(*args, cwd, capture_stderr=True):
             git_calls.append(args)
             if args[0] == "branch" and args[1] == "--list":
-                return 0, branch, ""
+                # Only return the branch when the pattern matches the self-healing prefix
+                pattern = args[2] if len(args) > 2 else ""
+                if pattern.startswith("self-healing"):
+                    return 0, branch, ""
+                return 0, "", ""
             if args[0] == "worktree" and args[1] == "list":
                 # No worktrees
                 return 0, "", ""
@@ -465,7 +469,7 @@ class TestReapStaleWorktrees:
             await reap_stale_worktrees(tmp_path, mock_pool)
 
         branch_delete_calls = [c for c in git_calls if c[0] == "branch" and c[1] == "-D"]
-        assert len(branch_delete_calls) >= 1
+        assert len(branch_delete_calls) == 1
 
     async def test_returns_count(self, tmp_path: Path) -> None:
         """reap_stale_worktrees returns the total count of reaped items."""
@@ -793,7 +797,7 @@ class TestReapStaleWorktreesQaPrefix:
             await reap_stale_worktrees(tmp_path, mock_pool)
 
         branch_delete_calls = [c for c in git_calls if c[0] == "branch" and c[1] == "-D"]
-        assert len(branch_delete_calls) >= 1
+        assert len(branch_delete_calls) == 1
 
     async def test_mixed_prefixes_both_reaped(self, tmp_path: Path) -> None:
         """Both self-healing and QA prefix worktrees are reaped in a single call."""

@@ -49,10 +49,10 @@ _BRANCH_PREFIX = "self-healing"
 #: Branch prefix used by QA staffer investigations.
 _QA_BRANCH_PREFIX = "qa"
 
-#: All branch prefixes managed by this module.  ``reap_stale_worktrees``
-#: scans worktree directories and branches for every prefix in this tuple so
-#: that newly-introduced prefixes are automatically reaped without code changes
-#: to the reaper.
+#: Default branch prefixes managed by this module. ``reap_stale_worktrees``
+#: scans worktree directories and branches for every prefix in this tuple by
+#: default; callers can override or extend the set of prefixes via
+#: ``prefixes=`` where supported.
 _ALL_BRANCH_PREFIXES: tuple[str, ...] = (_BRANCH_PREFIX, _QA_BRANCH_PREFIX)
 
 #: Number of hex characters from fingerprint to include in the branch name.
@@ -417,7 +417,7 @@ async def reap_stale_worktrees(
        (``failed``, ``timeout``, etc.) and ``closed_at`` older than 24 hours.
     2. **Orphaned worktrees**: directories in ``.healing-worktrees/`` with
        no matching ``healing_attempts`` row.
-    3. **Orphaned branches**: local ``<prefix>/*/`` branches with no worktree
+    3. **Orphaned branches**: local ``<prefix>/*/*`` branches with no worktree
        and no active (``investigating`` / ``pr_open``) attempt.
 
     By default all known prefixes (``self-healing`` and ``qa``) are processed.
@@ -470,7 +470,7 @@ async def reap_stale_worktrees(
             return f"{prefix}/{wt_dir.parent.name}/{wt_dir.name}"
 
         # Fetch all matching attempt rows in one query
-        candidate_branches = [_branch_from_wt(p, d) for p, d in candidate_paths]
+        candidate_branches = [_branch_from_wt(prefix, wt_dir) for prefix, wt_dir in candidate_paths]
         attempt_map = await _healing_attempts_for_branches(pool, candidate_branches)
 
         for prefix, wt_dir in candidate_paths:
