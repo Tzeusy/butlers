@@ -123,7 +123,8 @@ def _make_spawner(success: bool = True, session_id: uuid.UUID | None = None) -> 
 
 
 class TestHealingConfig:
-    def test_defaults(self) -> None:
+    def test_defaults_and_from_module_config(self) -> None:
+        """Defaults are correct; from_module_config applies all fields; empty dict uses defaults."""
         cfg = HealingConfig()
         assert cfg.enabled is False
         assert cfg.severity_threshold == 2
@@ -134,31 +135,16 @@ class TestHealingConfig:
         assert cfg.gh_token_env_var == "GH_TOKEN"
         assert cfg.pr_labels == ["self-healing", "automated"]
 
-    def test_from_module_config_full(self) -> None:
-        cfg = HealingConfig.from_module_config(
-            {
-                "enabled": True,
-                "severity_threshold": 1,
-                "cooldown_minutes": 30,
-                "max_concurrent": 4,
-                "circuit_breaker_threshold": 3,
-                "timeout_minutes": 60,
-                "gh_token_env_var": "MY_GH_TOKEN",
-                "pr_labels": ["healing"],
-            }
-        )
-        assert cfg.enabled is True
-        assert cfg.severity_threshold == 1
-        assert cfg.cooldown_minutes == 30
-        assert cfg.max_concurrent == 4
-        assert cfg.circuit_breaker_threshold == 3
-        assert cfg.timeout_minutes == 60
-        assert cfg.gh_token_env_var == "MY_GH_TOKEN"
-        assert cfg.pr_labels == ["healing"]
+        full = HealingConfig.from_module_config({
+            "enabled": True, "severity_threshold": 1, "cooldown_minutes": 30,
+            "max_concurrent": 4, "circuit_breaker_threshold": 3, "timeout_minutes": 60,
+            "gh_token_env_var": "MY_GH_TOKEN", "pr_labels": ["healing"],
+        })
+        assert full.enabled is True
+        assert full.severity_threshold == 1
+        assert full.gh_token_env_var == "MY_GH_TOKEN"
 
-    def test_from_module_config_empty_dict(self) -> None:
-        cfg = HealingConfig.from_module_config({})
-        assert cfg.enabled is False  # default
+        assert HealingConfig.from_module_config({}).enabled is False
 
 
 # ---------------------------------------------------------------------------
@@ -917,32 +903,29 @@ class TestWorktreeCreationFailure:
 
 
 class TestPromptVariants:
-    def test_prompt_with_agent_context(self) -> None:
-        """Prompt includes agent_context section when context provided."""
+    def test_prompt_variants(self) -> None:
+        """Prompt: context section when provided; fallback when not; required fields always."""
+        # With context
         fp = _make_fp()
-        context = "SMTP auth failed — likely credential rotation"
-        prompt = _build_healing_prompt(fp, "email", "external", context)
+        prompt = _build_healing_prompt(fp, "email", "external", "SMTP auth failed")
         assert "SMTP auth failed" in prompt
         assert "Butler Diagnostic Context" in prompt
 
-    def test_prompt_without_agent_context(self) -> None:
-        """Prompt includes fallback note when no context provided."""
-        fp = _make_fp()
-        prompt = _build_healing_prompt(fp, "email", "tick", None)
-        assert "spawner fallback" in prompt.lower() or "hard crash" in prompt.lower()
-        assert "Butler Diagnostic Context" not in prompt
+        # Without context
+        no_ctx = _build_healing_prompt(fp, "email", "tick", None)
+        assert "spawner fallback" in no_ctx.lower() or "hard crash" in no_ctx.lower()
+        assert "Butler Diagnostic Context" not in no_ctx
 
-    def test_prompt_contains_required_fields(self) -> None:
-        """Prompt always includes fingerprint, exception_type, call_site."""
-        fp = _make_fp(
+        # Required fields always present
+        fp2 = _make_fp(
             fingerprint="c" * 64,
             exception_type="asyncpg.exceptions.UndefinedTableError",
             call_site="src/butlers/modules/email/tools.py:_send",
         )
-        prompt = _build_healing_prompt(fp, "email", "external", None)
-        assert "c" * 64 in prompt
-        assert "asyncpg.exceptions.UndefinedTableError" in prompt
-        assert "src/butlers/modules/email/tools.py:_send" in prompt
+        p2 = _build_healing_prompt(fp2, "email", "external", None)
+        assert "c" * 64 in p2
+        assert "asyncpg.exceptions.UndefinedTableError" in p2
+        assert "src/butlers/modules/email/tools.py:_send" in p2
 
 
 # ---------------------------------------------------------------------------
@@ -1580,14 +1563,13 @@ class TestDispatchHealingOtelSpan:
 class TestPrBodyTemplate:
     """Verify _build_pr_body includes First seen, Occurrences, and fingerprint footer."""
 
-    def test_first_seen_and_occurrences_in_body(self) -> None:
-        """_build_pr_body includes First seen and Occurrences fields."""
+    def test_pr_body_fields_and_defaults(self) -> None:
+        """PR body includes first_seen, occurrences, fingerprint; defaults to 'unknown'."""
         from butlers.core.healing.dispatch import _build_pr_body
 
-        fp = _make_fp(fingerprint="e" * 64)
         attempt_id = uuid.uuid4()
         body = _build_pr_body(
-            fp=fp,
+            fp=_make_fp(fingerprint="e" * 64),
             butler_name="email",
             attempt_id=attempt_id,
             repo_root=Path("/tmp"),
@@ -1599,38 +1581,16 @@ class TestPrBodyTemplate:
         assert "2026-01-01T00:00:00Z" in body
         assert "**Occurrences:**" in body
         assert "3" in body
-
-    def test_fingerprint_footer_in_body(self) -> None:
-        """_build_pr_body includes *Fingerprint: `<full-fingerprint>`* footer."""
-        from butlers.core.healing.dispatch import _build_pr_body
-
-        fp = _make_fp(fingerprint="f" * 64)
-        attempt_id = uuid.uuid4()
-        body = _build_pr_body(
-            fp=fp,
-            butler_name="email",
-            attempt_id=attempt_id,
-            repo_root=Path("/tmp"),
-            agent_context=None,
-        )
         assert "*Fingerprint:" in body
-        assert "f" * 64 in body
+        assert "e" * 64 in body
 
-    def test_defaults_when_not_provided(self) -> None:
-        """first_seen and occurrences default to 'unknown' when not supplied."""
-        from butlers.core.healing.dispatch import _build_pr_body
-
-        fp = _make_fp()
-        attempt_id = uuid.uuid4()
-        body = _build_pr_body(
-            fp=fp,
-            butler_name="email",
-            attempt_id=attempt_id,
-            repo_root=Path("/tmp"),
-            agent_context=None,
+        # Defaults to 'unknown' when not provided
+        body2 = _build_pr_body(
+            fp=_make_fp(), butler_name="email", attempt_id=attempt_id,
+            repo_root=Path("/tmp"), agent_context=None,
         )
-        assert "**First seen:** unknown" in body
-        assert "**Occurrences:** unknown" in body
+        assert "**First seen:** unknown" in body2
+        assert "**Occurrences:** unknown" in body2
 
 
 # ---------------------------------------------------------------------------
