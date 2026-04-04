@@ -177,65 +177,44 @@ def _make_mock_client(*, post_return=None, post_side_effect=None) -> MagicMock:
 class TestLivenessReporterConfig:
     """Verify SchedulerConfig liveness reporter fields parsing from butler.toml."""
 
-    def test_default_heartbeat_interval(self, tmp_path: Path) -> None:
-        """heartbeat_interval_seconds defaults to 120 when not configured."""
+    def test_heartbeat_interval_parsing(self, tmp_path: Path) -> None:
+        """Default 120s; custom value parsed; 0 and negative rejected."""
         _make_butler_toml(tmp_path)
-        config = load_config(tmp_path)
-        assert config.scheduler.heartbeat_interval_seconds == 120
+        assert load_config(tmp_path).scheduler.heartbeat_interval_seconds == 120
 
-    def test_custom_heartbeat_interval(self, tmp_path: Path) -> None:
-        """Custom heartbeat_interval_seconds is parsed from [butler.scheduler]."""
         _make_butler_toml(tmp_path, heartbeat_interval_seconds=60)
-        config = load_config(tmp_path)
-        assert config.scheduler.heartbeat_interval_seconds == 60
+        assert load_config(tmp_path).scheduler.heartbeat_interval_seconds == 60
 
-    def test_invalid_zero_heartbeat_interval_rejected(self, tmp_path: Path) -> None:
-        """heartbeat_interval_seconds=0 is rejected with ConfigError."""
-        _make_butler_toml(tmp_path, heartbeat_interval_seconds=0)
-        with pytest.raises(ConfigError, match="heartbeat_interval_seconds"):
-            load_config(tmp_path)
+        for bad in (0, -10):
+            _make_butler_toml(tmp_path, heartbeat_interval_seconds=bad)
+            with pytest.raises(ConfigError, match="heartbeat_interval_seconds"):
+                load_config(tmp_path)
 
-    def test_invalid_negative_heartbeat_interval_rejected(self, tmp_path: Path) -> None:
-        """Negative heartbeat_interval_seconds is rejected with ConfigError."""
-        _make_butler_toml(tmp_path, heartbeat_interval_seconds=-10)
-        with pytest.raises(ConfigError, match="heartbeat_interval_seconds"):
-            load_config(tmp_path)
-
-    def test_default_switchboard_url(self, tmp_path: Path) -> None:
-        """switchboard_url defaults to http://localhost:41200 when not configured."""
-        _make_butler_toml(tmp_path)
-        # Ensure BUTLERS_SWITCHBOARD_URL is not set for this test
-        env_backup = os.environ.pop("BUTLERS_SWITCHBOARD_URL", None)
-        try:
-            config = load_config(tmp_path)
-            assert config.scheduler.switchboard_url == "http://localhost:41200"
-        finally:
-            if env_backup is not None:
-                os.environ["BUTLERS_SWITCHBOARD_URL"] = env_backup
-
-    def test_switchboard_url_from_toml(self, tmp_path: Path) -> None:
-        """switchboard_url in [butler.scheduler] overrides default."""
-        _make_butler_toml(tmp_path, switchboard_url="http://my-switchboard:9999")
-        env_backup = os.environ.pop("BUTLERS_SWITCHBOARD_URL", None)
-        try:
-            config = load_config(tmp_path)
-            assert config.scheduler.switchboard_url == "http://my-switchboard:9999"
-        finally:
-            if env_backup is not None:
-                os.environ["BUTLERS_SWITCHBOARD_URL"] = env_backup
-
-    def test_switchboard_url_from_env_var(self, tmp_path: Path) -> None:
-        """BUTLERS_SWITCHBOARD_URL env var overrides default URL."""
-        _make_butler_toml(tmp_path)
-        with patch.dict(os.environ, {"BUTLERS_SWITCHBOARD_URL": "http://env-switchboard:7777"}):
-            config = load_config(tmp_path)
-        assert config.scheduler.switchboard_url == "http://env-switchboard:7777"
-
-    def test_scheduler_config_dataclass_defaults(self) -> None:
-        """SchedulerConfig defaults are correct."""
+    def test_switchboard_url_resolution(self, tmp_path: Path) -> None:
+        """Default URL; TOML override; env var override; dataclass defaults."""
         cfg = SchedulerConfig()
         assert cfg.heartbeat_interval_seconds == 120
         assert cfg.switchboard_url == "http://localhost:41200"
+
+        _make_butler_toml(tmp_path)
+        env_backup = os.environ.pop("BUTLERS_SWITCHBOARD_URL", None)
+        try:
+            assert load_config(tmp_path).scheduler.switchboard_url == "http://localhost:41200"
+        finally:
+            if env_backup is not None:
+                os.environ["BUTLERS_SWITCHBOARD_URL"] = env_backup
+
+        _make_butler_toml(tmp_path, switchboard_url="http://my-switchboard:9999")
+        env_backup = os.environ.pop("BUTLERS_SWITCHBOARD_URL", None)
+        try:
+            assert load_config(tmp_path).scheduler.switchboard_url == "http://my-switchboard:9999"
+        finally:
+            if env_backup is not None:
+                os.environ["BUTLERS_SWITCHBOARD_URL"] = env_backup
+
+        _make_butler_toml(tmp_path)
+        with patch.dict(os.environ, {"BUTLERS_SWITCHBOARD_URL": "http://env-switchboard:7777"}):
+            assert load_config(tmp_path).scheduler.switchboard_url == "http://env-switchboard:7777"
 
 
 # ---------------------------------------------------------------------------
