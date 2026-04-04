@@ -46,21 +46,6 @@ def _past_date(days: int = 1) -> date:
 # ---------------------------------------------------------------------------
 
 
-def test_deadline_validation_valid_passes():
-    """Correctly formed deadline does not raise."""
-    from butlers.core.temporal.deadlines import validate_deadline_input
-
-    validate_deadline_input(
-        target_date=_future_date(60),
-        lead_time_days=42,
-        alert_thresholds=[
-            _make_threshold(42, "info"),
-            _make_threshold(14, "warning"),
-            _make_threshold(3, "critical"),
-        ],
-    )
-
-
 @pytest.mark.parametrize(
     "target_date,lead_time_days,thresholds,match",
     [
@@ -88,8 +73,23 @@ def test_deadline_validation_invalid_raises(target_date, lead_time_days, thresho
 
 
 def test_deadline_countdown_and_threshold_firing():
-    """days_remaining correct; threshold fires when due or past; already-fired excluded."""
-    from butlers.core.temporal.deadlines import compute_days_remaining, find_unfired_threshold
+    """Valid deadline does not raise; days_remaining correct; threshold fires when due or past."""
+    from butlers.core.temporal.deadlines import (
+        compute_days_remaining,
+        find_unfired_threshold,
+        validate_deadline_input,
+    )
+
+    # Valid input does not raise
+    validate_deadline_input(
+        target_date=_future_date(60),
+        lead_time_days=42,
+        alert_thresholds=[
+            _make_threshold(42, "info"),
+            _make_threshold(14, "warning"),
+            _make_threshold(3, "critical"),
+        ],
+    )
 
     target = _future_date(42)
     result = compute_days_remaining(target_date=target)
@@ -251,18 +251,19 @@ def test_event_chain_materialization():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("depth,expected", [(0, True), (2, True), (3, False), (4, False)])
-def test_event_chain_depth_limit(depth, expected):
-    from butlers.core.temporal.event_chains import should_fire_chain
-
-    assert should_fire_chain(chain_depth=depth) is expected
-
-
-def test_event_chain_depth_exceeded_logs_warning(caplog):
+def test_event_chain_depth_limit_and_warning(caplog) -> None:
+    """Depth > 2 blocks firing; exceeded depth logs a warning referencing the chain name."""
     import logging
 
     from butlers.core.temporal.event_chains import should_fire_chain
 
+    # Depth-limit boundary cases
+    assert should_fire_chain(chain_depth=0) is True
+    assert should_fire_chain(chain_depth=2) is True
+    assert should_fire_chain(chain_depth=3) is False
+    assert should_fire_chain(chain_depth=4) is False
+
+    # Warning logged with chain name when depth exceeded
     with caplog.at_level(logging.WARNING, logger="butlers.core.temporal.event_chains"):
         result = should_fire_chain(chain_depth=3, chain_name="cascade-chain")
     assert result is False
@@ -358,12 +359,8 @@ def test_quiet_hours_priority_defer(priority, t, expected_defer):
     from butlers.core.temporal.delivery import should_defer_notification
 
     assert should_defer_notification(priority, t, _make_prefs()) is expected_defer
-
-
-def test_quiet_hours_no_prefs_no_defer():
-    from butlers.core.temporal.delivery import should_defer_notification
-
-    assert not should_defer_notification("medium", time(2, 0), None)
+    # None prefs never defers regardless of time
+    assert should_defer_notification("medium", time(2, 0), None) is False
 
 
 @pytest.mark.parametrize(
@@ -397,11 +394,7 @@ def test_compute_deliver_at_utc(now_dt, exp_date, exp_hour):
     result = compute_deliver_at(_make_prefs("UTC"), now_dt)
     assert result.date() == exp_date and result.hour == exp_hour
     assert result.utcoffset().total_seconds() == 0  # UTC-aware
-
-
-def test_compute_deliver_at_invalid_tz_and_naive_raise():
-    from butlers.core.temporal.delivery import compute_deliver_at
-
+    # Invalid tz and naive datetime raise ValueError
     with pytest.raises(ValueError, match="Unknown timezone"):
         compute_deliver_at(_make_prefs(tz="Invalid/Zone"), datetime(2026, 1, 15, 12, 0, tzinfo=UTC))
     with pytest.raises(ValueError, match="timezone-aware"):
