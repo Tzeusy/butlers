@@ -208,37 +208,33 @@ def test_adapter_init_error_is_high(adapter_module):
 # ---------------------------------------------------------------------------
 
 
-def test_hint_upgrades_default_medium():
-    result = compute_fingerprint_from_report(
-        "builtins.AttributeError",
-        "attr missing",
-        "<unknown>:<unknown>",
-        None,
-        severity_hint="high",
+def test_severity_hint_behavior():
+    """Hint upgrades default; cannot override specific rule; invalid hint → auto."""
+    # Upgrades default medium
+    r1 = compute_fingerprint_from_report(
+        "builtins.AttributeError", "attr missing", "<unknown>:<unknown>", None, severity_hint="high"
     )
-    assert result.severity == SEVERITY_HIGH
+    assert r1.severity == SEVERITY_HIGH
 
-
-def test_hint_cannot_override_specific_rule():
-    result = compute_fingerprint_from_report(
+    # Cannot override specific rule (postgres error in module path → critical)
+    r2 = compute_fingerprint_from_report(
         "asyncpg.exceptions.PostgresError",
         "lost",
         "src/butlers/modules/email.py:send",
         None,
         severity_hint="low",
     )
-    assert result.severity == SEVERITY_CRITICAL
+    assert r2.severity == SEVERITY_CRITICAL
 
-
-def test_invalid_hint_falls_back_to_auto():
-    result = compute_fingerprint_from_report(
+    # Invalid hint falls back to auto
+    r3 = compute_fingerprint_from_report(
         "builtins.AttributeError",
         "attr missing",
         "<unknown>:<unknown>",
         None,
         severity_hint="urgent",
     )
-    assert result.severity == SEVERITY_MEDIUM
+    assert r3.severity == SEVERITY_MEDIUM
 
 
 # ---------------------------------------------------------------------------

@@ -159,8 +159,14 @@ class TestConstants:
     """VALID_STATUSES, TERMINAL_STATUSES, ACTIVE_STATUSES are correctly defined."""
 
     @pytest.mark.unit
-    def test_valid_statuses_complete(self) -> None:
-        from butlers.core.healing.tracking import VALID_STATUSES
+    def test_status_sets_and_transitions(self) -> None:
+        """Valid statuses complete; terminal is subset; active statuses correct; transitions."""
+        from butlers.core.healing.tracking import (
+            _VALID_TRANSITIONS,
+            ACTIVE_STATUSES,
+            TERMINAL_STATUSES,
+            VALID_STATUSES,
+        )
 
         expected = {
             "dispatch_pending",
@@ -173,44 +179,12 @@ class TestConstants:
             "timeout",
         }
         assert VALID_STATUSES == expected
-
-    @pytest.mark.unit
-    def test_terminal_statuses_are_subset_of_valid(self) -> None:
-        from butlers.core.healing.tracking import TERMINAL_STATUSES, VALID_STATUSES
-
         assert TERMINAL_STATUSES.issubset(VALID_STATUSES)
-
-    @pytest.mark.unit
-    def test_investigating_not_terminal(self) -> None:
-        from butlers.core.healing.tracking import TERMINAL_STATUSES
-
-        assert "investigating" not in TERMINAL_STATUSES
-
-    @pytest.mark.unit
-    def test_dispatch_pending_not_terminal(self) -> None:
-        from butlers.core.healing.tracking import TERMINAL_STATUSES
-
-        assert "dispatch_pending" not in TERMINAL_STATUSES
-
-    @pytest.mark.unit
-    def test_pr_open_not_terminal(self) -> None:
-        from butlers.core.healing.tracking import TERMINAL_STATUSES
-
-        assert "pr_open" not in TERMINAL_STATUSES
-
-    @pytest.mark.unit
-    def test_active_statuses(self) -> None:
-        from butlers.core.healing.tracking import ACTIVE_STATUSES
-
+        for non_terminal in ("investigating", "dispatch_pending", "pr_open"):
+            assert non_terminal not in TERMINAL_STATUSES
         assert "dispatch_pending" in ACTIVE_STATUSES
         assert "investigating" in ACTIVE_STATUSES
         assert "pr_open" in ACTIVE_STATUSES
-
-    @pytest.mark.unit
-    def test_dispatch_pending_transitions(self) -> None:
-        from butlers.core.healing.tracking import _VALID_TRANSITIONS
-
-        # dispatch_pending can only go to investigating (agent dispatched) or failed (timeout)
         assert _VALID_TRANSITIONS["dispatch_pending"] == frozenset({"investigating", "failed"})
 
 
@@ -218,54 +192,32 @@ class TestUpdateAttemptStatusUnit:
     """State machine validation tested with a mock pool."""
 
     @pytest.mark.unit
-    async def test_rejects_invalid_status(self) -> None:
-        """update_attempt_status returns False for an unknown status."""
+    async def test_rejects_invalid_and_terminal_transitions(self) -> None:
+        """Returns False for unknown status, terminal state, missing row, invalid transition."""
         from butlers.core.healing.tracking import update_attempt_status
 
-        pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value={"status": "investigating"})
-        pool.fetchval = AsyncMock(return_value=uuid.uuid4())
+        # Unknown status — fetchrow never called
+        pool_a = MagicMock()
+        pool_a.fetchrow = AsyncMock(return_value={"status": "investigating"})
+        assert await update_attempt_status(pool_a, uuid.uuid4(), "not_a_real_status") is False
+        pool_a.fetchrow.assert_not_called()
 
-        result = await update_attempt_status(pool, uuid.uuid4(), "not_a_real_status")
-        assert result is False
-        # fetchrow should NOT have been called since we reject before hitting DB
-        pool.fetchrow.assert_not_called()
+        # Terminal state transition
+        pool_b = MagicMock()
+        pool_b.fetchrow = AsyncMock(return_value={"status": "failed"})
+        pool_b.fetchval = AsyncMock(return_value=None)
+        assert await update_attempt_status(pool_b, uuid.uuid4(), "pr_open") is False
 
-    @pytest.mark.unit
-    async def test_rejects_terminal_state_transition(self) -> None:
-        """update_attempt_status returns False and logs warning for terminal state."""
-        from butlers.core.healing.tracking import update_attempt_status
+        # Attempt not found
+        pool_c = MagicMock()
+        pool_c.fetchrow = AsyncMock(return_value=None)
+        assert await update_attempt_status(pool_c, uuid.uuid4(), "failed") is False
 
-        pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value={"status": "failed"})
-        pool.fetchval = AsyncMock(return_value=None)
-
-        result = await update_attempt_status(pool, uuid.uuid4(), "pr_open")
-        assert result is False
-
-    @pytest.mark.unit
-    async def test_returns_false_when_attempt_not_found(self) -> None:
-        """update_attempt_status returns False when the attempt row is missing."""
-        from butlers.core.healing.tracking import update_attempt_status
-
-        pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value=None)
-
-        result = await update_attempt_status(pool, uuid.uuid4(), "failed")
-        assert result is False
-
-    @pytest.mark.unit
-    async def test_rejects_invalid_transition(self) -> None:
-        """update_attempt_status rejects transitions not in the state machine."""
-        from butlers.core.healing.tracking import update_attempt_status
-
-        pool = MagicMock()
-        # investigating → pr_merged is not a valid direct transition
-        pool.fetchrow = AsyncMock(return_value={"status": "investigating"})
-        pool.fetchval = AsyncMock(return_value=None)
-
-        result = await update_attempt_status(pool, uuid.uuid4(), "pr_merged")
-        assert result is False
+        # Invalid transition (investigating → pr_merged)
+        pool_d = MagicMock()
+        pool_d.fetchrow = AsyncMock(return_value={"status": "investigating"})
+        pool_d.fetchval = AsyncMock(return_value=None)
+        assert await update_attempt_status(pool_d, uuid.uuid4(), "pr_merged") is False
 
 
 class TestCollisionDetectionUnit:
@@ -349,21 +301,20 @@ class TestCollisionDetectionUnit:
         assert len(critical_records) == 0
 
     @pytest.mark.unit
-    async def test_new_insert_returns_is_new_true(self) -> None:
-        """create_or_join_attempt returns is_new=True when a new row is inserted."""
+    async def test_new_insert_and_none_result(self) -> None:
+        """is_new=True when new row inserted; raises RuntimeError on None result."""
         from butlers.core.healing import tracking
 
         attempt_id = uuid.uuid4()
-        mock_row = {
-            "id": attempt_id,
-            "existing_exc_type": "builtins.KeyError",
-            "existing_call_site": "src/butlers/core/spawner.py:_run",
-            "was_inserted": True,
-        }
-
         pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value=mock_row)
-
+        pool.fetchrow = AsyncMock(
+            return_value={
+                "id": attempt_id,
+                "existing_exc_type": "builtins.KeyError",
+                "existing_call_site": "src/butlers/core/spawner.py:_run",
+                "was_inserted": True,
+            }
+        )
         result_id, is_new = await tracking.create_or_join_attempt(
             pool,
             fingerprint="c" * 64,
@@ -373,21 +324,14 @@ class TestCollisionDetectionUnit:
             call_site="src/butlers/core/spawner.py:_run",
             session_id=uuid.uuid4(),
         )
-
         assert result_id == attempt_id
         assert is_new is True
 
-    @pytest.mark.unit
-    async def test_raises_on_none_result(self) -> None:
-        """create_or_join_attempt raises RuntimeError when the query returns None."""
-        from butlers.core.healing import tracking
-
-        pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value=None)
-
+        pool2 = MagicMock()
+        pool2.fetchrow = AsyncMock(return_value=None)
         with pytest.raises(RuntimeError, match="unexpected empty result"):
             await tracking.create_or_join_attempt(
-                pool,
+                pool2,
                 fingerprint="d" * 64,
                 butler_name="test-butler",
                 severity=2,
