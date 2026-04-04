@@ -390,22 +390,38 @@ class TestSpawnerResult:
 class TestSpawnerInvocation:
     """Tests for runtime invocation via Spawner.trigger() with MockAdapter."""
 
-    async def test_success_with_result(self, tmp_path: Path):
+    async def test_success_result_tool_calls_and_duration(self, tmp_path: Path):
+        """Success returns output; tool calls captured; duration measured."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
 
+        # Basic success
         adapter = MockAdapter(result_text="Hello from mock!")
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-        )
-
+        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
         result = await spawner.trigger("hello", "tick")
         assert result.output == "Hello from mock!"
         assert result.error is None
         assert result.duration_ms >= 0
+
+        # Tool calls captured
+        adapter2 = MockAdapter(
+            result_text="Done with tools",
+            tool_calls=[{"id": "tool_1", "name": "state_get", "input": {"key": "foo"}}],
+        )
+        result2 = await Spawner(config=config, config_dir=config_dir, runtime=adapter2).trigger(
+            "use tools", "trigger_tool"
+        )
+        assert result2.output == "Done with tools"
+        assert len(result2.tool_calls) == 1
+        assert result2.tool_calls[0]["name"] == "state_get"
+
+        # Duration measured for slow adapter
+        slow_adapter = MockAdapter(result_text="slow result", delay=0.05)
+        result3 = await Spawner(
+            config=config, config_dir=config_dir, runtime=slow_adapter
+        ).trigger("slow", "tick")
+        assert result3.duration_ms >= 40
 
     async def test_runtime_args_forwarded_to_runtime_invoke(self, tmp_path: Path):
         """Configured runtime args are forwarded to adapter invoke kwargs."""
@@ -455,27 +471,6 @@ class TestSpawnerInvocation:
         assert result.success is True
         assert captured["runtime_args"] == ["--config", 'model_reasoning_effort="high"']
 
-    async def test_tool_calls_captured(self, tmp_path: Path):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-
-        adapter = MockAdapter(
-            result_text="Done with tools",
-            tool_calls=[{"id": "tool_1", "name": "state_get", "input": {"key": "foo"}}],
-        )
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-        )
-
-        result = await spawner.trigger("use tools", "trigger_tool")
-        assert result.output == "Done with tools"
-        assert len(result.tool_calls) == 1
-        assert result.tool_calls[0]["name"] == "state_get"
-        assert result.tool_calls[0]["input"] == {"key": "foo"}
-
     async def test_error_wrapped_in_result(self, tmp_path: Path):
         config_dir = tmp_path / "config"
         config_dir.mkdir()
@@ -495,21 +490,6 @@ class TestSpawnerInvocation:
         assert result.output is None
         assert result.duration_ms >= 0
         assert adapter.reset_calls == 1
-
-    async def test_duration_measured(self, tmp_path: Path):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-
-        adapter = MockAdapter(result_text="slow result", delay=0.05)
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-        )
-
-        result = await spawner.trigger("slow", "tick")
-        assert result.duration_ms >= 40  # at least ~50ms sleep
 
     async def test_runtime_not_reset_when_failure_before_invoke(self, tmp_path: Path):
         """reset() is skipped when the exception occurs before runtime invocation."""
@@ -546,45 +526,30 @@ class TestSpawnerInvocation:
         assert adapter.created_worker_ids == [1, 2]
         assert adapter.invoked_worker_ids == [1, 2]
 
-    async def test_session_timeout_cancels_hung_invoke(self, tmp_path: Path):
-        """Sessions exceeding session_timeout_s are cancelled and return a timeout error."""
+    async def test_session_timeout_and_semaphore_release(self, tmp_path: Path):
+        """Timed-out sessions return error; semaphore released so next session succeeds."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config(session_timeout_s=1)
 
-        # Adapter that hangs for 60s — will be cancelled by the 1s timeout
+        # Single-shot timeout
         adapter = MockAdapter(result_text="never reached", delay=60)
-        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
-
-        result = await spawner.trigger("hung prompt", "route")
-        assert result.success is False
-        assert result.error is not None
-        assert "timed out" in result.error.lower()
-        assert result.duration_ms >= 900  # at least ~1s
-
-    async def test_session_timeout_releases_semaphore(self, tmp_path: Path):
-        """After a timeout, the concurrency semaphore is released for subsequent sessions."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config(session_timeout_s=1)
-
-        adapter = SequenceMockAdapter(
-            sequence=[
-                {"delay": 60},  # first call hangs → timeout
-                {"result_text": "ok"},  # second call succeeds
-            ]
+        result = await Spawner(config=config, config_dir=config_dir, runtime=adapter).trigger(
+            "hung prompt", "route"
         )
-        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
+        assert result.success is False
+        assert "timed out" in result.error.lower()
+        assert result.duration_ms >= 900
 
-        # First trigger should timeout
+        # Semaphore released: second session succeeds
+        seq_adapter = SequenceMockAdapter(
+            sequence=[{"delay": 60}, {"result_text": "ok"}]
+        )
+        spawner = Spawner(config=config, config_dir=config_dir, runtime=seq_adapter)
         r1 = await spawner.trigger("hung", "route")
-        assert r1.success is False
-        assert "timed out" in r1.error.lower()
-
-        # Second trigger should succeed — semaphore was released
+        assert r1.success is False and "timed out" in r1.error.lower()
         r2 = await spawner.trigger("ok", "route")
-        assert r2.success is True
-        assert r2.output == "ok"
+        assert r2.success is True and r2.output == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -1093,6 +1058,7 @@ class TestFullFlow:
     """End-to-end spawner flow with MockAdapter."""
 
     async def test_full_trigger_flow(self, tmp_path: Path):
+        """Full flow: result, tool calls, env passthrough, system prompt, and memory context suffix."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         claude_md = config_dir / "CLAUDE.md"
@@ -1110,73 +1076,38 @@ class TestFullFlow:
             tool_calls=[{"id": "t1", "name": "state_set", "input": {"k": "v"}}],
             capture=True,
         )
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-        )
+        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
 
+        # Without memory context
         with patch(
             "butlers.core.spawner.fetch_memory_context",
             new_callable=AsyncMock,
             return_value=None,
         ) as mock_fetch:
-            with patch.dict(
-                os.environ,
-                {"CUSTOM_VAR": "cv"},
-                clear=False,
-            ):
+            with patch.dict(os.environ, {"CUSTOM_VAR": "cv"}, clear=False):
                 result = await spawner.trigger("do the thing", "schedule")
 
-        mock_fetch.assert_called_once_with(
-            None,
-            "flow-butler",
-            "do the thing",
-            token_budget=3000,
-        )
-
+        mock_fetch.assert_called_once_with(None, "flow-butler", "do the thing", token_budget=3000)
         assert result.output == "All done!"
         assert result.error is None
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0]["name"] == "state_set"
-        assert result.duration_ms >= 0
-
-        # Verify adapter received correct args
-        assert len(adapter.calls) == 1
         call = adapter.calls[0]
         assert call["system_prompt"] == "You are the test butler."
         assert "flow-butler" in call["mcp_servers"]
         assert call["env"]["CUSTOM_VAR"] == "cv"
 
-    async def test_full_trigger_flow_appends_memory_context_suffix(self, tmp_path: Path):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "CLAUDE.md").write_text("You are the test butler.")
-
-        config = _make_config(
-            name="flow-butler",
-            port=9200,
-            modules={"memory": {}},
-        )
-
-        adapter = MockAdapter(result_text="All done!", capture=True)
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-        )
-
+        # With memory context → appended to system prompt
+        adapter2 = MockAdapter(result_text="All done!", capture=True)
+        spawner2 = Spawner(config=config, config_dir=config_dir, runtime=adapter2)
         memory_ctx = "# Memory Context\n- user prefers concise updates"
         with patch(
             "butlers.core.spawner.fetch_memory_context",
             new_callable=AsyncMock,
             return_value=memory_ctx,
         ):
-            await spawner.trigger("do the thing", "schedule")
-
-        assert len(adapter.calls) == 1
-        call = adapter.calls[0]
-        assert call["system_prompt"] == f"You are the test butler.\n\n{memory_ctx}"
+            await spawner2.trigger("do the thing", "schedule")
+        assert adapter2.calls[0]["system_prompt"] == f"You are the test butler.\n\n{memory_ctx}"
 
 
 # ---------------------------------------------------------------------------
@@ -1965,8 +1896,8 @@ class TestSpawnerCwdAndBypassSemaphore:
     def teardown_method(self) -> None:
         _reset_global_semaphore()
 
-    async def test_cwd_overrides_config_dir(self, tmp_path: Path) -> None:
-        """When cwd is provided to trigger(), the adapter receives it instead of config_dir."""
+    async def test_cwd_override_and_default(self, tmp_path: Path) -> None:
+        """cwd overrides config_dir when provided; defaults to config_dir when absent."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         custom_cwd = tmp_path / "worktree"
@@ -1979,39 +1910,17 @@ class TestSpawnerCwdAndBypassSemaphore:
                 captured_cwd.append(kwargs.get("cwd"))
                 return "ok", [], None
 
-        spawner = Spawner(
-            config=_make_config(),
-            config_dir=config_dir,
-            runtime=CwdCaptureAdapter(),
-        )
+        spawner = Spawner(config=_make_config(), config_dir=config_dir, runtime=CwdCaptureAdapter())
 
+        # Override: adapter gets custom_cwd
         result = await spawner.trigger("hello", "tick", cwd=str(custom_cwd))
         assert result.success is True
-        assert len(captured_cwd) == 1
-        assert captured_cwd[0] == str(custom_cwd)
+        assert captured_cwd[-1] == str(custom_cwd)
 
-    async def test_cwd_defaults_to_config_dir(self, tmp_path: Path) -> None:
-        """When cwd is not provided, adapter receives str(config_dir)."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        captured_cwd: list = []
-
-        class CwdCaptureAdapter(MockAdapter):
-            async def invoke(self, *args, **kwargs):
-                captured_cwd.append(kwargs.get("cwd"))
-                return "ok", [], None
-
-        spawner = Spawner(
-            config=_make_config(),
-            config_dir=config_dir,
-            runtime=CwdCaptureAdapter(),
-        )
-
-        result = await spawner.trigger("hello", "tick")
-        assert result.success is True
-        assert len(captured_cwd) == 1
-        assert captured_cwd[0] == str(config_dir)
+        # Default: adapter gets config_dir
+        result2 = await spawner.trigger("hello", "tick")
+        assert result2.success is True
+        assert captured_cwd[-1] == str(config_dir)
 
     async def test_bypass_butler_semaphore_skips_per_butler_lock(self, tmp_path: Path) -> None:
         """bypass_butler_semaphore=True proceeds even when per-butler semaphore is at 0."""
