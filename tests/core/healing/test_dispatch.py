@@ -436,33 +436,30 @@ class TestNoveltyGate:
 
 
 class TestSeverityGate:
-    async def test_severity_above_threshold_rejected(self, tmp_path: Path) -> None:
-        """Severity 3 (low) with threshold 2 (medium) → rejected."""
-        fp = _make_fp(severity=3)
-
+    async def test_severity_gate(self, tmp_path: Path) -> None:
+        """Severity above threshold rejected; severity at threshold passes."""
+        # Above threshold: severity 3 (low) with threshold 2 (medium) → rejected
+        fp_high = _make_fp(severity=3)
         with (
             patch(
                 "butlers.core.healing.dispatch.session_set_healing_fingerprint",
                 new_callable=AsyncMock,
             ),
         ):
-            result = await dispatch_healing(
+            result_above = await dispatch_healing(
                 pool=_make_pool_all_pass(),
                 butler_name="email",
                 session_id=uuid.uuid4(),
-                fingerprint_input=fp,
+                fingerprint_input=fp_high,
                 config=_make_config(severity_threshold=2),
                 repo_root=tmp_path,
                 spawner=_make_spawner(),
             )
+        assert result_above.accepted is False
+        assert result_above.reason == "severity_below_threshold"
 
-        assert result.accepted is False
-        assert result.reason == "severity_below_threshold"
-
-    async def test_severity_at_threshold_passes(self, tmp_path: Path) -> None:
-        """Severity == threshold passes (1 ≤ 1)."""
+        # At threshold: severity 1 == threshold 1 → passes
         fp = _make_fp(severity=1)
-
         with (
             patch(
                 "butlers.core.healing.dispatch.session_set_healing_fingerprint",
@@ -1176,8 +1173,9 @@ class TestCreatePr:
 
 
 class TestDispatchNeverRaises:
-    async def test_unexpected_exception_returns_internal_error(self, tmp_path: Path) -> None:
-        """An unexpected exception in dispatch returns DispatchResult(internal_error)."""
+    async def test_internal_error_cases(self, tmp_path: Path) -> None:
+        """Unexpected exception, DB error, and fingerprint all result in internal_error."""
+        # Unexpected exception → internal_error
         with patch(
             "butlers.core.healing.dispatch.session_set_healing_fingerprint",
             new_callable=AsyncMock,
@@ -1192,12 +1190,10 @@ class TestDispatchNeverRaises:
                 repo_root=tmp_path,
                 spawner=_make_spawner(),
             )
-
         assert result.accepted is False
         assert result.reason == "internal_error"
 
-    async def test_gate_db_error_returns_internal_error(self, tmp_path: Path) -> None:
-        """DB error in novelty gate → internal_error, never raises."""
+        # DB error in novelty gate → internal_error
         with (
             patch(
                 "butlers.core.healing.dispatch.session_set_healing_fingerprint",
@@ -1209,7 +1205,7 @@ class TestDispatchNeverRaises:
                 side_effect=Exception("asyncpg connection error"),
             ),
         ):
-            result = await dispatch_healing(
+            result2 = await dispatch_healing(
                 pool=_make_pool_all_pass(),
                 butler_name="email",
                 session_id=uuid.uuid4(),
@@ -1218,20 +1214,17 @@ class TestDispatchNeverRaises:
                 repo_root=tmp_path,
                 spawner=_make_spawner(),
             )
+        assert result2.accepted is False
+        assert result2.reason == "internal_error"
 
-        assert result.accepted is False
-        assert result.reason == "internal_error"
-
-    async def test_fingerprint_is_preserved_in_internal_error(self, tmp_path: Path) -> None:
-        """When FingerprintResult is passed, its fingerprint appears in internal_error result."""
+        # Fingerprint preserved in internal_error result
         fp = _make_fp(fingerprint="d" * 64)
-
         with patch(
             "butlers.core.healing.dispatch.session_set_healing_fingerprint",
             new_callable=AsyncMock,
             side_effect=Exception("boom"),
         ):
-            result = await dispatch_healing(
+            result3 = await dispatch_healing(
                 pool=_make_pool_all_pass(),
                 butler_name="email",
                 session_id=uuid.uuid4(),
@@ -1240,8 +1233,7 @@ class TestDispatchNeverRaises:
                 repo_root=tmp_path,
                 spawner=_make_spawner(),
             )
-
-        assert result.fingerprint == "d" * 64
+        assert result3.fingerprint == "d" * 64
 
 
 # ---------------------------------------------------------------------------
@@ -1496,36 +1488,25 @@ class TestDispatchHealingOtelSpan:
         assert result.accepted is True
         return exporter, expected_trace_id
 
-    async def test_failed_session_trace_id_recorded_as_span_attribute(self, tmp_path: Path) -> None:
-        """healing.dispatch span records healing.failed_session_trace_id from the failed session."""
+    async def test_failed_session_trace_id_span_attribute(self, tmp_path: Path) -> None:
+        """healing.dispatch span records trace ID when parent exists; omits it when absent."""
+        # With parent span: trace ID recorded as attribute
         exporter, expected_trace_id = await self._run_dispatch_with_otel(
             tmp_path, with_parent_span=True
         )
-
-        # Find the healing.dispatch span and verify the attribute.
         finished = exporter.get_finished_spans()
         dispatch_spans = [s for s in finished if s.name == "butlers.healing.dispatch"]
         assert dispatch_spans, "Expected at least one butlers.healing.dispatch span"
         dispatch_span = dispatch_spans[0]
-        assert "healing.failed_session_trace_id" in dispatch_span.attributes, (
-            "healing.dispatch span must record healing.failed_session_trace_id"
-        )
+        assert "healing.failed_session_trace_id" in dispatch_span.attributes
         assert dispatch_span.attributes["healing.failed_session_trace_id"] == expected_trace_id
 
-    async def test_failed_session_trace_id_omitted_when_no_parent_context(
-        self, tmp_path: Path
-    ) -> None:
-        """healing.dispatch span omits healing.failed_session_trace_id when no active trace."""
-        exporter, _ = await self._run_dispatch_with_otel(tmp_path, with_parent_span=False)
-
-        finished = exporter.get_finished_spans()
-        dispatch_spans = [s for s in finished if s.name == "butlers.healing.dispatch"]
-        assert dispatch_spans, "Expected at least one butlers.healing.dispatch span"
-        dispatch_span = dispatch_spans[0]
-        # When there's no active trace context, the attribute should not be set.
-        assert "healing.failed_session_trace_id" not in (dispatch_span.attributes or {}), (
-            "healing.failed_session_trace_id should be absent when there is no parent trace context"
-        )
+        # Without parent span: attribute omitted
+        exporter2, _ = await self._run_dispatch_with_otel(tmp_path, with_parent_span=False)
+        finished2 = exporter2.get_finished_spans()
+        dispatch_spans2 = [s for s in finished2 if s.name == "butlers.healing.dispatch"]
+        assert dispatch_spans2, "Expected at least one butlers.healing.dispatch span"
+        assert "healing.failed_session_trace_id" not in (dispatch_spans2[0].attributes or {})
 
     async def test_dispatch_works_when_otel_missing(self, tmp_path: Path) -> None:
         """dispatch_healing gracefully handles ImportError from opentelemetry."""
@@ -1664,14 +1645,13 @@ def _all_gates_pass_patches(tmp_path: Path):
 class TestTaskRegistry:
     """dispatch_healing appends watchdog task to task_registry when provided."""
 
-    async def test_watchdog_task_appended_to_registry(self, tmp_path: Path) -> None:
-        """When task_registry is provided, the watchdog task is appended to it."""
+    async def test_task_registry_behavior(self, tmp_path: Path) -> None:
+        """Watchdog appended on success; omitted on rejection; accumulates across dispatches."""
+        # Task appended on success
         registry: list[asyncio.Task] = []
         fake_watchdog = MagicMock(spec=asyncio.Task)
-
         with _all_gates_pass_patches(tmp_path) as _:
             with patch("asyncio.create_task") as mock_create_task:
-                # First call returns healing_task, second returns watchdog_task
                 mock_create_task.side_effect = [MagicMock(spec=asyncio.Task), fake_watchdog]
                 result = await dispatch_healing(
                     pool=_make_pool_all_pass(),
@@ -1683,16 +1663,14 @@ class TestTaskRegistry:
                     spawner=_make_spawner(),
                     task_registry=registry,
                 )
-
         assert result.accepted is True
         assert fake_watchdog in registry
 
-    async def test_no_task_registry_does_not_raise(self, tmp_path: Path) -> None:
-        """When task_registry is None (default), dispatch succeeds without error."""
+        # None registry (default) → no error
         with _all_gates_pass_patches(tmp_path) as _:
             with patch("asyncio.create_task") as mock_create_task:
                 mock_create_task.return_value = MagicMock(spec=asyncio.Task)
-                result = await dispatch_healing(
+                result2 = await dispatch_healing(
                     pool=_make_pool_all_pass(),
                     butler_name="email",
                     session_id=uuid.uuid4(),
@@ -1700,66 +1678,47 @@ class TestTaskRegistry:
                     config=_make_config(),
                     repo_root=tmp_path,
                     spawner=_make_spawner(),
-                    # task_registry omitted → None
                 )
+        assert result2.accepted is True
 
-        assert result.accepted is True
-
-    async def test_registry_not_populated_on_gate_rejection(self, tmp_path: Path) -> None:
-        """When dispatch is rejected (any gate), registry must remain empty."""
-        registry: list[asyncio.Task] = []
-        result = await dispatch_healing(
+        # Gate rejection → registry not populated
+        registry2: list[asyncio.Task] = []
+        result3 = await dispatch_healing(
             pool=_make_pool_all_pass(),
             butler_name="email",
             session_id=uuid.uuid4(),
             fingerprint_input=_make_fp(),
-            config=_make_config(enabled=False),  # gate 2 rejects
+            config=_make_config(enabled=False),
             repo_root=tmp_path,
             spawner=_make_spawner(),
-            task_registry=registry,
+            task_registry=registry2,
         )
-        assert result.accepted is False
-        assert registry == []
+        assert result3.accepted is False
+        assert registry2 == []
 
-    async def test_multiple_dispatches_accumulate_in_registry(self, tmp_path: Path) -> None:
-        """Multiple successful dispatches each append their watchdog to the same registry."""
-        registry: list[asyncio.Task] = []
+        # Multiple dispatches accumulate watchdogs
+        registry3: list[asyncio.Task] = []
         watchdog_a = MagicMock(spec=asyncio.Task)
         watchdog_b = MagicMock(spec=asyncio.Task)
-
-        # First dispatch
         with _all_gates_pass_patches(tmp_path) as _:
             with patch("asyncio.create_task") as mock_create_task:
                 mock_create_task.side_effect = [MagicMock(spec=asyncio.Task), watchdog_a]
                 await dispatch_healing(
-                    pool=_make_pool_all_pass(),
-                    butler_name="email",
-                    session_id=uuid.uuid4(),
-                    fingerprint_input=_make_fp(fingerprint="a" * 64),
-                    config=_make_config(),
-                    repo_root=tmp_path,
-                    spawner=_make_spawner(),
-                    task_registry=registry,
+                    pool=_make_pool_all_pass(), butler_name="email", session_id=uuid.uuid4(),
+                    fingerprint_input=_make_fp(fingerprint="a" * 64), config=_make_config(),
+                    repo_root=tmp_path, spawner=_make_spawner(), task_registry=registry3,
                 )
-
-        # Second dispatch
         with _all_gates_pass_patches(tmp_path) as _:
             with patch("asyncio.create_task") as mock_create_task:
                 mock_create_task.side_effect = [MagicMock(spec=asyncio.Task), watchdog_b]
                 await dispatch_healing(
-                    pool=_make_pool_all_pass(),
-                    butler_name="email",
-                    session_id=uuid.uuid4(),
-                    fingerprint_input=_make_fp(fingerprint="b" * 64),
-                    config=_make_config(),
-                    repo_root=tmp_path,
-                    spawner=_make_spawner(),
-                    task_registry=registry,
+                    pool=_make_pool_all_pass(), butler_name="email", session_id=uuid.uuid4(),
+                    fingerprint_input=_make_fp(fingerprint="b" * 64), config=_make_config(),
+                    repo_root=tmp_path, spawner=_make_spawner(), task_registry=registry3,
                 )
-
-        assert watchdog_a in registry
-        assert watchdog_b in registry
-        assert len(registry) == 2
+        assert watchdog_a in registry3
+        assert watchdog_b in registry3
+        assert len(registry3) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1770,32 +1729,21 @@ class TestTaskRegistry:
 class TestIsUnfixable:
     """Unit tests for the _is_unfixable sentinel detection helper."""
 
-    def test_returns_false_when_no_sentinel(self, tmp_path: Path) -> None:
-        """_is_unfixable returns False when UNFIXABLE file is absent."""
-        from butlers.core.healing.dispatch import _is_unfixable
-
-        assert _is_unfixable(tmp_path) is False
-
-    def test_returns_true_when_sentinel_present(self, tmp_path: Path) -> None:
-        """_is_unfixable returns True when UNFIXABLE file exists."""
-        from butlers.core.healing.dispatch import _is_unfixable
-
-        (tmp_path / "UNFIXABLE").write_text("External service is down.")
-        assert _is_unfixable(tmp_path) is True
-
-    def test_sentinel_filename_constant(self) -> None:
-        """The UNFIXABLE_SENTINEL_FILENAME constant is exactly 'UNFIXABLE'."""
-        from butlers.core.healing.dispatch import UNFIXABLE_SENTINEL_FILENAME
+    def test_sentinel_detection(self, tmp_path: Path) -> None:
+        """False when absent; True when present; constant is 'UNFIXABLE'; exact match only."""
+        from butlers.core.healing.dispatch import UNFIXABLE_SENTINEL_FILENAME, _is_unfixable
 
         assert UNFIXABLE_SENTINEL_FILENAME == "UNFIXABLE"
+        assert _is_unfixable(tmp_path) is False
 
-    def test_only_exact_filename_matches(self, tmp_path: Path) -> None:
-        """Partial or different-case filenames do not trigger the sentinel."""
-        from butlers.core.healing.dispatch import _is_unfixable
-
+        # Partial/wrong-case filenames don't match
         (tmp_path / "UNFIXABLE.txt").write_text("not the sentinel")
         (tmp_path / "unfixable").write_text("wrong case")
         assert _is_unfixable(tmp_path) is False
+
+        # Exact match triggers sentinel
+        (tmp_path / "UNFIXABLE").write_text("External service is down.")
+        assert _is_unfixable(tmp_path) is True
 
 
 # ---------------------------------------------------------------------------

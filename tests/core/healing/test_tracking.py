@@ -221,123 +221,78 @@ class TestUpdateAttemptStatusUnit:
 
 
 class TestCollisionDetectionUnit:
-    """Fingerprint collision detection emits CRITICAL log."""
+    """Fingerprint collision detection: CRITICAL logged on mismatch; new inserts; None raises."""
 
     @pytest.mark.unit
-    async def test_collision_emits_critical_log(self, caplog: pytest.LogCaptureFixture) -> None:
-        """CRITICAL is logged when (exception_type, call_site) differ on join."""
+    async def test_collision_and_insert_behavior(self, caplog: pytest.LogCaptureFixture) -> None:
+        """CRITICAL on metadata mismatch; no log on match; is_new=True on insert; None raises."""
         from butlers.core.healing import tracking
 
-        fingerprint = "a" * 64
-        session_id = uuid.uuid4()
+        # Metadata mismatch → CRITICAL logged
         attempt_id = uuid.uuid4()
-
-        # Simulate ON CONFLICT path: xmax != 0, existing fields differ from new
-        mock_row = {
+        pool = MagicMock()
+        pool.fetchrow = AsyncMock(return_value={
             "id": attempt_id,
             "existing_exc_type": "asyncpg.exceptions.UndefinedTableError",
             "existing_call_site": "src/butlers/core/sessions.py:session_create",
             "was_inserted": False,
-        }
-
-        pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value=mock_row)
-
+        })
         with caplog.at_level(logging.CRITICAL, logger="butlers.core.healing.tracking"):
             result_id, is_new = await tracking.create_or_join_attempt(
-                pool,
-                fingerprint=fingerprint,
-                butler_name="test-butler",
-                severity=0,
-                exception_type="builtins.KeyError",  # DIFFERENT from stored
-                call_site="src/butlers/core/spawner.py:_run",  # DIFFERENT from stored
-                session_id=session_id,
-            )
-
-        assert result_id == attempt_id
-        assert is_new is False
-        assert any(
-            "Fingerprint collision detected" in record.message
-            for record in caplog.records
-            if record.levelno == logging.CRITICAL
-        )
-
-    @pytest.mark.unit
-    async def test_no_collision_log_on_matching_metadata(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """No CRITICAL log when (exception_type, call_site) match on join."""
-        from butlers.core.healing import tracking
-
-        fingerprint = "b" * 64
-        session_id = uuid.uuid4()
-        attempt_id = uuid.uuid4()
-        exc_type = "builtins.KeyError"
-        call_site = "src/butlers/core/spawner.py:_run"
-
-        mock_row = {
-            "id": attempt_id,
-            "existing_exc_type": exc_type,
-            "existing_call_site": call_site,
-            "was_inserted": False,
-        }
-
-        pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value=mock_row)
-
-        with caplog.at_level(logging.CRITICAL, logger="butlers.core.healing.tracking"):
-            result_id, is_new = await tracking.create_or_join_attempt(
-                pool,
-                fingerprint=fingerprint,
-                butler_name="test-butler",
-                severity=2,
-                exception_type=exc_type,
-                call_site=call_site,
-                session_id=session_id,
-            )
-
-        assert is_new is False
-        critical_records = [r for r in caplog.records if r.levelno == logging.CRITICAL]
-        assert len(critical_records) == 0
-
-    @pytest.mark.unit
-    async def test_new_insert_and_none_result(self) -> None:
-        """is_new=True when new row inserted; raises RuntimeError on None result."""
-        from butlers.core.healing import tracking
-
-        attempt_id = uuid.uuid4()
-        pool = MagicMock()
-        pool.fetchrow = AsyncMock(
-            return_value={
-                "id": attempt_id,
-                "existing_exc_type": "builtins.KeyError",
-                "existing_call_site": "src/butlers/core/spawner.py:_run",
-                "was_inserted": True,
-            }
-        )
-        result_id, is_new = await tracking.create_or_join_attempt(
-            pool,
-            fingerprint="c" * 64,
-            butler_name="test-butler",
-            severity=2,
-            exception_type="builtins.KeyError",
-            call_site="src/butlers/core/spawner.py:_run",
-            session_id=uuid.uuid4(),
-        )
-        assert result_id == attempt_id
-        assert is_new is True
-
-        pool2 = MagicMock()
-        pool2.fetchrow = AsyncMock(return_value=None)
-        with pytest.raises(RuntimeError, match="unexpected empty result"):
-            await tracking.create_or_join_attempt(
-                pool2,
-                fingerprint="d" * 64,
-                butler_name="test-butler",
-                severity=2,
+                pool, fingerprint="a" * 64, butler_name="test-butler", severity=0,
                 exception_type="builtins.KeyError",
                 call_site="src/butlers/core/spawner.py:_run",
                 session_id=uuid.uuid4(),
+            )
+        assert result_id == attempt_id
+        assert is_new is False
+        assert any(
+            "Fingerprint collision detected" in r.message
+            for r in caplog.records if r.levelno == logging.CRITICAL
+        )
+
+        # Matching metadata → no CRITICAL logged
+        caplog.clear()
+        exc_type = "builtins.KeyError"
+        call_site = "src/butlers/core/spawner.py:_run"
+        pool2 = MagicMock()
+        pool2.fetchrow = AsyncMock(return_value={
+            "id": uuid.uuid4(),
+            "existing_exc_type": exc_type,
+            "existing_call_site": call_site,
+            "was_inserted": False,
+        })
+        with caplog.at_level(logging.CRITICAL, logger="butlers.core.healing.tracking"):
+            _, is_new2 = await tracking.create_or_join_attempt(
+                pool2, fingerprint="b" * 64, butler_name="test-butler", severity=2,
+                exception_type=exc_type, call_site=call_site, session_id=uuid.uuid4(),
+            )
+        assert is_new2 is False
+        assert not [r for r in caplog.records if r.levelno == logging.CRITICAL]
+
+        # New insert: is_new=True
+        new_attempt_id = uuid.uuid4()
+        pool3 = MagicMock()
+        pool3.fetchrow = AsyncMock(return_value={
+            "id": new_attempt_id,
+            "existing_exc_type": exc_type,
+            "existing_call_site": call_site,
+            "was_inserted": True,
+        })
+        result_id3, is_new3 = await tracking.create_or_join_attempt(
+            pool3, fingerprint="c" * 64, butler_name="test-butler", severity=2,
+            exception_type=exc_type, call_site=call_site, session_id=uuid.uuid4(),
+        )
+        assert result_id3 == new_attempt_id
+        assert is_new3 is True
+
+        # None result → RuntimeError
+        pool4 = MagicMock()
+        pool4.fetchrow = AsyncMock(return_value=None)
+        with pytest.raises(RuntimeError, match="unexpected empty result"):
+            await tracking.create_or_join_attempt(
+                pool4, fingerprint="d" * 64, butler_name="test-butler", severity=2,
+                exception_type=exc_type, call_site=call_site, session_id=uuid.uuid4(),
             )
 
 
@@ -1204,17 +1159,14 @@ class TestCreateOrJoinAttemptQaPatrolId:
         return record
 
     @pytest.mark.unit
-    async def test_qa_patrol_id_not_required(self) -> None:
-        """qa_patrol_id defaults to None — backward-compatible call without it."""
+    async def test_qa_patrol_id_optional_and_returns_result(self) -> None:
+        """qa_patrol_id defaults to None; with qa_id returns correct attempt_id and is_new."""
         from butlers.core.healing.tracking import create_or_join_attempt
 
+        # Without qa_patrol_id: defaults to None (backward-compatible)
         attempt_id = uuid.uuid4()
-        session_id = uuid.uuid4()
-        fingerprint = "c" * 64
-
         captured_args: list = []
         mock_result = self._make_fetchrow_result(attempt_id, was_inserted=True)
-
         pool = MagicMock()
 
         async def mock_fetchrow(sql, *args):
@@ -1222,46 +1174,24 @@ class TestCreateOrJoinAttemptQaPatrolId:
             return mock_result
 
         pool.fetchrow = mock_fetchrow
-
-        # Call WITHOUT qa_patrol_id — must not raise
         result_id, is_new = await create_or_join_attempt(
-            pool,
-            fingerprint=fingerprint,
-            butler_name="test",
-            severity=2,
-            exception_type="builtins.KeyError",
-            call_site="src/butlers/core/spawner.py:_run",
-            session_id=session_id,
+            pool, fingerprint="c" * 64, butler_name="test", severity=2,
+            exception_type="builtins.KeyError", call_site="src/butlers/core/spawner.py:_run",
+            session_id=uuid.uuid4(),
         )
-
         assert result_id == attempt_id
         assert is_new is True
-        # Last positional arg to SQL must be None (default qa_patrol_id)
-        assert captured_args[-1] is None
+        assert captured_args[-1] is None  # qa_patrol_id defaults to None
 
-    @pytest.mark.unit
-    async def test_returns_correct_attempt_id_and_is_new(self) -> None:
-        """create_or_join_attempt returns (attempt_id, True) for a new insertion."""
-        from butlers.core.healing.tracking import create_or_join_attempt
-
-        attempt_id = uuid.uuid4()
+        # With qa_patrol_id: returns correct (attempt_id, True)
+        attempt_id2 = uuid.uuid4()
         qa_id = uuid.uuid4()
-        session_id = uuid.uuid4()
-
-        mock_result = self._make_fetchrow_result(attempt_id, was_inserted=True)
-        pool = MagicMock()
-        pool.fetchrow = AsyncMock(return_value=mock_result)
-
-        result_id, is_new = await create_or_join_attempt(
-            pool,
-            fingerprint="d" * 64,
-            butler_name="test",
-            severity=1,
-            exception_type="builtins.ValueError",
-            call_site="src/butlers/modules/test.py:handler",
-            session_id=session_id,
-            qa_patrol_id=qa_id,
+        pool2 = MagicMock()
+        pool2.fetchrow = AsyncMock(return_value=self._make_fetchrow_result(attempt_id2, was_inserted=True))
+        result_id2, is_new2 = await create_or_join_attempt(
+            pool2, fingerprint="d" * 64, butler_name="test", severity=1,
+            exception_type="builtins.ValueError", call_site="src/butlers/modules/test.py:handler",
+            session_id=uuid.uuid4(), qa_patrol_id=qa_id,
         )
-
-        assert result_id == attempt_id
-        assert is_new is True
+        assert result_id2 == attempt_id2
+        assert is_new2 is True
