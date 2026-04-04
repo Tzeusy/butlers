@@ -96,6 +96,8 @@ def test_pii_scrubbing(text, not_in, tag):
     result = anonymize(text, REPO_ROOT)
     assert not_in not in result
     assert tag in result
+    # Multiple emails all scrubbed
+    assert anonymize("From: alice@example.com To: bob@corp.io", REPO_ROOT).count("[REDACTED-EMAIL]") == 2
 
 
 @pytest.mark.parametrize(
@@ -111,49 +113,33 @@ def test_localhost_preserved(text, preserved):
     assert preserved in result
 
 
-def test_multiple_emails_all_scrubbed():
-    result = anonymize("From: alice@example.com To: bob@corp.io", REPO_ROOT)
-    assert result.count("[REDACTED-EMAIL]") == 2
-
-
 # ---------------------------------------------------------------------------
 # Path normalization
 # ---------------------------------------------------------------------------
 
 
-def test_path_normalization_and_redaction():
-    """Repo paths normalized to relative; external paths redacted."""
+def test_path_normalization_and_hostname_scrubbing():
+    """Repo paths normalized to relative; external paths redacted; internal hosts redacted."""
+    # Repo path normalized to relative
     abs_path = str(REPO_ROOT / "src/butlers/core/spawner.py")
     result = anonymize(f"Error at {abs_path}", REPO_ROOT)
     assert str(REPO_ROOT) not in result
     assert "src/butlers/core/spawner.py" in result
 
+    # External path redacted
     result2 = anonymize("Config file: /etc/passwd", REPO_ROOT)
     assert "/etc/passwd" not in result2
     assert "[REDACTED-PATH]" in result2
 
-
-# ---------------------------------------------------------------------------
-# Hostname scrubbing
-# ---------------------------------------------------------------------------
-
-
-def test_hostname_scrubbing():
-    """Internal hostnames redacted; public domains preserved."""
+    # Internal hostname redacted; public domain preserved
     assert "[REDACTED-HOST]" in anonymize("Cannot reach db.internal.example.local", REPO_ROOT)
-    r2 = anonymize("Connecting to github.com", REPO_ROOT)
-    assert "github.com" in r2 and "[REDACTED-HOST]" not in r2
+    r3 = anonymize("Connecting to github.com", REPO_ROOT)
+    assert "github.com" in r3 and "[REDACTED-HOST]" not in r3
 
 
 # ---------------------------------------------------------------------------
 # Validation pass
 # ---------------------------------------------------------------------------
-
-
-def test_clean_text_passes_validation():
-    is_clean, violations = validate_anonymized("No sensitive data here.")
-    assert is_clean is True
-    assert violations == []
 
 
 @pytest.mark.parametrize(
@@ -169,10 +155,10 @@ def test_validation_detects_residual_patterns(text, violation_type):
     is_clean, violations = validate_anonymized(text)
     assert is_clean is False
     assert any(violation_type in v for v in violations)
-
-
-def test_multiple_violations_all_reported():
-    text = "alice@example.com and bob@example.com and 203.0.113.1 remain"
-    is_clean, violations = validate_anonymized(text)
-    assert is_clean is False
-    assert len(violations) >= 3
+    # Clean text passes validation
+    assert validate_anonymized("No sensitive data here.") == (True, [])
+    # Multiple violations all reported
+    bad_text = "alice@example.com and bob@example.com and 203.0.113.1 remain"
+    is_clean2, violations2 = validate_anonymized(bad_text)
+    assert is_clean2 is False
+    assert len(violations2) >= 3

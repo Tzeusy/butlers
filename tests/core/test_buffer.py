@@ -730,28 +730,23 @@ class TestGracefulShutdown:
 
         assert len(processed) == 3
 
-    async def test_double_start_is_idempotent(self) -> None:
-        """Calling start() twice does not create extra worker tasks."""
+    async def test_double_start_and_stop_idempotent(self) -> None:
+        """Double start() creates no extra workers; double stop() does not raise."""
         process_fn = AsyncMock()
         buf = DurableBuffer(config=_make_config(worker_count=1), pool=None, process_fn=process_fn)
 
         await buf.start()
         task_count_after_first = len(buf._worker_tasks)
-
         await buf.start()  # Second call — should be a no-op
         task_count_after_second = len(buf._worker_tasks)
-
         await buf.stop(drain_timeout_s=0.1)
-
         assert task_count_after_first == task_count_after_second == 1
 
-    async def test_double_stop_is_idempotent(self) -> None:
-        """Calling stop() twice does not raise."""
-        process_fn = AsyncMock()
-        buf = DurableBuffer(config=_make_config(), pool=None, process_fn=process_fn)
-        await buf.start()
-        await buf.stop(drain_timeout_s=0.1)
-        await buf.stop(drain_timeout_s=0.1)  # Should not raise
+        # Double stop does not raise
+        buf2 = DurableBuffer(config=_make_config(), pool=None, process_fn=AsyncMock())
+        await buf2.start()
+        await buf2.stop(drain_timeout_s=0.1)
+        await buf2.stop(drain_timeout_s=0.1)  # Should not raise
 
     async def test_stop_cancels_scanner(self) -> None:
         """stop() cancels the scanner task when pool is provided."""
