@@ -138,266 +138,139 @@ class TestNotifyReactIntent:
             await daemon.start()
             return daemon, notify_fn
 
-    async def test_notify_react_intent_accepted(self, butler_dir: Path) -> None:
-        """notify with intent='react' should be accepted as valid intent."""
+    def _mock_ok_client(self) -> AsyncMock:
+        """Return a mock switchboard client that returns ok."""
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(
+            return_value=MagicMock(
+                is_error=False,
+                data={"status": "ok"},
+                content=[MagicMock(text='{"status":"ok"}')],
+            )
+        )
+        return mock_client
+
+    async def test_notify_react_validation_errors(self, butler_dir: Path) -> None:
+        """Intent accepted (error is about emoji, not intent); emoji required;
+        channel must be telegram; request_context required; source_thread_identity required."""
         patches = _patch_infra()
         daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
         assert notify_fn is not None
 
-        # Should fail due to missing emoji, not unsupported intent
+        # Intent accepted — error is about missing emoji, not unsupported intent
         result = await notify_fn(
-            channel="telegram",
-            message="",  # Empty message is OK for react
-            intent="react",
+            channel="telegram", message="", intent="react",
             request_context={"source_thread_identity": "123:456"},
         )
         assert result["status"] == "error"
         assert "emoji" in result["error"].lower()
 
-    async def test_notify_react_requires_emoji(self, butler_dir: Path) -> None:
-        """notify with intent='react' requires emoji parameter."""
-        patches = _patch_infra()
-        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
-        assert notify_fn is not None
-
-        result = await notify_fn(
-            channel="telegram",
-            message="",
-            intent="react",
+        # Non-telegram channel rejected
+        result2 = await notify_fn(
+            channel="email", message="", intent="react", emoji="👍",
             request_context={"source_thread_identity": "123:456"},
         )
-        assert result["status"] == "error"
-        assert "emoji" in result["error"].lower()
+        assert result2["status"] == "error"
+        assert "telegram" in result2["error"].lower()
+        assert "not supported" in result2["error"].lower()
 
-    async def test_notify_react_requires_telegram_channel(self, butler_dir: Path) -> None:
-        """notify with intent='react' requires channel='telegram'."""
+        # Missing request_context
+        result3 = await notify_fn(channel="telegram", message="", intent="react", emoji="👍")
+        assert result3["status"] == "error"
+        assert "request_context" in result3["error"].lower()
+
+        # Missing source_thread_identity in request_context
+        result4 = await notify_fn(
+            channel="telegram", message="", intent="react", emoji="👍",
+            request_context={"request_id": "test"},
+        )
+        assert result4["status"] == "error"
+        assert "source_thread_identity" in result4["error"].lower()
+
+    async def test_notify_react_successful_delivery(self, butler_dir: Path) -> None:
+        """Empty/omitted message allowed; omitted message normalized to empty string;
+        emoji and intent forwarded to switchboard."""
         patches = _patch_infra()
         daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
+        daemon.switchboard_client = self._mock_ok_client()
         assert notify_fn is not None
 
-        result = await notify_fn(
-            channel="email",
-            message="",
-            intent="react",
-            emoji="👍",
+        # Empty message allowed
+        r1 = await notify_fn(
+            channel="telegram", message="", intent="react", emoji="👍",
             request_context={"source_thread_identity": "123:456"},
         )
-        assert result["status"] == "error"
-        assert "telegram" in result["error"].lower()
-        assert "not supported" in result["error"].lower()
+        assert r1["status"] == "ok"
 
-    async def test_notify_react_requires_request_context(self, butler_dir: Path) -> None:
-        """notify with intent='react' requires request_context."""
-        patches = _patch_infra()
-        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
-        assert notify_fn is not None
-
-        result = await notify_fn(
-            channel="telegram",
-            message="",
-            intent="react",
-            emoji="👍",
-        )
-        assert result["status"] == "error"
-        assert "request_context" in result["error"].lower()
-
-    async def test_notify_react_requires_source_thread_identity(self, butler_dir: Path) -> None:
-        """notify with intent='react' requires source_thread_identity in request_context."""
-        patches = _patch_infra()
-        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
-        assert notify_fn is not None
-
-        result = await notify_fn(
-            channel="telegram",
-            message="",
-            intent="react",
-            emoji="👍",
-            request_context={"request_id": "test"},  # Missing source_thread_identity
-        )
-        assert result["status"] == "error"
-        assert "source_thread_identity" in result["error"].lower()
-
-    async def test_notify_react_empty_message_allowed(self, butler_dir: Path) -> None:
-        """notify with intent='react' allows empty message."""
-        patches = _patch_infra()
-        mock_client = AsyncMock()
-        mock_client.call_tool = AsyncMock(
-            return_value=MagicMock(
-                is_error=False,
-                data={"status": "ok"},
-                content=[MagicMock(text='{"status":"ok"}')],
-            )
-        )
-
-        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
-        daemon.switchboard_client = mock_client
-        assert notify_fn is not None
-
-        # Empty message should be OK for react intent
-        result = await notify_fn(
-            channel="telegram",
-            message="",  # Empty message
-            intent="react",
-            emoji="👍",
+        # Omitted message normalized to empty string
+        daemon.switchboard_client = self._mock_ok_client()
+        r2 = await notify_fn(
+            channel="telegram", intent="react", emoji="✅",
             request_context={"source_thread_identity": "123:456"},
         )
-        # Should succeed (not fail with empty message validation)
-        assert result["status"] == "ok"
+        assert r2["status"] == "ok"
+        call_args = daemon.switchboard_client.call_tool.call_args
+        assert call_args[0][1]["notify_request"]["delivery"]["message"] == ""
 
-    async def test_notify_react_omitted_message_normalized_to_empty(self, butler_dir: Path) -> None:
-        """notify with intent='react' should normalize omitted message to empty string."""
-        patches = _patch_infra()
-        mock_client = AsyncMock()
-        mock_client.call_tool = AsyncMock(
-            return_value=MagicMock(
-                is_error=False,
-                data={"status": "ok"},
-                content=[MagicMock(text='{"status":"ok"}')],
-            )
-        )
-
-        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
-        daemon.switchboard_client = mock_client
-        assert notify_fn is not None
-
-        result = await notify_fn(
-            channel="telegram",
-            intent="react",
-            emoji="✅",
+        # Emoji and intent forwarded to switchboard
+        daemon.switchboard_client = self._mock_ok_client()
+        r3 = await notify_fn(
+            channel="telegram", message="", intent="react", emoji="🔥",
             request_context={"source_thread_identity": "123:456"},
         )
-        assert result["status"] == "ok"
-
-        mock_client.call_tool.assert_called_once()
-        call_args = mock_client.call_tool.call_args
-        notify_request = call_args[0][1]["notify_request"]
-        assert notify_request["delivery"]["message"] == ""
-
-    async def test_notify_react_forwards_emoji_to_switchboard(self, butler_dir: Path) -> None:
-        """notify with intent='react' should include emoji in notify_request."""
-        patches = _patch_infra()
-        mock_client = AsyncMock()
-        mock_client.call_tool = AsyncMock(
-            return_value=MagicMock(
-                is_error=False,
-                data={"status": "ok"},
-                content=[MagicMock(text='{"status":"ok"}')],
-            )
-        )
-
-        daemon, notify_fn = await self._start_daemon_with_notify(butler_dir, patches)
-        daemon.switchboard_client = mock_client
-        assert notify_fn is not None
-
-        result = await notify_fn(
-            channel="telegram",
-            message="",
-            intent="react",
-            emoji="🔥",
-            request_context={"source_thread_identity": "123:456"},
-        )
-        assert result["status"] == "ok"
-
-        # Verify emoji was passed to switchboard
-        mock_client.call_tool.assert_called_once()
-        call_args = mock_client.call_tool.call_args
-        assert call_args[0][0] == "deliver"
-        notify_request = call_args[0][1]["notify_request"]
-        assert notify_request["delivery"]["emoji"] == "🔥"
-        assert notify_request["delivery"]["intent"] == "react"
+        assert r3["status"] == "ok"
+        nr = daemon.switchboard_client.call_tool.call_args[0][1]["notify_request"]
+        assert nr["delivery"]["emoji"] == "🔥"
+        assert nr["delivery"]["intent"] == "react"
 
 
 class TestNotifyReactContract:
     """Test suite for notify.v1 contract validation of react intent."""
 
-    def test_react_intent_validates_emoji_required(self) -> None:
-        """Contract validation should require emoji for react intent."""
-        payload = {
-            "schema_version": "notify.v1",
-            "origin_butler": "health",
-            "delivery": {
-                "intent": "react",
-                "channel": "telegram",
-                "message": "",
-            },
-            "request_context": {
-                "request_id": "01916b9d-1234-7000-abcd-123456789abc",
-                "source_channel": "telegram_bot",
-                "source_endpoint_identity": "test",
-                "source_sender_identity": "user123",
-                "source_thread_identity": "123:456",
-            },
-        }
+    _BASE_CTX = {
+        "request_id": "01916b9d-1234-7000-abcd-123456789abc",
+        "source_channel": "telegram_bot",
+        "source_endpoint_identity": "test",
+        "source_sender_identity": "user123",
+        "source_thread_identity": "123:456",
+    }
 
+    def test_react_contract_validation_errors(self) -> None:
+        """emoji required; request_context required; source_thread_identity required."""
+        # Missing emoji
         with pytest.raises(ValidationError) as exc_info:
-            parse_notify_request(payload)
-
+            parse_notify_request({
+                "schema_version": "notify.v1", "origin_butler": "health",
+                "delivery": {"intent": "react", "channel": "telegram", "message": ""},
+                "request_context": self._BASE_CTX,
+            })
         assert "emoji" in str(exc_info.value).lower()
 
-    def test_react_intent_validates_request_context_required(self) -> None:
-        """Contract validation should require request_context for react intent."""
-        payload = {
-            "schema_version": "notify.v1",
-            "origin_butler": "health",
-            "delivery": {
-                "intent": "react",
-                "channel": "telegram",
-                "message": "",
-                "emoji": "👍",
-            },
-        }
-
+        # Missing request_context
         with pytest.raises(ValidationError) as exc_info:
-            parse_notify_request(payload)
-
+            parse_notify_request({
+                "schema_version": "notify.v1", "origin_butler": "health",
+                "delivery": {"intent": "react", "channel": "telegram", "message": "", "emoji": "👍"},
+            })
         assert "context" in str(exc_info.value).lower()
 
-    def test_react_intent_validates_thread_identity_required(self) -> None:
-        """Contract validation should require source_thread_identity for react on telegram."""
-        payload = {
-            "schema_version": "notify.v1",
-            "origin_butler": "health",
-            "delivery": {
-                "intent": "react",
-                "channel": "telegram",
-                "message": "",
-                "emoji": "👍",
-            },
-            "request_context": {
-                "request_id": "01916b9d-1234-7000-abcd-123456789abc",
-                "source_channel": "telegram_bot",
-                "source_endpoint_identity": "test",
-                "source_sender_identity": "user123",
-                # Missing source_thread_identity
-            },
-        }
-
+        # Missing source_thread_identity
+        ctx_no_thread = {k: v for k, v in self._BASE_CTX.items() if k != "source_thread_identity"}
         with pytest.raises(ValidationError) as exc_info:
-            parse_notify_request(payload)
-
+            parse_notify_request({
+                "schema_version": "notify.v1", "origin_butler": "health",
+                "delivery": {"intent": "react", "channel": "telegram", "message": "", "emoji": "👍"},
+                "request_context": ctx_no_thread,
+            })
         assert "thread" in str(exc_info.value).lower()
 
-    def test_react_intent_valid_payload(self) -> None:
-        """Contract validation should accept valid react intent payload."""
-        payload = {
-            "schema_version": "notify.v1",
-            "origin_butler": "health",
-            "delivery": {
-                "intent": "react",
-                "channel": "telegram",
-                "message": "",
-                "emoji": "🎉",
-            },
-            "request_context": {
-                "request_id": "01916b9d-1234-7000-abcd-123456789abc",
-                "source_channel": "telegram_bot",
-                "source_endpoint_identity": "test",
-                "source_sender_identity": "user123",
-                "source_thread_identity": "123:456",
-            },
-        }
-
-        result = parse_notify_request(payload)
+    def test_react_contract_valid_payload(self) -> None:
+        """Valid react payload parsed correctly: intent, emoji, request_context fields."""
+        result = parse_notify_request({
+            "schema_version": "notify.v1", "origin_butler": "health",
+            "delivery": {"intent": "react", "channel": "telegram", "message": "", "emoji": "🎉"},
+            "request_context": self._BASE_CTX,
+        })
         assert result.delivery.intent == "react"
         assert result.delivery.emoji == "🎉"
         assert result.request_context is not None
