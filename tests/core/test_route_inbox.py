@@ -65,7 +65,7 @@ def _sample_envelope() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# route_inbox_insert
+# State transition tests (insert + lifecycle mutations)
 # ---------------------------------------------------------------------------
 
 
@@ -93,86 +93,49 @@ class TestRouteInboxInsert:
         assert parsed["input"]["prompt"] == "Run a health check."
 
 
-# ---------------------------------------------------------------------------
-# route_inbox_mark_processing
-# ---------------------------------------------------------------------------
+class TestRouteInboxLifecycleMutations:
+    """Tests for mark_processing, mark_processed, and mark_errored state transitions."""
 
+    async def test_lifecycle_transitions(self) -> None:
+        """mark_processing/mark_processed/mark_errored each execute correct UPDATE SQL."""
+        row_id = uuid.uuid4()
+        session_id = uuid.uuid4()
 
-class TestRouteInboxMarkProcessing:
-    """Tests for the processing state transition."""
-
-    async def test_mark_processing_updates_row(self) -> None:
-        """route_inbox_mark_processing executes UPDATE to 'processing'."""
+        # mark_processing: transitions accepted → processing
         pool, conn = _make_pool()
         conn.execute = AsyncMock()
-        row_id = uuid.uuid4()
-
         await route_inbox_mark_processing(pool, row_id)
-
         conn.execute.assert_awaited_once()
         call_args = conn.execute.call_args
-        sql = call_args.args[0]
-        assert "UPDATE route_inbox" in sql
-        # Check state values in call
+        assert "UPDATE route_inbox" in call_args.args[0]
         assert STATE_PROCESSING in call_args.args
         assert row_id in call_args.args
         assert STATE_ACCEPTED in call_args.args
 
+        # mark_processed: stores session_id; None session_id accepted
+        pool2, conn2 = _make_pool()
+        conn2.execute = AsyncMock()
+        await route_inbox_mark_processed(pool2, row_id, session_id)
+        conn2.execute.assert_awaited_once()
+        call_args2 = conn2.execute.call_args
+        assert "UPDATE route_inbox" in call_args2.args[0]
+        assert STATE_PROCESSED in call_args2.args
+        assert session_id in call_args2.args
+        conn2.execute.reset_mock()
+        await route_inbox_mark_processed(pool2, row_id, None)
+        conn2.execute.assert_awaited_once()
 
-# ---------------------------------------------------------------------------
-# route_inbox_mark_processed
-# ---------------------------------------------------------------------------
-
-
-class TestRouteInboxMarkProcessed:
-    """Tests for the processed state transition."""
-
-    async def test_mark_processed_behavior(self) -> None:
-        """mark_processed updates state/session_id; None session_id accepted."""
-        pool, conn = _make_pool()
-        conn.execute = AsyncMock()
-        row_id = uuid.uuid4()
-        session_id = uuid.uuid4()
-
-        await route_inbox_mark_processed(pool, row_id, session_id)
-
-        conn.execute.assert_awaited_once()
-        call_args = conn.execute.call_args
-        assert "UPDATE route_inbox" in call_args.args[0]
-        assert STATE_PROCESSED in call_args.args
-        assert session_id in call_args.args
-        assert row_id in call_args.args
-
-        # None session_id accepted
-        conn.execute.reset_mock()
-        await route_inbox_mark_processed(pool, row_id, None)
-        conn.execute.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# route_inbox_mark_errored
-# ---------------------------------------------------------------------------
-
-
-class TestRouteInboxMarkErrored:
-    """Tests for the errored state transition."""
-
-    async def test_mark_errored_updates_row_with_error(self) -> None:
-        """route_inbox_mark_errored stores error message."""
-        pool, conn = _make_pool()
-        conn.execute = AsyncMock()
-        row_id = uuid.uuid4()
+        # mark_errored: stores error message
+        pool3, conn3 = _make_pool()
+        conn3.execute = AsyncMock()
         error = "TimeoutError: spawner timed out"
-
-        await route_inbox_mark_errored(pool, row_id, error)
-
-        conn.execute.assert_awaited_once()
-        call_args = conn.execute.call_args
-        sql = call_args.args[0]
-        assert "UPDATE route_inbox" in sql
-        assert STATE_ERRORED in call_args.args
-        assert error in call_args.args
-        assert row_id in call_args.args
+        await route_inbox_mark_errored(pool3, row_id, error)
+        conn3.execute.assert_awaited_once()
+        call_args3 = conn3.execute.call_args
+        assert "UPDATE route_inbox" in call_args3.args[0]
+        assert STATE_ERRORED in call_args3.args
+        assert error in call_args3.args
+        assert row_id in call_args3.args
 
 
 # ---------------------------------------------------------------------------

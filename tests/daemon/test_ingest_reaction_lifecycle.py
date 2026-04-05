@@ -131,11 +131,13 @@ class TestReactForIngestParsing:
         assert calls == []
 
 
-class TestReactForIngestReactionValues:
-    """Test that react_for_ingest passes the correct reaction strings through."""
+class TestReactForIngestBehavior:
+    """Tests for reaction values, error swallowing, non-telegram guard, and sequences."""
 
-    async def test_reaction_values_and_error_swallowing(self) -> None:
-        """IN_PROGRESS/SUCCESS/FAILURE pass through; API errors are swallowed."""
+    async def test_reaction_values_errors_and_sequences(self) -> None:
+        """IN_PROGRESS/SUCCESS/FAILURE pass through; API errors swallowed; non-telegram skipped;
+        IN_PROGRESS→SUCCESS and IN_PROGRESS→FAILURE sequences correct."""
+        # All reaction values forwarded correctly
         for reaction in (REACTION_IN_PROGRESS, REACTION_SUCCESS, REACTION_FAILURE):
             mod, calls = _make_capturing_mod()
             await mod.react_for_ingest(external_thread_id="1:1", reaction=reaction)
@@ -150,42 +152,21 @@ class TestReactForIngestReactionValues:
         mod._set_message_reaction = raising_reaction  # type: ignore[method-assign]
         await mod.react_for_ingest(external_thread_id="123:456", reaction=REACTION_IN_PROGRESS)
 
-
-class TestIngestReactionNonTelegram:
-    """Non-Telegram messages must not trigger any Telegram reactions."""
-
-    async def test_react_for_ingest_is_not_called_for_email(self) -> None:
-        """Email messages (source_channel != 'telegram_bot') do not invoke react_for_ingest.
-
-        This test verifies the behavioral contract: the caller in daemon.py
-        must guard the react_for_ingest call with a channel check.
-        """
-        mod, calls = _make_capturing_mod()
-
-        # Simulate what the daemon does: check channel before calling react_for_ingest
+        # Non-telegram: guard check prevents call (email channel → no react_for_ingest)
+        mod_email, calls_email = _make_capturing_mod()
         channel = "email"
         if channel == "telegram_bot":
-            await mod.react_for_ingest(
-                external_thread_id="123:456",
-                reaction=REACTION_IN_PROGRESS,
-            )
+            await mod_email.react_for_ingest(external_thread_id="123:456", reaction=REACTION_IN_PROGRESS)
+        assert calls_email == []
 
-        assert calls == [], "react_for_ingest must not be called for non-telegram channels"
-
-
-class TestReactForIngestSequence:
-    """Test that react_for_ingest fires in the correct sequence for the pipeline flow."""
-
-    async def test_reaction_sequences(self) -> None:
-        """IN_PROGRESS then SUCCESS; IN_PROGRESS then FAILURE."""
         # Success sequence
-        mod, seq = _make_capturing_mod()
-        await mod.react_for_ingest(external_thread_id="42:100", reaction=REACTION_IN_PROGRESS)
-        await mod.react_for_ingest(external_thread_id="42:100", reaction=REACTION_SUCCESS)
-        assert [c["reaction"] for c in seq] == [REACTION_IN_PROGRESS, REACTION_SUCCESS]
+        mod_s, seq_s = _make_capturing_mod()
+        await mod_s.react_for_ingest(external_thread_id="42:100", reaction=REACTION_IN_PROGRESS)
+        await mod_s.react_for_ingest(external_thread_id="42:100", reaction=REACTION_SUCCESS)
+        assert [c["reaction"] for c in seq_s] == [REACTION_IN_PROGRESS, REACTION_SUCCESS]
 
         # Failure sequence
-        mod2, seq2 = _make_capturing_mod()
-        await mod2.react_for_ingest(external_thread_id="99:200", reaction=REACTION_IN_PROGRESS)
-        await mod2.react_for_ingest(external_thread_id="99:200", reaction=REACTION_FAILURE)
-        assert [c["reaction"] for c in seq2] == [REACTION_IN_PROGRESS, REACTION_FAILURE]
+        mod_f, seq_f = _make_capturing_mod()
+        await mod_f.react_for_ingest(external_thread_id="99:200", reaction=REACTION_IN_PROGRESS)
+        await mod_f.react_for_ingest(external_thread_id="99:200", reaction=REACTION_FAILURE)
+        assert [c["reaction"] for c in seq_f] == [REACTION_IN_PROGRESS, REACTION_FAILURE]
