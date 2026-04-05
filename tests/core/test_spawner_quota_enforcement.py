@@ -128,126 +128,60 @@ def _quota_unlimited() -> QuotaStatus:
 class TestSpawnerQuotaEnforcement:
     """Spawner blocks spawn when catalog entry quota is exhausted."""
 
-    async def test_spawn_blocked_when_24h_limit_exhausted(self, tmp_path: Path) -> None:
-        """Spawner returns success=False when 24h quota is exceeded."""
+    async def test_spawn_blocked_by_quota(self, tmp_path: Path) -> None:
+        """Spawner returns success=False when 24h or 30d quota is exceeded; adapter not invoked."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
         mock_pool = AsyncMock()
-        adapter = _MockAdapter(
-            result_text="should not run",
-            usage={"input_tokens": 10, "output_tokens": 5},
-        )
-        spawner = Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=adapter)
 
+        # 24h limit exhausted
+        adapter_24 = _MockAdapter(result_text="should not run")
         with (
-            patch(
-                "butlers.core.spawner.resolve_model",
-                new_callable=AsyncMock,
-                return_value=("claude", "claude-haiku", [], _FAKE_CATALOG_ID),
-            ),
-            patch(
-                "butlers.core.spawner.check_token_quota",
-                new_callable=AsyncMock,
-                return_value=_quota_denied_24h(),
-            ),
+            patch("butlers.core.spawner.resolve_model", new_callable=AsyncMock,
+                  return_value=("claude", "claude-haiku", [], _FAKE_CATALOG_ID)),
+            patch("butlers.core.spawner.check_token_quota", new_callable=AsyncMock,
+                  return_value=_quota_denied_24h()),
         ):
-            result = await spawner.trigger("hello", "tick")
+            result = await Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=adapter_24).trigger("hello", "tick")
+        assert result.success is False and result.error is not None
+        assert "24h" in result.error and adapter_24.invoke_calls == 0
 
-        assert result.success is False
-        assert result.error is not None
-        assert "quota" in result.error.lower() or "24h" in result.error
-        # Adapter must NOT have been invoked
-        assert adapter.invoke_calls == 0
+        # 30d limit exhausted
+        adapter_30 = _MockAdapter(result_text="should not run")
+        with (
+            patch("butlers.core.spawner.resolve_model", new_callable=AsyncMock,
+                  return_value=("claude", "claude-haiku", [], _FAKE_CATALOG_ID)),
+            patch("butlers.core.spawner.check_token_quota", new_callable=AsyncMock,
+                  return_value=_quota_denied_30d()),
+        ):
+            result2 = await Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=adapter_30).trigger("hello", "tick")
+        assert result2.success is False and "30d" in result2.error and adapter_30.invoke_calls == 0
 
-    async def test_spawn_blocked_when_30d_limit_exhausted(self, tmp_path: Path) -> None:
-        """Spawner returns success=False when 30d quota is exceeded."""
+    async def test_spawn_proceeds_within_or_unlimited(self, tmp_path: Path) -> None:
+        """Spawner proceeds normally when within limits or unlimited."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
         mock_pool = AsyncMock()
-        adapter = _MockAdapter(result_text="should not run")
-        spawner = Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=adapter)
 
-        with (
-            patch(
-                "butlers.core.spawner.resolve_model",
-                new_callable=AsyncMock,
-                return_value=("claude", "claude-haiku", [], _FAKE_CATALOG_ID),
-            ),
-            patch(
-                "butlers.core.spawner.check_token_quota",
-                new_callable=AsyncMock,
-                return_value=_quota_denied_30d(),
-            ),
-        ):
-            result = await spawner.trigger("hello", "tick")
-
-        assert result.success is False
-        assert result.error is not None
-        assert "30d" in result.error
-        assert adapter.invoke_calls == 0
-
-    async def test_spawn_proceeds_when_within_limits(self, tmp_path: Path) -> None:
-        """Spawner proceeds normally when usage is within limits."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-        mock_pool = AsyncMock()
-        adapter = _MockAdapter(result_text="session output")
-        spawner = Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=adapter)
-
-        with (
-            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
-            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock),
-            patch(
-                "butlers.core.spawner.resolve_model",
-                new_callable=AsyncMock,
-                return_value=("claude", "claude-haiku", [], _FAKE_CATALOG_ID),
-            ),
-            patch(
-                "butlers.core.spawner.check_token_quota",
-                new_callable=AsyncMock,
-                return_value=_quota_allowed(),
-            ),
-            patch("butlers.core.spawner.record_token_usage", new_callable=AsyncMock),
-        ):
-            mock_create.return_value = _SESSION_ID
-            result = await spawner.trigger("hello", "tick")
-
-        assert result.success is True
-        assert result.output == "session output"
-        assert adapter.invoke_calls == 1
-
-    async def test_spawn_proceeds_when_no_limits_configured(self, tmp_path: Path) -> None:
-        """Spawner proceeds when quota check returns unlimited (no limits row)."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-        mock_pool = AsyncMock()
-        adapter = _MockAdapter(result_text="unlimited output")
-        spawner = Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=adapter)
-
-        with (
-            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
-            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock),
-            patch(
-                "butlers.core.spawner.resolve_model",
-                new_callable=AsyncMock,
-                return_value=("claude", "claude-haiku", [], _FAKE_CATALOG_ID),
-            ),
-            patch(
-                "butlers.core.spawner.check_token_quota",
-                new_callable=AsyncMock,
-                return_value=_quota_unlimited(),
-            ),
-            patch("butlers.core.spawner.record_token_usage", new_callable=AsyncMock),
-        ):
-            mock_create.return_value = _SESSION_ID
-            result = await spawner.trigger("hello", "tick")
-
-        assert result.success is True
-        assert adapter.invoke_calls == 1
+        for quota_status, expected_output in [
+            (_quota_allowed(), "session output"),
+            (_quota_unlimited(), "unlimited output"),
+        ]:
+            adapter = _MockAdapter(result_text=expected_output)
+            with (
+                patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
+                patch("butlers.core.spawner.session_complete", new_callable=AsyncMock),
+                patch("butlers.core.spawner.resolve_model", new_callable=AsyncMock,
+                      return_value=("claude", "claude-haiku", [], _FAKE_CATALOG_ID)),
+                patch("butlers.core.spawner.check_token_quota", new_callable=AsyncMock,
+                      return_value=quota_status),
+                patch("butlers.core.spawner.record_token_usage", new_callable=AsyncMock),
+            ):
+                mock_create.return_value = _SESSION_ID
+                result = await Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=adapter).trigger("hello", "tick")
+            assert result.success is True and result.output == expected_output and adapter.invoke_calls == 1
 
     async def test_quota_error_message_includes_alias_and_windows(self, tmp_path: Path) -> None:
         """Error message from quota block includes catalog alias and window details."""
@@ -256,73 +190,47 @@ class TestSpawnerQuotaEnforcement:
         config = _make_config()
         mock_pool = AsyncMock()
         adapter = _MockAdapter()
-        spawner = Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=adapter)
 
         denied = QuotaStatus(
             allowed=False, usage_24h=1500, limit_24h=1000, usage_30d=200, limit_30d=5000
         )
 
         with (
-            patch(
-                "butlers.core.spawner.resolve_model",
-                new_callable=AsyncMock,
-                return_value=("claude", "claude-haiku", [], _FAKE_CATALOG_ID),
-            ),
-            patch(
-                "butlers.core.spawner.check_token_quota",
-                new_callable=AsyncMock,
-                return_value=denied,
-            ),
+            patch("butlers.core.spawner.resolve_model", new_callable=AsyncMock,
+                  return_value=("claude", "claude-haiku", [], _FAKE_CATALOG_ID)),
+            patch("butlers.core.spawner.check_token_quota", new_callable=AsyncMock,
+                  return_value=denied),
         ):
-            result = await spawner.trigger("hi", "tick")
+            result = await Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=adapter).trigger("hi", "tick")
 
-        assert result.success is False
-        assert result.error is not None
-        # Should mention the alias/model and the exceeded window
-        assert "claude-haiku" in result.error
-        assert "24h" in result.error
-        assert "1500" in result.error
-        assert "1000" in result.error
+        assert result.success is False and result.error is not None
+        assert "claude-haiku" in result.error and "24h" in result.error
+        assert "1500" in result.error and "1000" in result.error
 
-    async def test_quota_not_checked_without_pool(self, tmp_path: Path) -> None:
-        """When no pool is available, quota check is skipped (TOML fallback path)."""
+    async def test_quota_not_checked_without_pool_or_toml_fallback(self, tmp_path: Path) -> None:
+        """Quota check skipped when pool=None or when catalog returns None (TOML fallback)."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
-        adapter = _MockAdapter(result_text="toml output")
-        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)  # no pool
 
+        # No pool → quota check not called
         with patch("butlers.core.spawner.check_token_quota", new_callable=AsyncMock) as mock_quota:
-            result = await spawner.trigger("hi", "tick")
-
-        # No pool → quota check must not be called
+            result = await Spawner(config=config, config_dir=config_dir, runtime=_MockAdapter(result_text="toml")).trigger("hi", "tick")
         mock_quota.assert_not_called()
         assert result.success is True
 
-    async def test_quota_not_checked_for_toml_fallback_resolution(self, tmp_path: Path) -> None:
-        """When catalog returns None (TOML fallback), quota check is skipped."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
+        # TOML fallback (catalog returns None) → quota check not called
         mock_pool = AsyncMock()
-        adapter = _MockAdapter(result_text="toml output")
-        spawner = Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=adapter)
-
         with (
             patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
             patch("butlers.core.spawner.session_complete", new_callable=AsyncMock),
-            patch(
-                "butlers.core.spawner.resolve_model",
-                new_callable=AsyncMock,
-                return_value=None,  # catalog miss → TOML fallback, no catalog_entry_id
-            ),
-            patch("butlers.core.spawner.check_token_quota", new_callable=AsyncMock) as mock_quota,
+            patch("butlers.core.spawner.resolve_model", new_callable=AsyncMock, return_value=None),
+            patch("butlers.core.spawner.check_token_quota", new_callable=AsyncMock) as mock_quota2,
         ):
             mock_create.return_value = _SESSION_ID
-            result = await spawner.trigger("hi", "tick")
-
-        mock_quota.assert_not_called()
-        assert result.success is True
+            result2 = await Spawner(config=config, config_dir=config_dir, pool=mock_pool, runtime=_MockAdapter(result_text="ok")).trigger("hi", "tick")
+        mock_quota2.assert_not_called()
+        assert result2.success is True
 
 
 # ---------------------------------------------------------------------------
