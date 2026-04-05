@@ -84,26 +84,22 @@ class TestButlerContext:
 
 
 class TestAddOtelContext:
-    def test_zeroed_ids_when_no_span(self):
-        """No active OTel span — injects zeroed trace_id and span_id."""
-        event_dict = {"event": "test"}
-        result = add_otel_context(None, "info", event_dict)
-        assert result["trace_id"] == "0" * 32
-        assert result["span_id"] == "0" * 16
+    def test_otel_context_injection(self):
+        """No active span injects zeroed IDs; active span injects real hex IDs."""
+        result_no_span = add_otel_context(None, "info", {"event": "test"})
+        assert result_no_span["trace_id"] == "0" * 32
+        assert result_no_span["span_id"] == "0" * 16
 
-    def test_real_ids_when_span_active(self):
-        """Active OTel span — injects real hex trace_id and span_id."""
         from opentelemetry.sdk.trace import TracerProvider
 
         provider = TracerProvider()
         tracer = provider.get_tracer("test")
         with tracer.start_as_current_span("test-span"):
-            event_dict = {"event": "test"}
-            result = add_otel_context(None, "info", event_dict)
-            assert result["trace_id"] != "0" * 32
-            assert result["span_id"] != "0" * 16
-            assert len(result["trace_id"]) == 32
-            assert len(result["span_id"]) == 16
+            result_span = add_otel_context(None, "info", {"event": "test"})
+            assert result_span["trace_id"] != "0" * 32
+            assert result_span["span_id"] != "0" * 16
+            assert len(result_span["trace_id"]) == 32
+            assert len(result_span["span_id"]) == 16
         provider.shutdown()
 
 
@@ -113,8 +109,8 @@ class TestAddOtelContext:
 
 
 class TestConfigureLogging:
-    def test_configure_logging_behavior(self):
-        """Renderer, level, butler context, and noise suppression all applied correctly."""
+    def test_configure_logging_behavior_and_formats(self):
+        """Text renderer, level, butler context, noise suppression; json format installs JSONRenderer."""
         configure_logging(fmt="text", butler_name="health", level="DEBUG")
         root = logging.getLogger()
         assert root.level == logging.DEBUG
@@ -126,13 +122,19 @@ class TestConfigureLogging:
         assert logging.getLogger("httpx").level >= logging.WARNING
         assert logging.getLogger("uvicorn.access").level >= logging.WARNING
 
-    def test_json_format_installs_json_renderer(self):
+        # Reset before testing JSON format
+        for handler in list(root.handlers):
+            handler.close()
+        root.handlers.clear()
+        root.filters.clear()
+        root.setLevel(logging.WARNING)
+
         configure_logging(fmt="json")
-        root = logging.getLogger()
-        assert len(root.handlers) >= 1
-        formatter = root.handlers[0].formatter
-        assert isinstance(formatter, structlog.stdlib.ProcessorFormatter)
-        assert isinstance(formatter.processors[-1], structlog.processors.JSONRenderer)
+        root2 = logging.getLogger()
+        assert len(root2.handlers) >= 1
+        formatter2 = root2.handlers[0].formatter
+        assert isinstance(formatter2, structlog.stdlib.ProcessorFormatter)
+        assert isinstance(formatter2.processors[-1], structlog.processors.JSONRenderer)
 
 
 # ---------------------------------------------------------------------------
@@ -264,33 +266,21 @@ class TestCredentialRedactionFilter:
         assert f.filter(r6) is True
         assert r6.msg == original
 
-    def test_configure_logging_attaches_redaction_filter(self):
-        """configure_logging() attaches CredentialRedactionFilter to root logger."""
+    def test_configure_logging_attaches_and_deduplicates_filter(self):
+        """configure_logging() attaches CredentialRedactionFilter; calling twice yields only one; httpx suppressed."""
         configure_logging()
         root = logging.getLogger()
         redaction_filters = [f for f in root.filters if isinstance(f, CredentialRedactionFilter)]
         assert len(redaction_filters) == 1
 
-    def test_configure_logging_called_twice_has_single_filter(self):
-        """Calling configure_logging() twice does not accumulate duplicate filters."""
+        # Calling again must not duplicate the filter
         configure_logging()
-        configure_logging()
-        root = logging.getLogger()
-        redaction_filters = [f for f in root.filters if isinstance(f, CredentialRedactionFilter)]
-        assert len(redaction_filters) == 1
+        root2 = logging.getLogger()
+        redaction_filters2 = [f for f in root2.filters if isinstance(f, CredentialRedactionFilter)]
+        assert len(redaction_filters2) == 1
 
-    def test_httpx_url_with_token_is_suppressed_or_redacted(self):
-        """httpx logger set to WARNING means INFO token URLs never reach handlers.
-
-        This test verifies that after configure_logging(), a simulated httpx
-        INFO record with a bot token in the URL would be redacted if it were
-        to pass the level gate (defense-in-depth).
-        """
-        configure_logging()
-        # Verify httpx is suppressed to WARNING (primary defense)
+        # httpx suppressed and redaction filter provides secondary defense
         assert logging.getLogger("httpx").level >= logging.WARNING
-
-        # Verify the redaction filter would also scrub the token (secondary defense)
         f = CredentialRedactionFilter()
         record = self._make_record(
             "HTTP Request: GET https://api.telegram.org/bot8448271413:ATokenHere123/getUpdates"

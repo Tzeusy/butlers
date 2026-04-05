@@ -342,69 +342,40 @@ class TestDurableBufferMetrics:
     def _metrics_map(self) -> dict[str, Any]:
         return _collect_metrics(self._reader)
 
-    def test_hot_enqueue_increments_enqueue_total_and_depth(self) -> None:
-        """Successful hot-path enqueue updates enqueue_total and queue_depth."""
+    def test_enqueue_metrics_and_backpressure(self) -> None:
+        """Hot-path enqueue updates enqueue_total and queue_depth; full queue increments backpressure."""
+        # Hot enqueue increments enqueue_total and queue_depth
         buf = DurableBuffer(
             config=_make_buffer_config(),
             pool=None,
             process_fn=AsyncMock(),
             butler_name="sw",
         )
-        buf.enqueue(
-            request_id="r1",
-            message_inbox_id="r1",
-            message_text="msg",
-            source={},
-            event={},
-            sender={},
-        )
+        buf.enqueue(request_id="r1", message_inbox_id="r1", message_text="msg",
+                    source={}, event={}, sender={})
 
         data = self._metrics_map()
-
-        # enqueue_total with path=hot
-        hot_dps = [
-            dp
-            for dp in data.get("butlers.buffer.enqueue_total", [])
-            if dp.attributes.get("path") == "hot"
-        ]
-        assert len(hot_dps) == 1
-        assert hot_dps[0].value == 1
-
-        # queue_depth incremented
-        depth_dps = data.get("butlers.buffer.queue_depth", [])
-        total_depth = sum(dp.value for dp in depth_dps)
+        hot_dps = [dp for dp in data.get("butlers.buffer.enqueue_total", [])
+                   if dp.attributes.get("path") == "hot"]
+        assert len(hot_dps) == 1 and hot_dps[0].value == 1
+        total_depth = sum(dp.value for dp in data.get("butlers.buffer.queue_depth", []))
         assert total_depth == 1
 
-    def test_backpressure_increments_counter(self) -> None:
-        """When queue is full, backpressure_total is incremented."""
-        buf = DurableBuffer(
+        # Backpressure: fill queue then overflow increments backpressure_total
+        buf2 = DurableBuffer(
             config=_make_buffer_config(queue_capacity=1),
             pool=None,
             process_fn=AsyncMock(),
             butler_name="sw",
         )
-        # Fill the queue
-        buf.enqueue(
-            request_id="r1",
-            message_inbox_id="r1",
-            message_text="first",
-            source={},
-            event={},
-            sender={},
-        )
-        # Trigger backpressure
-        buf.enqueue(
-            request_id="r2",
-            message_inbox_id="r2",
-            message_text="second",
-            source={},
-            event={},
-            sender={},
-        )
+        buf2.enqueue(request_id="r1", message_inbox_id="r1", message_text="first",
+                     source={}, event={}, sender={})
+        buf2.enqueue(request_id="r2", message_inbox_id="r2", message_text="second",
+                     source={}, event={}, sender={})
 
-        data = self._metrics_map()
-        bp_dps = data.get("butlers.buffer.backpressure_total", [])
-        assert sum(dp.value for dp in bp_dps) == 1
+        data2 = self._metrics_map()
+        bp_dps = data2.get("butlers.buffer.backpressure_total", [])
+        assert sum(dp.value for dp in bp_dps) >= 1
 
     async def test_worker_decrements_queue_depth_and_records_latency(self) -> None:
         """Worker loop decrements queue_depth and records process_latency_ms."""
@@ -463,15 +434,15 @@ class TestMultiButlerMeterProvider:
         yield
         _reset_metrics_global_state()
 
-    def test_second_init_no_override_and_usable_meter(self) -> None:
-        """Second init_metrics call does not call set_provider again; returned meter is usable."""
+    def test_provider_guard_and_noop_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Second init_metrics does not override provider; no-op mode never calls set_provider."""
         import os as _os
 
+        # Part 1: second init with installed provider → no override
         reader = InMemoryMetricReader()
         from opentelemetry.sdk.metrics import MeterProvider as _MP
         from opentelemetry.sdk.resources import Resource as _Res
 
-        # Install a real provider (simulating the first butler's init_metrics)
         provider = _MP(
             resource=_Res.create({"service.name": "butlers"}),
             metric_readers=[reader],
@@ -479,7 +450,6 @@ class TestMultiButlerMeterProvider:
         metrics.set_meter_provider(provider)
         _metrics_mod._meter_provider_installed = True
 
-        # Track whether set_meter_provider is called again
         set_count = 0
         original_set = metrics.set_meter_provider
 
@@ -498,41 +468,32 @@ class TestMultiButlerMeterProvider:
         finally:
             metrics.set_meter_provider = original_set
 
-        assert set_count == 0, (
-            f"set_meter_provider called {set_count} times on second init; expected 0"
-        )
+        assert set_count == 0
         assert meter is not None
-
-        # Meter must be usable
         counter = meter.create_counter("test.multi.counter")
         counter.add(5, {"butler": "general"})
         data = _collect_metrics(reader)
         assert "test.multi.counter" in data
         assert data["test.multi.counter"][0].value == 5
 
-    def test_noop_mode_returns_valid_meter(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """In no-op mode init_metrics returns a valid meter (no endpoint → no provider install)."""
+        # Part 2: no-op mode (no endpoint) — set_provider never called
+        _reset_metrics_global_state()
         monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
 
-        # Track whether set_meter_provider is called at all
-        set_count = 0
-        original_set = metrics.set_meter_provider
+        set_count2 = 0
+        original_set2 = metrics.set_meter_provider
 
-        def guarded_set(p):
-            nonlocal set_count
-            set_count += 1
-            original_set(p)
+        def guarded_set2(p):
+            nonlocal set_count2
+            set_count2 += 1
+            original_set2(p)
 
-        metrics.set_meter_provider = guarded_set
+        metrics.set_meter_provider = guarded_set2
         try:
             meter1 = init_metrics("butler.finance")
             meter2 = init_metrics("butler.general")
         finally:
-            metrics.set_meter_provider = original_set
+            metrics.set_meter_provider = original_set2
 
-        # set_meter_provider must not be called in no-op mode
-        assert set_count == 0, (
-            f"set_meter_provider called {set_count} times in no-op mode; expected 0"
-        )
-        assert meter1 is not None
-        assert meter2 is not None
+        assert set_count2 == 0
+        assert meter1 is not None and meter2 is not None

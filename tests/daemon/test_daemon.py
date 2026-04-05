@@ -582,70 +582,18 @@ async def test_module_lifecycle(butler_dir_with_modules: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_shutdown_sequence(butler_dir_with_modules: Path) -> None:
-    """Modules shut down in reverse topological order; DB closed; errors don't abort shutdown."""
-    registry = _make_registry(StubModuleA, StubModuleB)
-    patches = _patch_infra()
-    mock_db = patches["mock_db"]
-    shutdown_order: list[str] = []
-
-    with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"],
-        patches["get_adapter"],
-        patches["shutil_which"],
-        patches["start_mcp_server"],
-        patches["connect_switchboard"],
-        patches["create_audit_pool"],
-        patches["recover_route_inbox"],
-    ):
-        daemon = ButlerDaemon(butler_dir_with_modules, registry=registry)
-        await daemon.start()
-
-    # Track shutdown order; make stub_b fail to verify error resilience
-    for mod in daemon._modules:
-        original = mod.on_shutdown
-        if mod.name == "stub_b":
-
-            async def failing_shutdown():
-                shutdown_order.append("stub_b")
-                raise RuntimeError("shutdown failed")
-
-            mod.on_shutdown = failing_shutdown
-        else:
-
-            async def make_tracker(name=mod.name, orig=original):
-                shutdown_order.append(name)
-                await orig()
-
-            mod.on_shutdown = make_tracker  # type: ignore[method-assign]
-
-    await daemon.shutdown()
-
-    # stub_b shuts down first (reverse topological: b before a)
-    assert "stub_b" in shutdown_order
-    # DB should still be closed despite module error
-    mock_db.close.assert_awaited_once()
-
 
 async def test_shutdown_stops_mcp_server(butler_dir: Path) -> None:
-    """shutdown() signals uvicorn to exit and awaits the server task."""
+    """shutdown() signals uvicorn to exit, awaits server task; reverse-topological module shutdown."""
+    # MCP server shutdown: signals uvicorn and awaits task
     patches = _patch_infra()
     daemon = await _start_daemon(butler_dir, patches)
 
     mock_server = MagicMock()
     mock_server.should_exit = False
-    task_completed = False
 
     async def _fake_serve():
-        nonlocal task_completed
-        task_completed = True
+        pass
 
     mock_task = asyncio.ensure_future(_fake_serve())
     await mock_task
@@ -659,6 +607,52 @@ async def test_shutdown_stops_mcp_server(butler_dir: Path) -> None:
     assert mock_task.done()
     assert daemon._server is None
     assert daemon._server_task is None
+
+    # Module shutdown: reverse topological order, errors don't abort shutdown
+    registry = _make_registry(StubModuleA, StubModuleB)
+    shutdown_mods_dir = butler_dir.parent / "shutdown_mods"
+    shutdown_mods_dir.mkdir(exist_ok=True)
+    butler_dir_m = _make_butler_toml(shutdown_mods_dir,
+                                     modules={"stub_a": {}, "stub_b": {}})
+    patches2 = _patch_infra()
+    mock_db2 = patches2["mock_db"]
+    shutdown_order: list[str] = []
+
+    with (
+        patches2["db_from_env"],
+        patches2["run_migrations"],
+        patches2["validate_credentials"],
+        patches2["validate_module_credentials"],
+        patches2["init_telemetry"],
+        patches2["sync_schedules"],
+        patches2["FastMCP"],
+        patches2["Spawner"],
+        patches2["get_adapter"],
+        patches2["shutil_which"],
+        patches2["start_mcp_server"],
+        patches2["connect_switchboard"],
+        patches2["create_audit_pool"],
+        patches2["recover_route_inbox"],
+    ):
+        daemon2 = ButlerDaemon(butler_dir_m, registry=registry)
+        await daemon2.start()
+
+    for mod in daemon2._modules:
+        original = mod.on_shutdown
+        if mod.name == "stub_b":
+            async def failing_shutdown():
+                shutdown_order.append("stub_b")
+                raise RuntimeError("shutdown failed")
+            mod.on_shutdown = failing_shutdown
+        else:
+            async def make_tracker(name=mod.name, orig=original):
+                shutdown_order.append(name)
+                await orig()
+            mod.on_shutdown = make_tracker  # type: ignore[method-assign]
+
+    await daemon2.shutdown()
+    assert "stub_b" in shutdown_order
+    mock_db2.close.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -2347,8 +2341,8 @@ async def test_non_fatal_module_failures(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_heartbeat_lifecycle(butler_dir: Path, tmp_path: Path) -> None:
-    """Heartbeat task created on start, cleared on shutdown; switchboard butler has none."""
+async def test_heartbeat_lifecycle_and_reconnect(butler_dir: Path, tmp_path: Path) -> None:
+    """Heartbeat created/cleared on start/shutdown; switchboard butler omitted; reconnects on dead connection."""
     # Normal butler: heartbeat created and cleared on shutdown
     patches = _patch_infra()
     daemon = await _start_daemon(butler_dir, patches)
@@ -2359,7 +2353,9 @@ async def test_heartbeat_lifecycle(butler_dir: Path, tmp_path: Path) -> None:
     assert heartbeat_task.cancelled() or heartbeat_task.done()
 
     # Switchboard butler (switchboard_url=None): no heartbeat task
-    toml = """\
+    sw_dir = tmp_path / "sw_test"
+    sw_dir.mkdir()
+    (sw_dir / "butler.toml").write_text("""\
 [butler]
 name = "switchboard"
 port = 41100
@@ -2372,8 +2368,7 @@ schema = "switchboard"
 name = "daily-check"
 cron = "0 9 * * *"
 prompt = "Do the daily check"
-"""
-    (tmp_path / "butler.toml").write_text(toml)
+""")
     patches2 = _patch_infra()
     with (
         patches2["db_from_env"],
@@ -2389,15 +2384,12 @@ prompt = "Do the daily check"
         patches2["start_mcp_server"],
         # Don't mock _connect_switchboard — let it see switchboard_url=None
     ):
-        daemon2 = ButlerDaemon(tmp_path)
+        daemon2 = ButlerDaemon(sw_dir)
         await daemon2.start()
     assert daemon2._switchboard_heartbeat_task is None
     await daemon2.shutdown()
 
-
-async def test_heartbeat_reconnect_behavior(butler_dir: Path) -> None:
-    """Heartbeat reconnects on dead connection; healthy connection requires no reconnect."""
-
+    # Dead connection → disconnects and reconnects; healthy connection → no reconnect
     def _make_client(list_tools_side_effect=None, list_tools_return=None):
         client = AsyncMock()
         client.__aenter__ = AsyncMock(return_value=client)
@@ -2433,9 +2425,8 @@ async def test_heartbeat_reconnect_behavior(butler_dir: Path) -> None:
             pass
         return d
 
-    # Dead connection → disconnects and reconnects
     dead_client = _make_client(list_tools_side_effect=ConnectionError("dead"))
-    daemon = await _start_with_client(dead_client)
+    daemon3 = await _start_with_client(dead_client)
     disconnect_called = False
     connect_called = False
 
@@ -2453,17 +2444,17 @@ async def test_heartbeat_reconnect_behavior(butler_dir: Path) -> None:
         patch.object(ButlerDaemon, "_connect_switchboard", new=fake_connect),
     ):
         try:
-            await asyncio.wait_for(daemon.switchboard_client.list_tools(), timeout=5.0)
+            await asyncio.wait_for(daemon3.switchboard_client.list_tools(), timeout=5.0)
         except Exception:
-            await daemon._disconnect_switchboard()
-            await daemon._connect_switchboard()
+            await daemon3._disconnect_switchboard()
+            await daemon3._connect_switchboard()
 
     assert disconnect_called
     assert connect_called
 
     # Healthy connection → no reconnect
     healthy_client = _make_client(list_tools_return=[])
-    daemon2 = await _start_with_client(healthy_client)
+    daemon4 = await _start_with_client(healthy_client)
     disconnect_called2 = False
 
     async def fake_disconnect2(self_daemon):
@@ -2471,10 +2462,10 @@ async def test_heartbeat_reconnect_behavior(butler_dir: Path) -> None:
         disconnect_called2 = True
 
     with patch.object(ButlerDaemon, "_disconnect_switchboard", new=fake_disconnect2):
-        await asyncio.wait_for(daemon2.switchboard_client.list_tools(), timeout=5.0)
+        await asyncio.wait_for(daemon4.switchboard_client.list_tools(), timeout=5.0)
 
     assert not disconnect_called2
-    assert daemon2.switchboard_client is healthy_client
+    assert daemon4.switchboard_client is healthy_client
 
 
 # ---------------------------------------------------------------------------
