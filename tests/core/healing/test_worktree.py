@@ -19,8 +19,10 @@ Covers:
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -93,119 +95,76 @@ class TestBranchNameFormat:
 
 
 class TestCreateHealingWorktree:
-    async def test_returns_path_and_branch(self, tmp_path: Path) -> None:
-        """create_healing_worktree returns (worktree_path, branch_name)."""
+    async def test_success_path_and_prefix_variants(self, tmp_path: Path) -> None:
+        """create_healing_worktree returns (path, branch); parent dir created; QA prefix works."""
         fp = _make_fingerprint("abc123def456")
 
-        # Simulate successful git branch and git worktree add
         async def mock_run_git(*args, cwd, capture_stderr=True):
             return 0, "", ""
 
-        with patch(
-            "butlers.core.healing.worktree._run_git",
-            side_effect=mock_run_git,
-        ):
+        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
             wt_path, branch = await create_healing_worktree(tmp_path, "email", fp)
-
         assert branch.startswith("self-healing/email/abc123def456-")
         assert wt_path == _worktree_path(tmp_path, branch)
+        assert wt_path.parent.exists()
 
-    async def test_branch_collision_raises(self, tmp_path: Path) -> None:
-        """Branch creation failure raises WorktreeCreationError before worktree add."""
+        # QA prefix
+        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
+            qa_path, qa_branch = await create_healing_worktree(tmp_path, "email", fp, prefix="qa")
+            sh_path, sh_branch = await create_healing_worktree(tmp_path, "email", fp)
+        assert qa_branch.startswith("qa/email/abc123def456-")
+        assert qa_path == _worktree_path(tmp_path, qa_branch)
+        assert ".healing-worktrees/qa/" in str(qa_path)
+        assert sh_branch.startswith("self-healing/email/")
+        assert ".healing-worktrees/self-healing/" in str(sh_path)
+        assert qa_path.parent.exists()
+
+    async def test_failure_cases(self, tmp_path: Path) -> None:
+        """Branch collision, worktree add failure (cleanup), and git lock all raise WorktreeCreationError."""
         fp = _make_fingerprint()
 
-        async def mock_run_git(*args, cwd, capture_stderr=True):
-            # Simulate branch already exists
+        # Branch collision
+        async def branch_collision(*args, cwd, capture_stderr=True):
             return 1, "", "fatal: A branch named 'self-healing/email/...' already exists."
 
-        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
+        with patch("butlers.core.healing.worktree._run_git", side_effect=branch_collision):
             with pytest.raises(WorktreeCreationError) as exc_info:
                 await create_healing_worktree(tmp_path, "email", fp)
-
         assert "already exists" in exc_info.value.git_output
 
-    async def test_worktree_add_failure_cleans_branch(self, tmp_path: Path) -> None:
-        """When git worktree add fails, the orphaned branch is deleted."""
-        fp = _make_fingerprint("deadbeef0000")
+        # Worktree add failure cleans up orphaned branch
+        fp2 = _make_fingerprint("deadbeef0000")
         calls: list[tuple] = []
 
-        async def mock_run_git(*args, cwd, capture_stderr=True):
+        async def add_failure(*args, cwd, capture_stderr=True):
             calls.append(args)
-            if args[0] == "branch":
+            if args[0] == "branch" and len(args) == 3:
                 return 0, "", ""  # branch created OK
             if args[0] == "worktree" and args[1] == "add":
                 return 1, "", "error: worktree add failed"
-            if args[0] == "branch" and args[1] == "-D":
-                return 0, "", ""  # branch deletion
             return 0, "", ""
 
-        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
-            with pytest.raises(WorktreeCreationError) as exc_info:
-                await create_healing_worktree(tmp_path, "email", fp)
+        with patch("butlers.core.healing.worktree._run_git", side_effect=add_failure):
+            with pytest.raises(WorktreeCreationError) as exc_info2:
+                await create_healing_worktree(tmp_path, "email", fp2)
+        assert len([c for c in calls if c[0] == "branch" and c[1] == "-D"]) == 1
+        assert "worktree add failed" in exc_info2.value.git_output
 
-        # Verify branch -D was called
-        delete_calls = [c for c in calls if c[0] == "branch" and c[1] == "-D"]
-        assert len(delete_calls) == 1
-        assert "worktree add failed" in exc_info.value.git_output
-
-    async def test_git_lock_raises_worktree_creation_error(self, tmp_path: Path) -> None:
-        """Git lock file causes WorktreeCreationError (no retry)."""
-        fp = _make_fingerprint()
-
+        # Git lock raises WorktreeCreationError
         call_count = 0
 
-        async def mock_run_git(*args, cwd, capture_stderr=True):
+        async def git_lock(*args, cwd, capture_stderr=True):
             nonlocal call_count
             call_count += 1
             if args[0] == "branch" and call_count == 1:
-                return 0, "", ""  # branch OK
+                return 0, "", ""
             if args[0] == "worktree":
                 return 1, "", "fatal: Unable to create '.git/worktrees/...': File exists"
             return 0, "", ""
 
-        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
+        with patch("butlers.core.healing.worktree._run_git", side_effect=git_lock):
             with pytest.raises(WorktreeCreationError):
                 await create_healing_worktree(tmp_path, "email", fp)
-
-    async def test_parent_directory_created(self, tmp_path: Path) -> None:
-        """Parent directory for worktree is created if it doesn't exist."""
-        fp = _make_fingerprint()
-
-        captured_paths: list[str] = []
-
-        async def mock_run_git(*args, cwd, capture_stderr=True):
-            if args[0] == "worktree" and args[1] == "add":
-                captured_paths.append(args[2])
-            return 0, "", ""
-
-        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
-            wt_path, _ = await create_healing_worktree(tmp_path, "calendar", fp)
-
-        assert wt_path.parent.exists()
-
-        # QA prefix: parent dir also created
-        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
-            wt_path_qa, _ = await create_healing_worktree(tmp_path, "finance", fp, prefix="qa")
-
-        assert wt_path_qa.parent.exists()
-
-    async def test_prefix_variants_branch_and_path(self, tmp_path: Path) -> None:
-        """QA prefix produces qa/* branch and correct path; default remains self-healing/*."""
-        fp = _make_fingerprint("abc123def456")
-
-        async def mock_run_git(*args, cwd, capture_stderr=True):
-            return 0, "", ""
-
-        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
-            qa_path, qa_branch = await create_healing_worktree(tmp_path, "email", fp, prefix="qa")
-            sh_path, sh_branch = await create_healing_worktree(tmp_path, "email", fp)
-
-        assert qa_branch.startswith("qa/email/abc123def456-")
-        assert qa_path == _worktree_path(tmp_path, qa_branch)
-        assert ".healing-worktrees/qa/" in str(qa_path)
-
-        assert sh_branch.startswith("self-healing/email/")
-        assert ".healing-worktrees/self-healing/" in str(sh_path)
 
 
 # ---------------------------------------------------------------------------
@@ -214,110 +173,87 @@ class TestCreateHealingWorktree:
 
 
 class TestRemoveHealingWorktree:
-    async def test_removes_worktree_and_branch(self, tmp_path: Path) -> None:
-        """remove_healing_worktree calls worktree remove and branch -D."""
+    async def test_remove_branch_force_and_no_branch(self, tmp_path: Path) -> None:
+        """Normal remove with branch -D; force on dirty; no branch deletion when flag False."""
         branch = "self-healing/email/abc123def456-1710700000"
         wt_dir = _worktree_path(tmp_path, branch)
         wt_dir.mkdir(parents=True)
 
+        # Normal remove + branch deletion
         calls: list[tuple] = []
 
-        async def mock_run_git(*args, cwd, capture_stderr=True):
+        async def mock_git_ok(*args, cwd, capture_stderr=True):
             calls.append(args)
             return 0, "", ""
 
-        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
+        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_git_ok):
             await remove_healing_worktree(tmp_path, branch, delete_branch=True)
+        assert "worktree" in [c[0] for c in calls]
+        assert "branch" in [c[0] for c in calls]
 
-        git_commands = [c[0] for c in calls]
-        assert "worktree" in git_commands
-        assert "branch" in git_commands
+        # No branch deletion
+        calls2: list[tuple] = []
 
-    async def test_no_branch_deletion_when_flag_false(self, tmp_path: Path) -> None:
-        """When delete_branch=False, branch -D is not called."""
-        branch = "self-healing/email/abc123def456-1710700000"
-        wt_dir = _worktree_path(tmp_path, branch)
-        wt_dir.mkdir(parents=True)
-
-        calls: list[tuple] = []
-
-        async def mock_run_git(*args, cwd, capture_stderr=True):
-            calls.append(args)
+        async def mock_git_ok2(*args, cwd, capture_stderr=True):
+            calls2.append(args)
             return 0, "", ""
 
-        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
+        wt_dir.mkdir(parents=True, exist_ok=True)
+        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_git_ok2):
             await remove_healing_worktree(tmp_path, branch, delete_branch=False)
+        assert not any(c for c in calls2 if c[0] == "branch" and c[1] == "-D")
 
-        branch_delete_calls = [c for c in calls if c[0] == "branch" and c[1] == "-D"]
-        assert len(branch_delete_calls) == 0
+        # Force remove on dirty worktree
+        calls3: list[tuple] = []
 
-    async def test_force_remove_on_dirty_worktree(self, tmp_path: Path) -> None:
-        """Falls back to --force when initial worktree remove fails."""
-        branch = "self-healing/email/abc123def456-1710700000"
-        wt_dir = _worktree_path(tmp_path, branch)
-        wt_dir.mkdir(parents=True)
-
-        calls: list[tuple] = []
-
-        async def mock_run_git(*args, cwd, capture_stderr=True):
-            calls.append(args)
+        async def dirty_git(*args, cwd, capture_stderr=True):
+            calls3.append(args)
             if args[0] == "worktree" and args[1] == "remove" and "--force" not in args:
                 return 1, "", "error: worktree has uncommitted changes"
             return 0, "", ""
 
-        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
+        wt_dir.mkdir(parents=True, exist_ok=True)
+        with patch("butlers.core.healing.worktree._run_git", side_effect=dirty_git):
             await remove_healing_worktree(tmp_path, branch)
+        assert any("--force" in c for c in calls3)
 
-        force_calls = [c for c in calls if "--force" in c]
-        assert len(force_calls) >= 1
-
-    async def test_nonexistent_worktree_triggers_prune(self, tmp_path: Path) -> None:
-        """When worktree dir doesn't exist, prune is called instead."""
+    async def test_nonexistent_remote_and_failure(self, tmp_path: Path) -> None:
+        """Nonexistent worktree triggers prune; remote delete works; failure is non-fatal."""
         branch = "self-healing/email/abc123def456-1710700000"
         # Do NOT create the worktree directory
 
+        # Nonexistent worktree → prune
         calls: list[tuple] = []
 
-        async def mock_run_git(*args, cwd, capture_stderr=True):
+        async def mock_git(*args, cwd, capture_stderr=True):
             calls.append(args)
             return 0, "", ""
 
-        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
+        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_git):
             await remove_healing_worktree(tmp_path, branch, delete_branch=False)
+        assert any(c[0] == "worktree" and "prune" in c for c in calls)
 
-        prune_calls = [c for c in calls if c[0] == "worktree" and "prune" in c]
-        assert len(prune_calls) >= 1
-
-    async def test_delete_remote_branch(self, tmp_path: Path) -> None:
-        """When delete_remote=True, git push origin --delete is called."""
-        branch = "self-healing/email/abc123def456-1710700000"
+        # Remote delete
         wt_dir = _worktree_path(tmp_path, branch)
         wt_dir.mkdir(parents=True)
+        calls2: list[tuple] = []
 
-        calls: list[tuple] = []
-
-        async def mock_run_git(*args, cwd, capture_stderr=True):
-            calls.append(args)
+        async def mock_git2(*args, cwd, capture_stderr=True):
+            calls2.append(args)
             return 0, "", ""
 
-        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
+        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_git2):
             await remove_healing_worktree(tmp_path, branch, delete_remote=True)
+        assert any("push" in c and "--delete" in c for c in calls2)
 
-        remote_delete_calls = [c for c in calls if "push" in c and "--delete" in c]
-        assert len(remote_delete_calls) == 1
+        # Failure is non-fatal
+        wt_dir.mkdir(parents=True, exist_ok=True)
 
-    async def test_cleanup_failure_is_non_fatal(self, tmp_path: Path) -> None:
-        """Worktree remove failure is logged as WARNING and does not raise."""
-        branch = "self-healing/email/abc123def456-1710700000"
-        wt_dir = _worktree_path(tmp_path, branch)
-        wt_dir.mkdir(parents=True)
-
-        async def mock_run_git(*args, cwd, capture_stderr=True):
+        async def always_fail(*args, cwd, capture_stderr=True):
             return 1, "", "fatal: some git error"
 
-        with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
-            # Must not raise
-            await remove_healing_worktree(tmp_path, branch)
+        with patch("butlers.core.healing.worktree._run_git", side_effect=always_fail):
+            await remove_healing_worktree(tmp_path, branch)  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -326,116 +262,51 @@ class TestRemoveHealingWorktree:
 
 
 class TestReapStaleWorktrees:
-    def _make_pool(
-        self,
-        attempts: dict,  # branch_name -> {"status": ..., "closed_at": ...}
-    ) -> MagicMock:
-        """Build a mock asyncpg Pool that answers healing_attempts queries."""
+    def _make_pool(self, rows: list[dict]) -> MagicMock:
         pool = MagicMock()
-        # Patch _healing_attempts_for_branches and _list_healing_branches
+
+        async def mock_fetch(*args, **kwargs):
+            sql = args[0]
+            if "branch_name = ANY" in sql:
+                return rows
+            return []
+
+        pool.fetch = AsyncMock(side_effect=mock_fetch)
         return pool
 
-    async def test_terminal_aged_worktree_is_reaped(self, tmp_path: Path) -> None:
-        """Worktree for a terminal attempt older than 24h is removed."""
-        from datetime import UTC, datetime, timedelta
-
-        branch = "self-healing/email/abc123def456-1710600000"
-        wt_dir = _worktree_path(tmp_path, branch)
-        wt_dir.mkdir(parents=True)
-
-        old_time = datetime.now(UTC) - timedelta(hours=36)
-
-        mock_pool = MagicMock()
-
-        async def mock_fetch(*args, **kwargs):
-            # Return the attempt row when queried for branch_names
-            sql = args[0]
-            if "branch_name = ANY" in sql:
-                return [
-                    {
-                        "branch_name": branch,
-                        "status": "failed",
-                        "closed_at": old_time,
-                        "updated_at": old_time,
-                        "healing_session_id": None,
-                    }
-                ]
-            return []
-
-        mock_pool.fetch = AsyncMock(side_effect=mock_fetch)
-
-        remove_calls: list[str] = []
-
-        async def mock_remove(repo_root, branch_name, **kwargs):
-            remove_calls.append(branch_name)
-
-        with (
-            patch("butlers.core.healing.worktree._list_healing_branches", return_value=[]),
-            patch("butlers.core.healing.worktree.remove_healing_worktree", side_effect=mock_remove),
-        ):
-            count = await reap_stale_worktrees(tmp_path, mock_pool)
-
-        assert count == 1
-        assert branch in remove_calls
-
-    async def test_active_worktree_preserved(self, tmp_path: Path) -> None:
-        """Worktree for an active (investigating) attempt is NOT reaped."""
-        from datetime import UTC, datetime
-
-        branch = "self-healing/email/abc123def456-1710700000"
-        wt_dir = _worktree_path(tmp_path, branch)
-        wt_dir.mkdir(parents=True)
-
+    async def test_terminal_active_and_orphaned_worktrees(self, tmp_path: Path, caplog) -> None:
+        """Terminal+aged → reaped; active → preserved; orphaned (no DB row) → reaped with WARNING."""
+        old = datetime.now(UTC) - timedelta(hours=36)
         recent = datetime.now(UTC)
 
-        mock_pool = MagicMock()
+        # Terminal: should be reaped
+        terminal_branch = "self-healing/email/abc123def456-1710600000"
+        terminal_wt = _worktree_path(tmp_path, terminal_branch)
+        terminal_wt.mkdir(parents=True)
+
+        # Active: should be preserved
+        active_branch = "self-healing/email/def456abc123-1710700000"
+        active_wt = _worktree_path(tmp_path, active_branch)
+        active_wt.mkdir(parents=True)
+
+        # Orphaned: no DB row, should be reaped with warning
+        orphaned_branch = "self-healing/email/orphan00000-1710500000"
+        orphaned_wt = _worktree_path(tmp_path, orphaned_branch)
+        orphaned_wt.mkdir(parents=True)
+
+        pool = MagicMock()
 
         async def mock_fetch(*args, **kwargs):
             sql = args[0]
             if "branch_name = ANY" in sql:
                 return [
-                    {
-                        "branch_name": branch,
-                        "status": "investigating",
-                        "closed_at": None,
-                        "updated_at": recent,
-                        "healing_session_id": str(uuid.uuid4()),
-                    }
+                    {"branch_name": terminal_branch, "status": "failed", "closed_at": old, "updated_at": old, "healing_session_id": None},
+                    {"branch_name": active_branch, "status": "investigating", "closed_at": None, "updated_at": recent, "healing_session_id": str(uuid.uuid4())},
+                    # orphaned_branch has no row → orphaned
                 ]
             return []
 
-        mock_pool.fetch = AsyncMock(side_effect=mock_fetch)
-
-        remove_calls: list[str] = []
-
-        async def mock_remove(repo_root, branch_name, **kwargs):
-            remove_calls.append(branch_name)
-
-        with (
-            patch("butlers.core.healing.worktree._list_healing_branches", return_value=[]),
-            patch("butlers.core.healing.worktree.remove_healing_worktree", side_effect=mock_remove),
-        ):
-            count = await reap_stale_worktrees(tmp_path, mock_pool)
-
-        assert count == 0
-        assert branch not in remove_calls
-
-    async def test_orphaned_worktree_is_reaped_with_warning(self, tmp_path: Path, caplog) -> None:
-        """Orphaned worktree (no DB row) is reaped with a WARNING log."""
-        import logging
-
-        branch = "self-healing/email/abc123def456-1710500000"
-        wt_dir = _worktree_path(tmp_path, branch)
-        wt_dir.mkdir(parents=True)
-
-        mock_pool = MagicMock()
-
-        async def mock_fetch(*args, **kwargs):
-            # Return no rows — orphaned
-            return []
-
-        mock_pool.fetch = AsyncMock(side_effect=mock_fetch)
-
+        pool.fetch = AsyncMock(side_effect=mock_fetch)
         remove_calls: list[str] = []
 
         async def mock_remove(repo_root, branch_name, **kwargs):
@@ -446,93 +317,71 @@ class TestReapStaleWorktrees:
             patch("butlers.core.healing.worktree.remove_healing_worktree", side_effect=mock_remove),
             caplog.at_level(logging.WARNING, logger="butlers.core.healing.worktree"),
         ):
-            count = await reap_stale_worktrees(tmp_path, mock_pool)
+            count = await reap_stale_worktrees(tmp_path, pool)
 
-        assert count == 1
-        assert branch in remove_calls
+        assert terminal_branch in remove_calls
+        assert active_branch not in remove_calls
+        assert orphaned_branch in remove_calls
+        assert count == 2
         assert any("orphaned" in r.message.lower() for r in caplog.records)
 
-    async def test_orphaned_branch_no_worktree_deleted(self, tmp_path: Path) -> None:
-        """Orphaned self-healing/* branches with no worktree and no active attempt are deleted."""
-        branch = "self-healing/calendar/orphan000000-1710400000"
-        # Do NOT create a worktree directory
+    async def test_orphaned_branch_count_and_custom_prefixes(self, tmp_path: Path) -> None:
+        """Orphaned branch (no worktree) deleted; count returned; custom prefixes respected."""
+        old = datetime.now(UTC) - timedelta(hours=48)
 
-        mock_pool = MagicMock()
+        # Orphaned branch with no worktree
+        orphan_branch = "self-healing/calendar/orphan000000-1710400000"
+        orphan_tmp = tmp_path / "orphan_test"
+        orphan_tmp.mkdir()
 
-        async def mock_fetch(*args, **kwargs):
+        pool_orphan = MagicMock()
+
+        async def mock_fetch_orphan(*args, **kwargs):
             sql = args[0]
             if "branch_name = ANY" in sql:
-                # Branch has a terminal attempt (not active)
-                return [
-                    {
-                        "branch_name": branch,
-                        "status": "failed",
-                        "closed_at": None,
-                        "updated_at": None,
-                        "healing_session_id": None,
-                    }
-                ]
+                return [{"branch_name": orphan_branch, "status": "failed", "closed_at": None, "updated_at": None, "healing_session_id": None}]
             return []
 
-        mock_pool.fetch = AsyncMock(side_effect=mock_fetch)
-
-        # worktree_base is empty (no subdirs)
+        pool_orphan.fetch = AsyncMock(side_effect=mock_fetch_orphan)
         git_calls: list[tuple] = []
 
         async def mock_run_git(*args, cwd, capture_stderr=True):
             git_calls.append(args)
             if args[0] == "branch" and args[1] == "--list":
-                # Only return the branch when the pattern matches the self-healing prefix
                 pattern = args[2] if len(args) > 2 else ""
                 if pattern.startswith("self-healing"):
-                    return 0, branch, ""
+                    return 0, orphan_branch, ""
                 return 0, "", ""
             if args[0] == "worktree" and args[1] == "list":
-                # No worktrees
                 return 0, "", ""
             return 0, "", ""
 
         with patch("butlers.core.healing.worktree._run_git", side_effect=mock_run_git):
-            await reap_stale_worktrees(tmp_path, mock_pool)
+            await reap_stale_worktrees(orphan_tmp, pool_orphan)
 
-        branch_delete_calls = [c for c in git_calls if c[0] == "branch" and c[1] == "-D"]
-        assert len(branch_delete_calls) == 1
+        assert any(c[0] == "branch" and c[1] == "-D" for c in git_calls)
 
-    async def test_returns_count_and_mixed_prefixes(self, tmp_path: Path) -> None:
-        """reap_stale_worktrees returns total count; both self-healing and QA prefixes reaped."""
-        from datetime import UTC, datetime, timedelta
-
-        old_time = datetime.now(UTC) - timedelta(hours=48)
-
-        # 2 self-healing + 1 QA terminal worktrees
+        # Mixed prefixes count
+        mixed_tmp = tmp_path / "mixed_test"
+        mixed_tmp.mkdir()
         branches = [
             "self-healing/email/aaa000000000-1710600000",
             "self-healing/calendar/bbb111111111-1710600001",
             "qa/email/ccc222222222-1710600002",
         ]
         for b in branches:
-            wt_dir = _worktree_path(tmp_path, b)
+            wt_dir = _worktree_path(mixed_tmp, b)
             wt_dir.mkdir(parents=True)
 
-        mock_pool = MagicMock()
+        pool_mixed = MagicMock()
 
-        async def mock_fetch(*args, **kwargs):
+        async def mock_fetch_mixed(*args, **kwargs):
             sql = args[0]
             if "branch_name = ANY" in sql:
-                return [
-                    {
-                        "branch_name": b,
-                        "status": "failed",
-                        "closed_at": old_time,
-                        "updated_at": old_time,
-                        "healing_session_id": None,
-                    }
-                    for b in branches
-                ]
+                return [{"branch_name": b, "status": "failed", "closed_at": old, "updated_at": old, "healing_session_id": None} for b in branches]
             return []
 
-        mock_pool.fetch = AsyncMock(side_effect=mock_fetch)
-
+        pool_mixed.fetch = AsyncMock(side_effect=mock_fetch_mixed)
         remove_calls: list[str] = []
 
         async def mock_remove(repo_root, branch_name, **kwargs):
@@ -542,53 +391,39 @@ class TestReapStaleWorktrees:
             patch("butlers.core.healing.worktree._list_healing_branches", return_value=[]),
             patch("butlers.core.healing.worktree.remove_healing_worktree", side_effect=mock_remove),
         ):
-            count = await reap_stale_worktrees(tmp_path, mock_pool)
+            count = await reap_stale_worktrees(mixed_tmp, pool_mixed)
 
         assert count == 3
         assert all(b in remove_calls for b in branches)
 
-    async def test_custom_prefixes_parameter(self, tmp_path: Path) -> None:
-        """reap_stale_worktrees respects a custom prefixes tuple."""
-        from datetime import UTC, datetime, timedelta
-
-        old_time = datetime.now(UTC) - timedelta(hours=48)
-
-        # Only the qa branch is present; restrict reaper to qa only
+        # Custom prefixes: only qa
+        qa_tmp = tmp_path / "qa_test"
+        qa_tmp.mkdir()
         qa_branch = "qa/email/bbb111111111-1710600001"
-        wt_dir = _worktree_path(tmp_path, qa_branch)
-        wt_dir.mkdir(parents=True)
+        qa_wt = _worktree_path(qa_tmp, qa_branch)
+        qa_wt.mkdir(parents=True)
+        pool_qa = MagicMock()
 
-        mock_pool = MagicMock()
-
-        async def mock_fetch(*args, **kwargs):
+        async def mock_fetch_qa(*args, **kwargs):
             sql = args[0]
             if "branch_name = ANY" in sql:
-                return [
-                    {
-                        "branch_name": qa_branch,
-                        "status": "failed",
-                        "closed_at": old_time,
-                        "updated_at": old_time,
-                        "healing_session_id": None,
-                    }
-                ]
+                return [{"branch_name": qa_branch, "status": "failed", "closed_at": old, "updated_at": old, "healing_session_id": None}]
             return []
 
-        mock_pool.fetch = AsyncMock(side_effect=mock_fetch)
+        pool_qa.fetch = AsyncMock(side_effect=mock_fetch_qa)
+        remove_qa: list[str] = []
 
-        remove_calls: list[str] = []
-
-        async def mock_remove(repo_root, branch_name, **kwargs):
-            remove_calls.append(branch_name)
+        async def mock_remove_qa(repo_root, branch_name, **kwargs):
+            remove_qa.append(branch_name)
 
         with (
             patch("butlers.core.healing.worktree._list_healing_branches", return_value=[]),
-            patch("butlers.core.healing.worktree.remove_healing_worktree", side_effect=mock_remove),
+            patch("butlers.core.healing.worktree.remove_healing_worktree", side_effect=mock_remove_qa),
         ):
-            count = await reap_stale_worktrees(tmp_path, mock_pool, prefixes=("qa",))
+            count_qa = await reap_stale_worktrees(qa_tmp, pool_qa, prefixes=("qa",))
 
-        assert count == 1
-        assert qa_branch in remove_calls
+        assert count_qa == 1
+        assert qa_branch in remove_qa
 
 
 # ---------------------------------------------------------------------------
@@ -599,7 +434,6 @@ class TestReapStaleWorktrees:
 class TestGitignore:
     def test_healing_worktrees_in_gitignore(self) -> None:
         """Verify .healing-worktrees/ is listed in the repository's .gitignore."""
-        # Walk up from this test file to find the repo root
         here = Path(__file__).resolve()
         root = here
         while root != root.parent:
@@ -611,5 +445,3 @@ class TestGitignore:
         assert gitignore.exists(), f".gitignore not found at {gitignore}"
         content = gitignore.read_text()
         assert ".healing-worktrees/" in content, ".healing-worktrees/ not found in .gitignore"
-
-
