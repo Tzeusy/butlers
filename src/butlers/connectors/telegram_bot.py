@@ -1,0 +1,1291 @@
+"""Telegram Bot connector runtime for ingestion.
+
+This connector is a transport-only adapter that:
+- Polls Telegram for updates (dev mode) or registers webhooks (prod mode)
+- Normalizes Telegram updates to canonical ingest.v1 format
+- Submits normalized events to Switchboard MCP server via ingest tool
+- Persists durable checkpoints for safe resume after crashes
+
+The connector does NOT perform classification or routing - those remain
+downstream responsibilities of the Switchboard after ingest acceptance.
+
+Environment Variables (from docs/connectors/telegram_bot.md):
+    SWITCHBOARD_MCP_URL: SSE endpoint URL for Switchboard MCP server (required)
+    CONNECTOR_PROVIDER: "telegram" (required)
+    CONNECTOR_CHANNEL: "telegram_bot" (required)
+    CONNECTOR_POLL_INTERVAL_S: Poll interval in seconds (required for polling)
+    CONNECTOR_MAX_INFLIGHT: Max concurrent ingest submissions (optional, default 8)
+    CONNECTOR_HEALTH_PORT: HTTP port for health endpoint (optional, default 40081)
+    CONNECTOR_BUTLER_DB_NAME: Local butler DB for per-butler secret overrides (optional)
+    BUTLER_SHARED_DB_NAME: Shared credential DB name (optional, default butlers)
+    BUTLER_TELEGRAM_TOKEN: Telegram bot token (required; resolved from DB first, then env)
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import random
+import time
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from threading import Thread
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    import asyncpg
+
+import httpx
+import uvicorn
+from fastapi import FastAPI
+from prometheus_client import REGISTRY, generate_latest
+from pydantic import BaseModel
+
+from butlers.connectors.filtered_event_buffer import FilteredEventBuffer, drain_replay_pending
+from butlers.connectors.heartbeat import ConnectorHeartbeat, HeartbeatConfig
+from butlers.connectors.mcp_client import CachedMCPClient, wait_for_switchboard_ready
+from butlers.connectors.metrics import ConnectorMetrics, get_error_type
+from butlers.core.logging import configure_logging
+from butlers.credential_store import (
+    CredentialStore,
+    shared_db_name_from_env,
+)
+from butlers.db import db_params_from_env
+from butlers.ingestion_policy import IngestionEnvelope, IngestionPolicyEvaluator
+
+logger = logging.getLogger(__name__)
+
+TELEGRAM_API_BASE = "https://api.telegram.org/bot{token}"
+
+_MEDIA_TYPE_LABELS: dict[str, str] = {
+    "photo": "Photo",
+    "sticker": "Sticker",
+    "voice": "Voice message",
+    "video_note": "Video message",
+    "video": "Video",
+    "animation": "GIF",
+    "document": "Document",
+    "audio": "Audio",
+    "location": "Location",
+    "contact": "Contact",
+    "poll": "Poll",
+    "dice": "Dice",
+}
+
+
+def _extract_normalized_text(msg: dict[str, Any]) -> str | None:
+    """Extract meaningful text from a Telegram message dict.
+
+    Returns the best available text representation using a tiered strategy:
+    1. text — standard text messages
+    2. caption — media messages with captions
+    3. Media type descriptor — synthesized tag like [Photo], [Sticker: 😀]
+    4. None — service messages with no user content
+    """
+    # Tier 1: explicit text field
+    if msg.get("text"):
+        return msg["text"]
+
+    # Tier 2: caption on media messages
+    if msg.get("caption"):
+        return msg["caption"]
+
+    # Tier 3: media type descriptor
+    for media_key, label in _MEDIA_TYPE_LABELS.items():
+        if media_key not in msg:
+            continue
+
+        # Enrich specific media types
+        if media_key == "poll" and isinstance(msg["poll"], dict):
+            question = msg["poll"].get("question", "")
+            if question:
+                return f"[Poll: {question}]"
+
+        if media_key == "sticker" and isinstance(msg["sticker"], dict):
+            emoji = msg["sticker"].get("emoji", "")
+            if emoji:
+                return f"[Sticker: {emoji}]"
+
+        if media_key == "contact" and isinstance(msg["contact"], dict):
+            contact = msg["contact"]
+            first = contact.get("first_name", "")
+            last = contact.get("last_name", "")
+            name = f"{first} {last}".strip() if (first or last) else ""
+            if name:
+                return f"[Contact: {name}]"
+
+        return f"[{label}]"
+
+    # Tier 4: no extractable content (service messages like new_chat_members, etc.)
+    return None
+
+
+class HealthStatus(BaseModel):
+    """Health check response model for Kubernetes probes."""
+
+    status: Literal["healthy", "unhealthy"]
+    uptime_seconds: float
+    last_checkpoint_save_at: str | None
+    last_ingest_submit_at: str | None
+    source_api_connectivity: Literal["connected", "disconnected", "unknown"]
+    timestamp: str
+
+
+@dataclass
+class TelegramBotConnectorConfig:
+    """Configuration for Telegram bot connector runtime."""
+
+    # Switchboard MCP config
+    switchboard_mcp_url: str
+
+    # Connector identity
+    provider: str = "telegram"
+    channel: str = "telegram_bot"
+    endpoint_identity: str = field(default="")
+
+    # Telegram credentials
+    telegram_token: str | None = None
+
+    # Polling mode config
+    poll_interval_s: float = 1.0
+
+    # Webhook mode config
+    webhook_url: str | None = None
+
+    # Concurrency control
+    max_inflight: int = 8
+
+    # Health check config
+    health_port: int = 40081
+
+    @classmethod
+    def from_env(cls) -> TelegramBotConnectorConfig:
+        """Load configuration from environment variables."""
+        switchboard_mcp_url = os.environ.get("SWITCHBOARD_MCP_URL")
+        if not switchboard_mcp_url:
+            raise ValueError("SWITCHBOARD_MCP_URL environment variable is required")
+
+        provider = os.environ.get("CONNECTOR_PROVIDER", "telegram")
+        channel = os.environ.get("CONNECTOR_CHANNEL", "telegram_bot")
+
+        telegram_token = os.environ.get("BUTLER_TELEGRAM_TOKEN") or None
+
+        poll_interval_s = float(os.environ.get("CONNECTOR_POLL_INTERVAL_S", "1.0"))
+
+        webhook_url = os.environ.get("CONNECTOR_WEBHOOK_URL")
+
+        max_inflight = int(os.environ.get("CONNECTOR_MAX_INFLIGHT", "8"))
+
+        health_port = int(os.environ.get("CONNECTOR_HEALTH_PORT", "40081"))
+
+        return cls(
+            switchboard_mcp_url=switchboard_mcp_url,
+            provider=provider,
+            channel=channel,
+            telegram_token=telegram_token,
+            poll_interval_s=poll_interval_s,
+            webhook_url=webhook_url,
+            max_inflight=max_inflight,
+            health_port=health_port,
+        )
+
+
+class TelegramBotConnector:
+    """Telegram bot connector runtime for transport-only ingestion.
+
+    Responsibilities:
+    - Poll Telegram getUpdates or register webhook
+    - Normalize updates to ingest.v1 format
+    - Submit to Switchboard ingest API
+    - Persist polling cursor for safe resume
+    - Expose health endpoint for Kubernetes probes
+
+    Does NOT:
+    - Classify messages
+    - Route to specialist butlers
+    - Mint canonical request_id values
+    """
+
+    def __init__(
+        self,
+        config: TelegramBotConnectorConfig,
+        db_pool: asyncpg.Pool | None = None,
+        cursor_pool: asyncpg.Pool | None = None,
+    ) -> None:
+        self._config = config
+        self._http_client = httpx.AsyncClient(timeout=30.0)
+        self._mcp_client = CachedMCPClient(config.switchboard_mcp_url, client_name="telegram-bot")
+        self._last_update_id: int | None = None
+        self._running = False
+        self._semaphore = asyncio.Semaphore(config.max_inflight)
+
+        # DB pool for cursor read/write to switchboard.connector_registry.
+        self._cursor_pool = cursor_pool
+
+        # DB pool for filtered event persistence (may be None if DB unavailable).
+        self._db_pool = db_pool
+
+        # Metrics
+        self._metrics = ConnectorMetrics(
+            connector_type="telegram_bot",
+            endpoint_identity=config.endpoint_identity,
+        )
+
+        # Health tracking
+        self._start_time = time.time()
+        self._last_checkpoint_save: float | None = None
+        self._last_ingest_submit: float | None = None
+        self._source_api_ok: bool | None = None
+        self._health_server: uvicorn.Server | None = None
+        self._health_thread: Thread | None = None
+
+        # Heartbeat
+        self._heartbeat: ConnectorHeartbeat | None = None
+
+        # Backoff tracking for polling loop
+        self._consecutive_failures: int = 0
+
+        # Ingestion policy evaluators (replaces SourceFilterEvaluator).
+        # Two scopes evaluated in order:
+        #   1. connector:telegram-bot:<endpoint> — pre-ingest block/pass_through
+        #   2. global — post-ingest skip/metadata_only/route_to/low_priority_queue
+        # DB-backed with TTL refresh; fail-open on DB error.
+        self._ingestion_policy = IngestionPolicyEvaluator(
+            scope=f"connector:telegram-bot:{config.endpoint_identity}",
+            db_pool=db_pool,
+        )
+        self._global_ingestion_policy = IngestionPolicyEvaluator(
+            scope="global",
+            db_pool=db_pool,
+        )
+
+        # Filtered event buffer: accumulates events filtered during each poll cycle.
+        # Flushed to connectors.filtered_events after each cycle completes.
+        self._filtered_event_buffer = FilteredEventBuffer(
+            connector_type=config.provider,
+            endpoint_identity=config.endpoint_identity,
+        )
+
+    @property
+    def _telegram_api_base(self) -> str:
+        return TELEGRAM_API_BASE.format(token=self._config.telegram_token)
+
+    async def get_health_status(self) -> HealthStatus:
+        """Get current health status for Kubernetes probes."""
+        uptime = time.time() - self._start_time
+
+        last_checkpoint_save_at = None
+        if self._last_checkpoint_save is not None:
+            last_checkpoint_save_at = datetime.fromtimestamp(
+                self._last_checkpoint_save, UTC
+            ).isoformat()
+
+        last_ingest_submit_at = None
+        if self._last_ingest_submit is not None:
+            last_ingest_submit_at = datetime.fromtimestamp(
+                self._last_ingest_submit, UTC
+            ).isoformat()
+
+        if self._source_api_ok is None:
+            connectivity = "unknown"
+        elif self._source_api_ok:
+            connectivity = "connected"
+        else:
+            connectivity = "disconnected"
+
+        # Determine overall status
+        status = "healthy"
+        if self._source_api_ok is False:
+            status = "unhealthy"
+
+        return HealthStatus(
+            status=status,
+            uptime_seconds=uptime,
+            last_checkpoint_save_at=last_checkpoint_save_at,
+            last_ingest_submit_at=last_ingest_submit_at,
+            source_api_connectivity=connectivity,
+            timestamp=datetime.now(UTC).isoformat(),
+        )
+
+    def _start_health_server(self) -> None:
+        """Start FastAPI health check server in background thread."""
+        app = FastAPI(title="Telegram Connector Health")
+
+        @app.get("/health")
+        async def health() -> HealthStatus:
+            return await self.get_health_status()
+
+        @app.get("/metrics")
+        async def metrics() -> bytes:
+            """Prometheus metrics endpoint."""
+            return generate_latest(REGISTRY)
+
+        from butlers.connectors.health_socket import make_health_socket
+
+        port = self._config.health_port
+        sock = make_health_socket("127.0.0.1", port)
+        config = uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=port,
+            log_level="warning",
+        )
+        self._health_server = uvicorn.Server(config)
+
+        def run_server() -> None:
+            asyncio.run(self._health_server.serve(sockets=[sock]))
+
+        self._health_thread = Thread(target=run_server, daemon=True)
+        self._health_thread.start()
+        logger.info(
+            "Health server started",
+            extra={"port": port},
+        )
+
+    def _start_heartbeat(self) -> None:
+        """Initialize and start heartbeat background task."""
+        heartbeat_config = HeartbeatConfig.from_env(
+            connector_type="telegram_bot",
+            endpoint_identity=self._config.endpoint_identity,
+            version=None,  # Could be set from env or git sha
+        )
+
+        self._heartbeat = ConnectorHeartbeat(
+            config=heartbeat_config,
+            mcp_client=self._mcp_client,
+            metrics=self._metrics,
+            get_health_state=self._get_health_state,
+            get_checkpoint=self._get_checkpoint,
+        )
+
+        self._heartbeat.start()
+
+    def _get_health_state(self) -> tuple[str, str | None]:
+        """Determine current health state for heartbeat.
+
+        Returns:
+            Tuple of (state, error_message) where state is one of:
+            "healthy", "degraded", "error"
+        """
+        if self._source_api_ok is False:
+            error_msg = "Telegram API unreachable or authentication failed"
+            if self._consecutive_failures > 0:
+                error_msg += f" (consecutive_failures={self._consecutive_failures})"
+            return ("error", error_msg)
+
+        if self._consecutive_failures > 0:
+            return (
+                "degraded",
+                f"Polling recovering after {self._consecutive_failures} consecutive failure(s)",
+            )
+
+        return ("healthy", None)
+
+    def _get_checkpoint(self) -> tuple[str | None, datetime | None]:
+        """Get current checkpoint state for heartbeat.
+
+        Returns:
+            Tuple of (cursor_json, updated_at) — cursor_json matches the
+            format written by ``_save_checkpoint`` so the heartbeat UPSERT
+            does not corrupt the cursor for ``_load_checkpoint``.
+        """
+        if self._last_update_id is None:
+            return (None, None)
+        cursor = json.dumps({"last_update_id": self._last_update_id})
+        updated_at = (
+            datetime.fromtimestamp(self._last_checkpoint_save, UTC)
+            if self._last_checkpoint_save is not None
+            else None
+        )
+        return (cursor, updated_at)
+
+    async def start_polling(self) -> None:
+        """Start long-polling loop for dev mode.
+
+        Loads checkpoint, polls for updates, normalizes and submits to ingest,
+        persists new checkpoint after successful submission.
+        """
+        if self._cursor_pool is None:
+            raise ValueError("DB cursor pool is required for polling mode")
+
+        # Start health server
+        self._start_health_server()
+
+        # Start heartbeat
+        self._start_heartbeat()
+
+        # Load checkpoint
+        await self._load_checkpoint()
+
+        # Load ingestion policy rules before entering the ingestion loop.
+        await self._ingestion_policy.ensure_loaded()
+        await self._global_ingestion_policy.ensure_loaded()
+
+        # Wait for Switchboard to be ready before entering the poll loop.
+        # Telegram advances the update offset as soon as getUpdates returns —
+        # messages received while the Switchboard is down would be permanently
+        # lost if we started polling immediately.  Block here until the
+        # Switchboard health endpoint responds 200 OK.
+        try:
+            await wait_for_switchboard_ready(self._config.switchboard_mcp_url)
+        except TimeoutError:
+            logger.warning(
+                "Switchboard readiness probe timed out; proceeding anyway. "
+                "Messages may be dropped if Switchboard is still starting.",
+                extra={"endpoint_identity": self._config.endpoint_identity},
+            )
+
+        self._running = True
+        logger.info(
+            "Starting Telegram bot connector in polling mode",
+            extra={
+                "endpoint_identity": self._config.endpoint_identity,
+                "poll_interval_s": self._config.poll_interval_s,
+                "last_update_id": self._last_update_id,
+            },
+        )
+
+        while self._running:
+            try:
+                updates = await self._get_updates()
+                if updates:
+                    logger.info(
+                        "Polled Telegram updates",
+                        extra={
+                            "update_count": len(updates),
+                            "endpoint_identity": self._config.endpoint_identity,
+                        },
+                    )
+
+                    # Process each update
+                    for update in updates:
+                        await self._process_update(update)
+
+                    # Save checkpoint after successful batch
+                    await self._save_checkpoint()
+
+                # Flush filtered event buffer and drain replay-pending rows.
+                await self._flush_and_drain()
+
+                # Successful poll — reset backoff
+                self._consecutive_failures = 0
+                sleep_s = self._config.poll_interval_s
+
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._consecutive_failures += 1
+                logger.exception(
+                    "Error polling Telegram updates",
+                    extra={
+                        "endpoint_identity": self._config.endpoint_identity,
+                        "consecutive_failures": self._consecutive_failures,
+                    },
+                )
+                # Exponential backoff with ±10% jitter, capped at 60s
+                base_backoff = self._config.poll_interval_s * (2**self._consecutive_failures)
+                capped_backoff = min(base_backoff, 60.0)
+                jitter = capped_backoff * 0.1 * (2 * random.random() - 1)
+                sleep_s = capped_backoff + jitter
+
+            await asyncio.sleep(sleep_s)
+
+    async def start_webhook(self) -> None:
+        """Register webhook for prod mode.
+
+        Sets the Telegram webhook URL. Incoming updates should be POSTed to
+        the webhook endpoint and processed via process_webhook_update().
+        """
+        if not self._config.webhook_url:
+            raise ValueError("CONNECTOR_WEBHOOK_URL is required for webhook mode")
+
+        # Start health server
+        self._start_health_server()
+
+        # Start heartbeat
+        self._start_heartbeat()
+
+        # Load ingestion policy rules before registering the webhook.
+        await self._ingestion_policy.ensure_loaded()
+        await self._global_ingestion_policy.ensure_loaded()
+
+        await self._set_webhook(self._config.webhook_url)
+        logger.info(
+            "Registered Telegram webhook",
+            extra={
+                "endpoint_identity": self._config.endpoint_identity,
+                "webhook_url": self._config.webhook_url,
+            },
+        )
+
+    async def process_webhook_update(self, update: dict[str, Any]) -> None:
+        """Process a single webhook update.
+
+        Called by the webhook endpoint handler when Telegram POSTs an update.
+        """
+        await self._process_update(update)
+
+    async def stop(self) -> None:
+        """Stop the connector gracefully."""
+        self._running = False
+
+        # Stop heartbeat
+        if self._heartbeat is not None:
+            await self._heartbeat.stop()
+
+        await self._mcp_client.aclose()
+        await self._http_client.aclose()
+
+    # -------------------------------------------------------------------------
+    # Internal: Telegram API calls
+    # -------------------------------------------------------------------------
+
+    async def _get_updates(self) -> list[dict[str, Any]]:
+        """Call Telegram getUpdates API and return new updates."""
+        url = f"{self._telegram_api_base}/getUpdates"
+        params: dict[str, Any] = {"timeout": 0}
+        if self._last_update_id is not None:
+            params["offset"] = self._last_update_id + 1
+
+        try:
+            resp = await self._http_client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            updates: list[dict[str, Any]] = data.get("result", [])
+
+            if updates:
+                self._last_update_id = updates[-1]["update_id"]
+
+            # Mark API as connected on success
+            self._source_api_ok = True
+
+            # Record successful API call
+            self._metrics.record_source_api_call(api_method="getUpdates", status="success")
+
+            return updates
+        except Exception as exc:
+            # Mark API as disconnected on failure
+            self._source_api_ok = False
+
+            response = exc.response if isinstance(exc, httpx.HTTPStatusError) else None
+            if response is not None:
+                if response.status_code == 409:
+                    description = self._telegram_error_description(response)
+                    conflict_hint = self._describe_get_updates_conflict(response)
+                    self._metrics.record_source_api_call(api_method="getUpdates", status="conflict")
+                    self._metrics.record_error(
+                        error_type=get_error_type(exc), operation="fetch_updates"
+                    )
+                    logger.warning(
+                        "Telegram getUpdates conflict; skipping this poll cycle",
+                        extra={
+                            "endpoint_identity": self._config.endpoint_identity,
+                            "status_code": 409,
+                            "description": description,
+                            "hint": conflict_hint,
+                        },
+                    )
+                    return []
+
+            # Record failed API call
+            is_rate_limited = response is not None and response.status_code == 429
+            status = "rate_limited" if is_rate_limited else "error"
+            self._metrics.record_source_api_call(api_method="getUpdates", status=status)
+            self._metrics.record_error(error_type=get_error_type(exc), operation="fetch_updates")
+
+            if is_rate_limited:
+                retry_after_s = self._telegram_retry_after_seconds(response)
+                logger.warning(
+                    "Telegram getUpdates rate-limited; skipping this poll cycle",
+                    extra={
+                        "endpoint_identity": self._config.endpoint_identity,
+                        "status_code": 429,
+                        "retry_after_s": retry_after_s,
+                    },
+                )
+                if retry_after_s is not None and retry_after_s > 0:
+                    await asyncio.sleep(retry_after_s)
+                return []
+
+            raise
+
+    @staticmethod
+    def _telegram_error_description(response: httpx.Response | None) -> str | None:
+        if response is None:
+            return None
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
+        if isinstance(payload, dict):
+            description = payload.get("description")
+            if isinstance(description, str):
+                description = description.strip()
+                if description:
+                    return description
+        return None
+
+    @staticmethod
+    def _telegram_retry_after_seconds(response: httpx.Response | None) -> float | None:
+        if response is None:
+            return None
+
+        retry_after_header = response.headers.get("Retry-After")
+        if retry_after_header is not None:
+            try:
+                value = float(retry_after_header)
+                if value > 0:
+                    return value
+            except ValueError:
+                pass
+
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+
+        if not isinstance(payload, dict):
+            return None
+
+        parameters = payload.get("parameters")
+        if not isinstance(parameters, dict):
+            return None
+
+        retry_after = parameters.get("retry_after")
+        value: float | None
+        if isinstance(retry_after, (int, float)) and not isinstance(retry_after, bool):
+            value = float(retry_after)
+        elif isinstance(retry_after, str):
+            try:
+                value = float(retry_after)
+            except ValueError:
+                value = None
+        else:
+            value = None
+
+        if value is not None and value > 0:
+            return value
+        return None
+
+    @classmethod
+    def _describe_get_updates_conflict(cls, response: httpx.Response | None) -> str:
+        description = cls._telegram_error_description(response)
+        if description is None:
+            return (
+                "Telegram rejected getUpdates with 409 Conflict. "
+                "Ensure only one poller is active and webhook mode is not enabled for this token."
+            )
+
+        normalized = description.lower()
+        if "webhook" in normalized:
+            return (
+                f"{description} Disable webhook mode for this token "
+                "or switch this connector to webhook ingestion."
+            )
+        if "terminated by other getupdates request" in normalized:
+            return (
+                f"{description} Another consumer is polling with this token; "
+                "ensure only one polling process is active."
+            )
+        return description
+
+    async def _set_webhook(self, webhook_url: str) -> dict[str, Any]:
+        """Call Telegram setWebhook API."""
+        url = f"{self._telegram_api_base}/setWebhook"
+        try:
+            resp = await self._http_client.post(url, json={"url": webhook_url})
+            resp.raise_for_status()
+            data: dict[str, Any] = resp.json()
+
+            # Mark API as connected on success
+            self._source_api_ok = True
+
+            # Record successful API call
+            self._metrics.record_source_api_call(api_method="setWebhook", status="success")
+
+            return data
+        except Exception as exc:
+            # Mark API as disconnected on failure
+            self._source_api_ok = False
+
+            # Record failed API call
+            self._metrics.record_source_api_call(api_method="setWebhook", status="error")
+            self._metrics.record_error(error_type=get_error_type(exc), operation="set_webhook")
+
+            raise
+
+    # -------------------------------------------------------------------------
+    # Internal: Update processing
+    # -------------------------------------------------------------------------
+
+    async def _process_update(self, update: dict[str, Any]) -> None:
+        """Normalize Telegram update to ingest.v1 and submit to Switchboard.
+
+        This is the core transport-only boundary. The connector:
+        1. Extracts relevant fields from Telegram update
+        2. Maps to canonical ingest.v1 contract
+        3. Submits to Switchboard ingest API
+        4. Handles retries and errors
+
+        Updates that produce no usable content (service messages, non-message
+        updates) are silently skipped.
+
+        ``ConnectionError`` is re-raised so the outer polling loop can catch it
+        and retry the entire batch without saving the checkpoint.  Telegram
+        advances the update offset as soon as ``getUpdates`` returns, so the
+        only way to prevent message loss is to not advance our own checkpoint
+        when delivery to Switchboard fails.
+
+        Other exceptions are logged and swallowed — a single malformed update
+        must not block the rest of the batch.
+
+        Does NOT classify or route - that happens downstream.
+        """
+        async with self._semaphore:
+            update_id = str(update.get("update_id", "unknown"))
+            try:
+                envelope = self._normalize_to_ingest_v1(update)
+                if envelope is None:
+                    return  # Nothing to ingest
+
+                # Ingestion policy gate: evaluate before Switchboard submission.
+                # update_id is already advanced by _get_updates, so blocked updates
+                # are intentionally dropped — this is not an error condition.
+                _ip_envelope = self._build_ingestion_envelope(update)
+
+                # 1. Connector-scope rules (block/pass_through)
+                _ip_decision = self._ingestion_policy.evaluate(_ip_envelope)
+                if not _ip_decision.allowed:
+                    logger.debug(
+                        "Ingestion policy blocked Telegram update %s: action=%s reason=%s",
+                        update.get("update_id"),
+                        _ip_decision.action,
+                        _ip_decision.reason,
+                    )
+                    self._filtered_event_buffer.record(
+                        external_message_id=update_id,
+                        source_channel=self._config.channel,
+                        sender_identity=self._extract_sender_identity(update),
+                        subject_or_preview=self._extract_preview(update),
+                        filter_reason=FilteredEventBuffer.reason_policy_rule(
+                            "connector_rule",
+                            "block",
+                            _ip_decision.matched_rule_type or "unknown",
+                        ),
+                        full_payload=FilteredEventBuffer.full_payload(
+                            channel=self._config.channel,
+                            provider=self._config.provider,
+                            endpoint_identity=self._config.endpoint_identity,
+                            external_event_id=update_id,
+                            external_thread_id=self._extract_chat_id(update),
+                            observed_at=datetime.now(UTC).isoformat(),
+                            sender_identity=self._extract_sender_identity(update),
+                            raw=update,
+                        ),
+                    )
+                    return
+
+                # 2. Global-scope rules (skip/metadata_only/route_to/low_priority_queue)
+                _gp_decision = self._global_ingestion_policy.evaluate(_ip_envelope)
+                if _gp_decision.action == "skip":
+                    logger.debug(
+                        "Global ingestion policy skipped Telegram update %s: reason=%s",
+                        update.get("update_id"),
+                        _gp_decision.reason,
+                    )
+                    self._filtered_event_buffer.record(
+                        external_message_id=update_id,
+                        source_channel=self._config.channel,
+                        sender_identity=self._extract_sender_identity(update),
+                        subject_or_preview=self._extract_preview(update),
+                        filter_reason=FilteredEventBuffer.reason_policy_rule(
+                            "global_rule",
+                            "skip",
+                            _gp_decision.matched_rule_type or "unknown",
+                        ),
+                        full_payload=FilteredEventBuffer.full_payload(
+                            channel=self._config.channel,
+                            provider=self._config.provider,
+                            endpoint_identity=self._config.endpoint_identity,
+                            external_event_id=update_id,
+                            external_thread_id=self._extract_chat_id(update),
+                            observed_at=datetime.now(UTC).isoformat(),
+                            sender_identity=self._extract_sender_identity(update),
+                            raw=update,
+                        ),
+                    )
+                    return
+
+                await self._submit_to_ingest(envelope)
+            except ConnectionError:
+                # Switchboard unavailable — propagate so the outer loop
+                # retries with backoff and does NOT save the checkpoint.
+                raise
+            except Exception as exc:
+                logger.exception(
+                    "Failed to process Telegram update",
+                    extra={
+                        "update_id": update.get("update_id"),
+                        "endpoint_identity": self._config.endpoint_identity,
+                    },
+                )
+                # Record error event in the filtered event buffer
+                self._filtered_event_buffer.record(
+                    external_message_id=update_id,
+                    source_channel=self._config.channel,
+                    sender_identity="unknown",
+                    subject_or_preview=None,
+                    filter_reason=FilteredEventBuffer.reason_submission_error(),
+                    full_payload=FilteredEventBuffer.full_payload(
+                        channel=self._config.channel,
+                        provider=self._config.provider,
+                        endpoint_identity=self._config.endpoint_identity,
+                        external_event_id=update_id,
+                        external_thread_id=self._extract_chat_id(update),
+                        observed_at=datetime.now(UTC).isoformat(),
+                        sender_identity="unknown",
+                        raw=update,
+                    ),
+                    status="error",
+                    error_detail=str(exc),
+                )
+
+    @staticmethod
+    def _build_ingestion_envelope(update: dict[str, Any]) -> IngestionEnvelope:
+        """Build an IngestionEnvelope from a Telegram bot update.
+
+        Extracts the chat_id from the update and sets it as raw_key
+        for ingestion policy evaluation.
+        """
+        chat_id = ""
+        for msg_key in ("message", "edited_message", "channel_post"):
+            msg = update.get(msg_key)
+            if isinstance(msg, dict):
+                chat = msg.get("chat")
+                if isinstance(chat, dict) and "id" in chat:
+                    chat_id = str(chat["id"])
+                    break
+        return IngestionEnvelope(
+            source_channel="telegram_bot",
+            raw_key=chat_id,
+        )
+
+    def _normalize_to_ingest_v1(self, update: dict[str, Any]) -> dict[str, Any] | None:
+        """Normalize Telegram update to canonical ingest.v1 format.
+
+        Returns None when the update has no usable content (service messages,
+        non-message updates like callback_query/inline_query).
+
+        Mapping (from docs/connectors/telegram_bot.md):
+        - source.channel: "telegram_bot"
+        - source.provider: "telegram"
+        - source.endpoint_identity: receiving bot identity
+        - event.external_event_id: update_id
+        - event.external_thread_id: chat.id:message_id (fallback: chat.id)
+        - event.observed_at: current timestamp (RFC3339)
+        - sender.identity: message.from.id
+        - payload.raw: full Telegram update JSON
+        - payload.normalized_text: extracted text
+        - control.idempotency_key: tg:<chat_id>:<message_id> (canonical across connectors)
+        """
+        update_id = str(update.get("update_id", "unknown"))
+        chat_id = None
+        sender_id = "unknown"
+
+        # Extract message data (handles message, edited_message, channel_post)
+        msg = None
+        for key in ("message", "edited_message", "channel_post"):
+            if key in update and isinstance(update[key], dict):
+                msg = update[key]
+                break
+
+        # No message object at all → non-message update (callback_query, inline_query, etc.)
+        if msg is None:
+            return None
+
+        # Extract text using tiered strategy
+        normalized_text = _extract_normalized_text(msg)
+
+        # No extractable content → service message (new_chat_members, title changes, etc.)
+        if normalized_text is None:
+            return None
+
+        if "chat" in msg and isinstance(msg["chat"], dict):
+            chat_id = str(msg["chat"].get("id", ""))
+
+        if "from" in msg and isinstance(msg["from"], dict):
+            sender_id = str(msg["from"].get("id", "unknown"))
+
+        message_id = msg.get("message_id")
+
+        # Build thread identity as chat_id:message_id for reply targeting
+        thread_identity = (
+            f"{chat_id}:{message_id}" if chat_id and message_id is not None else chat_id
+        )
+
+        # Canonical idempotency key: tg:<chat_id>:<message_id>
+        # Uses chat_id + message_id (unique per chat) so that bot and user-client
+        # connectors produce the same key for the same Telegram message.
+        idem_key = (
+            f"tg:{chat_id}:{message_id}"
+            if chat_id and message_id is not None
+            else f"telegram:{self._config.endpoint_identity}:{update_id}"
+        )
+
+        # Build ingest.v1 envelope
+        return {
+            "schema_version": "ingest.v1",
+            "source": {
+                "channel": self._config.channel,
+                "provider": self._config.provider,
+                "endpoint_identity": self._config.endpoint_identity,
+            },
+            "event": {
+                "external_event_id": update_id,
+                "external_thread_id": thread_identity,
+                "observed_at": datetime.now(UTC).isoformat(),
+            },
+            "sender": {
+                "identity": sender_id,
+            },
+            "payload": {
+                "raw": update,
+                "normalized_text": normalized_text,
+            },
+            "control": {
+                "idempotency_key": idem_key,
+                "policy_tier": "interactive",
+            },
+        }
+
+    async def _submit_to_ingest(self, envelope: dict[str, Any]) -> None:
+        """Submit ingest.v1 envelope to Switchboard via MCP ingest tool.
+
+        Handles retries and treats accepted duplicates as success.
+        """
+        start_time = time.perf_counter()
+        status = "error"
+
+        try:
+            result = await self._mcp_client.call_tool("ingest", envelope)
+
+            # Check for tool-level error response
+            if isinstance(result, dict) and result.get("status") == "error":
+                error_msg = result.get("error", "Unknown ingest error")
+                raise RuntimeError(f"Ingest tool error: {error_msg}")
+
+            # Record successful ingest submission
+            self._last_ingest_submit = time.time()
+
+            # Determine status for metrics
+            is_duplicate = isinstance(result, dict) and result.get("duplicate", False)
+            status = "duplicate" if is_duplicate else "success"
+
+            logger.info(
+                "Submitted to Switchboard ingest",
+                extra={
+                    "request_id": result.get("request_id") if isinstance(result, dict) else None,
+                    "duplicate": is_duplicate,
+                    "endpoint_identity": self._config.endpoint_identity,
+                    "external_event_id": envelope["event"]["external_event_id"],
+                },
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to submit to Switchboard ingest",
+                extra={
+                    "error": str(exc),
+                    "endpoint_identity": self._config.endpoint_identity,
+                },
+            )
+            self._metrics.record_error(error_type=get_error_type(exc), operation="ingest_submit")
+            raise
+        finally:
+            # Record metrics
+            latency = time.perf_counter() - start_time
+            self._metrics.record_ingest_submission(status=status, latency=latency)
+
+    # -------------------------------------------------------------------------
+    # Internal: FilteredEventBuffer helpers
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_chat_id(update: dict[str, Any]) -> str | None:
+        """Extract chat ID string from a Telegram update, or None if absent."""
+        for msg_key in ("message", "edited_message", "channel_post"):
+            msg = update.get(msg_key)
+            if isinstance(msg, dict):
+                chat = msg.get("chat")
+                if isinstance(chat, dict) and "id" in chat:
+                    return str(chat["id"])
+        return None
+
+    @staticmethod
+    def _extract_sender_identity(update: dict[str, Any]) -> str:
+        """Extract sender identity from a Telegram update."""
+        for msg_key in ("message", "edited_message", "channel_post"):
+            msg = update.get(msg_key)
+            if isinstance(msg, dict):
+                from_field = msg.get("from")
+                if isinstance(from_field, dict) and "id" in from_field:
+                    return str(from_field["id"])
+        return "unknown"
+
+    @staticmethod
+    def _extract_preview(update: dict[str, Any]) -> str | None:
+        """Extract a short text preview from a Telegram update."""
+        for msg_key in ("message", "edited_message", "channel_post"):
+            msg = update.get(msg_key)
+            if isinstance(msg, dict):
+                text = msg.get("text") or msg.get("caption")
+                if text:
+                    return str(text)[:200]
+        return None
+
+    async def _flush_and_drain(self) -> None:
+        """Flush filtered event buffer then drain up to 10 replay-pending rows.
+
+        Called after each poll cycle.  No-op when ``_db_pool`` is None (no DB
+        connectivity at connector startup).
+        """
+        if self._db_pool is None:
+            return
+
+        # 1. Flush accumulated filtered/error events from this cycle.
+        await self._filtered_event_buffer.flush(self._db_pool)
+
+        # 2. Drain replay-pending rows left by the dashboard "retry" action.
+        await self._drain_replay_pending()
+
+    async def _drain_replay_pending(self) -> None:
+        """Process up to 10 replay_pending rows from connectors.filtered_events.
+
+        Delegates to the shared ``drain_replay_pending`` helper in
+        :mod:`butlers.connectors.filtered_event_buffer`.
+        """
+        if self._db_pool is None:
+            return
+
+        await drain_replay_pending(
+            self._db_pool,
+            self._config.provider,
+            self._config.endpoint_identity,
+            self._submit_to_ingest,
+            logger,
+        )
+
+    # -------------------------------------------------------------------------
+    # Internal: Checkpoint persistence
+    # -------------------------------------------------------------------------
+
+    async def _load_checkpoint(self) -> None:
+        """Load polling cursor from DB."""
+        from butlers.connectors.cursor_store import load_cursor
+
+        try:
+            raw = await load_cursor(
+                self._cursor_pool,
+                "telegram_bot",
+                self._config.endpoint_identity,
+            )
+            if raw is not None:
+                data = json.loads(raw)
+                self._last_update_id = data.get("last_update_id")
+                logger.info(
+                    "Loaded checkpoint from DB",
+                    extra={"last_update_id": self._last_update_id},
+                )
+            else:
+                logger.info("No checkpoint in DB, starting from scratch")
+        except Exception:
+            logger.exception("Failed to load checkpoint from DB, starting from scratch")
+
+    async def _save_checkpoint(self) -> None:
+        """Persist polling cursor to DB."""
+        try:
+            from butlers.connectors.cursor_store import save_cursor
+
+            await save_cursor(
+                self._cursor_pool,
+                "telegram_bot",
+                self._config.endpoint_identity,
+                json.dumps({"last_update_id": self._last_update_id}),
+            )
+            self._last_checkpoint_save = time.time()
+            self._metrics.record_checkpoint_save(status="success")
+            logger.debug(
+                "Saved checkpoint to DB",
+                extra={"last_update_id": self._last_update_id},
+            )
+        except Exception as exc:
+            self._metrics.record_checkpoint_save(status="error")
+            self._metrics.record_error(error_type=get_error_type(exc), operation="checkpoint_save")
+            logger.exception("Failed to save checkpoint to DB")
+
+
+async def _resolve_telegram_bot_token_from_db() -> str | None:
+    """Attempt DB-first credential resolution for the Telegram bot connector.
+
+    Creates a short-lived asyncpg pool, resolves ``BUTLER_TELEGRAM_TOKEN``
+    from the ``butler_secrets`` table via :class:`~butlers.credential_store.CredentialStore`,
+    and closes the pool before returning.
+
+    Returns ``None`` if:
+    - No DB connection parameters are configured (env vars absent).
+    - The DB is reachable but the secret has not been stored yet.
+
+    In both cases the caller should fall back to env-var resolution.
+    """
+    import asyncpg
+
+    db_params = db_params_from_env()
+    local_db_name = os.environ.get("CONNECTOR_BUTLER_DB_NAME", "").strip()
+    shared_db_name = shared_db_name_from_env()
+    candidate_db_names: list[str] = []
+    for name in [local_db_name, shared_db_name]:
+        if name and name not in candidate_db_names:
+            candidate_db_names.append(name)
+
+    connected_pools: list[tuple[str, asyncpg.Pool]] = []
+    for db_name in candidate_db_names:
+        try:
+            pool = await asyncpg.create_pool(
+                host=db_params["host"],
+                port=db_params["port"],
+                user=db_params["user"],
+                password=db_params["password"],
+                database=db_name,
+                ssl=db_params.get("ssl"),  # type: ignore[arg-type]
+                min_size=1,
+                max_size=2,
+                command_timeout=5,
+                server_settings={"search_path": "public"},
+            )
+            connected_pools.append((db_name, pool))
+        except Exception as exc:
+            logger.debug(
+                "DB connection failed during Telegram bot credential resolution "
+                "(db=%s, non-fatal): %s",
+                db_name,
+                exc,
+            )
+
+    if not connected_pools:
+        return None
+
+    primary_db_name, primary_pool = connected_pools[0]
+    fallback_pools = [pool for _, pool in connected_pools[1:]]
+    store = CredentialStore(primary_pool, fallback_pools=fallback_pools)
+
+    try:
+        token = await store.resolve("BUTLER_TELEGRAM_TOKEN", env_fallback=False)
+        if token:
+            logger.info(
+                "Telegram bot connector: resolved BUTLER_TELEGRAM_TOKEN from layered DB lookup "
+                "(primary_db=%s, fallbacks=%d)",
+                primary_db_name,
+                len(fallback_pools),
+            )
+        return token
+    except Exception as exc:
+        logger.debug("Telegram bot connector: DB credential lookup failed (non-fatal): %s", exc)
+        return None
+    finally:
+        for _, pool in connected_pools:
+            await pool.close()
+
+
+async def resolve_telegram_endpoint_identity(token: str) -> str:
+    """Resolve the bot identity from the Telegram Bot API via ``getMe``.
+
+    Returns ``telegram:bot:@<username>`` (or ``telegram:bot:@<first_name>``
+    if the bot has no username set).
+
+    Raises:
+        RuntimeError: If the API call fails or returns no usable identity.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"https://api.telegram.org/bot{token}/getMe",
+            )
+            response.raise_for_status()
+            data = response.json()
+            if data.get("ok"):
+                result = data.get("result", {})
+                username = result.get("username") or result.get("first_name", "")
+                if username:
+                    identity = f"telegram:bot:@{username}"
+                    logger.info(
+                        "Telegram bot connector: resolved endpoint_identity=%s",
+                        identity,
+                    )
+                    return identity
+            raise RuntimeError("Telegram bot connector: getMe response missing username/first_name")
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(
+            f"Telegram bot connector: failed to resolve endpoint identity: {exc}"
+        ) from exc
+
+
+async def run_telegram_bot_connector() -> None:
+    """CLI entry point for running Telegram bot connector.
+
+    Credential resolution order:
+    1. Database (butler_secrets table via CredentialStore).
+    2. Environment variable BUTLER_TELEGRAM_TOKEN (backward-compatible fallback).
+    """
+    configure_logging(level="INFO", butler_name="telegram-bot")
+
+    # Step 1: Load config from env (token may be None).
+    config = TelegramBotConnectorConfig.from_env()
+
+    # Step 2: DB-first credential resolution.
+    if os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_HOST"):
+        db_token = await _resolve_telegram_bot_token_from_db()
+        if db_token:
+            config = replace(config, telegram_token=db_token)
+
+    # Step 3: Validate we have a token from either source.
+    if not config.telegram_token:
+        raise ValueError(
+            "Telegram bot token not found. Store it via the dashboard Secrets page "
+            "(key: BUTLER_TELEGRAM_TOKEN) or set the BUTLER_TELEGRAM_TOKEN env var."
+        )
+
+    # Step 4: Auto-resolve endpoint_identity from the authenticated bot account.
+    resolved_identity = await resolve_telegram_endpoint_identity(token=config.telegram_token)
+    config = replace(config, endpoint_identity=resolved_identity)
+
+    # Create cursor pool for DB-backed checkpoint persistence.
+    from butlers.connectors.cursor_store import create_cursor_pool_from_env
+
+    cursor_pool = await create_cursor_pool_from_env()
+    logger.info("Telegram bot connector: cursor pool created for DB-backed checkpoints")
+
+    connector = TelegramBotConnector(config, db_pool=cursor_pool, cursor_pool=cursor_pool)
+
+    # Determine mode based on config
+    try:
+        if config.webhook_url:
+            logger.info("Running in webhook mode")
+            await connector.start_webhook()
+        else:
+            logger.info("Running in polling mode")
+            try:
+                await connector.start_polling()
+            except KeyboardInterrupt:
+                logger.info("Received interrupt, stopping connector")
+            finally:
+                await connector.stop()
+    finally:
+        if cursor_pool is not None:
+            await cursor_pool.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(run_telegram_bot_connector())

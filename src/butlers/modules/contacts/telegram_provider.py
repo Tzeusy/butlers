@@ -1,0 +1,293 @@
+"""Telegram contacts sync provider via Telethon.
+
+Implements ContactsProvider for syncing contacts from the user's Telegram
+account. Both full_sync and incremental_sync fetch the full contact list.
+A hash-based cursor tracks whether the overall list has changed.  Per-contact
+deduplication is handled by the sync engine's version hashing.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from typing import Any
+
+from .sync import (
+    CanonicalContact,
+    ContactBatch,
+    ContactPhone,
+    ContactsProvider,
+    ContactsTokenRefreshError,
+    ContactUsername,
+    GroupBatch,
+)
+
+# Telethon is an optional dependency — handle import gracefully
+try:
+    from telethon import TelegramClient
+    from telethon.sessions import StringSession
+    from telethon.tl.functions.contacts import GetContactsRequest
+    from telethon.tl.types import User
+
+    TELETHON_AVAILABLE = True
+except ImportError:
+    TELETHON_AVAILABLE = False
+    TelegramClient = None  # type: ignore[assignment,misc]
+    StringSession = None  # type: ignore[assignment,misc]
+    GetContactsRequest = None  # type: ignore[assignment,misc]
+    User = None  # type: ignore[assignment,misc]
+
+logger = logging.getLogger(__name__)
+
+
+def _user_to_canonical(user: Any) -> CanonicalContact | None:
+    """Convert a Telethon User to a CanonicalContact.
+
+    Returns None for bots, deleted accounts, and the user themselves (is_self).
+    """
+    if user is None:
+        return None
+    if getattr(user, "bot", False) or getattr(user, "deleted", False):
+        return None
+    if getattr(user, "is_self", False):
+        return None
+
+    user_id = str(user.id)
+    first_name = getattr(user, "first_name", None) or None
+    last_name = getattr(user, "last_name", None) or None
+    username = getattr(user, "username", None) or None
+    phone = getattr(user, "phone", None) or None
+
+    # Build display name
+    name_parts = [p for p in [first_name, last_name] if p]
+    display_name = " ".join(name_parts).strip() or username or user_id
+
+    phones: list[ContactPhone] = []
+    if phone:
+        # Telegram stores phone numbers without '+' prefix
+        normalized = f"+{phone}" if not phone.startswith("+") else phone
+        phones.append(ContactPhone(value=normalized, label="mobile", primary=True))
+
+    usernames: list[ContactUsername] = []
+    if username:
+        usernames.append(ContactUsername(value=username, service="telegram"))
+
+    # Build raw payload for hash-based versioning (no etag from Telegram)
+    raw: dict[str, Any] = {
+        "telegram_user_id": user_id,
+        "first_name": first_name,
+        "last_name": last_name,
+        "username": username,
+        "phone": phone,
+    }
+
+    return CanonicalContact(
+        external_id=f"telegram:{user_id}",
+        display_name=display_name,
+        first_name=first_name,
+        last_name=last_name,
+        phones=phones,
+        usernames=usernames,
+        raw=raw,
+    )
+
+
+class TelegramContactsProvider(ContactsProvider):
+    """Telegram contacts provider using Telethon user-client API.
+
+    Fetches the user's Telegram contact list via the raw Telethon request
+    ``GetContactsRequest(hash=0)``, which returns a ``Contacts`` object
+    whose ``.users`` list contains the actual ``User`` objects.
+
+    Uses hash-based cursor: both full_sync and incremental_sync compute a hash
+    of the contact list and return it as the cursor.  The full contact list is
+    always returned so the sync engine can report accurate fetched/skipped counts.
+
+    Chat ID enrichment (resolving private chat IDs for each contact) is done
+    as a post-sync step by iterating dialogs.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_id: int,
+        api_hash: str,
+        session_string: str,
+    ) -> None:
+        if not TELETHON_AVAILABLE:
+            raise RuntimeError("Telethon is not installed. Install with: uv pip install telethon")
+        self._api_id = api_id
+        self._api_hash = api_hash
+        self._session_string = session_string
+        self._client: TelegramClient | None = None
+
+    @property
+    def name(self) -> str:
+        return "telegram"
+
+    async def _ensure_client(self) -> TelegramClient:
+        """Create and connect the Telethon client if not already connected."""
+        if self._client is not None and self._client.is_connected():
+            return self._client
+
+        session = StringSession(self._session_string)
+        self._client = TelegramClient(session, self._api_id, self._api_hash)
+        await self._client.connect()
+
+        if not await self._client.is_user_authorized():
+            raise ContactsTokenRefreshError(
+                "Telegram session is not authorized. "
+                "Re-authenticate via the dashboard to generate a new session string."
+            )
+
+        return self._client
+
+    async def full_sync(self, *, account_id: str, page_token: str | None = None) -> ContactBatch:
+        """Fetch all Telegram contacts.
+
+        Telegram returns the full contact list in one call (no pagination).
+        A hash-based cursor is returned so incremental_sync can detect changes.
+        """
+        del page_token  # Telegram doesn't paginate contacts
+
+        client = await self._ensure_client()
+        result = await client(GetContactsRequest(hash=0))
+
+        contacts: list[CanonicalContact] = []
+        for user in result.users:
+            canonical = _user_to_canonical(user)
+            if canonical is not None:
+                contacts.append(canonical)
+
+        cursor = _compute_contacts_hash(contacts)
+
+        logger.info(
+            "Telegram full_sync: fetched %d contacts (account=%s)",
+            len(contacts),
+            account_id,
+        )
+
+        return ContactBatch(
+            contacts=contacts,
+            next_page_token=None,
+            next_sync_cursor=cursor,
+        )
+
+    async def incremental_sync(
+        self,
+        *,
+        account_id: str,
+        cursor: str,
+        page_token: str | None = None,
+    ) -> ContactBatch:
+        """Fetch contacts and return the full list for per-contact dedup.
+
+        Always returns all contacts so the sync engine can report accurate
+        ``fetched`` / ``skipped`` counts.  Per-contact version hashing in
+        ``_apply_changes`` handles deduplication efficiently.
+        """
+        del page_token  # Telegram doesn't paginate contacts
+
+        client = await self._ensure_client()
+        result = await client(GetContactsRequest(hash=0))
+
+        contacts: list[CanonicalContact] = []
+        for user in result.users:
+            canonical = _user_to_canonical(user)
+            if canonical is not None:
+                contacts.append(canonical)
+
+        new_cursor = _compute_contacts_hash(contacts)
+
+        if new_cursor == cursor:
+            logger.info(
+                "Telegram incremental_sync: %d contacts fetched, no changes (account=%s)",
+                len(contacts),
+                account_id,
+            )
+        else:
+            logger.info(
+                "Telegram incremental_sync: %d contacts fetched, changes detected (account=%s)",
+                len(contacts),
+                account_id,
+            )
+
+        return ContactBatch(
+            contacts=contacts,
+            next_page_token=None,
+            next_sync_cursor=new_cursor,
+        )
+
+    async def validate_credentials(self) -> None:
+        """Verify Telegram session credentials are valid.
+
+        Connects to Telegram and checks authorization status.
+        """
+        client = await self._ensure_client()
+        me = await client.get_me()
+        if me is None:
+            raise ContactsTokenRefreshError("Telegram session returned no user identity")
+        logger.debug("Telegram credentials validated: user_id=%s", me.id)
+
+    async def list_groups(
+        self,
+        *,
+        account_id: str,
+        page_token: str | None = None,
+    ) -> GroupBatch:
+        """Telegram contacts don't have groups/labels. Return empty batch."""
+        del account_id, page_token
+        return GroupBatch(groups=[])
+
+    async def shutdown(self) -> None:
+        """Disconnect the Telethon client."""
+        if self._client is not None:
+            try:
+                await self._client.disconnect()
+            except Exception:
+                logger.debug("Error disconnecting Telegram client", exc_info=True)
+            self._client = None
+
+    async def enrich_chat_ids(self, pool: Any) -> dict[int, int]:
+        """Post-sync enrichment: resolve private chat IDs from dialogs.
+
+        Iterates the user's dialogs and matches by user_id to find the
+        private chat_id for each contact. Returns a mapping of
+        {user_id: chat_id} for contacts that have private chats.
+
+        This should be called after sync to populate telegram_chat_id entries
+        in public.contact_info.
+        """
+        client = await self._ensure_client()
+        user_to_chat: dict[int, int] = {}
+
+        async for dialog in client.iter_dialogs():
+            entity = dialog.entity
+            if entity is None:
+                continue
+            # Only match private user chats (not groups/channels)
+            if not getattr(entity, "is_self", False) and hasattr(entity, "id"):
+                is_user = not getattr(entity, "megagroup", False) and not getattr(
+                    entity, "broadcast", False
+                )
+                if is_user and not getattr(entity, "bot", False):
+                    user_to_chat[entity.id] = dialog.id
+
+        return user_to_chat
+
+
+def _compute_contacts_hash(contacts: list[CanonicalContact]) -> str:
+    """Compute a stable hash over the sorted contact list.
+
+    Used as a sync cursor so that incremental_sync can short-circuit when the
+    contact list hasn't changed since the last sync.
+    """
+    # Sort by external_id for determinism, then serialize each contact's raw payload
+    sorted_contacts = sorted(contacts, key=lambda c: c.external_id)
+    payloads = [
+        json.dumps(c.raw if c.raw is not None else {"id": c.external_id}, sort_keys=True)
+        for c in sorted_contacts
+    ]
+    digest = hashlib.sha256("\n".join(payloads).encode("utf-8")).hexdigest()
+    return f"telegram:hash:{digest}"
