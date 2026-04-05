@@ -1,4 +1,7 @@
-"""Tests for memory migration chain registration in the daemon migration runner."""
+"""Tests for migration chain registration in the daemon migration runner.
+
+Covers memory module chain and relationship butler migration chain integrity.
+"""
 
 from __future__ import annotations
 
@@ -16,13 +19,19 @@ _MIGRATIONS_PATH = (
     Path(__file__).resolve().parent.parent.parent / "src" / "butlers" / "migrations.py"
 )
 
+ROSTER_DIR = Path(__file__).resolve().parent.parent.parent / "roster"
 
-def _load_migrations_module():
-    spec = importlib.util.spec_from_file_location("butlers.migrations", _MIGRATIONS_PATH)
+
+def _load_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _load_migrations_module():
+    return _load_module(_MIGRATIONS_PATH, "butlers.migrations")
 
 
 _mod = _load_migrations_module()
@@ -36,6 +45,7 @@ has_butler_chain = _mod.has_butler_chain
 # ---------------------------------------------------------------------------
 MODULES_DIR = Path(__file__).resolve().parent.parent.parent / "src" / "butlers" / "modules"
 MEMORY_MIGRATIONS_DIR = MODULES_DIR / "memory" / "migrations"
+RELATIONSHIP_MIGRATIONS_DIR = ROSTER_DIR / "relationship" / "migrations"
 
 
 class TestMemoryChainRegistration:
@@ -55,8 +65,8 @@ class TestMemoryChainRegistration:
                 "Shared chains should appear before non-shared chains"
             )
 
-    def test_memory_chain_dir(self) -> None:
-        """_resolve_chain_dir('memory') returns a valid directory with correct migration files."""
+    def test_memory_chain_dir_and_files(self) -> None:
+        """_resolve_chain_dir('memory') is valid dir with expected migrations; has_butler_chain False."""
         chain_dir = _resolve_chain_dir("memory")
         assert chain_dir is not None
         assert chain_dir.is_dir()
@@ -68,58 +78,43 @@ class TestMemoryChainRegistration:
             "002_seed_predicates.py",
         ], f"Unexpected migration files: {migration_files}"
 
-    def test_has_butler_chain(self) -> None:
-        """has_butler_chain returns False for module-owned and nonexistent butlers."""
         assert has_butler_chain("memory") is False
         assert has_butler_chain("nonexistent_butler_xyz") is False
 
+    def test_memory_migration_chain_metadata_and_structure(self) -> None:
+        """Files exist; revision/down_revision/branch_labels correct; linear chain; no duplicates."""
+        _EXPECTED_CHAIN = [
+            ("001_memory_schema.py", "mem_001", None),
+            ("002_seed_predicates.py", "mem_002", "mem_001"),
+        ]
 
-class TestBaselineRevisionChain:
-    """Validate the single baseline revision chain for memory."""
-
-    EXPECTED_CHAIN = [
-        ("001_memory_schema.py", "mem_001", None),
-        ("002_seed_predicates.py", "mem_002", "mem_001"),
-    ]
-
-    @staticmethod
-    def _load_migration(filename: str):
-        """Load a migration module by filename from the memory migrations dir."""
-        filepath = MEMORY_MIGRATIONS_DIR / filename
-        spec = importlib.util.spec_from_file_location(filename.removesuffix(".py"), filepath)
-        assert spec is not None and spec.loader is not None
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
-
-    def test_migration_files_and_metadata(self) -> None:
-        """Files exist; revision/down_revision correct; branch_label on root; no depends_on."""
-        for filename, expected_rev, expected_down_rev in self.EXPECTED_CHAIN:
+        def _load_migration(filename: str):
             filepath = MEMORY_MIGRATIONS_DIR / filename
-            assert filepath.exists(), f"Missing migration: {filepath}"
-            mod = self._load_migration(filename)
+            spec = importlib.util.spec_from_file_location(filename.removesuffix(".py"), filepath)
+            assert spec is not None and spec.loader is not None
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+
+        revisions = []
+        chain_map = {}
+        for filename, expected_rev, expected_down_rev in _EXPECTED_CHAIN:
+            assert (MEMORY_MIGRATIONS_DIR / filename).exists(), f"Missing migration: {filename}"
+            mod = _load_migration(filename)
             assert mod.revision == expected_rev
             assert mod.down_revision == expected_down_rev
             assert mod.depends_on is None
             assert callable(getattr(mod, "upgrade", None))
             assert callable(getattr(mod, "downgrade", None))
-
-        # Branch label on root
-        root_filename, _, _ = self.EXPECTED_CHAIN[0]
-        root = self._load_migration(root_filename)
-        assert root.branch_labels == ("memory",)
-
-    def test_revision_chain_structure(self) -> None:
-        """No duplicate revisions; chain is linear mem_001 -> mem_002."""
-        revisions = []
-        chain_map = {}
-        for filename, _, _ in self.EXPECTED_CHAIN:
-            mod = self._load_migration(filename)
             revisions.append(mod.revision)
             chain_map[mod.revision] = mod.down_revision
 
-        assert len(revisions) == len(set(revisions)), f"Duplicate revisions: {revisions}"
+        # Branch label on root
+        root = _load_migration(_EXPECTED_CHAIN[0][0])
+        assert root.branch_labels == ("memory",)
 
+        # Linear chain, no duplicates
+        assert len(revisions) == len(set(revisions)), f"Duplicate revisions: {revisions}"
         current = "mem_002"
         path = [current]
         while chain_map.get(current) is not None:
@@ -127,3 +122,50 @@ class TestBaselineRevisionChain:
             path.append(current)
         path.reverse()
         assert path == ["mem_001", "mem_002"]
+
+
+class TestRelationshipChainRegistration:
+    """Migration chain integrity for the relationship butler."""
+
+    _EXPECTED_CHAIN = [
+        ("001_relationship_tables.py", "rel_001", None),
+        ("002_align_contacts_schema.py", "rel_002", "rel_001"),
+    ]
+
+    @classmethod
+    def _load_migration(cls, filename: str):
+        return _load_module(RELATIONSHIP_MIGRATIONS_DIR / filename, filename.removesuffix(".py"))
+
+    def test_relationship_chain_structure_and_metadata(self) -> None:
+        """Directory resolves correctly; 002 file is canonical; revisions/labels correct; linear."""
+        # Directory resolves
+        chain_dir = _mod._resolve_chain_dir("relationship")
+        assert chain_dir == RELATIONSHIP_MIGRATIONS_DIR
+
+        # 002 file canonical
+        files_002 = sorted(p.name for p in RELATIONSHIP_MIGRATIONS_DIR.glob("002_*.py"))
+        assert files_002 == ["002_align_contacts_schema.py"]
+
+        # Revision/down_revision/branch_labels
+        revisions = []
+        chain_map = {}
+        for filename, expected_revision, expected_down_revision in self._EXPECTED_CHAIN:
+            migration = self._load_migration(filename)
+            assert migration.revision == expected_revision
+            assert migration.down_revision == expected_down_revision
+            if expected_revision == "rel_001":
+                assert migration.branch_labels == ("relationship",)
+            else:
+                assert migration.branch_labels is None
+            revisions.append(migration.revision)
+            chain_map[migration.revision] = migration.down_revision
+
+        # Linear, no duplicates
+        assert len(revisions) == len(set(revisions))
+        current = "rel_002"
+        path = [current]
+        while chain_map.get(current) is not None:
+            current = chain_map[current]
+            path.append(current)
+        path.reverse()
+        assert path == ["rel_001", "rel_002"]
