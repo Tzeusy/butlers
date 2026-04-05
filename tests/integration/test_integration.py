@@ -606,7 +606,10 @@ class TestSwitchboardRoutingIntegration:
         assert result == {"result": {"status": "ok"}}
 
         rows = await pool.fetch("SELECT * FROM routing_log WHERE target_butler = 'target-butler'")
-        assert len(rows) == 1 and rows[0]["success"] is True
+        assert len(rows) == 1
+        assert rows[0]["success"] is True
+        assert rows[0]["tool_name"] == "state_get"
+        assert rows[0]["source_butler"] == "switchboard"
 
     async def test_route_unknown_butler_error_and_logs(self, pool):
         """route() returns error dict for unregistered butler and creates failure routing_log."""

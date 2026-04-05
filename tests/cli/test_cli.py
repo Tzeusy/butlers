@@ -119,6 +119,7 @@ class TestInitCommand:
         assert (butler_dir / "AGENTS.md").exists()
         assert (butler_dir / ".agents" / "skills").is_dir()
         assert (butler_dir / ".claude").is_symlink()
+        assert (butler_dir / ".claude").resolve() == (butler_dir / ".agents").resolve()
 
         toml_text = (butler_dir / "butler.toml").read_text()
         assert 'name = "mybot"' in toml_text

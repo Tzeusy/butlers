@@ -156,8 +156,39 @@ class TestInjectExtractAndTraceparent:
 class TestActiveSessionContext:
     """Verify tool_span uses the active session context as parent."""
 
-    def test_tool_span_uses_session_context_and_nested_share_trace(self, otel_provider):
-        """tool_span parents to the session span; sequential tools share trace."""
+    def test_tool_span_uses_session_context_as_parent(self, otel_provider):
+        """tool_span parents to the session span even when the current task's OTel context is empty.
+
+        This simulates cross-MCP-boundary trace propagation: the spawner sets the active
+        session context, detaches from contextvars (simulating a separate HTTP handler task),
+        and tool_span must still parent to the session span via the module-level store.
+        """
+        tracer = trace.get_tracer("test")
+
+        session_span = tracer.start_span("butler.llm_session")
+        session_ctx = trace.set_span_in_context(session_span)
+        token = trace.context_api.attach(session_ctx)
+        set_active_session_context(trace.context_api.get_current())
+
+        # Detach from contextvars to simulate a separate HTTP handler task
+        trace.context_api.detach(token)
+
+        # tool_span should still parent to the session span via the
+        # module-level _active_session_context
+        with tool_span("state_get", butler_name="switchboard"):
+            pass
+
+        session_span.end()
+
+        spans = otel_provider.get_finished_spans()
+        tool = next(s for s in spans if s.name == "butler.tool.state_get")
+        session = next(s for s in spans if s.name == "butler.llm_session")
+
+        assert tool.context.trace_id == session.context.trace_id
+        assert tool.parent.span_id == session.context.span_id
+
+    def test_nested_tool_spans_share_trace_id(self, otel_provider):
+        """Sequential tool calls both parent to the same session span."""
         tracer = trace.get_tracer("test")
 
         session_span = tracer.start_span("butler.llm_session")

@@ -209,6 +209,7 @@ async def test_claude_health_probe_authenticated():
     with patch("butlers.cli_auth.registry.shutil.which", return_value="/usr/bin/claude"):
         result = await probe_provider(provider, credential_store=mock_store)
     assert result.state == AuthHealthState.authenticated
+    mock_store.load.assert_awaited_once_with("cli-auth/claude")
 
     # Via env fallback (no store)
     import os

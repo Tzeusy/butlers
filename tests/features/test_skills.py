@@ -152,6 +152,8 @@ def test_get_skills_dir(tmp_path: Path) -> None:
     assert result is not None
     skill_dirs = sorted(p.name for p in result.iterdir() if p.is_dir())
     assert skill_dirs == ["calendar-check", "email-send"]
+    for skill_name in skill_dirs:
+        assert (result / skill_name / "SKILL.md").is_file()
 
 
 # ---------------------------------------------------------------------------

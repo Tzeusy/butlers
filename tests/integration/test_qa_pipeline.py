@@ -621,16 +621,25 @@ class TestSandboxEnforcement:
         """Strips BUTLERS_*, DATABASE_*, PG*, ANTHROPIC_* vars; preserves PATH/HOME/UV_CACHE_DIR."""
         monkeypatch.setenv("BUTLERS_DB_URL", "postgres://secret")
         monkeypatch.setenv("BUTLERS_SECRET_KEY", "topsecret")
+        monkeypatch.setenv("BUTLERS_EMAIL_PASSWORD", "pass123")
+        monkeypatch.setenv("BUTLERS_API_KEY", "key-abc")
         monkeypatch.setenv("DATABASE_URL", "postgres://host/db")
         monkeypatch.setenv("PGPASSWORD", "dbpass")
+        monkeypatch.setenv("PGHOST", "localhost")
+        monkeypatch.setenv("PGUSER", "admin")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+        monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "auth-token")
         monkeypatch.setenv("PATH", "/usr/bin:/usr/local/bin")
         monkeypatch.setenv("HOME", "/home/user")
         monkeypatch.setenv("UV_CACHE_DIR", "/tmp/uv-cache")
 
         env = build_sandbox_env(None)
 
-        for key in ("BUTLERS_DB_URL", "BUTLERS_SECRET_KEY", "DATABASE_URL", "PGPASSWORD", "ANTHROPIC_API_KEY"):
+        for key in (
+            "BUTLERS_DB_URL", "BUTLERS_SECRET_KEY", "BUTLERS_EMAIL_PASSWORD", "BUTLERS_API_KEY",
+            "DATABASE_URL", "PGPASSWORD", "PGHOST", "PGUSER",
+            "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+        ):
             assert key not in env, f"{key} should be stripped from sandbox env"
         for key in ("PATH", "HOME", "UV_CACHE_DIR"):
             assert key in env, f"{key} should be preserved in sandbox env"

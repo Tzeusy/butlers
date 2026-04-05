@@ -207,6 +207,7 @@ class TestMailboxCRUD:
         # Pagination
         for i in range(3):
             await mod._mailbox_post(mailbox_pool, f"p{i}", "mcp", f"page-{i}")
+            await asyncio.sleep(0.01)
         page1 = await mod._mailbox_list(mailbox_pool, limit=2, offset=0)
         page2 = await mod._mailbox_list(mailbox_pool, limit=2, offset=2)
         assert {m["id"] for m in page1}.isdisjoint({m["id"] for m in page2})

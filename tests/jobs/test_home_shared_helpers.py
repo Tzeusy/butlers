@@ -69,7 +69,7 @@ class _FakeRecord:
 
 
 async def test_home_job_context_create():
-    """create() populates credentials from contact info; returns None when absent."""
+    """create() populates credentials from contact info; credentials are None when absent."""
     pool = _make_pool()
 
     async def _resolve(pool: Any, info_type: str) -> str | None:

@@ -321,6 +321,11 @@ class TestMailboxPostAndRead:
         msg_id = uuid.UUID(result["id"])
         row = await pool.fetchrow("SELECT * FROM mailbox WHERE id = $1", msg_id)
         assert row["sender"] == "butler-b" and row["priority"] == 5 and row["status"] == "unread"
+        meta = row["metadata"]
+        if isinstance(meta, str):
+            import json
+            meta = json.loads(meta)
+        assert meta == {"tag": "urgent"}
 
         # Minimal defaults
         r2 = await mailbox._post(sender="x", sender_channel="api", body="minimal")
