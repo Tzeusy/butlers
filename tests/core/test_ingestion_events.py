@@ -154,10 +154,16 @@ class _FakeDatabaseManager:
 
 
 class TestUnionColumnSpec:
-    def test_ingested_cols_exact_content(self) -> None:
-        from butlers.core.ingestion_events import _INGESTED_COLS
+    def test_column_spec_contract(self) -> None:
+        """Column strings exact; ingested+filtered same count as spec; no duplicate aliases."""
+        from butlers.core.ingestion_events import (
+            _EVENT_COLUMNS,
+            _FILTERED_COLS,
+            _INGESTED_COLS,
+            _UNION_COLUMN_SPEC,
+        )
 
-        expected = (
+        assert _INGESTED_COLS == (
             "id, received_at, source_channel, source_provider, "
             "source_endpoint_identity, source_sender_identity, "
             "source_thread_identity, external_event_id, dedupe_key, "
@@ -167,12 +173,7 @@ class TestUnionColumnSpec:
             "NULL::text AS filter_reason, "
             "error_detail"
         )
-        assert _INGESTED_COLS == expected
-
-    def test_filtered_cols_exact_content(self) -> None:
-        from butlers.core.ingestion_events import _FILTERED_COLS
-
-        expected = (
+        assert _FILTERED_COLS == (
             "id, received_at, source_channel, "
             "NULL::text AS source_provider, "
             "endpoint_identity AS source_endpoint_identity, "
@@ -184,12 +185,7 @@ class TestUnionColumnSpec:
             "NULL::text AS triage_decision, NULL::text AS triage_target, "
             "status, filter_reason, error_detail"
         )
-        assert _FILTERED_COLS == expected
-
-    def test_event_columns_exact_content(self) -> None:
-        from butlers.core.ingestion_events import _EVENT_COLUMNS
-
-        expected = (
+        assert _EVENT_COLUMNS == (
             "id, received_at, source_channel, source_provider, "
             "source_endpoint_identity, source_sender_identity, "
             "source_thread_identity, external_event_id, dedupe_key, "
@@ -197,17 +193,10 @@ class TestUnionColumnSpec:
             "triage_decision, triage_target, "
             "status, error_detail"
         )
-        assert _EVENT_COLUMNS == expected
-
-    def test_ingested_and_filtered_have_same_column_count(self) -> None:
-        from butlers.core.ingestion_events import _FILTERED_COLS, _INGESTED_COLS, _UNION_COLUMN_SPEC
 
         n = len(_UNION_COLUMN_SPEC)
         assert len(_INGESTED_COLS.split(",")) == n
         assert len(_FILTERED_COLS.split(",")) == n
-
-    def test_spec_has_no_duplicate_aliases(self) -> None:
-        from butlers.core.ingestion_events import _UNION_COLUMN_SPEC
 
         aliases = [alias for alias, _, _ in _UNION_COLUMN_SPEC]
         assert len(aliases) == len(set(aliases))
