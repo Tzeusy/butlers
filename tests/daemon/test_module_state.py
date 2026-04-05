@@ -399,60 +399,52 @@ async def test_get_module_states_behavior(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_set_module_enabled_lifecycle(tmp_path: Path) -> None:
-    """Disable/enable cycle; persists to store; idempotent double-disable."""
+async def test_set_module_enabled_lifecycle_and_errors(tmp_path: Path) -> None:
+    """Disable/enable cycle; persists to store; idempotent; unknown/failed modules raise."""
+    # Lifecycle: disable → re-enable → idempotent double-disable
     store: dict = {}
-    butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
+    (tmp_path / "a").mkdir()
+    butler_dir = _make_butler_toml(tmp_path / "a", modules={"stub_a": {}})
     registry = _make_registry(StubModuleA)
     daemon = await _start_daemon(butler_dir, registry=registry, state_store=store)
 
-    # Disable
     assert await daemon.set_module_enabled("stub_a", False) is True
     assert daemon.get_module_states()["stub_a"].enabled is False
     assert store.get("module::stub_a::enabled") is False
     assert store.get("module::stub_a::disabled_by") == "user"
 
-    # Re-enable
     assert await daemon.set_module_enabled("stub_a", True) is True
     assert daemon.get_module_states()["stub_a"].enabled is True
     assert store.get("module::stub_a::enabled") is True
     assert store.get("module::stub_a::disabled_by") is None
 
-    # Idempotent double-disable
     await daemon.set_module_enabled("stub_a", False)
     assert await daemon.set_module_enabled("stub_a", False) is True
 
-    # Key format uses module:: prefix
     enabled_key = f"{_MODULE_ENABLED_KEY_PREFIX}stub_a{_MODULE_ENABLED_KEY_SUFFIX}"
     disabled_by_key = f"{_MODULE_ENABLED_KEY_PREFIX}stub_a{_MODULE_DISABLED_BY_KEY_SUFFIX}"
-    assert enabled_key in store
-    assert disabled_by_key in store
+    assert enabled_key in store and disabled_by_key in store
 
-
-async def test_set_module_enabled_error_cases(tmp_path: Path) -> None:
-    """Unknown/failed/cascade_failed modules raise ValueError."""
-    butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
-
+    # Error cases: unknown/failed/cascade_failed raise ValueError
     class FailingModuleA(StubModuleA):
         async def on_startup(
             self, config: Any, db: Any, credential_store: Any = None, blob_store: Any = None
         ) -> None:
             raise RuntimeError("startup failed")
 
-    registry = _make_registry(FailingModuleA)
-    daemon = await _start_daemon(butler_dir, registry=registry, state_store={})
+    (tmp_path / "b").mkdir()
+    butler_dir2 = _make_butler_toml(tmp_path / "b", modules={"stub_a": {}})
+    registry2 = _make_registry(FailingModuleA)
+    daemon2 = await _start_daemon(butler_dir2, registry=registry2, state_store={})
 
-    # Unknown module
     with pytest.raises(ValueError, match="Unknown module"):
-        await daemon.set_module_enabled("nonexistent", True)
+        await daemon2.set_module_enabled("nonexistent", True)
 
-    # Failed module cannot be enabled
     with pytest.raises(ValueError, match="unavailable"):
-        await daemon.set_module_enabled("stub_a", True)
+        await daemon2.set_module_enabled("stub_a", True)
 
-    # Cascade_failed cannot be enabled (injected directly)
-    daemon._module_runtime_states["fake_cascade"] = ModuleRuntimeState(
+    daemon2._module_runtime_states["fake_cascade"] = ModuleRuntimeState(
         health="cascade_failed", enabled=False, failure_phase="dependency"
     )
     with pytest.raises(ValueError, match="unavailable"):
-        await daemon.set_module_enabled("fake_cascade", True)
+        await daemon2.set_module_enabled("fake_cascade", True)

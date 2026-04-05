@@ -45,56 +45,31 @@ class _FakePool:
 # ---------------------------------------------------------------------------
 
 
-async def test_write_insert_behavior() -> None:
-    """write() inserts all fields; optional fields default to None; ttl defaults to 14."""
+async def test_write_insert_fields_and_ttl() -> None:
+    """write() inserts all fields; optional fields default to None; ttl defaults to 14; custom ttl overrides."""
     from butlers.core.session_process_logs import write
-
-    pool = _FakePool()
-    session_id = uuid.uuid4()
 
     # With all fields
-    await write(
-        pool,
-        session_id,
-        pid=42,
-        exit_code=1,
-        command="codex run",
-        stderr="some error",
-        runtime_type="codex",
-    )
+    pool = _FakePool()
+    session_id = uuid.uuid4()
+    await write(pool, session_id, pid=42, exit_code=1, command="codex run", stderr="some error", runtime_type="codex")
     sql, args = pool.execute_calls[0]
     assert "INSERT INTO session_process_logs" in sql
-    assert session_id in args
-    assert 42 in args
-    assert 1 in args
-    assert "codex run" in args
-    assert "some error" in args
-    assert "codex" in args
+    assert session_id in args and 42 in args and 1 in args
+    assert "codex run" in args and "some error" in args and "codex" in args
 
-    # With defaults: None fields, ttl=14
+    # Defaults: None fields, ttl=14
     pool2 = _FakePool()
-    s2 = uuid.uuid4()
-    await write(pool2, s2)
+    await write(pool2, uuid.uuid4())
     _, args2 = pool2.execute_calls[0]
-    assert args2[1] is None  # pid
-    assert args2[2] is None  # exit_code
-    assert args2[3] is None  # command
-    assert args2[4] is None  # stderr
-    assert args2[5] is None  # runtime_type
-    assert args2[-1] == 14   # default ttl_days
+    assert args2[1] is None and args2[2] is None and args2[3] is None
+    assert args2[4] is None and args2[5] is None
+    assert args2[-1] == 14
 
-
-async def test_write_ttl() -> None:
-    """write() defaults ttl_days=14; custom ttl_days overrides."""
-    from butlers.core.session_process_logs import write
-
-    pool = _FakePool()
-    await write(pool, uuid.uuid4())
-    assert pool.execute_calls[0][1][-1] == 14
-
-    pool2 = _FakePool()
-    await write(pool2, uuid.uuid4(), ttl_days=30)
-    assert pool2.execute_calls[0][1][-1] == 30
+    # Custom ttl_days overrides
+    pool3 = _FakePool()
+    await write(pool3, uuid.uuid4(), ttl_days=30)
+    assert pool3.execute_calls[0][1][-1] == 30
 
 
 async def test_write_stderr_cap() -> None:

@@ -1456,10 +1456,10 @@ optional = ["OPTIONAL_KEY"]
 # ---------------------------------------------------------------------------
 
 
-async def test_runtime_adapter_passed_to_spawner(butler_dir: Path) -> None:
-    """Spawner should receive the runtime adapter instance."""
+async def test_runtime_adapter_and_binary_check(butler_dir: Path) -> None:
+    """Spawner receives runtime adapter; missing binary raises; found binary proceeds."""
+    # Adapter passed to spawner
     patches = _patch_infra()
-
     with (
         patches["db_from_env"],
         patches["run_migrations"],
@@ -1478,11 +1478,9 @@ async def test_runtime_adapter_passed_to_spawner(butler_dir: Path) -> None:
     ):
         daemon = ButlerDaemon(butler_dir)
         await daemon.start()
-
     mock_spawner_cls.assert_called_once()
     call_kwargs = mock_spawner_cls.call_args.kwargs
-    assert "runtime" in call_kwargs
-    assert call_kwargs["runtime"] is patches["mock_adapter"]
+    assert "runtime" in call_kwargs and call_kwargs["runtime"] is patches["mock_adapter"]
 
 
 # ---------------------------------------------------------------------------
@@ -1531,52 +1529,44 @@ async def test_message_pipeline_wiring(tmp_path: Path) -> None:
         assert not hasattr(em, "_pipeline")
 
 
-# ---------------------------------------------------------------------------
-# Runtime binary check
-# ---------------------------------------------------------------------------
-
-
-async def test_runtime_binary_check(butler_dir: Path) -> None:
-    """Missing binary raises RuntimeBinaryNotFoundError; found binary allows startup."""
-    patches = _patch_infra()
-
     # Missing binary → raises, Spawner not created
+    patches_m = _patch_infra()
     with (
-        patches["db_from_env"],
-        patches["run_migrations"],
-        patches["validate_credentials"],
-        patches["validate_module_credentials"],
-        patches["init_telemetry"],
-        patches["sync_schedules"],
-        patches["FastMCP"],
-        patches["Spawner"] as mock_spawner_cls,
-        patches["get_adapter"],
+        patches_m["db_from_env"],
+        patches_m["run_migrations"],
+        patches_m["validate_credentials"],
+        patches_m["validate_module_credentials"],
+        patches_m["init_telemetry"],
+        patches_m["sync_schedules"],
+        patches_m["FastMCP"],
+        patches_m["Spawner"] as mock_spawner_cls2,
+        patches_m["get_adapter"],
         patch("butlers.daemon.shutil.which", return_value=None),
     ):
-        daemon = ButlerDaemon(butler_dir)
+        daemon_m = ButlerDaemon(butler_dir)
         with pytest.raises(RuntimeBinaryNotFoundError, match="'claude'"):
-            await daemon.start()
-    mock_spawner_cls.assert_not_called()
+            await daemon_m.start()
+    mock_spawner_cls2.assert_not_called()
 
     # Found binary → startup proceeds
-    patches2 = _patch_infra()
+    patches_f = _patch_infra()
     with (
-        patches2["db_from_env"],
-        patches2["run_migrations"],
-        patches2["validate_credentials"],
-        patches2["validate_module_credentials"],
-        patches2["init_telemetry"],
-        patches2["sync_schedules"],
-        patches2["FastMCP"],
-        patches2["Spawner"],
-        patches2["get_adapter"],
-        patches2["shutil_which"] as mock_which,
-        patches2["socket"],
+        patches_f["db_from_env"],
+        patches_f["run_migrations"],
+        patches_f["validate_credentials"],
+        patches_f["validate_module_credentials"],
+        patches_f["init_telemetry"],
+        patches_f["sync_schedules"],
+        patches_f["FastMCP"],
+        patches_f["Spawner"],
+        patches_f["get_adapter"],
+        patches_f["shutil_which"] as mock_which,
+        patches_f["socket"],
     ):
-        daemon2 = ButlerDaemon(butler_dir)
-        await daemon2.start()
+        daemon_f = ButlerDaemon(butler_dir)
+        await daemon_f.start()
     mock_which.assert_called_once_with("claude")
-    assert daemon2._started_at is not None
+    assert daemon_f._started_at is not None
 
 
 # ---------------------------------------------------------------------------

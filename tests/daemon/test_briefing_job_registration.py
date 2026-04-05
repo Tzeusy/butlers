@@ -24,9 +24,9 @@ _HOME_DETERMINISTIC_JOBS = (
 
 
 class TestBriefingJobRegistration:
-    def test_briefing_handlers_registered_and_callable(self):
-        """All 7 briefing handlers registered and callable; count is exactly 7."""
-        from butlers.daemon import _DETERMINISTIC_SCHEDULE_JOB_REGISTRY
+    def test_briefing_handlers_registered_callable_and_resolvable(self):
+        """All 7 briefing handlers registered, callable, and resolvable via resolve function."""
+        from butlers.daemon import _DETERMINISTIC_SCHEDULE_JOB_REGISTRY, _resolve_deterministic_schedule_job_name
 
         # All specialist butlers have daily_briefing_contribution
         missing = [
@@ -35,61 +35,39 @@ class TestBriefingJobRegistration:
             if "daily_briefing_contribution"
             not in _DETERMINISTIC_SCHEDULE_JOB_REGISTRY.get(butler, {})
         ]
-        assert not missing, (
-            f"daily_briefing_contribution not registered for specialist butlers: {missing}"
-        )
+        assert not missing, f"daily_briefing_contribution not registered for: {missing}"
 
         # General butler has collect_briefing_contributions
         jobs = _DETERMINISTIC_SCHEDULE_JOB_REGISTRY.get("general", {})
-        assert "collect_briefing_contributions" in jobs, (
-            "collect_briefing_contributions not registered for general butler"
-        )
+        assert "collect_briefing_contributions" in jobs
 
-        # All 7 handler references are callable
+        # All 7 callable and exactly 7 slots
         handler_entries: list[tuple[str, str]] = [
             (butler, "daily_briefing_contribution") for butler in _SPECIALIST_BUTLERS
         ] + [("general", "collect_briefing_contributions")]
+        not_callable = [
+            f"{b}/{j}"
+            for b, j in handler_entries
+            if not callable(_DETERMINISTIC_SCHEDULE_JOB_REGISTRY.get(b, {}).get(j))
+        ]
+        assert not not_callable, f"Non-callable handlers: {not_callable}"
+        assert len(handler_entries) == 7
 
-        not_callable = []
-        for butler, job_name in handler_entries:
-            handler = _DETERMINISTIC_SCHEDULE_JOB_REGISTRY.get(butler, {}).get(job_name)
-            if not callable(handler):
-                not_callable.append(f"{butler}/{job_name}")
-        assert not not_callable, f"Non-callable handlers in registry: {not_callable}"
-
-        # Exactly 7 briefing handler slots
-        specialist_count = sum(
-            1
-            for butler in _SPECIALIST_BUTLERS
-            if "daily_briefing_contribution" in _DETERMINISTIC_SCHEDULE_JOB_REGISTRY.get(butler, {})
-        )
-        total = specialist_count + int("collect_briefing_contributions" in jobs)
-        assert total == 7, f"Expected exactly 7 briefing handler slots, got {total}"
-
-    def test_briefing_handlers_are_resolvable_via_resolve_function(self):
-        """_resolve_deterministic_schedule_job_name returns job names for briefing jobs."""
-        from butlers.daemon import _resolve_deterministic_schedule_job_name
-
-        # Specialist butlers
+        # Resolvable via resolve function
         for butler in _SPECIALIST_BUTLERS:
             resolved = _resolve_deterministic_schedule_job_name(
                 butler_name=butler,
                 trigger_source="schedule:daily_briefing_contribution",
                 job_name="daily_briefing_contribution",
             )
-            assert resolved == "daily_briefing_contribution", (
-                f"Expected 'daily_briefing_contribution' for {butler}, got {resolved!r}"
-            )
+            assert resolved == "daily_briefing_contribution", f"{butler}: {resolved!r}"
 
-        # General butler
-        resolved = _resolve_deterministic_schedule_job_name(
+        resolved_general = _resolve_deterministic_schedule_job_name(
             butler_name="general",
             trigger_source="schedule:collect_briefing_contributions",
             job_name="collect_briefing_contributions",
         )
-        assert resolved == "collect_briefing_contributions", (
-            f"Expected 'collect_briefing_contributions' for general, got {resolved!r}"  # noqa: E501
-        )
+        assert resolved_general == "collect_briefing_contributions"
 
 
 class TestHomeJobRegistration:

@@ -21,33 +21,22 @@ def test_from_env_sslmode(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Database.from_env("test_db").ssl == "verify-full"
 
 
+@patch("butlers.db.asyncpg.create_pool", new_callable=AsyncMock)
 @patch("butlers.db.asyncpg.connect", new_callable=AsyncMock)
-async def test_provision_passes_ssl_to_asyncpg_connect(mock_connect: AsyncMock) -> None:
-    """provision() forwards ssl mode to asyncpg.connect."""
+async def test_ssl_forwarded_to_provision_and_connect(mock_connect: AsyncMock, mock_create_pool: AsyncMock) -> None:
+    """provision() and connect() each forward ssl mode to asyncpg."""
     conn = AsyncMock()
     conn.fetchval = AsyncMock(return_value=1)
     conn.execute = AsyncMock()
     conn.close = AsyncMock()
     mock_connect.return_value = conn
-
-    db = Database(db_name="test_db", ssl="disable")
-    await db.provision()
-
-    assert mock_connect.await_args is not None
+    await Database(db_name="test_db", ssl="disable").provision()
     assert mock_connect.await_args.kwargs["ssl"] == "disable"
 
-
-@patch("butlers.db.asyncpg.create_pool", new_callable=AsyncMock)
-async def test_connect_passes_ssl_to_asyncpg_pool(mock_create_pool: AsyncMock) -> None:
-    """connect() forwards ssl mode to asyncpg.create_pool."""
     pool = AsyncMock()
     mock_create_pool.return_value = pool
-
-    db = Database(db_name="test_db", ssl="require")
-    out = await db.connect()
-
+    out = await Database(db_name="test_db", ssl="require").connect()
     assert out is pool
-    assert mock_create_pool.await_args is not None
     assert mock_create_pool.await_args.kwargs["ssl"] == "require"
 
 

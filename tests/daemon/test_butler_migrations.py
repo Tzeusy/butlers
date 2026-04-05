@@ -121,8 +121,8 @@ def test_has_butler_chain(tmp_path, setup, expected):
 # ---------------------------------------------------------------------------
 
 
-def test_discover_butler_chains(tmp_path) -> None:
-    """Returns sorted list of butlers with .py migrations; real roster includes known butlers."""
+def test_discover_chains(tmp_path) -> None:
+    """Butler and module discovery: sorted list of .py migrations; real chains include known names."""
     for name in ["zeta", "alpha"]:
         mig_dir = tmp_path / name / "migrations"
         mig_dir.mkdir(parents=True)
@@ -130,32 +130,24 @@ def test_discover_butler_chains(tmp_path) -> None:
     (tmp_path / "no-migrations").mkdir()
 
     with patch("butlers.migrations.ROSTER_DIR", tmp_path):
-        chains = _discover_butler_chains()
-    assert chains == ["alpha", "zeta"]
+        butler_chains = _discover_butler_chains()
+    assert butler_chains == ["alpha", "zeta"]
+
+    with patch("butlers.migrations.MODULES_DIR", tmp_path):
+        module_chains = _discover_module_chains()
+    assert module_chains == ["alpha", "zeta"]
 
     # Real roster
     assert has_butler_chain("relationship") is True
     assert has_butler_chain("does-not-exist-butler-xyz") is False
-    real_chains = _discover_butler_chains()
+    real_butler_chains = _discover_butler_chains()
     for expected in ["general", "health", "relationship", "switchboard"]:
-        assert expected in real_chains
-
-
-def test_discover_module_chains(tmp_path) -> None:
-    """Returns sorted list of modules with .py migrations; real modules include known chains."""
-    for name in ["zeta", "alpha"]:
-        mig_dir = tmp_path / name / "migrations"
-        mig_dir.mkdir(parents=True)
-        (mig_dir / "001_tables.py").write_text("# migration")
-
-    with patch("butlers.migrations.MODULES_DIR", tmp_path):
-        chains = _discover_module_chains()
-    assert chains == ["alpha", "zeta"]
+        assert expected in real_butler_chains
 
     # Real modules
-    real_chains = _discover_module_chains()
+    real_module_chains = _discover_module_chains()
     for expected in ["approvals", "mailbox", "memory"]:
-        assert expected in real_chains
+        assert expected in real_module_chains
 
 
 # ---------------------------------------------------------------------------

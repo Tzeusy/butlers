@@ -471,43 +471,27 @@ class TestSpawnerInvocation:
         assert result.success is True
         assert captured["runtime_args"] == ["--config", 'model_reasoning_effort="high"']
 
-    async def test_error_wrapped_in_result(self, tmp_path: Path):
+    async def test_error_wrapping_and_reset_behavior(self, tmp_path: Path):
+        """Adapter error is wrapped in result with reset called; pre-invoke failure skips reset."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config()
 
+        # Adapter error wrapped in result; reset called once
         adapter = MockAdapter(error="adapter connection failed")
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-        )
-
-        result = await spawner.trigger("fail", "tick")
+        result = await Spawner(config=config, config_dir=config_dir, runtime=adapter).trigger("fail", "tick")
         assert result.error is not None
-        assert "RuntimeError" in result.error
-        assert "adapter connection failed" in result.error
-        assert result.output is None
-        assert result.duration_ms >= 0
+        assert "RuntimeError" in result.error and "adapter connection failed" in result.error
+        assert result.output is None and result.duration_ms >= 0
         assert adapter.reset_calls == 1
 
-    async def test_runtime_not_reset_when_failure_before_invoke(self, tmp_path: Path):
-        """reset() is skipped when the exception occurs before runtime invocation."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config()
-
-        adapter = MockAdapter()
-        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
-
+        # Pre-invoke failure (before runtime invocation) → reset not called
+        adapter2 = MockAdapter()
+        spawner2 = Spawner(config=config, config_dir=config_dir, runtime=adapter2)
         with patch("butlers.core.spawner.read_system_prompt", side_effect=RuntimeError("boom")):
-            result = await spawner.trigger("hi", "tick")
-
-        assert result.success is False
-        assert result.error is not None
-        assert "RuntimeError: boom" in result.error
-        assert adapter.calls == []
-        assert adapter.reset_calls == 0
+            result2 = await spawner2.trigger("hi", "tick")
+        assert result2.success is False and "RuntimeError: boom" in result2.error
+        assert adapter2.calls == [] and adapter2.reset_calls == 0
 
     async def test_runtime_worker_factory_used_per_trigger(self, tmp_path: Path):
         """Spawner should invoke worker adapters returned by create_worker()."""
@@ -775,16 +759,15 @@ class TestSemaphoreConcurrencyPool:
         assert len(started) == 3
         assert len(finished) == 3
 
-    async def test_self_trigger_allowed_when_n3_has_free_slot(self, tmp_path: Path):
-        """With n=3, trigger-source is allowed when only 2 of 3 slots are taken."""
+    async def test_self_trigger_guard_with_free_and_full_n3_slots(self, tmp_path: Path):
+        """With n=3, trigger allowed when slot free; rejected when all slots occupied."""
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         config = _make_config(max_concurrent_sessions=3)
 
+        # One slot free (2 of 3 occupied) → trigger allowed
         adapter = MockAdapter(result_text="allowed", capture=True)
         spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
-
-        # Occupy 2 of 3 slots — one slot is still free
         await spawner._session_semaphore.acquire()
         await spawner._session_semaphore.acquire()
         try:
@@ -792,34 +775,23 @@ class TestSemaphoreConcurrencyPool:
         finally:
             spawner._session_semaphore.release()
             spawner._session_semaphore.release()
+        assert result.success is True and result.error is None
 
-        # Should succeed: one slot was free so the guard should NOT reject
-        assert result.success is True
-        assert result.error is None
-
-    async def test_self_trigger_rejected_when_n3_all_slots_full(self, tmp_path: Path):
-        """With n=3, trigger-source rejected when all 3 slots are occupied."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config = _make_config(max_concurrent_sessions=3)
-
-        adapter = MockAdapter(result_text="should not run", capture=True)
-        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
-
-        # Occupy all 3 slots
-        await spawner._session_semaphore.acquire()
-        await spawner._session_semaphore.acquire()
-        await spawner._session_semaphore.acquire()
+        # All 3 slots occupied → trigger rejected
+        adapter2 = MockAdapter(result_text="should not run", capture=True)
+        spawner2 = Spawner(config=config, config_dir=config_dir, runtime=adapter2)
+        await spawner2._session_semaphore.acquire()
+        await spawner2._session_semaphore.acquire()
+        await spawner2._session_semaphore.acquire()
         try:
-            result = await spawner.trigger("nested", "trigger")
+            result2 = await spawner2.trigger("nested", "trigger")
         finally:
-            spawner._session_semaphore.release()
-            spawner._session_semaphore.release()
-            spawner._session_semaphore.release()
-
-        assert result.success is False
-        assert "cannot be called while another session is in flight" in result.error
-        assert adapter.calls == []
+            spawner2._session_semaphore.release()
+            spawner2._session_semaphore.release()
+            spawner2._session_semaphore.release()
+        assert result2.success is False
+        assert "cannot be called while another session is in flight" in result2.error
+        assert adapter2.calls == []
 
     async def test_drain_handles_multiple_concurrent_sessions(self, tmp_path: Path):
         """drain() waits for all concurrent in-flight sessions to complete."""
