@@ -633,11 +633,10 @@ class TestScanner:
 class TestGracefulShutdown:
     """Tests for the start/stop lifecycle."""
 
-    async def test_stop_cancels_workers_and_drains(self) -> None:
-        """stop() cancels workers; drains queue first; idempotent double calls."""
+    async def test_stop_lifecycle(self) -> None:
+        """stop() cancels workers; drains queue; idempotent double calls; cancels scanner."""
         # Cancels workers
-        process_fn = AsyncMock()
-        buf = DurableBuffer(config=_make_config(worker_count=2), pool=None, process_fn=process_fn)
+        buf = DurableBuffer(config=_make_config(worker_count=2), pool=None, process_fn=AsyncMock())
         await buf.start()
         assert len(buf._worker_tasks) == 2
         await buf.stop(drain_timeout_s=0.1)
@@ -652,10 +651,7 @@ class TestGracefulShutdown:
         buf2 = DurableBuffer(config=_make_config(worker_count=1), pool=None, process_fn=process_fn2)
         await buf2.start()
         for i in range(3):
-            buf2.enqueue(
-                request_id=f"r{i}", message_inbox_id=f"r{i}", message_text="msg",
-                source={}, event={}, sender={},
-            )
+            buf2.enqueue(request_id=f"r{i}", message_inbox_id=f"r{i}", message_text="msg", source={}, event={}, sender={})
         await buf2.stop(drain_timeout_s=2.0)
         assert len(processed) == 3
 
@@ -674,19 +670,13 @@ class TestGracefulShutdown:
         await buf4.stop(drain_timeout_s=0.1)
         await buf4.stop(drain_timeout_s=0.1)
 
-    async def test_stop_cancels_scanner(self) -> None:
-        """stop() cancels the scanner task when pool is provided."""
-        process_fn = AsyncMock()
+        # Scanner cancelled by stop()
         mock_pool = MagicMock()
-        buf = DurableBuffer(
-            config=_make_config(scanner_interval_s=3600),
-            pool=mock_pool,
-            process_fn=process_fn,
-        )
-        await buf.start()
-        assert buf._scanner_task is not None and not buf._scanner_task.done()
-        await buf.stop(drain_timeout_s=0.1)
-        assert buf._scanner_task is None
+        buf5 = DurableBuffer(config=_make_config(scanner_interval_s=3600), pool=mock_pool, process_fn=AsyncMock())
+        await buf5.start()
+        assert buf5._scanner_task is not None and not buf5._scanner_task.done()
+        await buf5.stop(drain_timeout_s=0.1)
+        assert buf5._scanner_task is None
 
 
 # ---------------------------------------------------------------------------

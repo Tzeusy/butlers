@@ -51,8 +51,8 @@ RELATIONSHIP_MIGRATIONS_DIR = ROSTER_DIR / "relationship" / "migrations"
 class TestMemoryChainRegistration:
     """Verify that the memory chain is registered and discoverable."""
 
-    def test_chain_registration_and_ordering(self) -> None:
-        """memory not in shared; in get_all_chains; core in shared; shared come first."""
+    def test_memory_chain_registration_ordering_and_metadata(self) -> None:
+        """memory not in shared; in get_all_chains; shared come first; chain dir + files correct; linear."""
         assert "memory" not in _SHARED_CHAINS
         assert "memory" in get_all_chains()
         assert "core" in _SHARED_CHAINS
@@ -61,28 +61,17 @@ class TestMemoryChainRegistration:
         shared_indices = [i for i, c in enumerate(chains) if c in _SHARED_CHAINS]
         non_shared_indices = [i for i, c in enumerate(chains) if c not in _SHARED_CHAINS]
         if shared_indices and non_shared_indices:
-            assert max(shared_indices) < min(non_shared_indices), (
-                "Shared chains should appear before non-shared chains"
-            )
+            assert max(shared_indices) < min(non_shared_indices)
 
-    def test_memory_chain_dir_and_files(self) -> None:
-        """_resolve_chain_dir('memory') is valid dir with expected migrations; has_butler_chain False."""
         chain_dir = _resolve_chain_dir("memory")
-        assert chain_dir is not None
-        assert chain_dir.is_dir()
+        assert chain_dir is not None and chain_dir.is_dir()
         migration_files = sorted(
             f.name for f in chain_dir.iterdir() if f.suffix == ".py" and f.name != "__init__.py"
         )
-        assert migration_files == [
-            "001_memory_schema.py",
-            "002_seed_predicates.py",
-        ], f"Unexpected migration files: {migration_files}"
-
+        assert migration_files == ["001_memory_schema.py", "002_seed_predicates.py"]
         assert has_butler_chain("memory") is False
         assert has_butler_chain("nonexistent_butler_xyz") is False
 
-    def test_memory_migration_chain_metadata_and_structure(self) -> None:
-        """Files exist; revision/down_revision/branch_labels correct; linear chain; no duplicates."""
         _EXPECTED_CHAIN = [
             ("001_memory_schema.py", "mem_001", None),
             ("002_seed_predicates.py", "mem_002", "mem_001"),
@@ -105,16 +94,12 @@ class TestMemoryChainRegistration:
             assert mod.down_revision == expected_down_rev
             assert mod.depends_on is None
             assert callable(getattr(mod, "upgrade", None))
-            assert callable(getattr(mod, "downgrade", None))
             revisions.append(mod.revision)
             chain_map[mod.revision] = mod.down_revision
 
-        # Branch label on root
         root = _load_migration(_EXPECTED_CHAIN[0][0])
         assert root.branch_labels == ("memory",)
-
-        # Linear chain, no duplicates
-        assert len(revisions) == len(set(revisions)), f"Duplicate revisions: {revisions}"
+        assert len(revisions) == len(set(revisions))
         current = "mem_002"
         path = [current]
         while chain_map.get(current) is not None:

@@ -136,49 +136,31 @@ class _CapturingAdapter(RuntimeAdapter):
 
 
 class TestSpawnerMemoryContextInjection:
-    async def test_memory_context_injected_when_memory_module_enabled(self, tmp_path: Path):
+    async def test_memory_context_injected_and_skipped_when_disabled(self, tmp_path: Path):
+        """Memory context injected with custom budget when enabled; not fetched when disabled."""
+        # Enabled: context injected with custom budget
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         (config_dir / "CLAUDE.md").write_text("Base prompt.")
         config = _make_config(modules={"memory": {"retrieval": {"context_token_budget": 1234}}})
-
         adapter = _CapturingAdapter()
-        spawner = Spawner(
-            config=config,
-            config_dir=config_dir,
-            runtime=adapter,
-        )
-
+        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
         with patch(
             "butlers.core.spawner.fetch_memory_context",
             new_callable=AsyncMock,
             return_value="Remembered: user prefers concise answers.",
         ) as mock_fetch:
             await spawner.trigger(prompt="do task", trigger_source="trigger")
+        assert adapter.captured_system_prompts[-1] == "Base prompt.\n\nRemembered: user prefers concise answers."
+        mock_fetch.assert_awaited_once_with(None, "test-butler", "do task", token_budget=1234)
 
-        assert adapter.captured_system_prompts[-1] == (
-            "Base prompt.\n\nRemembered: user prefers concise answers."
-        )
-        mock_fetch.assert_awaited_once_with(
-            None,
-            "test-butler",
-            "do task",
-            token_budget=1234,
-        )
-
-    async def test_memory_context_not_fetched_when_module_disabled(self, tmp_path: Path):
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "CLAUDE.md").write_text("Base prompt.")
-        config = _make_config(modules={})
-
-        adapter = _CapturingAdapter()
-        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
-
-        with patch(
-            "butlers.core.spawner.fetch_memory_context",
-            new_callable=AsyncMock,
-        ) as mock_fetch:
-            await spawner.trigger(prompt="do task", trigger_source="trigger")
-
-        mock_fetch.assert_not_called()
+        # Disabled: fetch not called
+        config_dir2 = tmp_path / "config2"
+        config_dir2.mkdir()
+        (config_dir2 / "CLAUDE.md").write_text("Base prompt.")
+        config2 = _make_config(modules={})
+        adapter2 = _CapturingAdapter()
+        spawner2 = Spawner(config=config2, config_dir=config_dir2, runtime=adapter2)
+        with patch("butlers.core.spawner.fetch_memory_context", new_callable=AsyncMock) as mock_fetch2:
+            await spawner2.trigger(prompt="do task", trigger_source="trigger")
+        mock_fetch2.assert_not_called()

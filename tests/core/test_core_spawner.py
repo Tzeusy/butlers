@@ -1754,8 +1754,8 @@ class TestGlobalSpawnConcurrencyCap:
             f"Expected at most 2 concurrent sessions; observed {max_concurrent}"
         )
 
-    async def test_global_cap_env_var_default_and_override(self, tmp_path: Path):
-        """Default cap is 3; BUTLERS_MAX_GLOBAL_SESSIONS overrides it."""
+    async def test_global_cap_env_var_and_semaphore_release(self, tmp_path: Path):
+        """Default cap is 3; BUTLERS_MAX_GLOBAL_SESSIONS overrides it; semaphore released after success and error."""
         import butlers.core.spawner as spawner_mod
 
         env_without_cap = {
@@ -1771,10 +1771,7 @@ class TestGlobalSpawnConcurrencyCap:
             sem2 = spawner_mod._get_global_semaphore()
         assert sem2._value == 7
 
-    async def test_global_semaphore_released_after_session_and_error(self, tmp_path: Path):
-        """Global semaphore slot is released after session completes and after error."""
-        import butlers.core.spawner as spawner_mod
-
+        # Semaphore released after session completes (success and error)
         with patch.dict(os.environ, {"BUTLERS_MAX_GLOBAL_SESSIONS": "1"}, clear=False):
             _reset_global_semaphore()
 
@@ -1782,21 +1779,19 @@ class TestGlobalSpawnConcurrencyCap:
             config_dir.mkdir()
             config = _make_config(max_concurrent_sessions=1)
 
-            # Success path
             result = await Spawner(
                 config=config, config_dir=config_dir, runtime=MockAdapter(result_text="ok")
             ).trigger("first", "tick")
             assert result.success
-            sem = spawner_mod._get_global_semaphore()
-            assert sem._value == 1
+            sem3 = spawner_mod._get_global_semaphore()
+            assert sem3._value == 1
 
-            # Error path
             result2 = await Spawner(
                 config=config, config_dir=config_dir, runtime=MockAdapter(error="adapter crashed")
             ).trigger("fail", "tick")
             assert result2.error is not None
-            sem2 = spawner_mod._get_global_semaphore()
-            assert sem2._value == 1
+            sem4 = spawner_mod._get_global_semaphore()
+            assert sem4._value == 1
 
     async def test_global_cap_queuing_logged_at_info(self, tmp_path: Path, caplog):
         """When the global cap is saturated, a queuing INFO message is emitted."""
@@ -1894,36 +1889,24 @@ class TestSpawnerCwdAndBypassSemaphore:
         assert result2.success is True
         assert captured_cwd[-1] == str(config_dir)
 
-    async def test_bypass_butler_semaphore_skips_per_butler_lock(self, tmp_path: Path) -> None:
-        """bypass_butler_semaphore=True proceeds even when per-butler semaphore is at 0."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        # Use max_concurrent_sessions=1 (serial dispatch)
+    async def test_bypass_and_normal_butler_semaphore_behavior(self, tmp_path: Path) -> None:
+        """bypass_butler_semaphore=True proceeds with semaphore at 0; normal trigger waits."""
+        # Bypass scenario: proceeds even when per-butler semaphore is drained
+        bypass_dir = tmp_path / "bypass"
+        bypass_dir.mkdir()
         config = _make_config(max_concurrent_sessions=1)
-        adapter = MockAdapter(result_text="ok")
-        spawner = Spawner(config=config, config_dir=config_dir, runtime=adapter)
-
-        # Manually drain the per-butler semaphore to simulate a slot being held
-        await spawner._session_semaphore.acquire()
-
-        # bypass_butler_semaphore=True should still proceed
+        spawner_b = Spawner(config=config, config_dir=bypass_dir, runtime=MockAdapter(result_text="ok"))
+        await spawner_b._session_semaphore.acquire()
         trigger_task = asyncio.create_task(
-            spawner.trigger("healing prompt", "healing", bypass_butler_semaphore=True)
+            spawner_b.trigger("healing prompt", "healing", bypass_butler_semaphore=True)
         )
-        result = await asyncio.wait_for(trigger_task, timeout=2.0)
+        result_b = await asyncio.wait_for(trigger_task, timeout=2.0)
+        spawner_b._session_semaphore.release()
+        assert result_b.success is True
 
-        # Release the held slot
-        spawner._session_semaphore.release()
-
-        assert result.success is True
-
-    async def test_normal_trigger_waits_for_butler_semaphore(self, tmp_path: Path) -> None:
-        """Without bypass, trigger() waits when per-butler semaphore is held."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-
-        config = _make_config(max_concurrent_sessions=1)
+        # Normal scenario: serializes when semaphore cap=1
+        normal_dir = tmp_path / "normal"
+        normal_dir.mkdir()
         completed: list[bool] = []
 
         class SlowAdapter(MockAdapter):
@@ -1932,11 +1915,10 @@ class TestSpawnerCwdAndBypassSemaphore:
                 completed.append(True)
                 return "ok", [], None
 
-        spawner = Spawner(config=config, config_dir=config_dir, runtime=SlowAdapter())
-
+        spawner_n = Spawner(config=config, config_dir=normal_dir, runtime=SlowAdapter())
         results = await asyncio.gather(
-            spawner.trigger("A", "tick"),
-            spawner.trigger("B", "tick"),
+            spawner_n.trigger("A", "tick"),
+            spawner_n.trigger("B", "tick"),
         )
         assert all(r.success for r in results)
         assert len(completed) == 2

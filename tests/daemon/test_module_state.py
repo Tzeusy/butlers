@@ -291,10 +291,17 @@ def test_module_runtime_state_dataclass(health, enabled, failure_phase, failure_
 # ---------------------------------------------------------------------------
 
 
-async def test_init_module_states_healthy_and_failed(tmp_path: Path) -> None:
-    """Healthy module defaults enabled=True; failed module defaults enabled=False and persists."""
-    store: dict = {}
-    butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}})
+async def test_init_module_states_startup_behavior(tmp_path: Path) -> None:
+    """Healthy defaults enabled=True; failed defaults False+persists; sticky state honored; multiple modules initialized."""
+    # Healthy first boot
+    d1 = tmp_path / "d1"
+    d1.mkdir()
+    butler_dir = _make_butler_toml(d1, modules={"stub_a": {}})
+    registry = _make_registry(StubModuleA)
+    daemon = await _start_daemon(butler_dir, registry=registry, state_store={})
+    states = daemon.get_module_states()
+    assert states["stub_a"].health == "active"
+    assert states["stub_a"].enabled is True
 
     class FailingModuleA(StubModuleA):
         async def on_startup(
@@ -302,14 +309,8 @@ async def test_init_module_states_healthy_and_failed(tmp_path: Path) -> None:
         ) -> None:
             raise RuntimeError("startup exploded")
 
-    # Healthy first boot
-    registry = _make_registry(StubModuleA)
-    daemon = await _start_daemon(butler_dir, registry=registry, state_store={})
-    states = daemon.get_module_states()
-    assert states["stub_a"].health == "active"
-    assert states["stub_a"].enabled is True
-
     # Failed startup: disabled + persisted
+    store: dict = {}
     registry2 = _make_registry(FailingModuleA)
     daemon2 = await _start_daemon(butler_dir, registry=registry2, state_store=store)
     states2 = daemon2.get_module_states()
@@ -319,19 +320,17 @@ async def test_init_module_states_healthy_and_failed(tmp_path: Path) -> None:
     assert store.get("module::stub_a::enabled") is False
     assert store.get("module::stub_a::disabled_by") == "failure"
 
-
-async def test_init_module_states_sticky_and_multiple(tmp_path: Path) -> None:
-    """Sticky disabled/enabled state honored on restart; all modules initialized."""
-    # User-disabled stays disabled; sticky-enabled stays enabled; two modules both present
+    # Sticky user-disabled honored; two modules both initialized
+    d2 = tmp_path / "d2"
+    d2.mkdir()
+    butler_dir2 = _make_butler_toml(d2, modules={"stub_a": {}, "stub_b": {}})
     store_disabled = {"module::stub_a::enabled": False, "module::stub_a::disabled_by": "user"}
-    butler_dir = _make_butler_toml(tmp_path, modules={"stub_a": {}, "stub_b": {}})
-    registry = _make_registry(StubModuleA, StubModuleB)
-
-    daemon = await _start_daemon(butler_dir, registry=registry, state_store=store_disabled)
-    states = daemon.get_module_states()
-    assert set(states.keys()) == {"stub_a", "stub_b"}
-    assert states["stub_a"].enabled is False  # user-disabled honored
-    assert states["stub_b"].enabled is True   # defaults to enabled
+    registry3 = _make_registry(StubModuleA, StubModuleB)
+    daemon3 = await _start_daemon(butler_dir2, registry=registry3, state_store=store_disabled)
+    states3 = daemon3.get_module_states()
+    assert set(states3.keys()) == {"stub_a", "stub_b"}
+    assert states3["stub_a"].enabled is False
+    assert states3["stub_b"].enabled is True
 
 
 @pytest.mark.parametrize(

@@ -22,29 +22,6 @@ pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 
 
-def test_trigger_sources_and_validation() -> None:
-    """TRIGGER_SOURCES includes 'healing' and all originals; validation is correct."""
-    from butlers.core.sessions import TRIGGER_SOURCES, _is_valid_trigger_source
-
-    # 'healing' is present
-    assert "healing" in TRIGGER_SOURCES
-
-    # All original sources still present
-    for source in ("tick", "external", "trigger", "route"):
-        assert source in TRIGGER_SOURCES, f"Missing trigger source: {source}"
-
-    # Validation
-    assert _is_valid_trigger_source("healing") is True
-    assert _is_valid_trigger_source("unknown") is False
-    assert _is_valid_trigger_source("heal") is False
-    assert _is_valid_trigger_source("healing:foo") is False
-
-
-# ---------------------------------------------------------------------------
-# session_create — healing trigger source is accepted
-# ---------------------------------------------------------------------------
-
-
 class _FakePool:
     """Fake asyncpg pool that captures fetchval/execute calls."""
 
@@ -62,53 +39,40 @@ class _FakePool:
         return "UPDATE 1"
 
 
-async def test_session_create_healing_source() -> None:
-    """session_create accepts 'healing'; rejects invalid sources with error mentioning 'healing'."""
-    from butlers.core.sessions import session_create
-
-    pool = _FakePool()
-    request_id = str(uuid.uuid4())
-
-    # 'healing' is valid — should not raise
-    result = await session_create(
-        pool,
-        prompt="Healing agent investigating error abc123",
-        trigger_source="healing",
-        request_id=request_id,
+async def test_healing_trigger_sources_create_and_fingerprint() -> None:
+    """TRIGGER_SOURCES includes 'healing'; session_create accepts/rejects; fingerprint UPDATE works."""
+    from butlers.core.sessions import (
+        TRIGGER_SOURCES,
+        _is_valid_trigger_source,
+        session_create,
+        session_set_healing_fingerprint,
     )
+
+    # Trigger source set
+    assert "healing" in TRIGGER_SOURCES
+    for source in ("tick", "external", "trigger", "route"):
+        assert source in TRIGGER_SOURCES, f"Missing trigger source: {source}"
+    assert _is_valid_trigger_source("healing") is True
+    assert _is_valid_trigger_source("unknown") is False
+    assert _is_valid_trigger_source("heal") is False
+    assert _is_valid_trigger_source("healing:foo") is False
+
+    # session_create accepts 'healing'; rejects invalid
+    pool = _FakePool()
+    result = await session_create(pool, prompt="Healing agent", trigger_source="healing", request_id=str(uuid.uuid4()))
     assert result == pool._return_id
     assert len(pool.fetchval_calls) == 1
-
-    # Invalid source — raises ValueError mentioning 'healing'
     with pytest.raises(ValueError, match="healing"):
-        await session_create(
-            pool,
-            prompt="Test",
-            trigger_source="not_valid",
-            request_id=str(uuid.uuid4()),
-        )
+        await session_create(pool, prompt="Test", trigger_source="not_valid", request_id=str(uuid.uuid4()))
 
-
-# ---------------------------------------------------------------------------
-# session_set_healing_fingerprint
-# ---------------------------------------------------------------------------
-
-
-async def test_session_set_healing_fingerprint() -> None:
-    """session_set_healing_fingerprint issues UPDATE; no raise on zero rows matched."""
-    from butlers.core.sessions import session_set_healing_fingerprint
-
-    pool = _FakePool()
+    # session_set_healing_fingerprint issues UPDATE; no raise on zero rows
+    pool2 = _FakePool()
     session_id = uuid.uuid4()
     fingerprint = "a" * 64
-
-    await session_set_healing_fingerprint(pool, session_id, fingerprint)
-
-    assert len(pool.execute_calls) == 1
-    sql, args = pool.execute_calls[0]
+    await session_set_healing_fingerprint(pool2, session_id, fingerprint)
+    assert len(pool2.execute_calls) == 1
+    sql, args = pool2.execute_calls[0]
     assert "healing_fingerprint" in sql
     assert session_id in args
     assert fingerprint in args
-
-    # No raise on zero rows matched (same pool, different session)
-    await session_set_healing_fingerprint(pool, uuid.uuid4(), "b" * 64)
+    await session_set_healing_fingerprint(pool2, uuid.uuid4(), "b" * 64)

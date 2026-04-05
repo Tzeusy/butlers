@@ -14,22 +14,6 @@ pytestmark = pytest.mark.unit
 
 
 class TestNativeScheduleDispatch:
-    def test_registry_includes_memory_and_switchboard_jobs(self):
-        """Memory-enabled butlers have deterministic memory jobs; switchboard has eligibility_sweep; rollup jobs removed."""
-        from butlers.daemon import _DETERMINISTIC_SCHEDULE_JOB_REGISTRY
-
-        expected_memory_jobs = {"memory_consolidation", "memory_episode_cleanup"}
-        for butler_name in ("general", "health", "home", "relationship", "switchboard"):
-            jobs = _DETERMINISTIC_SCHEDULE_JOB_REGISTRY.get(butler_name, {})
-            missing = expected_memory_jobs - set(jobs)
-            assert not missing, f"Missing memory jobs for {butler_name}: {sorted(missing)}"
-
-        switchboard_jobs = _DETERMINISTIC_SCHEDULE_JOB_REGISTRY.get("switchboard", {})
-        assert {"eligibility_sweep"} <= set(switchboard_jobs)
-        # Rollup jobs removed in butlers-ufzc
-        removed = {"connector_stats_hourly_rollup", "connector_stats_daily_rollup", "connector_stats_pruning"}
-        assert not (removed & set(switchboard_jobs)), f"Removed jobs still present: {sorted(removed & set(switchboard_jobs))}"
-
     def _make_daemon(self, tmp_path, butler_name="switchboard", port=41100):
         daemon = ButlerDaemon(tmp_path)
         daemon.config = ButlerConfig(name=butler_name, port=port)
@@ -42,8 +26,20 @@ class TestNativeScheduleDispatch:
         daemon.spawner = mock_spawner
         return daemon, mock_spawner
 
-    async def test_job_dispatch_and_unknown_and_blank_errors(self, tmp_path):
-        """Job-mode dispatches via registry; non-native falls back to spawner; unknown/blank raise."""
+    async def test_registry_and_job_dispatch_and_errors(self, tmp_path):
+        """Registry has memory jobs + eligibility_sweep; rollup jobs removed; job-mode dispatches; unknown/blank raise."""
+        from butlers.daemon import _DETERMINISTIC_SCHEDULE_JOB_REGISTRY
+
+        expected_memory_jobs = {"memory_consolidation", "memory_episode_cleanup"}
+        for butler_name in ("general", "health", "home", "relationship", "switchboard"):
+            jobs = _DETERMINISTIC_SCHEDULE_JOB_REGISTRY.get(butler_name, {})
+            missing = expected_memory_jobs - set(jobs)
+            assert not missing, f"Missing memory jobs for {butler_name}: {sorted(missing)}"
+        switchboard_jobs = _DETERMINISTIC_SCHEDULE_JOB_REGISTRY.get("switchboard", {})
+        assert {"eligibility_sweep"} <= set(switchboard_jobs)
+        removed = {"connector_stats_hourly_rollup", "connector_stats_daily_rollup", "connector_stats_pruning"}
+        assert not (removed & set(switchboard_jobs)), f"Removed jobs still present: {sorted(removed & set(switchboard_jobs))}"
+
         daemon, mock_spawner = self._make_daemon(tmp_path)
         native_result = {"evaluated": 1, "skipped": 0, "transitioned": 0, "transitions": []}
         mock_handler = AsyncMock(return_value=native_result)

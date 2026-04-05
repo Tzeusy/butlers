@@ -76,27 +76,18 @@ def _fake_pool() -> AsyncMock:
 class TestSpawnerRequestIdMinting:
     """Spawner mints a UUID7 for internally-triggered sessions."""
 
-    async def test_internal_triggers_mint_valid_uuid(self, tmp_path: Path):
-        """tick/schedule/trigger sources without request_id all mint a valid UUID; each is unique."""
+    async def test_request_id_minting_passthrough_and_no_pool(self, tmp_path: Path):
+        """Internal triggers mint valid unique UUIDs; connector request_id passed unchanged; pool=None works."""
+        # Internal triggers mint a valid UUID per session
         pool = _fake_pool()
-        spawner = Spawner(
-            config=_make_config(),
-            config_dir=tmp_path,
-            pool=pool,
-            runtime=_OkAdapter(),
-        )
-
+        spawner = Spawner(config=_make_config(), config_dir=tmp_path, pool=pool, runtime=_OkAdapter())
         collected: list[str] = []
-        side_effects = [
-            uuid.UUID(f"00000000-0000-0000-0000-{i:012d}") for i in range(1, 4)
-        ]
-
+        side_effects = [uuid.UUID(f"00000000-0000-0000-0000-{i:012d}") for i in range(1, 4)]
         with (
             patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
             patch("butlers.core.spawner.session_complete", new_callable=AsyncMock),
         ):
             mock_create.side_effect = side_effects
-
             for trigger_source in ("tick", "schedule:daily", "trigger"):
                 await spawner.trigger(prompt="work", trigger_source=trigger_source)
                 _, kwargs = mock_create.call_args
@@ -104,47 +95,22 @@ class TestSpawnerRequestIdMinting:
                 assert minted is not None, f"request_id must not be None for {trigger_source!r}"
                 assert _UUID_RE.match(minted), f"request_id {minted!r} is not a valid UUID"
                 collected.append(minted)
+        assert len(set(collected)) == 3
 
-        assert len(set(collected)) == 3, "Each session must receive a unique minted request_id"
-
-    async def test_connector_request_id_passed_through_unchanged(self, tmp_path: Path):
-        """When the caller provides a request_id (connector-sourced), it is passed unchanged."""
-        pool = _fake_pool()
-        spawner = Spawner(
-            config=_make_config(),
-            config_dir=tmp_path,
-            pool=pool,
-            runtime=_OkAdapter(),
-        )
-
+        # Connector-supplied request_id passed through unchanged
+        pool2 = _fake_pool()
+        spawner2 = Spawner(config=_make_config(), config_dir=tmp_path, pool=pool2, runtime=_OkAdapter())
         connector_request_id = "0195f3a2-1234-7000-8000-abcdef012345"
-
         with (
-            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create2,
             patch("butlers.core.spawner.session_complete", new_callable=AsyncMock),
         ):
-            mock_create.return_value = uuid.UUID("00000000-0000-0000-0000-000000000004")
+            mock_create2.return_value = uuid.UUID("00000000-0000-0000-0000-000000000004")
+            await spawner2.trigger(prompt="routed message", trigger_source="route", request_id=connector_request_id)
+            _, kwargs2 = mock_create2.call_args
+            assert kwargs2.get("request_id") == connector_request_id
 
-            await spawner.trigger(
-                prompt="routed message",
-                trigger_source="route",
-                request_id=connector_request_id,
-            )
-
-            mock_create.assert_called_once()
-            _, kwargs = mock_create.call_args
-            assert kwargs.get("request_id") == connector_request_id, (
-                "Connector-sourced request_id must be forwarded to session_create unchanged"
-            )
-
-    async def test_no_pool_does_not_raise_without_request_id(self, tmp_path: Path):
-        """When pool=None, internally-triggered sessions should not raise."""
-        spawner = Spawner(
-            config=_make_config(),
-            config_dir=tmp_path,
-            pool=None,
-            runtime=_OkAdapter(),
-        )
-
-        result = await spawner.trigger(prompt="no pool tick", trigger_source="tick")
+        # pool=None does not raise
+        spawner3 = Spawner(config=_make_config(), config_dir=tmp_path, pool=None, runtime=_OkAdapter())
+        result = await spawner3.trigger(prompt="no pool tick", trigger_source="tick")
         assert result.success is True

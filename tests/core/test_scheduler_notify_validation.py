@@ -26,47 +26,48 @@ pytestmark = [
 class TestCheckNotifyReference:
     """Unit tests for the _check_notify_reference helper."""
 
-    def test_no_warning_when_notify_present(self, caplog):
-        """No warning when 'notify' in prompt (case-insensitive); also no warning with skill containing notify."""
+    def test_notify_reference_behavior(self, tmp_path, caplog):
+        """No warning when notify present (case-insensitive); warning with task name when absent;
+        skill with notify suppresses warning; skill without notify doesn't; missing dir is safe."""
+        # notify present: no warning
         with caplog.at_level(logging.WARNING, logger="butlers.core.scheduler"):
             _check_notify_reference(task_name="report", prompt="Call notify() to send.", skills_dir=None)
         assert "does not reference notify" not in caplog.text
 
-        # Case-insensitive: NOTIFY
+        # NOTIFY case-insensitive: no warning
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger="butlers.core.scheduler"):
             _check_notify_reference(task_name="task", prompt="Call NOTIFY() when done.", skills_dir=None)
         assert "does not reference notify" not in caplog.text
 
-    def test_warning_when_notify_absent(self, caplog):
-        """Warning emitted with task name when notify absent from prompt and no skills."""
+        # notify absent: warning with task name
+        caplog.clear()
         with caplog.at_level(logging.WARNING, logger="butlers.core.scheduler"):
             _check_notify_reference(task_name="cleanup-task", prompt="Delete old temp files.", skills_dir=None)
         assert "does not reference notify" in caplog.text
         assert "cleanup-task" in caplog.text
 
-    def test_skill_notify_suppresses_warning(self, tmp_path, caplog):
-        """Skill SKILL.md with notify suppresses warning; skill without notify does not."""
+        # Skill WITH notify suppresses warning
         skills_dir = tmp_path / "skills"
-        # Skill WITH notify
         skill1 = skills_dir / "daily-digest"
         skill1.mkdir(parents=True)
         (skill1 / "SKILL.md").write_text("# Daily Digest\nCall notify() to send it.", encoding="utf-8")
+        caplog.clear()
         with caplog.at_level(logging.WARNING, logger="butlers.core.scheduler"):
             _check_notify_reference(task_name="digest", prompt="Run the daily-digest skill.", skills_dir=skills_dir)
         assert "does not reference notify" not in caplog.text
 
-        # Skill WITHOUT notify
-        caplog.clear()
+        # Skill WITHOUT notify does not suppress warning
         skill2 = skills_dir / "log-archiver"
         skill2.mkdir(parents=True)
         (skill2 / "SKILL.md").write_text("# Log Archiver\nCompress old logs.", encoding="utf-8")
+        caplog.clear()
         with caplog.at_level(logging.WARNING, logger="butlers.core.scheduler"):
             _check_notify_reference(task_name="archive-logs", prompt="Run the log-archiver skill.", skills_dir=skills_dir)
         assert "does not reference notify" in caplog.text
 
-    def test_missing_skills_dir_does_not_raise(self, tmp_path, caplog):
-        """Missing skills dir does not raise; warning still emitted when prompt lacks notify."""
+        # Missing skills dir does not raise; warning still emitted
+        caplog.clear()
         with caplog.at_level(logging.WARNING, logger="butlers.core.scheduler"):
             _check_notify_reference(task_name="task", prompt="Run some-skill.", skills_dir=tmp_path / "nonexistent")
         assert "does not reference notify" in caplog.text
