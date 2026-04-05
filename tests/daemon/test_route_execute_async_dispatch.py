@@ -200,7 +200,7 @@ class TestRouteExecuteAcceptPhase:
     """Verify route.execute returns accepted status on the non-messenger path."""
 
     async def test_accept_phase(self, tmp_path: Path) -> None:
-        """Returns {status: accepted} with expected fields; completes in <100ms."""
+        """Returns {status: accepted} with expected fields in <100ms; does not await trigger."""
         patches = _patch_infra("health")
         butler_dir = _make_butler_toml(tmp_path, butler_name="health")
         daemon, route_execute_fn = await _start_daemon_with_route_execute(butler_dir, patches)
@@ -224,22 +224,16 @@ class TestRouteExecuteAcceptPhase:
         assert result["inbox_id"] == str(inserted_id)
         assert elapsed_ms < 100, f"Accept phase took {elapsed_ms:.0f}ms, expected <100ms"
 
-    async def test_accept_phase_does_not_await_trigger(self, tmp_path: Path) -> None:
-        """route.execute returns before spawner.trigger() completes."""
-        patches = _patch_infra("health")
-        butler_dir = _make_butler_toml(tmp_path, butler_name="health")
-        daemon, route_execute_fn = await _start_daemon_with_route_execute(butler_dir, patches)
-        assert route_execute_fn is not None
-
+        # Does not await trigger before returning
         trigger_started = asyncio.Event()
         trigger_allowed = asyncio.Event()
 
         async def slow_trigger(**kwargs):
             trigger_started.set()
             await trigger_allowed.wait()
-            result = MagicMock()
-            result.session_id = uuid.uuid4()
-            return result
+            r = MagicMock()
+            r.session_id = uuid.uuid4()
+            return r
 
         daemon.spawner.trigger = slow_trigger
 
@@ -252,13 +246,13 @@ class TestRouteExecuteAcceptPhase:
             patch("butlers.daemon.route_inbox_mark_processing", new_callable=AsyncMock),
             patch("butlers.daemon.route_inbox_mark_processed", new_callable=AsyncMock),
         ):
-            result = await route_execute_fn(
+            result2 = await route_execute_fn(
                 schema_version="route.v1",
                 request_context=_route_request_context(),
                 input={"prompt": "Run health check."},
             )
 
-        assert result["status"] == "accepted"
+        assert result2["status"] == "accepted"
         trigger_allowed.set()
         await asyncio.sleep(0.1)
 
@@ -607,7 +601,7 @@ class TestRouteExecuteComplexityPlumbing:
         return trigger_mock.call_args.kwargs
 
     async def test_complexity_routing(self, tmp_path: Path) -> None:
-        """high, extra_high, absent (→ medium) all forwarded correctly to spawner."""
+        """high, extra_high, absent (→ medium) all forwarded correctly; invalid falls back to MEDIUM."""
         from butlers.core.model_routing import Complexity
 
         patches = _patch_infra("health")
@@ -624,15 +618,7 @@ class TestRouteExecuteComplexityPlumbing:
         kwargs3 = await self._run_with_complexity(route_execute_fn, daemon.spawner)
         assert kwargs3["complexity"] == Complexity.MEDIUM
 
-    async def test_invalid_complexity_falls_back_to_medium(self, tmp_path: Path) -> None:
-        """Invalid complexity value in route.v1 input defaults to MEDIUM at spawner."""
-        from butlers.core.model_routing import Complexity
-
-        patches = _patch_infra("health")
-        butler_dir = _make_butler_toml(tmp_path, butler_name="health")
-        daemon, route_execute_fn = await _start_daemon_with_route_execute(butler_dir, patches)
-        assert route_execute_fn is not None
-
+        # Invalid complexity falls back to MEDIUM
         trigger_mock = _make_trigger_mock()
         daemon.spawner.trigger = trigger_mock
 
