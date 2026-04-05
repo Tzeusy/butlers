@@ -1158,8 +1158,8 @@ class TestUndismissKnownIssue:
 
 
 class TestForcePatrol:
-    async def test_returns_202_accepted_in_standalone_mode(self) -> None:
-        """Without an in-process force_patrol_fn, should return 202 accepted."""
+    async def test_returns_202_not_accepted_in_standalone_mode(self) -> None:
+        """Without an in-process force_patrol_fn, returns 202 with accepted=False."""
         app, _ = _build_app()
 
         async with httpx.AsyncClient(
@@ -1169,7 +1169,7 @@ class TestForcePatrol:
 
         assert response.status_code == 202
         body = response.json()
-        assert body["data"]["accepted"] is True
+        assert body["data"]["accepted"] is False
         assert "message" in body["data"]
 
     async def test_calls_force_patrol_fn_when_provided(self) -> None:

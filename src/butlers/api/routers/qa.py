@@ -1040,12 +1040,14 @@ async def get_qa_trends(
 ) -> ApiResponse[QaTrends]:
     """Return daily patrol aggregates and per-source finding counts for trend charts.
 
-    ``days`` series entries — one per calendar day, most recent last.
+    ``days`` — entries for calendar days that had at least one patrol record
+    within the window (no zero-filled days), ordered ascending by date.
     ``source_breakdown`` — total findings per source_type over the window.
     """
     pool = _shared_pool(db)
 
-    # Daily patrol aggregates
+    # Daily patrol aggregates — use an explicit UTC timestamptz boundary so the
+    # window calculation is not affected by the DB server's session TimeZone.
     daily_rows = await pool.fetch(
         """
         SELECT
@@ -1056,7 +1058,8 @@ async def get_qa_trends(
             COALESCE(SUM(dispatched_count), 0) AS dispatched_count,
             COUNT(*) FILTER (WHERE status = 'clean') AS clean_count
         FROM public.qa_patrols
-        WHERE started_at >= (now() AT TIME ZONE 'UTC')::date - ($1 - 1) * INTERVAL '1 day'
+        WHERE started_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+              - ($1 - 1) * INTERVAL '1 day'
         GROUP BY (started_at AT TIME ZONE 'UTC')::date
         ORDER BY date ASC
         """,
@@ -1079,13 +1082,14 @@ async def get_qa_trends(
             )
         )
 
-    # Source breakdown — aggregate findings over the window
+    # Source breakdown — aggregate findings over the same UTC-anchored window.
     source_rows = await pool.fetch(
         """
         SELECT source_type, SUM(occurrence_count) AS count
         FROM public.qa_findings f
         JOIN public.qa_patrols p ON p.id = f.patrol_id
-        WHERE p.started_at >= (now() AT TIME ZONE 'UTC')::date - ($1 - 1) * INTERVAL '1 day'
+        WHERE p.started_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+              - ($1 - 1) * INTERVAL '1 day'
         GROUP BY source_type
         ORDER BY count DESC
         """,
@@ -1112,8 +1116,9 @@ async def force_patrol(
     """Request an immediate patrol cycle.
 
     When the QA module is available in-process (daemon mode), the patrol runs
-    synchronously and the result is returned.  In standalone API mode the
-    request is accepted and the daemon will pick it up on its next tick.
+    synchronously and the result is returned.  In standalone API mode (no
+    callable wired) the response is ``accepted=False`` with an informational
+    message — no action is taken.
 
     Override ``_get_force_patrol_fn`` via ``app.dependency_overrides`` to wire
     the live QA module callable in daemon deployments.
@@ -1130,14 +1135,20 @@ async def force_patrol(
             )
             return ApiResponse(data=ForcePatrolResponse(accepted=accepted, message=message))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("force-patrol callable raised: %s", exc)
-            raise HTTPException(status_code=503, detail="Force patrol failed") from exc
+            error_code = uuid.uuid4().hex
+            logger.exception("force-patrol callable raised [error_code=%s]", error_code)
+            raise HTTPException(
+                status_code=503,
+                detail=f"Force patrol failed [error_code={error_code}]",
+            ) from exc
 
-    # Standalone mode — accept and let the daemon handle it on next tick
+    # Standalone mode — no in-process callable wired; patrol cannot be triggered.
+    # The dashboard affordance is still available but has no effect until the
+    # QA module callable is injected via ``app.dependency_overrides``.
     return ApiResponse(
         data=ForcePatrolResponse(
-            accepted=True,
-            message="Force patrol accepted; daemon will execute on next available tick.",
+            accepted=False,
+            message="Force patrol is only supported when the QA daemon is running in-process.",
         )
     )
 
