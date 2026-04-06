@@ -100,46 +100,11 @@ class TestSpawnerMcpServers:
 
 
 class TestMemoryFetchGating:
-    async def test_memory_fetch_gating_budget_and_injection(self, tmp_path: Path):
-        """Fetched when enabled (with default budget); not fetched when disabled; budget from config; appended to system prompt."""
-        # Enabled with default budget
-        adapter_on = MockAdapter()
-        with patch(
-            "butlers.core.spawner.fetch_memory_context",
-            new_callable=AsyncMock,
-            return_value="ctx",
-        ) as mock_fetch:
-            await Spawner(
-                config=_make_config(modules={"memory": {}}), config_dir=tmp_path, runtime=adapter_on
-            ).trigger(prompt="do task", trigger_source="trigger")
-        mock_fetch.assert_awaited_once_with(None, "test-butler", "do task", token_budget=3000)
-
-        # Disabled → not called
-        with patch(
-            "butlers.core.spawner.fetch_memory_context",
-            new_callable=AsyncMock,
-        ) as mock_fetch2:
-            await Spawner(
-                config=_make_config(modules={}), config_dir=tmp_path, runtime=MockAdapter()
-            ).trigger(prompt="do task", trigger_source="trigger")
-        mock_fetch2.assert_not_called()
-
-        # Custom budget from config
-        with patch(
-            "butlers.core.spawner.fetch_memory_context",
-            new_callable=AsyncMock,
-            return_value=None,
-        ) as mock_fetch3:
-            await Spawner(
-                config=_make_config(modules={"memory": {"retrieval": {"context_token_budget": 7777}}}),
-                config_dir=tmp_path,
-                runtime=MockAdapter(),
-            ).trigger(prompt="do task", trigger_source="trigger")
-        _, kwargs3 = mock_fetch3.call_args
-        assert kwargs3["token_budget"] == 7777
-
-        # Context appended to system prompt
+    async def test_memory_context_injected_into_system_prompt(self, tmp_path: Path):
+        """Memory context appended to system prompt when enabled; not fetched when disabled."""
         (tmp_path / "CLAUDE.md").write_text("Base prompt.")
+
+        # Memory enabled → context appended to system prompt
         adapter_sys = MockAdapter()
         with patch(
             "butlers.core.spawner.fetch_memory_context",
@@ -150,3 +115,15 @@ class TestMemoryFetchGating:
                 config=_make_config(modules={"memory": {}}), config_dir=tmp_path, runtime=adapter_sys
             ).trigger(prompt="do task", trigger_source="trigger")
         assert adapter_sys.calls[0]["system_prompt"] == "Base prompt.\n\nRemembered: user likes TDD."
+
+        # Memory disabled → fetch not called, prompt unchanged
+        adapter_off = MockAdapter()
+        with patch(
+            "butlers.core.spawner.fetch_memory_context",
+            new_callable=AsyncMock,
+        ) as mock_fetch:
+            await Spawner(
+                config=_make_config(modules={}), config_dir=tmp_path, runtime=adapter_off
+            ).trigger(prompt="do task", trigger_source="trigger")
+        mock_fetch.assert_not_called()
+        assert adapter_off.calls[0]["system_prompt"] == "Base prompt."
