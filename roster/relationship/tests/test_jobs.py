@@ -1251,6 +1251,62 @@ async def _insert_message_inbox(
     )
 
 
+# Calendar events schema for testing calendar-based interaction detection
+CREATE_PUBLIC_CALENDAR_EVENTS_SQL = """
+CREATE TABLE IF NOT EXISTS public.calendar_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title TEXT NOT NULL,
+    description TEXT,
+    starts_at TIMESTAMPTZ NOT NULL,
+    ends_at TIMESTAMPTZ,
+    location TEXT,
+    status TEXT NOT NULL DEFAULT 'confirmed',
+    rrule TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
+
+
+async def _setup_interaction_sync_with_calendar_schema(pool) -> None:
+    """Create tables needed for interaction sync tests with calendar support."""
+    # First set up the base interaction sync schema
+    await _setup_interaction_sync_schema(pool)
+    # Then add calendar events table
+    await pool.execute(CREATE_PUBLIC_CALENDAR_EVENTS_SQL)
+
+
+async def _insert_calendar_event(
+    pool,
+    *,
+    title: str = "Test Event",
+    starts_at: datetime | None = None,
+    attendees: list[dict] | None = None,
+    status: str = "confirmed",
+    metadata_overrides: dict | None = None,
+) -> str:
+    """Insert a public.calendar_events row with attendees metadata."""
+    if starts_at is None:
+        starts_at = datetime.now(UTC) - timedelta(hours=1)
+    event_id = str(uuid.uuid4())
+    metadata = {"attendees": attendees or []}
+    if metadata_overrides:
+        metadata.update(metadata_overrides)
+    await pool.execute(
+        """
+        INSERT INTO public.calendar_events (id, title, starts_at, status, metadata)
+        VALUES ($1::uuid, $2, $3, $4, $5::jsonb)
+        """,
+        event_id,
+        title,
+        starts_at,
+        status,
+        json.dumps(metadata),
+    )
+    return event_id
+
+
 # ---------------------------------------------------------------------------
 # Tests: run_interaction_sync
 # ---------------------------------------------------------------------------
@@ -1711,3 +1767,486 @@ async def test_interaction_sync_second_run_uses_first_checkpoint(provisioned_pos
         start2 = datetime.fromisoformat(result2["scan_window_start"])
         diff_seconds = abs((start2 - end1).total_seconds())
         assert diff_seconds < 1.0  # Should match within a second
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_interaction_sync — calendar event integration
+# ---------------------------------------------------------------------------
+
+
+async def test_interaction_sync_calendar_no_events_returns_zeros(provisioned_postgres_pool):
+    """No calendar events found returns stats dict."""
+    from roster.relationship.jobs.relationship_jobs import run_interaction_sync
+
+    async with provisioned_postgres_pool() as pool:
+        await _setup_interaction_sync_with_calendar_schema(pool)
+
+        result = await run_interaction_sync(pool)
+
+        # Should return a dict with the expected structure
+        assert isinstance(result, dict)
+        assert "scan_window_start" in result
+        assert "scan_window_end" in result
+
+
+async def test_interaction_sync_calendar_with_attendees_logged(provisioned_postgres_pool):
+    """Calendar event with attendee resolves and logs interaction."""
+    from roster.relationship.jobs.relationship_jobs import run_interaction_sync
+
+    async with provisioned_postgres_pool() as pool:
+        await _setup_interaction_sync_with_calendar_schema(pool)
+
+        # Create owner contact
+        owner_entity = await _insert_public_entity(pool, roles=["owner"])
+        owner_contact = await _insert_public_contact(
+            pool, first_name="Owner", entity_id=owner_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=owner_contact,
+            ci_type="email",
+            value="owner@example.com",
+        )
+
+        # Create attendee contact
+        attendee_entity = await _insert_public_entity(pool)
+        attendee_contact = await _insert_public_contact(
+            pool, first_name="Alice", entity_id=attendee_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=attendee_contact,
+            ci_type="email",
+            value="alice@example.com",
+        )
+
+        # Insert calendar event with attendees
+        event_time = datetime.now(UTC) - timedelta(hours=2)
+        await _insert_calendar_event(
+            pool,
+            title="Team Meeting",
+            starts_at=event_time,
+            attendees=[
+                {"email": "owner@example.com", "self": True, "rsvp_status": "accepted"},
+                {"email": "alice@example.com", "self": False, "rsvp_status": "accepted"},
+            ],
+        )
+
+        result = await run_interaction_sync(pool)
+
+        # Should have run without error
+        assert "scan_window_start" in result
+        assert "scan_window_end" in result
+
+        # Check that an interaction fact was created for the attendee
+        facts = await pool.fetch(
+            """
+            SELECT id FROM facts
+            WHERE subject = $1 AND predicate = 'interaction'
+            AND metadata->>'type' = 'calendar_event'
+            """,
+            f"contact:{attendee_contact}",
+        )
+        assert len(facts) >= 1
+
+
+async def test_interaction_sync_calendar_declined_event_excluded(provisioned_postgres_pool):
+    """Calendar event where owner declined is excluded."""
+    from roster.relationship.jobs.relationship_jobs import run_interaction_sync
+
+    async with provisioned_postgres_pool() as pool:
+        await _setup_interaction_sync_with_calendar_schema(pool)
+
+        # Create owner contact with declined RSVP
+        owner_entity = await _insert_public_entity(pool, roles=["owner"])
+        owner_contact = await _insert_public_contact(
+            pool, first_name="Owner", entity_id=owner_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=owner_contact,
+            ci_type="email",
+            value="owner@example.com",
+        )
+
+        # Create attendee contact
+        attendee_entity = await _insert_public_entity(pool)
+        attendee_contact = await _insert_public_contact(
+            pool, first_name="Bob", entity_id=attendee_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=attendee_contact,
+            ci_type="email",
+            value="bob@example.com",
+        )
+
+        # Insert calendar event with owner declined
+        event_time = datetime.now(UTC) - timedelta(hours=2)
+        await _insert_calendar_event(
+            pool,
+            title="Team Meeting",
+            starts_at=event_time,
+            attendees=[
+                {"email": "owner@example.com", "self": True, "rsvp_status": "declined"},
+                {"email": "bob@example.com", "self": False, "rsvp_status": "accepted"},
+            ],
+        )
+
+        result = await run_interaction_sync(pool)
+
+        # Declined event should be skipped entirely — no interaction facts created
+        facts = await pool.fetch(
+            """
+            SELECT id FROM facts
+            WHERE predicate = 'interaction' AND metadata->>'type' = 'calendar_event'
+            """
+        )
+        assert len(facts) == 0
+
+
+async def test_interaction_sync_calendar_cancelled_event_excluded(provisioned_postgres_pool):
+    """Calendar event with cancelled status is excluded."""
+    from roster.relationship.jobs.relationship_jobs import run_interaction_sync
+
+    async with provisioned_postgres_pool() as pool:
+        await _setup_interaction_sync_with_calendar_schema(pool)
+
+        # Create owner first (required for event)
+        owner_entity = await _insert_public_entity(pool, roles=["owner"])
+        owner_contact = await _insert_public_contact(
+            pool, first_name="Owner", entity_id=owner_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=owner_contact,
+            ci_type="email",
+            value="owner@example.com",
+        )
+
+        # Create attendee contact
+        attendee_entity = await _insert_public_entity(pool)
+        attendee_contact = await _insert_public_contact(
+            pool, first_name="Carol", entity_id=attendee_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=attendee_contact,
+            ci_type="email",
+            value="carol@example.com",
+        )
+
+        # Insert cancelled calendar event
+        event_time = datetime.now(UTC) - timedelta(hours=2)
+        await _insert_calendar_event(
+            pool,
+            title="Cancelled Meeting",
+            starts_at=event_time,
+            status="cancelled",
+            attendees=[
+                {"email": "owner@example.com", "self": True, "rsvp_status": "accepted"},
+                {"email": "carol@example.com", "self": False, "rsvp_status": "accepted"},
+            ],
+        )
+
+        result = await run_interaction_sync(pool)
+
+        # Cancelled event should be skipped — no facts created
+        facts = await pool.fetch(
+            """
+            SELECT id FROM facts
+            WHERE predicate = 'interaction' AND metadata->>'type' = 'calendar_event'
+            """
+        )
+        assert len(facts) == 0
+
+
+async def test_interaction_sync_calendar_owner_self_entry_excluded(provisioned_postgres_pool):
+    """Calendar attendee entry with self=true for owner is excluded from resolution."""
+    from roster.relationship.jobs.relationship_jobs import run_interaction_sync
+
+    async with provisioned_postgres_pool() as pool:
+        await _setup_interaction_sync_with_calendar_schema(pool)
+
+        # Create owner contact (the self=true entry)
+        owner_entity = await _insert_public_entity(pool, roles=["owner"])
+        owner_contact = await _insert_public_contact(
+            pool, first_name="Owner", entity_id=owner_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=owner_contact,
+            ci_type="email",
+            value="owner@example.com",
+        )
+
+        # Create actual attendee
+        attendee_entity = await _insert_public_entity(pool)
+        attendee_contact = await _insert_public_contact(
+            pool, first_name="Dave", entity_id=attendee_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=attendee_contact,
+            ci_type="email",
+            value="dave@example.com",
+        )
+
+        # Insert event: owner should not count as an attendee interaction
+        event_time = datetime.now(UTC) - timedelta(hours=2)
+        await _insert_calendar_event(
+            pool,
+            title="Meeting",
+            starts_at=event_time,
+            attendees=[
+                {"email": "owner@example.com", "self": True, "rsvp_status": "accepted"},
+                {"email": "dave@example.com", "self": False, "rsvp_status": "accepted"},
+            ],
+        )
+
+        result = await run_interaction_sync(pool)
+
+        # Should only create interaction for Dave (the non-owner attendee), not the owner
+        owner_facts = await pool.fetch(
+            """
+            SELECT id FROM facts
+            WHERE subject = $1 AND predicate = 'interaction'
+            AND metadata->>'type' = 'calendar_event'
+            """,
+            f"contact:{owner_contact}",
+        )
+        assert len(owner_facts) == 0  # Owner should not have a calendar event interaction
+
+        dave_facts = await pool.fetch(
+            """
+            SELECT id FROM facts
+            WHERE subject = $1 AND predicate = 'interaction'
+            AND metadata->>'type' = 'calendar_event'
+            """,
+            f"contact:{attendee_contact}",
+        )
+        assert len(dave_facts) >= 1  # Dave should have the calendar event interaction
+
+
+async def test_interaction_sync_calendar_unresolved_attendee_skipped(provisioned_postgres_pool):
+    """Calendar attendee with no matching contact_info is skipped."""
+    from roster.relationship.jobs.relationship_jobs import run_interaction_sync
+
+    async with provisioned_postgres_pool() as pool:
+        await _setup_interaction_sync_with_calendar_schema(pool)
+
+        # Create owner
+        owner_entity = await _insert_public_entity(pool, roles=["owner"])
+        owner_contact = await _insert_public_contact(
+            pool, first_name="Owner", entity_id=owner_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=owner_contact,
+            ci_type="email",
+            value="owner@example.com",
+        )
+
+        # Event with attendee that has no contact_info entry
+        event_time = datetime.now(UTC) - timedelta(hours=2)
+        await _insert_calendar_event(
+            pool,
+            title="Meeting",
+            starts_at=event_time,
+            attendees=[
+                {"email": "owner@example.com", "self": True, "rsvp_status": "accepted"},
+                {"email": "unknown@example.com", "self": False, "rsvp_status": "accepted"},
+            ],
+        )
+
+        result = await run_interaction_sync(pool)
+
+        # Unknown attendee should not generate any interaction facts
+        facts = await pool.fetch(
+            """
+            SELECT id FROM facts
+            WHERE predicate = 'interaction' AND metadata->>'type' = 'calendar_event'
+            """
+        )
+        assert len(facts) == 0
+
+
+async def test_interaction_sync_calendar_case_insensitive_email_match(provisioned_postgres_pool):
+    """Calendar attendee email resolution is case-insensitive."""
+    from roster.relationship.jobs.relationship_jobs import run_interaction_sync
+
+    async with provisioned_postgres_pool() as pool:
+        await _setup_interaction_sync_with_calendar_schema(pool)
+
+        # Create contact with lowercase email
+        owner_entity = await _insert_public_entity(pool, roles=["owner"])
+        owner_contact = await _insert_public_contact(
+            pool, first_name="Owner", entity_id=owner_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=owner_contact,
+            ci_type="email",
+            value="owner@example.com",
+        )
+
+        attendee_entity = await _insert_public_entity(pool)
+        attendee_contact = await _insert_public_contact(
+            pool, first_name="Eve", entity_id=attendee_entity
+        )
+        # Store with lowercase
+        await _insert_contact_info(
+            pool,
+            contact_id=attendee_contact,
+            ci_type="email",
+            value="eve@example.com",
+        )
+
+        # Event attendee with different case
+        event_time = datetime.now(UTC) - timedelta(hours=2)
+        await _insert_calendar_event(
+            pool,
+            title="Meeting",
+            starts_at=event_time,
+            attendees=[
+                {"email": "owner@example.com", "self": True, "rsvp_status": "accepted"},
+                {
+                    "email": "EVE@EXAMPLE.COM",
+                    "self": False,
+                    "rsvp_status": "accepted",
+                },  # Different case
+            ],
+        )
+
+        result = await run_interaction_sync(pool)
+
+        # Should match despite case difference and create interaction fact
+        eve_facts = await pool.fetch(
+            """
+            SELECT id FROM facts
+            WHERE subject = $1 AND predicate = 'interaction'
+            AND metadata->>'type' = 'calendar_event'
+            """,
+            f"contact:{attendee_contact}",
+        )
+        assert len(eve_facts) >= 1
+
+
+async def test_interaction_sync_calendar_outside_window_excluded(provisioned_postgres_pool):
+    """Calendar events outside the scan window are excluded."""
+    from butlers.core.state import state_set
+    from roster.relationship.jobs.relationship_jobs import run_interaction_sync
+
+    async with provisioned_postgres_pool() as pool:
+        await _setup_interaction_sync_with_calendar_schema(pool)
+
+        # Create attendee
+        owner_entity = await _insert_public_entity(pool, roles=["owner"])
+        owner_contact = await _insert_public_contact(
+            pool, first_name="Owner", entity_id=owner_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=owner_contact,
+            ci_type="email",
+            value="owner@example.com",
+        )
+
+        attendee_entity = await _insert_public_entity(pool)
+        attendee_contact = await _insert_public_contact(
+            pool, first_name="Frank", entity_id=attendee_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=attendee_contact,
+            ci_type="email",
+            value="frank@example.com",
+        )
+
+        # Set checkpoint to 5 hours ago
+        checkpoint = datetime.now(UTC) - timedelta(hours=5)
+        await state_set(pool, "interaction_sync.last_scan_at", checkpoint.isoformat())
+
+        # Insert event from 10 hours ago (outside 5-hour window)
+        event_time = datetime.now(UTC) - timedelta(hours=10)
+        await _insert_calendar_event(
+            pool,
+            title="Old Meeting",
+            starts_at=event_time,
+            attendees=[
+                {"email": "owner@example.com", "self": True, "rsvp_status": "accepted"},
+                {"email": "frank@example.com", "self": False, "rsvp_status": "accepted"},
+            ],
+        )
+
+        result = await run_interaction_sync(pool)
+
+        # Event outside window should not create any calendar event interactions
+        facts = await pool.fetch(
+            """
+            SELECT id FROM facts
+            WHERE predicate = 'interaction' AND metadata->>'type' = 'calendar_event'
+            """
+        )
+        assert len(facts) == 0
+
+
+async def test_interaction_sync_calendar_interaction_fact_has_correct_metadata(
+    provisioned_postgres_pool,
+):
+    """Calendar interaction facts include event_id and event_title in metadata."""
+    from roster.relationship.jobs.relationship_jobs import run_interaction_sync
+
+    async with provisioned_postgres_pool() as pool:
+        await _setup_interaction_sync_with_calendar_schema(pool)
+
+        # Create owner and attendee
+        owner_entity = await _insert_public_entity(pool, roles=["owner"])
+        owner_contact = await _insert_public_contact(
+            pool, first_name="Owner", entity_id=owner_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=owner_contact,
+            ci_type="email",
+            value="owner@example.com",
+        )
+
+        attendee_entity = await _insert_public_entity(pool)
+        attendee_contact = await _insert_public_contact(
+            pool, first_name="Grace", entity_id=attendee_entity
+        )
+        await _insert_contact_info(
+            pool,
+            contact_id=attendee_contact,
+            ci_type="email",
+            value="grace@example.com",
+        )
+
+        # Insert event
+        event_time = datetime.now(UTC) - timedelta(hours=2)
+        event_id = await _insert_calendar_event(
+            pool,
+            title="Design Review",
+            starts_at=event_time,
+            attendees=[
+                {"email": "owner@example.com", "self": True, "rsvp_status": "accepted"},
+                {"email": "grace@example.com", "self": False, "rsvp_status": "accepted"},
+            ],
+        )
+
+        await run_interaction_sync(pool)
+
+        # Check that interaction fact was created with proper metadata
+        rows = await pool.fetch(
+            """
+            SELECT id, content, metadata FROM facts
+            WHERE subject = $1 AND predicate = 'interaction' AND metadata->>'type' = 'calendar_event'
+            """,
+            f"contact:{attendee_contact}",
+        )
+        assert len(rows) >= 1
+        metadata = json.loads(rows[0]["metadata"]) if isinstance(rows[0]["metadata"], str) else rows[0]["metadata"]
+        assert metadata.get("source") == "interaction_sync"
+        assert metadata.get("event_id") == event_id
+        assert metadata.get("event_title") == "Design Review"
