@@ -56,12 +56,14 @@ def test_pii_scrubbing():
         return anonymize(text, REPO_ROOT)
 
     # Emails
-    assert "user@example.com" not in r("user@example.com") and "[REDACTED-EMAIL]" in r("user@example.com")
+    redacted_email = r("user@example.com")
+    assert "user@example.com" not in redacted_email and "[REDACTED-EMAIL]" in redacted_email
     assert "USER@EXAMPLE.COM" not in r("USER@EXAMPLE.COM")
     assert "user.name+tag@sub.domain.org" not in r("user.name+tag@sub.domain.org")
     assert r("From: alice@example.com To: bob@corp.io").count("[REDACTED-EMAIL]") == 2
     # Phone numbers
-    assert "555-123-4567" not in r("Call +1-555-123-4567") and "[REDACTED-PHONE]" in r("Call +1-555-123-4567")
+    redacted_phone = r("Call +1-555-123-4567")
+    assert "555-123-4567" not in redacted_phone and "[REDACTED-PHONE]" in redacted_phone
     assert "555) 123-4567" not in r("Contact: (555) 123-4567")
     assert "555.123.4567" not in r("fax: 555.123.4567")
     # IPv4/IPv6

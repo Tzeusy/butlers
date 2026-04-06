@@ -4,7 +4,7 @@ Covers:
 - HealingConfig defaults and from_module_config
 - Gate 1: no-recursion (trigger_source=healing → rejected)
 - Gate 2: opt-in disabled → rejected, pool never queried
-- Gate 3+ severity/already-investigating/cooldown/concurrency/circuit-breaker/no-model → rejected
+- Gate 3+ severity/already-investigating/cooldown/no-model → rejected
 - Worktree creation failure → rejected
 - Successful dispatch → accepted, tasks spawned
 - dispatch_healing never raises (internal_error on exception)
@@ -119,7 +119,7 @@ def test_healing_config_defaults_and_from_module_config() -> None:
 
 @pytest.mark.unit
 async def test_dispatch_healing_gate_rejections(tmp_path: Path) -> None:
-    """No-recursion, disabled, severity, already_investigating, cooldown, concurrency, circuit breaker gates."""
+    """No-recursion, disabled, severity, already_investigating, cooldown, and no-model gates."""
     # Gate 1: no-recursion
     r = await dispatch_healing(
         pool=MagicMock(), butler_name="email", session_id=uuid.uuid4(),
