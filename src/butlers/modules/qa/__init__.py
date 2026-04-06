@@ -857,7 +857,7 @@ class QaModule(Module):
 
             # Phase 3: Dispatch
             gh_token = await self._resolve_gh_token()
-            if gh_token is None:
+            if not gh_token:  # None or empty string
                 await self._notify_missing_gh_token(patrol_id)
             dispatch_config = QaDispatchConfig(
                 severity_threshold=self._config.severity_threshold,
@@ -1275,15 +1275,17 @@ class QaModule(Module):
         """Send a one-per-patrol-cycle alert when the GH token is missing.
 
         Rate-limited: only one notification is sent per patrol cycle
-        (identified by ``patrol_id``).  If the daemon has no ``notify_fn``
-        wired in, this is a no-op (the caller already logs a warning).
+        (identified by ``patrol_id``).  This method always logs a
+        ``WARNING`` when first called for a given patrol cycle; the external
+        notification step (via ``notify_fn``) is skipped only when
+        ``notify_fn`` is ``None``.
 
         Parameters
         ----------
         patrol_id:
             The UUID of the current patrol cycle.  Used to deduplicate
-            notifications so we do not spam on every finding within a
-            single patrol.
+            notifications so we do not send more than one alert per patrol
+            cycle.
         """
         if self._last_missing_token_notified_patrol_id == patrol_id:
             logger.debug(

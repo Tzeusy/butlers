@@ -565,19 +565,31 @@ async def get_qa_summary(
     credentials_status = QaCredentialsStatus()
     if credentials_status_fn is not None:
         try:
-            creds_data: dict = await credentials_status_fn()
-            gh_token_present: bool | None = creds_data.get("gh_token_present")
-            provisioning_hint: str | None = None
-            if gh_token_present is False:
-                provisioning_hint = (
-                    "BUTLERS_QA_GH_TOKEN is missing. "
-                    "Provision via: butler secrets set BUTLERS_QA_GH_TOKEN <token> "
-                    "(requires 'repo' scope)"
+            raw_creds = await credentials_status_fn()
+            if isinstance(raw_creds, QaCredentialsStatus):
+                parsed_creds = raw_creds
+            elif isinstance(raw_creds, dict):
+                parsed_creds = QaCredentialsStatus.model_validate(raw_creds)
+            else:
+                logger.warning(
+                    "get_qa_summary: credentials_status_fn returned unsupported type %s; "
+                    "treating credentials status as unknown",
+                    type(raw_creds).__name__,
                 )
-            credentials_status = QaCredentialsStatus(
-                gh_token_present=gh_token_present,
-                provisioning_hint=provisioning_hint,
-            )
+                parsed_creds = None
+
+            if parsed_creds is not None:
+                provisioning_hint: str | None = None
+                if parsed_creds.gh_token_present is False:
+                    provisioning_hint = (
+                        "BUTLERS_QA_GH_TOKEN is missing. "
+                        "Provision via: butler secrets set BUTLERS_QA_GH_TOKEN <token> "
+                        "(requires 'repo' scope)"
+                    )
+                credentials_status = QaCredentialsStatus(
+                    gh_token_present=parsed_creds.gh_token_present,
+                    provisioning_hint=provisioning_hint,
+                )
         except Exception:
             logger.warning(
                 "get_qa_summary: credentials_status_fn failed (non-fatal)", exc_info=True
