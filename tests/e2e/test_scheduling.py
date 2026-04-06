@@ -221,7 +221,7 @@ async def test_timer_external_interleaving(
     # Verify at least 2 new sessions exist (one from external, one from tick)
     final_count = await health_pool.fetchval("SELECT COUNT(*) FROM sessions")
     assert final_count >= initial_count + 2, (
-        "Expected at least 2 new sessions (external + scheduled)"
+        f"Expected at least 2 new sessions (external + scheduled), got {final_count - initial_count}"  # noqa: E501
     )
 
     # Cleanup
