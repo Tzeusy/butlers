@@ -61,6 +61,21 @@ def _get_force_patrol_fn():
     return None
 
 
+def _get_credentials_status_fn():
+    """Dependency stub for the credentials-status callable.
+
+    Override via ``app.dependency_overrides[_get_credentials_status_fn]`` to
+    inject a callable that returns a ``dict`` describing the QA credential
+    status (e.g., whether ``BUTLERS_QA_GH_TOKEN`` is set).
+
+    The callable must be an async function with no required arguments and
+    must return a dict with at least ``{"gh_token_present": bool}``.
+
+    Returns ``None`` by default (standalone API mode — status is unknown).
+    """
+    return None
+
+
 def _shared_pool(db: DatabaseManager):
     """Return the shared credential pool, raising 503 if unavailable."""
     try:
@@ -174,6 +189,30 @@ class QaCircuitBreaker(BaseModel):
     consecutive_failures: int
 
 
+class QaCredentialsStatus(BaseModel):
+    """Credential availability status for QA investigations.
+
+    Populated when the daemon wires a ``credentials_status_fn`` into the
+    ``_get_credentials_status_fn`` dependency.  When the daemon is not
+    available (standalone API mode) all fields carry their ``None`` default
+    so the dashboard can distinguish "unknown" from "missing".
+    """
+
+    gh_token_present: bool | None = None
+    """Whether ``BUTLERS_QA_GH_TOKEN`` is set in the credential store.
+
+    ``None`` means the status could not be determined (e.g., no daemon
+    wired in).  ``True`` means the token is present; ``False`` means it
+    is missing and operator action is required.
+    """
+
+    provisioning_hint: str | None = None
+    """Actionable instructions for provisioning the missing credential.
+
+    Only populated when ``gh_token_present`` is ``False``.
+    """
+
+
 class QaSummary(BaseModel):
     """QA staffer status summary for the dashboard."""
 
@@ -186,6 +225,10 @@ class QaSummary(BaseModel):
     active_sources: list[str] = Field(default_factory=list)
     circuit_breaker: QaCircuitBreaker = Field(
         default_factory=lambda: QaCircuitBreaker(tripped=False, consecutive_failures=0)
+    )
+    credentials_status: QaCredentialsStatus = Field(
+        default_factory=QaCredentialsStatus,
+        description="GH token and credential availability for QA investigations.",
     )
 
 
@@ -356,6 +399,7 @@ def _row_to_investigation(row: Any) -> QaInvestigation:
 @router.get("/summary", response_model=ApiResponse[QaSummary])
 async def get_qa_summary(
     db: DatabaseManager = Depends(_get_db_manager),
+    credentials_status_fn=Depends(_get_credentials_status_fn),
 ) -> ApiResponse[QaSummary]:
     """Return QA staffer summary: last patrol, 24h stats, all-time stats, active sources."""
     pool = _shared_pool(db)
@@ -517,6 +561,28 @@ async def get_qa_summary(
     else:
         staffer_status = "healthy"
 
+    # Credentials status — populated when daemon wires credentials_status_fn
+    credentials_status = QaCredentialsStatus()
+    if credentials_status_fn is not None:
+        try:
+            creds_data: dict = await credentials_status_fn()
+            gh_token_present: bool | None = creds_data.get("gh_token_present")
+            provisioning_hint: str | None = None
+            if gh_token_present is False:
+                provisioning_hint = (
+                    "BUTLERS_QA_GH_TOKEN is missing. "
+                    "Provision via: butler secrets set BUTLERS_QA_GH_TOKEN <token> "
+                    "(requires 'repo' scope)"
+                )
+            credentials_status = QaCredentialsStatus(
+                gh_token_present=gh_token_present,
+                provisioning_hint=provisioning_hint,
+            )
+        except Exception:
+            logger.warning(
+                "get_qa_summary: credentials_status_fn failed (non-fatal)", exc_info=True
+            )
+
     summary = QaSummary(
         staffer_status=staffer_status,
         last_patrol_at=last_patrol_at,
@@ -526,6 +592,7 @@ async def get_qa_summary(
         stats_all_time=stats_all_time,
         active_sources=active_sources,
         circuit_breaker=circuit_breaker,
+        credentials_status=credentials_status,
     )
     return ApiResponse(data=summary)
 

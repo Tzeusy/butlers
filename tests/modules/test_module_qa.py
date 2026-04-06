@@ -7,6 +7,11 @@ Covers:
 - wire_runtime, report_finding, force_patrol, get_qa_status handlers
 - Patrol overlap prevention, source failure isolation, full cycle
 - Prometheus metrics: patrol_total, investigations_active, investigation_duration
+- wire_runtime: accepts optional notify_fn
+- _notify_missing_gh_token: calls notify_fn when token is absent
+- _notify_missing_gh_token: rate-limits to once per patrol cycle
+- _notify_missing_gh_token: no-op when notify_fn is None
+- _run_patrol_body: calls _notify_missing_gh_token when gh_token is None
 """
 
 from __future__ import annotations
@@ -453,3 +458,231 @@ class TestMetrics:
         mod._last_patrol_at = last_at
         await mod._record_investigation_metrics(pool)
         assert any(last_at in c["args"] for c in fetch_calls)
+
+
+# ---------------------------------------------------------------------------
+# wire_runtime: notify_fn injection
+# ---------------------------------------------------------------------------
+
+
+class TestWireRuntimeNotifyFn:
+    def test_wire_runtime_accepts_notify_fn(self):
+        """wire_runtime stores notify_fn when provided."""
+        mod = _make_module()
+        spawner = MagicMock()
+
+        async def _fake_notify(**kwargs):
+            return {}
+
+        mod.wire_runtime("qa", spawner, "/repo/root", notify_fn=_fake_notify)
+        assert mod._notify_fn is _fake_notify
+
+    def test_wire_runtime_notify_fn_defaults_none(self):
+        """wire_runtime notify_fn defaults to None when not provided."""
+        mod = _make_module()
+        spawner = MagicMock()
+        mod.wire_runtime("qa", spawner, "/repo/root")
+        assert mod._notify_fn is None
+
+
+# ---------------------------------------------------------------------------
+# _notify_missing_gh_token
+# ---------------------------------------------------------------------------
+
+
+class TestNotifyMissingGhToken:
+    async def test_calls_notify_fn_when_provided(self):
+        """_notify_missing_gh_token calls notify_fn with telegram/high."""
+        mod = _make_module()
+        notify_calls: list[dict] = []
+
+        async def _fake_notify(**kwargs):
+            notify_calls.append(kwargs)
+            return {}
+
+        mod._notify_fn = _fake_notify
+        patrol_id = uuid.uuid4()
+        await mod._notify_missing_gh_token(patrol_id)
+
+        assert len(notify_calls) == 1
+        call = notify_calls[0]
+        assert call["channel"] == "telegram"
+        assert call["priority"] == "high"
+        assert "BUTLERS_QA_GH_TOKEN" in call["message"]
+        assert "butler secrets set" in call["message"]
+
+    async def test_noop_when_notify_fn_is_none(self):
+        """_notify_missing_gh_token is a no-op when notify_fn is None."""
+        mod = _make_module()
+        mod._notify_fn = None
+        patrol_id = uuid.uuid4()
+        # Should not raise
+        await mod._notify_missing_gh_token(patrol_id)
+
+    async def test_rate_limited_to_once_per_patrol_id(self):
+        """Second call with the same patrol_id skips the notification."""
+        mod = _make_module()
+        notify_calls: list[dict] = []
+
+        async def _fake_notify(**kwargs):
+            notify_calls.append(kwargs)
+            return {}
+
+        mod._notify_fn = _fake_notify
+        patrol_id = uuid.uuid4()
+
+        await mod._notify_missing_gh_token(patrol_id)
+        await mod._notify_missing_gh_token(patrol_id)  # same patrol_id - deduplicated
+
+        assert len(notify_calls) == 1
+
+    async def test_new_patrol_id_triggers_new_notification(self):
+        """A different patrol_id after the first triggers a fresh notification."""
+        mod = _make_module()
+        notify_calls: list[dict] = []
+
+        async def _fake_notify(**kwargs):
+            notify_calls.append(kwargs)
+            return {}
+
+        mod._notify_fn = _fake_notify
+        first_patrol = uuid.uuid4()
+        second_patrol = uuid.uuid4()
+
+        await mod._notify_missing_gh_token(first_patrol)
+        await mod._notify_missing_gh_token(second_patrol)
+
+        assert len(notify_calls) == 2
+
+    async def test_notify_fn_exception_is_swallowed(self):
+        """If notify_fn raises, the error is caught and does not propagate."""
+        mod = _make_module()
+
+        async def _failing_notify(**kwargs):
+            raise RuntimeError("delivery failed")
+
+        mod._notify_fn = _failing_notify
+        patrol_id = uuid.uuid4()
+        # Should not raise
+        await mod._notify_missing_gh_token(patrol_id)
+
+
+# ---------------------------------------------------------------------------
+# _run_patrol_body: notifies when GH token is missing
+# ---------------------------------------------------------------------------
+
+
+class TestRunPatrolBodyNotifyOnMissingToken:
+    async def test_notify_called_when_gh_token_none(self):
+        """_run_patrol_body calls _notify_missing_gh_token when gh_token is None."""
+        mod = _make_module()
+        mod._config = QaConfig(enabled=True, enabled_sources=["butler_reports"])
+        pool = _make_pool()
+        mod._pool = pool
+        mod._sources = []
+
+        notify_calls: list[dict] = []
+
+        async def _fake_notify(**kwargs):
+            notify_calls.append(kwargs)
+            return {}
+
+        mod._notify_fn = _fake_notify
+
+        with (
+            patch("butlers.modules.qa.triage_findings", new_callable=AsyncMock) as mock_triage,
+            patch(
+                "butlers.modules.qa.dispatch_novel_findings", new_callable=AsyncMock
+            ) as mock_dispatch,
+            patch("butlers.modules.qa.check_open_pr_statuses", new_callable=AsyncMock),
+            patch.object(mod, "_resolve_gh_token", new_callable=AsyncMock, return_value=None),
+        ):
+            mock_triage.return_value = MagicMock(
+                all_findings=[], novel_findings=[], dedup_counts={}
+            )
+            mock_dispatch.return_value = []
+            await mod._run_patrol_cycle()
+
+        # Should have been notified exactly once
+        assert len(notify_calls) == 1
+        assert notify_calls[0]["channel"] == "telegram"
+        assert notify_calls[0]["priority"] == "high"
+
+    async def test_notify_not_called_when_gh_token_present(self):
+        """_run_patrol_body does NOT call notify when gh_token is resolved."""
+        mod = _make_module()
+        mod._config = QaConfig(enabled=True, enabled_sources=["butler_reports"])
+        pool = _make_pool()
+        mod._pool = pool
+        mod._sources = []
+
+        notify_calls: list[dict] = []
+
+        async def _fake_notify(**kwargs):
+            notify_calls.append(kwargs)
+            return {}
+
+        mod._notify_fn = _fake_notify
+
+        with (
+            patch("butlers.modules.qa.triage_findings", new_callable=AsyncMock) as mock_triage,
+            patch(
+                "butlers.modules.qa.dispatch_novel_findings", new_callable=AsyncMock
+            ) as mock_dispatch,
+            patch("butlers.modules.qa.check_open_pr_statuses", new_callable=AsyncMock),
+            patch.object(
+                mod,
+                "_resolve_gh_token",
+                new_callable=AsyncMock,
+                return_value="ghp_token123",
+            ),
+        ):
+            mock_triage.return_value = MagicMock(
+                all_findings=[], novel_findings=[], dedup_counts={}
+            )
+            mock_dispatch.return_value = []
+            await mod._run_patrol_cycle()
+
+        assert len(notify_calls) == 0
+
+    async def test_notify_rate_limited_across_patrol_cycles(self):
+        """notify_fn is only called once per patrol_id even across multiple cycles."""
+        mod = _make_module()
+        mod._config = QaConfig(enabled=True, enabled_sources=["butler_reports"])
+        pool = _make_pool()
+        mod._pool = pool
+        mod._sources = []
+
+        notify_calls: list[dict] = []
+
+        async def _fake_notify(**kwargs):
+            notify_calls.append(kwargs)
+            return {}
+
+        mod._notify_fn = _fake_notify
+
+        fixed_patrol_id = uuid.uuid4()
+
+        async def _fixed_fetchval(*args, **kwargs):
+            return fixed_patrol_id
+
+        pool.fetchval = AsyncMock(side_effect=_fixed_fetchval)
+
+        with (
+            patch("butlers.modules.qa.triage_findings", new_callable=AsyncMock) as mock_triage,
+            patch(
+                "butlers.modules.qa.dispatch_novel_findings", new_callable=AsyncMock
+            ) as mock_dispatch,
+            patch("butlers.modules.qa.check_open_pr_statuses", new_callable=AsyncMock),
+            patch.object(mod, "_resolve_gh_token", new_callable=AsyncMock, return_value=None),
+        ):
+            mock_triage.return_value = MagicMock(
+                all_findings=[], novel_findings=[], dedup_counts={}
+            )
+            mock_dispatch.return_value = []
+            # Run same patrol_id twice (both cycles share the same UUID from fetchval)
+            await mod._run_patrol_cycle()
+            await mod._run_patrol_cycle()
+
+        # Only one notification for the same patrol_id
+        assert len(notify_calls) == 1
