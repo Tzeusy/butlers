@@ -5,8 +5,10 @@ Covers:
 - Spawn blocked when 30d limit exhausted
 - Spawn proceeds when within limits
 - Spawn proceeds when no limits configured (unlimited)
-- Failed session with usage still records to ledger
+- Ledger recorded on successful session with usage
+- No ledger recording when adapter crashes (no usage returned)
 - No ledger recording when catalog_entry_id is absent (TOML fallback)
+  [covered by test_quota_not_checked_without_pool_or_toml_fallback]
 - No ledger recording when adapter reports no usage
 
 [bu-lm4m.1]
@@ -218,7 +220,11 @@ class TestSpawnerLedgerRecording:
     """Spawner records token usage to ledger in finally block."""
 
     async def test_ledger_recording_conditions(self, tmp_path: Path) -> None:
-        """Ledger recorded on success; not recorded when adapter crashes, TOML fallback, or no usage."""
+        """Ledger recorded on success; not recorded when adapter crashes or returns no usage.
+
+        Note: TOML fallback (catalog_entry_id absent) also skips ledger recording, but that
+        path is covered by TestSpawnerQuotaEnforcement.test_quota_not_checked_without_pool_or_toml_fallback.
+        """
         config = _make_config()
         mock_pool = AsyncMock()
 
