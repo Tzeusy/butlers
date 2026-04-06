@@ -81,8 +81,11 @@ class TestModuleABCAndConfig:
 
         with pytest.raises(ValidationError):
             QaConfig(unknown_field=True)
-        for field in ["patrol_interval_minutes", "log_lookback_minutes",
-                      "max_concurrent_investigations"]:
+        for field in [
+            "patrol_interval_minutes",
+            "log_lookback_minutes",
+            "max_concurrent_investigations",
+        ]:
             with pytest.raises(ValidationError):
                 QaConfig(**{field: 0})
         with pytest.raises(ValidationError):
@@ -108,6 +111,7 @@ class TestModuleABCAndConfig:
                 def decorator(fn):
                     registered_tools.append(fn.__name__)
                     return fn
+
                 return decorator
 
         await mod.register_tools(FakeMCP(), QaConfig(), _make_db())
@@ -148,8 +152,11 @@ class TestOnStartup:
         pool.fetch = AsyncMock(return_value=[{"id": uuid.uuid4()}])
         mod = _make_module()
         with (
-            patch("butlers.modules.qa.recover_stale_attempts",
-                  new_callable=AsyncMock, return_value=(0, [])),
+            patch(
+                "butlers.modules.qa.recover_stale_attempts",
+                new_callable=AsyncMock,
+                return_value=(0, []),
+            ),
             patch("butlers.modules.qa.reap_stale_worktrees", new_callable=AsyncMock),
         ):
             await mod.on_startup(QaConfig(), _make_db(pool=pool))
@@ -189,8 +196,13 @@ class TestReportFinding:
         pool = _make_pool()
         await mod.on_startup(QaConfig(), _make_db(pool=pool))
         result = await mod._handle_report_finding(
-            fingerprint="a" * 64, exception_type="ValueError", call_site="mod.py:func",
-            severity=2, event_summary="failed", source_butler="general", context=None,
+            fingerprint="a" * 64,
+            exception_type="ValueError",
+            call_site="mod.py:func",
+            severity=2,
+            event_summary="failed",
+            source_butler="general",
+            context=None,
         )
         assert result["accepted"] is True
 
@@ -199,8 +211,13 @@ class TestReportFinding:
             QaConfig(enabled_sources=["log_scanner"]), _make_db(pool=_make_pool())
         )
         r2 = await mod2._handle_report_finding(
-            fingerprint="a" * 64, exception_type="ValueError", call_site="mod.py:func",
-            severity=2, event_summary="failed", source_butler="general", context=None,
+            fingerprint="a" * 64,
+            exception_type="ValueError",
+            call_site="mod.py:func",
+            severity=2,
+            event_summary="failed",
+            source_butler="general",
+            context=None,
         )
         assert r2["accepted"] is False
 
@@ -216,8 +233,13 @@ class TestReportFinding:
 
         mod._schedule_mini_patrol = mock_schedule
         await mod._handle_report_finding(
-            fingerprint="a" * 64, exception_type="CriticalError", call_site="x.py:y",
-            severity=severity, event_summary="critical", source_butler="health", context=None,
+            fingerprint="a" * 64,
+            exception_type="CriticalError",
+            call_site="x.py:y",
+            severity=severity,
+            event_summary="critical",
+            source_butler="health",
+            context=None,
         )
         assert scheduled is should_schedule
 
@@ -254,9 +276,16 @@ class TestGetQaStatus:
     def test_returns_correct_fields_and_defaults(self):
         mod = _make_module()
         status = mod._handle_get_qa_status()
-        for k in ["enabled", "last_patrol_at", "last_patrol_status", "last_patrol_findings",
-                   "last_patrol_novel", "active_watchdog_tasks", "enabled_sources",
-                   "butler_reports_buffer_size"]:
+        for k in [
+            "enabled",
+            "last_patrol_at",
+            "last_patrol_status",
+            "last_patrol_findings",
+            "last_patrol_novel",
+            "active_watchdog_tasks",
+            "enabled_sources",
+            "butler_reports_buffer_size",
+        ]:
             assert k in status
         assert status["enabled"] is True and status["last_patrol_at"] is None
 
@@ -299,11 +328,15 @@ class TestSourceFailureIsolation:
     async def test_failing_source_does_not_abort_patrol(self):
         class FailingSource:
             name = "failing_source"
-            async def discover(self, lookback_minutes): raise RuntimeError("down")
+
+            async def discover(self, lookback_minutes):
+                raise RuntimeError("down")
 
         class GoodSource:
             name = "good_source"
-            async def discover(self, lookback_minutes): return []
+
+            async def discover(self, lookback_minutes):
+                return []
 
         mod = _make_module()
         mod._config = QaConfig(enabled=True, enabled_sources=["butler_reports"])
@@ -325,7 +358,9 @@ class TestFullCycleNoFindings:
     async def test_clean_patrol_when_no_findings(self):
         class EmptySource:
             name = "butler_reports"
-            async def discover(self, lookback_minutes): return []
+
+            async def discover(self, lookback_minutes):
+                return []
 
         mod = _make_module()
         mod._config = QaConfig(enabled=True, enabled_sources=["butler_reports"])
@@ -359,7 +394,9 @@ class TestMetrics:
             def labels(self, *, status):
                 counter_calls.append(status)
                 return self
-            def inc(self): pass
+
+            def inc(self):
+                pass
 
         original = qa_module._qa_patrol_total
         try:
@@ -389,19 +426,24 @@ class TestMetrics:
         gauge_values, observed = [], []
 
         class FakeGauge:
-            def set(self, value): gauge_values.append(value)
+            def set(self, value):
+                gauge_values.append(value)
 
         class FakeHistogram:
             def labels(self, *, status):
                 self._status = status
                 return self
-            def observe(self, value): observed.append((self._status, value))
+
+            def observe(self, value):
+                observed.append((self._status, value))
 
         pool = _make_pool()
         pool.fetchval = AsyncMock(return_value=3)
-        pool.fetch = AsyncMock(return_value=[
-            {"status": "pr_merged", "duration_seconds": 120.5},
-        ])
+        pool.fetch = AsyncMock(
+            return_value=[
+                {"status": "pr_merged", "duration_seconds": 120.5},
+            ]
+        )
 
         orig_g = qa_module._qa_investigations_active
         orig_h = qa_module._qa_investigation_duration_seconds
