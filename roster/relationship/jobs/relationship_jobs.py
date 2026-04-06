@@ -641,8 +641,9 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
 
     Queries ``switchboard.message_inbox`` for recent inbound messages on
     user-to-person channels (``telegram_user_client``, ``whatsapp_user_client``,
-    ``email``).  Groups by ``(source_sender_identity, DATE(received_at))`` so
-    that at most one interaction fact is logged per contact per day per channel.
+    ``email``).  Groups by ``(source_sender_identity, source_channel,
+    DATE(received_at))`` so that at most one interaction fact is logged per
+    contact per day per channel.
 
     Resolution steps:
     1. Map ``source_channel`` → ``contact_info.type`` (see ``_INTERACTION_SYNC_CHANNEL_MAP``).
@@ -651,7 +652,10 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
     3. Skip senders that cannot be resolved to a contact (unresolved).
     4. Skip owner contacts (entity has ``'owner'`` in roles).
     5. Call ``interaction_log()`` with ``type=source_channel``,
-       ``direction='incoming'``, ``occurred_at=<date as midnight UTC>``.
+       ``direction='incoming'``, and ``occurred_at`` set to the grouped
+       message date in UTC plus a channel-specific hour offset, so facts from
+       different channels on the same day do not collide under
+       ``store_fact()`` temporal idempotency.
 
     Args:
         db_pool: Database connection pool (relationship butler pool).
@@ -745,9 +749,10 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
                 FROM public.contact_info ci
                 JOIN public.contacts c ON c.id = ci.contact_id
                 LEFT JOIN public.entities e ON e.id = c.entity_id
-                WHERE (ci.type, ci.value) IN (
-                    SELECT UNNEST($1::text[]), UNNEST($2::text[])
-                )
+                JOIN (
+                    SELECT DISTINCT pairs.ci_type, pairs.ci_value
+                    FROM UNNEST($1::text[], $2::text[]) AS pairs(ci_type, ci_value)
+                ) pairs ON ci.type = pairs.ci_type AND ci.value = pairs.ci_value
                 """,
                 ci_types,
                 ci_values,
