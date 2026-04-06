@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from butlers.core.runtimes import RuntimeAdapter, get_adapter, register_adapter
+from butlers.core.runtimes.base import _ADAPTER_REGISTRY
 
 pytestmark = pytest.mark.unit
 
@@ -67,4 +68,7 @@ async def test_defaults_and_registry():
     assert "codex" in msg and "gemini" in msg and "opencode" in msg
 
     register_adapter("custom-test", FullAdapter)
-    assert get_adapter("custom-test") is FullAdapter
+    try:
+        assert get_adapter("custom-test") is FullAdapter
+    finally:
+        _ADAPTER_REGISTRY.pop("custom-test", None)
