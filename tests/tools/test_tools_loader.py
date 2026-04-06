@@ -14,7 +14,7 @@ ROSTER_ROOT = REPO_ROOT / "roster"
 
 
 def test_butler_tools_importable_and_discovery():
-    """Core tools importable; discovery registers modules in sys.modules; idempotent."""
+    """Core tools importable; imports register modules; discovered butler modules are present."""
     from butlers.tools._loader import _discover_butler_names, register_all_butler_tools
     from butlers.tools.general import collection_create
     from butlers.tools.health import measurement_log

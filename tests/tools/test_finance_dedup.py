@@ -57,7 +57,7 @@ async def test_p1_dedup_match_and_skip():
     pool2 = _mock_pool(fetchval_return=1, fetchrow_return=None)
     assert await _deduplicate(pool2, {"external_id": "new", "account_id": _ACCOUNT_ID}) is None
 
-    # external_id=None → fetchval not called, falls through to P2/P3
+    # external_id=None → P1 skipped (fetchval not called); P2/P3 also not run (no required fields)
     pool3 = _mock_pool(fetchval_return=1, fetchrow_return=None)
     await _deduplicate(pool3, {"external_id": None, "account_id": _ACCOUNT_ID})
     pool3.fetchval.assert_not_called()
