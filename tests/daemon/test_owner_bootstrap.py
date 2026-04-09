@@ -106,7 +106,7 @@ class TestEnsureOwnerEntityBehavior:
         acquire_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("DB connection failed"))
         acquire_ctx.__aexit__ = AsyncMock(return_value=None)
         pool_err.acquire = MagicMock(return_value=acquire_ctx)
-        with patch("butlers.daemon.logger") as mock_logger:
+        with patch("butlers.owner_bootstrap.logger") as mock_logger:
             await _ensure_owner_entity(pool_err)
             mock_logger.warning.assert_called_once()
             warning_msg = mock_logger.warning.call_args[0][0]
