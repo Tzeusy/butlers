@@ -65,6 +65,8 @@ async def _ensure_owner_entity(pool: asyncpg.Pool) -> None:
                         ["owner"],
                     )
                     if owner_entity_id is None:
+                        # ON CONFLICT hit (entity already exists); fetch the
+                        # existing id so callers always have a valid reference.
                         owner_entity_id = await conn.fetchval(
                             """
                             SELECT id FROM public.entities
@@ -73,12 +75,9 @@ async def _ensure_owner_entity(pool: asyncpg.Pool) -> None:
                             """
                         )
                     if owner_entity_id is None:
-                        await conn.fetchval(
-                            """
-                            SELECT id FROM public.entities
-                            WHERE canonical_name = 'Owner'
-                              AND entity_type = 'person'
-                            """
+                        logger.warning(
+                            "Owner entity not found after insert attempt — "
+                            "bootstrap may be incomplete"
                         )
 
     except Exception:  # noqa: BLE001
