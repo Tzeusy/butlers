@@ -1713,6 +1713,33 @@ class TestFindingEvidenceFields:
         assert f["structured_evidence"]["runtime_type"] == "codex"
         assert f["structured_evidence"]["tool_call_count"] == 5
 
+    async def test_evidence_fields_parsed_when_asyncpg_returns_string(self) -> None:
+        """Findings parse structured_evidence correctly when asyncpg returns JSONB as a string.
+
+        asyncpg returns JSONB columns as strings when no custom codec is registered.
+        The endpoint must handle both dict and string forms to avoid silently dropping evidence.
+        """
+        import json as _json
+
+        patrol_id = uuid.uuid4()
+        patrol = _make_patrol_row(patrol_id=patrol_id, findings_count=1)
+        evidence = {"session_id": "abc", "runtime_type": "codex"}
+        finding = _make_finding_row(
+            patrol_id=patrol_id,
+            source_session_trigger_source="healing",
+            structured_evidence=_json.dumps(evidence),  # simulate asyncpg string form
+        )
+        app, _ = _build_app(fetchrow_result=patrol, fetch_rows=[finding])
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(f"/api/qa/patrols/{patrol_id}")
+
+        assert response.status_code == 200
+        f = response.json()["data"]["findings"][0]
+        assert f["structured_evidence"]["runtime_type"] == "codex"
+
 
 # ---------------------------------------------------------------------------
 # GET /api/qa/meta-review (bu-xp0x0.5)
@@ -1766,9 +1793,14 @@ class TestListMetaReviewFindings:
         assert f["source_butler"] == "qa"
         assert f["source_session_trigger_source"] == "healing"
 
-    async def test_returns_meta_review_findings_with_qa_investigation_trigger(self) -> None:
-        """Findings with qa_investigation trigger_source also appear in meta-review."""
-        finding = self._make_meta_finding_row(source_session_trigger_source="qa_investigation")
+    async def test_returns_meta_review_findings_with_qa_trigger(self) -> None:
+        """Findings with source_session_trigger_source='qa' also appear in meta-review.
+
+        QA-spawned investigation sessions use trigger_source='qa'.  This matches
+        the dispatch barrier in butlers.core.qa.dispatch which checks
+        ``trigger_src in {"healing", "qa"}``.
+        """
+        finding = self._make_meta_finding_row(source_session_trigger_source="qa")
         app, _ = _build_app(fetch_rows=[finding], fetchval_result=1)
 
         async with httpx.AsyncClient(
@@ -1777,7 +1809,7 @@ class TestListMetaReviewFindings:
             response = await client.get("/api/qa/meta-review")
 
         assert response.status_code == 200
-        assert response.json()["data"][0]["source_session_trigger_source"] == "qa_investigation"
+        assert response.json()["data"][0]["source_session_trigger_source"] == "qa"
 
     async def test_returns_meta_review_findings_with_null_trigger_source(self) -> None:
         """Findings from QA butler with null trigger_source are treated as potentially recursive."""
@@ -1795,7 +1827,7 @@ class TestListMetaReviewFindings:
         assert body["data"][0]["source_session_trigger_source"] is None
 
     async def test_meta_review_includes_structured_evidence(self) -> None:
-        """Meta-review findings include structured_evidence when available."""
+        """Meta-review findings include structured_evidence when available (dict form)."""
         evidence = {"session_id": "abc123", "runtime_type": "codex"}
         finding = self._make_meta_finding_row()
         finding["structured_evidence"] = evidence
@@ -1809,6 +1841,29 @@ class TestListMetaReviewFindings:
         assert response.status_code == 200
         f = response.json()["data"][0]
         assert f["structured_evidence"]["runtime_type"] == "codex"
+
+    async def test_meta_review_includes_structured_evidence_as_string(self) -> None:
+        """Meta-review findings parse structured_evidence when asyncpg returns it as a string.
+
+        asyncpg returns JSONB columns as strings when no custom codec is registered.
+        The endpoint must handle both dict and string forms.
+        """
+        import json as _json
+
+        evidence = {"session_id": "def456", "runtime_type": "codex", "tool_call_count": 3}
+        finding = self._make_meta_finding_row()
+        finding["structured_evidence"] = _json.dumps(evidence)  # simulate asyncpg string form
+        app, _ = _build_app(fetch_rows=[finding], fetchval_result=1)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/qa/meta-review")
+
+        assert response.status_code == 200
+        f = response.json()["data"][0]
+        assert f["structured_evidence"]["runtime_type"] == "codex"
+        assert f["structured_evidence"]["tool_call_count"] == 3
 
     async def test_pagination_parameters_accepted(self) -> None:
         """Meta-review endpoint accepts standard pagination parameters."""

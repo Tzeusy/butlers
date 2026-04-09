@@ -36,6 +36,7 @@ All reads/writes query ``public.qa_patrols``, ``public.qa_findings``,
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -467,11 +468,19 @@ def _row_to_finding(row: Any) -> QaFindingRecord:
         except (ValueError, AttributeError):
             pass
 
-    # structured_evidence may be a JSONB dict or None
+    # structured_evidence is a JSONB column.  asyncpg returns JSONB as a
+    # Python string when no custom codec is registered; parse it if needed.
     raw_evidence = row.get("structured_evidence")
     structured_evidence: dict | None = None
     if isinstance(raw_evidence, dict):
         structured_evidence = raw_evidence
+    elif isinstance(raw_evidence, str):
+        try:
+            parsed = json.loads(raw_evidence)
+            if isinstance(parsed, dict):
+                structured_evidence = parsed
+        except (ValueError, TypeError):
+            pass
 
     return QaFindingRecord(
         id=row["id"],
@@ -1916,7 +1925,9 @@ async def sync_repo(
 #: QA self-recursion trigger sources that gate normal investigation.
 #: Findings from QA sessions with these trigger sources are routed here
 #: instead of being auto-investigated to prevent self-recursion spirals.
-_QA_SELF_RECURSION_TRIGGER_SOURCES = frozenset({"healing", "qa_investigation"})
+#: Must match the dispatch barrier in butlers.core.qa.dispatch
+#: (``trigger_src in {"healing", "qa"}``).
+_QA_SELF_RECURSION_TRIGGER_SOURCES = frozenset({"healing", "qa"})
 
 
 @router.get("/meta-review", response_model=PaginatedResponse[QaMetaReviewFinding])
@@ -1986,6 +1997,13 @@ async def list_meta_review_findings(
         structured_evidence: dict | None = None
         if isinstance(raw_evidence, dict):
             structured_evidence = raw_evidence
+        elif isinstance(raw_evidence, str):
+            try:
+                parsed = json.loads(raw_evidence)
+                if isinstance(parsed, dict):
+                    structured_evidence = parsed
+            except (ValueError, TypeError):
+                pass
 
         data.append(
             QaMetaReviewFinding(
