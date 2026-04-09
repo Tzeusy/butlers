@@ -1355,9 +1355,12 @@ class Spawner:
             }
             if merged_args:
                 invoke_kwargs["runtime_args"] = merged_args
-            timeout_s = (
-                timeout_override or accessor_timeout or self._config.runtime.session_timeout_s
-            )
+            if timeout_override is not None:
+                timeout_s = timeout_override
+            elif accessor_timeout is not None:
+                timeout_s = accessor_timeout
+            else:
+                timeout_s = self._config.runtime.session_timeout_s
             invoke_kwargs["timeout"] = timeout_s
             try:
                 result_text, tool_calls, usage = await asyncio.wait_for(
