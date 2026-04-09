@@ -211,6 +211,18 @@ async def _count_attempts(pool, status_filter: str | None) -> int:
     return int(result)
 
 
+async def _count_dispatch_events(pool, decision_filter: str | None) -> int:
+    """Return the total count of dispatch events, optionally filtered by decision."""
+    if decision_filter is not None:
+        result: int = await pool.fetchval(
+            "SELECT COUNT(*) FROM public.healing_dispatch_events WHERE decision = $1",
+            decision_filter,
+        )
+    else:
+        result = await pool.fetchval("SELECT COUNT(*) FROM public.healing_dispatch_events")
+    return int(result)
+
+
 async def _compute_breaker_state(pool, threshold: int) -> tuple[bool, int, datetime | None]:
     """Compute circuit breaker state from the last *threshold* terminal attempts.
 
@@ -586,6 +598,7 @@ async def list_healing_dispatch_events(
     """
     pool = _shared_pool(db)
     rows = await list_dispatch_events(pool, limit=limit, offset=offset, decision_filter=decision)
+    total = await _count_dispatch_events(pool, decision)
     events = [
         HealingDispatchEvent(
             id=row["id"],
@@ -599,6 +612,6 @@ async def list_healing_dispatch_events(
         for row in rows
     ]
     return PaginatedResponse(
-        items=events,
-        meta=PaginationMeta(limit=limit, offset=offset, total=len(events)),
+        data=events,
+        meta=PaginationMeta(limit=limit, offset=offset, total=total),
     )
