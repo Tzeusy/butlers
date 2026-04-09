@@ -913,6 +913,11 @@ async def _run_investigation_session(
                 outcome="timeout",
                 duration_ms=_elapsed,
             )
+            metrics.record_recovery_execution_failure(
+                workflow="qa",
+                phase="investigate",
+                error_class="timeout",
+            )
         if phase_session_id is not None:
             try:
                 await update_phase_session_status(
