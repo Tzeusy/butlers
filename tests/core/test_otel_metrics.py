@@ -519,7 +519,7 @@ def test_healing_dispatch_emits_dispatch_decision_metric() -> None:
                 new=AsyncMock(),
             ),
         ):
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 dispatch_healing(
                     pool=pool,
                     butler_name="test-butler",

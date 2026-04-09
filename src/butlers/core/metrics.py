@@ -774,7 +774,7 @@ class ButlerMetrics:
             workflow: Workflow type (``"healing"`` or ``"qa"``).
             decision: Gate decision code, e.g. ``"cooldown"``, ``"concurrency_cap"``,
                 ``"circuit_breaker"``, ``"novelty_join"``, ``"no_model"``,
-                ``"severity_below_threshold"``, ``"disabled"``, ``"no_recursion"``.
+                ``"severity_above_threshold"``, ``"disabled"``, ``"no_recursion"``.
         """
         self._recovery_decisions.add(1, {**self._attrs, "workflow": workflow, "decision": decision})
 

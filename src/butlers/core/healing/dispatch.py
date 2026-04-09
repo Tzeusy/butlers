@@ -866,14 +866,6 @@ async def _run_healing_session(
             return
 
         # PR created successfully
-        if metrics is not None:
-            _elapsed = (_time.monotonic() - _phase_start) * 1000
-            metrics.record_recovery_phase_duration(
-                workflow="healing",
-                phase="diagnose_and_fix",
-                outcome="success",
-                duration_ms=_elapsed,
-            )
         if phase_session_id is not None:
             try:
                 await update_phase_session_status(pool, phase_session_id, "completed")
@@ -895,6 +887,16 @@ async def _run_healing_session(
             delete_branch=False,
             delete_remote=False,
         )
+        # Record success only after DB status update and worktree cleanup succeed,
+        # so that no conflicting failure metric is emitted for the same attempt.
+        if metrics is not None:
+            _elapsed = (_time.monotonic() - _phase_start) * 1000
+            metrics.record_recovery_phase_duration(
+                workflow="healing",
+                phase="diagnose_and_fix",
+                outcome="success",
+                duration_ms=_elapsed,
+            )
 
     except asyncio.CancelledError:
         # Cancelled by watchdog — watchdog sets status to "timeout"
@@ -1098,12 +1100,12 @@ async def dispatch_healing(
             )
             if metrics is not None:
                 metrics.record_recovery_dispatch_decision(
-                    workflow="healing", decision="severity_below_threshold"
+                    workflow="healing", decision="severity_above_threshold"
                 )
             return DispatchResult(
                 accepted=False,
                 fingerprint=fp.fingerprint,
-                reason="severity_below_threshold",
+                reason="severity_above_threshold",
             )
 
         # -------------------------------------------------------------------

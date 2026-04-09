@@ -871,14 +871,6 @@ async def _run_investigation_session(
             return
 
         # PR created successfully
-        if metrics is not None:
-            _elapsed = (_time.monotonic() - _phase_start) * 1000
-            metrics.record_recovery_phase_duration(
-                workflow="qa",
-                phase="investigate",
-                outcome="success",
-                duration_ms=_elapsed,
-            )
         if phase_session_id is not None:
             try:
                 await update_phase_session_status(pool, phase_session_id, "completed")
@@ -900,6 +892,16 @@ async def _run_investigation_session(
         await remove_healing_worktree(
             repo_root, branch_name, delete_branch=False, delete_remote=False
         )
+        # Record success only after DB status update and worktree cleanup succeed,
+        # so that no conflicting failure metric is emitted for the same attempt.
+        if metrics is not None:
+            _elapsed = (_time.monotonic() - _phase_start) * 1000
+            metrics.record_recovery_phase_duration(
+                workflow="qa",
+                phase="investigate",
+                outcome="success",
+                duration_ms=_elapsed,
+            )
 
     except asyncio.CancelledError:
         # Cancelled by watchdog — watchdog sets status to "timeout"
