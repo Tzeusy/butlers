@@ -954,33 +954,37 @@ async def record_phase_session(
     uuid.UUID
         The newly created ``healing_attempt_sessions`` row ID.
     """
-    # Insert child session row
-    child_id = await pool.fetchval(
-        """
-        INSERT INTO public.healing_attempt_sessions
-            (attempt_id, phase, session_id, status)
-        VALUES ($1::uuid, $2, $3::uuid, 'running')
-        RETURNING id
-        """,
-        str(attempt_id),
-        phase,
-        str(session_id),
-    )
+    # Insert child row and update parent atomically so the two writes are
+    # never observed in an inconsistent state (child recorded but parent
+    # current_phase / healing_session_id still stale).
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            child_id = await conn.fetchval(
+                """
+                INSERT INTO public.healing_attempt_sessions
+                    (attempt_id, phase, session_id, status)
+                VALUES ($1::uuid, $2, $3::uuid, 'running')
+                RETURNING id
+                """,
+                str(attempt_id),
+                phase,
+                str(session_id),
+            )
 
-    # Update parent: current_phase + healing_session_id (compat)
-    await pool.execute(
-        """
-        UPDATE public.healing_attempts
-        SET
-            current_phase      = $2,
-            healing_session_id = $3::uuid,
-            updated_at         = now()
-        WHERE id = $1::uuid
-        """,
-        str(attempt_id),
-        phase,
-        str(session_id),
-    )
+            # Update parent: current_phase + healing_session_id (compat)
+            await conn.execute(
+                """
+                UPDATE public.healing_attempts
+                SET
+                    current_phase      = $2,
+                    healing_session_id = $3::uuid,
+                    updated_at         = now()
+                WHERE id = $1::uuid
+                """,
+                str(attempt_id),
+                phase,
+                str(session_id),
+            )
 
     return uuid.UUID(str(child_id))
 

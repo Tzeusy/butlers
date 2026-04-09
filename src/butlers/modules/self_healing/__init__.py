@@ -223,10 +223,13 @@ class SelfHealingModule(Module):
     ) -> None:
         """Run recovery and cleanup before accepting dispatch calls.
 
-        Transitions stale ``investigating`` rows to ``timeout``/``failed``
-        (from a prior crash), re-dispatches ``dispatch_pending`` rows that were
-        created by the retry endpoint while the daemon was down, and reaps
-        orphaned healing worktrees.
+        Transitions stale ``investigating`` rows to ``timeout`` (deadline-aware)
+        or ``failed`` (agent never spawned) using the updated recovery logic from
+        core_066.  Reaps orphaned healing worktrees.
+
+        Note: ``dispatch_pending`` re-dispatch was removed in core_066 — rows
+        are now created as ``investigating`` directly, and the per-phase watchdog
+        handles rows that never receive an agent within their deadline.
         """
         self._config = (
             config if isinstance(config, SelfHealingConfig) else SelfHealingConfig(**(config or {}))

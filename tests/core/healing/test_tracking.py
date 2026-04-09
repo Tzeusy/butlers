@@ -627,26 +627,45 @@ async def test_list_dispatch_events_unit() -> None:
 
 @pytest.mark.unit
 async def test_record_phase_session_unit() -> None:
-    """record_phase_session inserts child row and updates parent."""
+    """record_phase_session inserts child row and updates parent (inside a transaction)."""
+    from unittest.mock import AsyncMock, MagicMock
+
     from butlers.core.healing.tracking import record_phase_session
 
     child_id = uuid.uuid4()
+
+    # Build a mock connection that supports fetchval and execute
+    conn = MagicMock()
+    conn.fetchval = AsyncMock(return_value=child_id)
+    conn.execute = AsyncMock()
+
+    # transaction() is an async context manager
+    txn_cm = MagicMock()
+    txn_cm.__aenter__ = AsyncMock(return_value=None)
+    txn_cm.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction = MagicMock(return_value=txn_cm)
+
+    # acquire() is an async context manager that yields conn
+    acquire_cm = MagicMock()
+    acquire_cm.__aenter__ = AsyncMock(return_value=conn)
+    acquire_cm.__aexit__ = AsyncMock(return_value=False)
+
     pool = MagicMock()
-    pool.fetchval = AsyncMock(return_value=child_id)
-    pool.execute = AsyncMock()
+    pool.acquire = MagicMock(return_value=acquire_cm)
 
     attempt_id = uuid.uuid4()
     session_id = uuid.uuid4()
     result = await record_phase_session(pool, attempt_id, "diagnose", session_id)
     assert result == child_id
 
-    # fetchval for INSERT, execute for UPDATE
-    assert pool.fetchval.called
-    insert_sql: str = pool.fetchval.call_args[0][0]
+    # Verify conn.fetchval was called with INSERT into healing_attempt_sessions
+    assert conn.fetchval.called
+    insert_sql: str = conn.fetchval.call_args[0][0]
     assert "healing_attempt_sessions" in insert_sql
 
-    assert pool.execute.called
-    update_sql: str = pool.execute.call_args[0][0]
+    # Verify conn.execute was called with UPDATE on healing_attempts
+    assert conn.execute.called
+    update_sql: str = conn.execute.call_args[0][0]
     assert "current_phase" in update_sql
     assert "healing_session_id" in update_sql
 
