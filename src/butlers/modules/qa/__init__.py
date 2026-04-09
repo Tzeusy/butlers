@@ -480,9 +480,9 @@ class QaModule(Module):
         # Recover stale patrol rows
         await self._recover_stale_patrols(pool)
 
-        # Recover stale healing attempts (dispatch_pending + stale investigating)
+        # Recover stale healing attempts (stale investigating rows)
         try:
-            recovered, pending_rows = await recover_stale_attempts(
+            recovered = await recover_stale_attempts(
                 pool, timeout_minutes=self._config.log_lookback_minutes * 4
             )
             if recovered:
