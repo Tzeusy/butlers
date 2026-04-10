@@ -608,13 +608,19 @@ class QaModule(Module):
             Parameters
             ----------
             fingerprint:
-                Pre-computed SHA-256 hex fingerprint from the reporting butler.
+                Caller-supplied fingerprint hint.  The handler ignores this
+                value as the authoritative dedup key and recomputes a canonical
+                fingerprint from the structured report fields instead.  Pass a
+                best-effort value; any string is accepted.
             exception_type:
                 Fully qualified exception class name.
             call_site:
                 ``<file>:<function>`` call site string.
             severity:
-                Integer severity score (0=critical, 1=high, 2=medium, 3=low).
+                Caller-supplied severity hint (0=critical, 1=high, 2=medium,
+                3=low, 4=info).  Out-of-range values are clamped.  The handler
+                passes this as a hint to canonical scoring; authoritative rules
+                may override the caller value.
             event_summary:
                 Sanitized error event summary.
             source_butler:
