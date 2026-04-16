@@ -175,12 +175,8 @@ def test_core_migration_repairs_relationship_read_access_to_switchboard_message_
     db_name = migration_db_name()
     db_url = create_migration_db(postgres_container, db_name)
 
-    relationship_core = _build_alembic_config(
-        db_url, chains=["core"], target_schema="relationship"
-    )
-    switchboard_core = _build_alembic_config(
-        db_url, chains=["core"], target_schema="switchboard"
-    )
+    relationship_core = _build_alembic_config(db_url, chains=["core"], target_schema="relationship")
+    switchboard_core = _build_alembic_config(db_url, chains=["core"], target_schema="switchboard")
     switchboard_chain = _build_alembic_config(
         db_url, chains=["switchboard"], target_schema="switchboard"
     )
@@ -192,7 +188,9 @@ def test_core_migration_repairs_relationship_read_access_to_switchboard_message_
     engine = create_engine(db_url, isolation_level="AUTOCOMMIT")
     try:
         with engine.connect() as conn:
-            conn.execute(text("SELECT switchboard.switchboard_message_inbox_ensure_partition(now())"))
+            conn.execute(
+                text("SELECT switchboard.switchboard_message_inbox_ensure_partition(now())")
+            )
             conn.execute(
                 text(
                     "INSERT INTO switchboard.message_inbox ("
@@ -215,9 +213,7 @@ def test_core_migration_repairs_relationship_read_access_to_switchboard_message_
             scalar=True,
         )
 
-    relationship_core = _build_alembic_config(
-        db_url, chains=["core"], target_schema="relationship"
-    )
+    relationship_core = _build_alembic_config(db_url, chains=["core"], target_schema="relationship")
     command.upgrade(relationship_core, "core@head")
 
     count = _execute_as_role(
