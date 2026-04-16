@@ -4311,8 +4311,8 @@ class CalendarModule(Module):
             calling butler.  ``ends_at`` defaults to ``due_at + 15 minutes``
             when not provided.
 
-            ``recurrence`` accepts ``"yearly"`` or ``"monthly"``; omit for
-            one-time reminders.
+            ``recurrence`` accepts ``"daily"``, ``"weekly"``, ``"monthly"``,
+            or ``"yearly"``; omit for one-time reminders.
 
             ``entity_ids`` links the reminder to zero or more entities via
             the ``calendar_event_entities`` junction table.
@@ -5720,6 +5720,7 @@ class CalendarModule(Module):
                     updated_at = now()
                 WHERE source_id = $1
                   AND NOT (origin_ref = ANY($2::text[]))
+                  AND NOT (metadata->>'native' = 'true')
                 """,
                 source_id,
                 seen_origin_refs,
@@ -5731,6 +5732,7 @@ class CalendarModule(Module):
                 SET status = 'cancelled',
                     updated_at = now()
                 WHERE source_id = $1
+                  AND NOT (metadata->>'native' = 'true')
                 """,
                 source_id,
             )
@@ -7176,7 +7178,7 @@ class CalendarModule(Module):
             VALUES (
                 $1, $2, $3, $4, $5,
                 $6, $7, FALSE, 'confirmed', 'default',
-                $8, $9, $10, '{}'::jsonb
+                $8, $9, $10, '{"native": true}'::jsonb
             )
             RETURNING id, title, body, starts_at, ends_at, status,
                       recurrence_rule, source_butler, source_session_id
@@ -7196,6 +7198,24 @@ class CalendarModule(Module):
             raise RuntimeError("Failed to insert reminder into calendar_events")
 
         event_id: uuid.UUID = row["id"]
+
+        # Recurring reminders need at least one materialized instance so that
+        # reminder_dismiss can cancel the earliest confirmed occurrence.
+        # The background projection job will expand the full series on its next
+        # cycle; this seeds the initial instance at the creation time slot.
+        if recurrence_rule:
+            await pool.execute(
+                """
+                INSERT INTO calendar_event_instances (
+                    event_id, starts_at, ends_at, status
+                )
+                VALUES ($1, $2, $3, 'confirmed')
+                ON CONFLICT DO NOTHING
+                """,
+                event_id,
+                starts_at,
+                ends_at,
+            )
 
         # Insert entity associations if provided.
         if entity_ids:
@@ -7303,7 +7323,7 @@ class CalendarModule(Module):
         """Dismiss a reminder event.
 
         One-time reminders: set status='cancelled' on calendar_events.
-        Recurring reminders: cancel the earliest non-cancelled instance in
+        Recurring reminders: cancel the earliest confirmed instance in
         calendar_event_instances; the series row itself stays 'confirmed'.
         """
         pool = getattr(self._db, "pool", None) if self._db is not None else None
@@ -7364,7 +7384,7 @@ class CalendarModule(Module):
             SELECT id, starts_at
             FROM calendar_event_instances
             WHERE event_id = $1
-              AND status != 'cancelled'
+              AND status = 'confirmed'
             ORDER BY starts_at ASC
             LIMIT 1
             """,

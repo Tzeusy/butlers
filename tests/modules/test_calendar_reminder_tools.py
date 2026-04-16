@@ -531,3 +531,91 @@ class TestInsertReminderToCalendarEvents:
                 recurrence_rule=None,
                 entity_ids=[],
             )
+
+    async def test_recurring_reminder_inserts_initial_instance(self):
+        """A recurring reminder must seed an initial calendar_event_instances row."""
+        pool = _make_pool(
+            fetchrow_side_effect=[
+                _source_row(),
+                _event_row_dict(recurrence_rule="RRULE:FREQ=YEARLY"),
+            ]
+        )
+        mod = CalendarModule()
+        mod._butler_name = "relationship"
+        mod._db = _make_db(pool=pool)
+        mod._config = mod._coerce_config({"provider": "google"})
+        mod._projection_tables_available_cache = True
+
+        with patch(
+            "butlers.core.tool_call_capture.get_current_runtime_session_id",
+            return_value=None,
+        ):
+            await mod._insert_reminder_to_calendar_events(
+                title="Mom birthday",
+                body=None,
+                starts_at=_DUE_AT,
+                ends_at=_ENDS_AT,
+                timezone="UTC",
+                recurrence_rule="RRULE:FREQ=YEARLY",
+                entity_ids=[],
+            )
+
+        # pool.execute should be called once to seed the initial instance.
+        pool.execute.assert_called_once()
+        instance_query = pool.execute.call_args[0][0]
+        assert "calendar_event_instances" in instance_query
+        assert "confirmed" in instance_query
+
+    async def test_one_time_reminder_does_not_insert_instance(self):
+        """A one-time reminder must NOT insert into calendar_event_instances."""
+        pool = _make_pool(
+            fetchrow_side_effect=[
+                _source_row(),
+                _event_row_dict(),
+            ]
+        )
+        mod = CalendarModule()
+        mod._butler_name = "relationship"
+        mod._db = _make_db(pool=pool)
+        mod._config = mod._coerce_config({"provider": "google"})
+        mod._projection_tables_available_cache = True
+
+        with patch(
+            "butlers.core.tool_call_capture.get_current_runtime_session_id",
+            return_value=None,
+        ):
+            await mod._insert_reminder_to_calendar_events(
+                title="Call Mom",
+                body=None,
+                starts_at=_DUE_AT,
+                ends_at=_ENDS_AT,
+                timezone="UTC",
+                recurrence_rule=None,
+                entity_ids=[],
+            )
+
+        pool.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# reminder_dismiss: status filter
+# ---------------------------------------------------------------------------
+
+
+class TestReminderDismissStatusFilter:
+    async def test_dismiss_recurring_uses_confirmed_status_filter(self):
+        """The dismiss query must filter status = 'confirmed', not != 'cancelled'."""
+        event_row = _dismiss_event_row(recurrence_rule="RRULE:FREQ=YEARLY")
+        instance_id = uuid.uuid4()
+        instance_data = {"id": instance_id, "starts_at": _DUE_AT}
+        instance_row = MagicMock()
+        instance_row.__getitem__ = lambda self, key: instance_data[key]
+
+        pool = _make_pool(fetchrow_side_effect=[event_row, instance_row])
+        mcp, mod = await _make_module(pool=pool)
+
+        await mcp.tools["reminder_dismiss"](event_id=str(_EVENT_ID))
+
+        fetch_query = pool.fetchrow.call_args_list[-1][0][0]
+        assert "status = 'confirmed'" in fetch_query
+        assert "status != 'cancelled'" not in fetch_query
