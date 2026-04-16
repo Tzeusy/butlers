@@ -317,7 +317,8 @@ class TestDeliverTelegramSuccess:
 
         await deliver(pool, channel="telegram", message="Test", recipient="123", call_fn=mock_call)
 
-        assert captured_urls == ["http://tg-host:9200/sse"]
+        # Legacy ``/sse`` registry URLs are canonicalized to ``/mcp`` before dispatch.
+        assert captured_urls == ["http://tg-host:9200/mcp"]
 
 
 # ---------------------------------------------------------------------------

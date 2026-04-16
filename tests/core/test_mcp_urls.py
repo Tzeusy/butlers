@@ -19,10 +19,7 @@ def test_mcp_url_and_transport():
     # URL format
     assert runtime_mcp_url(41103) == "http://localhost:41103/mcp"
     assert canonical_runtime_mcp_url("http://localhost:41103/sse") == "http://localhost:41103/mcp"
-    assert (
-        canonical_runtime_mcp_url("http://localhost:41103/sse/")
-        == "http://localhost:41103/mcp"
-    )
+    assert canonical_runtime_mcp_url("http://localhost:41103/sse/") == "http://localhost:41103/mcp"
     assert (
         canonical_runtime_mcp_url("http://localhost:41103/mcp/sse")
         == "http://localhost:41103/mcp/sse"

@@ -1714,7 +1714,8 @@ async def test_deliver_selects_butler_with_matching_module(deliver_pool):
         recipient="123",
         call_fn=mock_call,
     )
-    assert captured_urls[-1] == "http://localhost:41103/sse"
+    # Legacy ``/sse`` registry URLs are canonicalized to ``/mcp`` before dispatch.
+    assert captured_urls[-1] == "http://localhost:41103/mcp"
 
     # Send via email — should route to emailer
     await deliver(
@@ -1724,7 +1725,7 @@ async def test_deliver_selects_butler_with_matching_module(deliver_pool):
         recipient="user@example.com",
         call_fn=mock_call,
     )
-    assert captured_urls[-1] == "http://localhost:41102/sse"
+    assert captured_urls[-1] == "http://localhost:41102/mcp"
 
 
 # ------------------------------------------------------------------
