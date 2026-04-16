@@ -584,6 +584,62 @@ async def test_duplicate_does_not_increment_logged():
 # ---------------------------------------------------------------------------
 
 
+async def test_group_size_uses_participant_count_when_only_one_sender_resolves():
+    """Group chats preserve participant_count-based group_size even if only one sender resolves.
+
+    Regression guard for the bug where len(non_owner_contacts) was used instead of
+    participant_count: a group with participant_count=5 but only one resolving sender
+    must still yield group_size=5, not 1.
+    """
+    pool = _make_pool()
+    # 5 senders in the chat, but only alice resolves to a contact.
+    inbox_rows = [
+        _make_inbox_row(
+            sender_identities=["alice", "ghost-1", "ghost-2", "ghost-3", "ghost-4"],
+            participant_count=5,
+        )
+    ]
+    contact_rows = [_make_contact_row(ci_value="alice", contact_id=_CONTACT_A)]
+    _, mock_log = await _run_with_mocked_deps(
+        pool, inbox_rows=inbox_rows, contact_rows=contact_rows
+    )
+    mock_log.assert_called_once()
+    kwargs = mock_log.call_args.kwargs
+    assert kwargs["metadata"]["group_size"] == 5
+
+
+async def test_bidirectional_dm_group_size_is_1():
+    """A 1-on-1 DM where both owner and contact sent must still have group_size=1.
+
+    Regression guard: participant_count=2 (owner + 1 contact) should yield
+    group_size=1, not 2.
+    """
+    pool = _make_pool()
+    inbox_rows = [
+        _make_inbox_row(
+            sender_identities=["owner-handle", "alice"],
+            participant_count=2,
+        )
+    ]
+    contact_rows = [
+        _make_contact_row(
+            ci_value="owner-handle",
+            contact_id=_CONTACT_OWNER,
+            roles=["owner"],
+        ),
+        _make_contact_row(ci_value="alice", contact_id=_CONTACT_A),
+    ]
+    _, mock_log = await _run_with_mocked_deps(
+        pool, inbox_rows=inbox_rows, contact_rows=contact_rows
+    )
+    # alice gets incoming + outgoing (owner sent), both must have group_size=1
+    assert mock_log.call_count == 2
+    for c in mock_log.call_args_list:
+        assert c.kwargs["metadata"]["group_size"] == 1, (
+            f"Expected group_size=1 for DM, got {c.kwargs['metadata']['group_size']}"
+        )
+
+
 def test_max_group_size_constant():
     """_INTERACTION_SYNC_MAX_GROUP_SIZE must be 20 per RFC 0013 D3."""
     assert _rjobs_attr("_INTERACTION_SYNC_MAX_GROUP_SIZE") == 20
