@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from typing import Any
 
 import pytest
 from opentelemetry import trace
@@ -300,12 +301,15 @@ async def test_route_to_known_butler_success(pool):
     from butlers.tools.switchboard import register_butler, route
 
     await register_butler(pool, "target", "http://localhost:41200/sse")
+    captured: dict[str, Any] = {}
 
     async def mock_call(endpoint_url, tool_name, args):
+        captured["endpoint_url"] = endpoint_url
         return {"status": "ok", "data": 42}
 
     result = await route(pool, "target", "get_data", {"key": "x"}, call_fn=mock_call)
     assert result == {"result": {"status": "ok", "data": 42}}
+    assert captured["endpoint_url"] == "http://localhost:41200/mcp"
 
 
 async def test_route_to_known_butler_failure(pool):
