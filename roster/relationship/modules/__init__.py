@@ -37,18 +37,17 @@ class RelationshipModuleConfig(ToolGroupMixin, BaseModel):
              group_members
     notes : note_create, note_list, note_search, label_create, label_assign,
             contact_search_by_label
-    tracking : reminder_create, reminder_list, reminder_dismiss, task_create,
-               task_list, task_complete, task_delete, loan_create, loan_settle,
-               loan_list
+    tracking : task_create, task_list, task_complete, task_delete,
+               loan_create, loan_settle, loan_list
     management : dunbar_tier_set, stay_in_touch_set, contacts_overdue
     entity : entity_resolve, entity_get, entity_update, entity_neighbors
     """
 
 
 class RelationshipModule(Module):
-    """Relationship module providing 60+ MCP tools for contacts, interactions,
+    """Relationship module providing MCP tools for contacts, interactions,
     dates, gifts, groups, labels, life events, loans, notes, relationships,
-    reminders, tasks, addresses, contact info, facts, feed, stay-in-touch,
+    tasks, addresses, contact info, facts, feed, stay-in-touch,
     resolve, and vCard import/export.
     """
 
@@ -86,7 +85,7 @@ class RelationshipModule(Module):
             raise RuntimeError("RelationshipModule not initialised -- no DB available")
         return self._db.pool
 
-    async def register_tools(self, mcp: Any, config: Any, db: Any, butler_name: str = "") -> None:
+    async def register_tools(self, mcp: Any, config: Any, db: Any, butler_name: str) -> None:
         """Register all relationship MCP tools."""
         self._db = db
         from .tools import register_tools
