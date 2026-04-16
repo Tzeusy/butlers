@@ -188,6 +188,10 @@ def test_core_migration_repairs_relationship_read_access_to_switchboard_message_
     engine = create_engine(db_url, isolation_level="AUTOCOMMIT")
     try:
         with engine.connect() as conn:
+            # The partition function lives in the switchboard schema and its
+            # body references ``message_inbox`` unqualified, so align the
+            # connection's search_path before invoking it.
+            conn.execute(text("SET search_path TO switchboard, public"))
             conn.execute(
                 text("SELECT switchboard.switchboard_message_inbox_ensure_partition(now())")
             )
