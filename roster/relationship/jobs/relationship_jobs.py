@@ -775,12 +775,19 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
     # RFC 0013 D4: group by (source_thread_identity, source_channel, date)
     # and collect the distinct set of senders per group.  Messages flagged
     # as interaction_eligible=false are excluded before grouping.
+    #
+    # When source_thread_identity is NULL (legacy/connectors that don't set it),
+    # fall back to source_sender_identity as the grouping key so that each sender
+    # forms its own "chat" group rather than being merged into a NULL mega-group.
     # -----------------------------------------------------------------------
     try:
         rows = await db_pool.fetch(
             """
             SELECT
-                request_context ->> 'source_thread_identity'  AS thread_identity,
+                COALESCE(
+                    request_context ->> 'source_thread_identity',
+                    request_context ->> 'source_sender_identity'
+                )                                              AS thread_identity,
                 request_context ->> 'source_channel'           AS source_channel,
                 (received_at AT TIME ZONE 'UTC')::date         AS interaction_date,
                 array_agg(DISTINCT request_context ->> 'source_sender_identity')
@@ -799,10 +806,12 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
               AND request_context ->> 'source_channel' = ANY($2::text[])
               AND request_context ->> 'source_sender_identity' IS NOT NULL
               AND request_context ->> 'source_sender_identity' != 'unknown'
-              AND request_context ->> 'source_thread_identity' IS NOT NULL
               AND COALESCE(request_context ->> 'interaction_eligible', 'true') != 'false'
             GROUP BY
-                request_context ->> 'source_thread_identity',
+                COALESCE(
+                    request_context ->> 'source_thread_identity',
+                    request_context ->> 'source_sender_identity'
+                ),
                 request_context ->> 'source_channel',
                 (received_at AT TIME ZONE 'UTC')::date
             ORDER BY interaction_date DESC
