@@ -672,7 +672,8 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
        collected.  ``participant_count`` is read from ``request_context`` if
        present; otherwise it falls back to the count of distinct senders.
     3. Groups with ``participant_count > 20`` are skipped (D3 gate).
-    4. The owner's sender identity is identified via ``public.contacts.roles``.
+    4. The owner's sender identity is identified via ``public.entities.roles``
+       (joined through ``public.contacts.entity_id``).
        If the owner sent at least one message in the chat on that day, each
        non-owner contact in the group receives both an **incoming** fact (they
        messaged) and an **outgoing** fact (owner engaged).  If the owner did
@@ -798,6 +799,7 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
               AND request_context ->> 'source_channel' = ANY($2::text[])
               AND request_context ->> 'source_sender_identity' IS NOT NULL
               AND request_context ->> 'source_sender_identity' != 'unknown'
+              AND request_context ->> 'source_thread_identity' IS NOT NULL
               AND COALESCE(request_context ->> 'interaction_eligible', 'true') != 'false'
             GROUP BY
                 request_context ->> 'source_thread_identity',
@@ -847,9 +849,10 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
                     ci.type        AS ci_type,
                     ci.value       AS ci_value,
                     ci.contact_id  AS contact_id,
-                    COALESCE(c.roles, '{}') AS roles
+                    COALESCE(e.roles, '{}') AS roles
                 FROM public.contact_info ci
                 JOIN public.contacts c ON c.id = ci.contact_id
+                LEFT JOIN public.entities e ON e.id = c.entity_id
                 JOIN (
                     SELECT DISTINCT pairs.ci_type, pairs.ci_value
                     FROM UNNEST($1::text[], $2::text[]) AS pairs(ci_type, ci_value)
@@ -922,16 +925,19 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
             stats["skipped_group_too_large"] += 1
             continue
 
-        # --- group_size ---
-        # For DMs (only one non-owner sender), group_size is 1.
-        # For group chats, group_size equals the participant_count.
-        non_owner_contacts = [c for c in sender_contacts if c not in owner_contact_ids]
+        # --- owner presence and group_size ---
         owner_sent = any(c in owner_contact_ids for c in sender_contacts)
 
-        # Use participant_count for group_size (covers cases where not all senders
-        # are resolved); for true DMs clamp to 1.
-        if len(non_owner_contacts) <= 1 and not owner_sent:
-            # DM: only one non-owner participant
+        # group_size = participant_count for group chats.
+        # For DMs (only one non-owner participant), clamp to 1 so the
+        # interaction receives full weight (RFC 0013 D2, D4).
+        #
+        # participant_count covers both owner and non-owner participants.
+        # A DM has at most 2 participants (owner + 1 contact), so:
+        # participant_count <= 2 → treat as DM → group_size = 1.
+        # This correctly handles bidirectional DMs where the owner also sent
+        # (participant_count=2 should still yield group_size=1, not 2).
+        if participant_count <= 2:
             group_size = 1
         else:
             group_size = max(participant_count, 1)
