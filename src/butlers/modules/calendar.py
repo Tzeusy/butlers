@@ -5510,9 +5510,7 @@ class CalendarModule(Module):
 
         # Treat partially migrated schemas as unavailable so background pollers
         # fail closed instead of repeatedly hitting column-mismatch errors.
-        self._projection_tables_available_cache = all(
-            flag is True for flag in flag_map.values()
-        )
+        self._projection_tables_available_cache = all(flag is True for flag in flag_map.values())
         if not self._projection_tables_available_cache:
             missing = sorted(name for name, flag in flag_map.items() if flag is not True)
             logger.debug(
