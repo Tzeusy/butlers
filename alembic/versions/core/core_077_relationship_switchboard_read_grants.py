@@ -67,7 +67,7 @@ def upgrade() -> None:
         role_name=_ROLE_NAME,
     )
     _execute_best_effort(
-        f"ALTER DEFAULT PRIVILEGES FOR ROLE CURRENT_USER IN SCHEMA {quoted_schema} "
+        f"ALTER DEFAULT PRIVILEGES IN SCHEMA {quoted_schema} "
         f"GRANT SELECT ON TABLES TO {quoted_role}",
         role_name=_ROLE_NAME,
     )
@@ -78,7 +78,7 @@ def downgrade() -> None:
     quoted_schema = _quote_ident(_SWITCHBOARD_SCHEMA)
 
     _execute_best_effort(
-        f"ALTER DEFAULT PRIVILEGES FOR ROLE CURRENT_USER IN SCHEMA {quoted_schema} "
+        f"ALTER DEFAULT PRIVILEGES IN SCHEMA {quoted_schema} "
         f"REVOKE SELECT ON TABLES FROM {quoted_role}",
         role_name=_ROLE_NAME,
     )
