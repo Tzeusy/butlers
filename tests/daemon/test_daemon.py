@@ -34,7 +34,7 @@ import anyio
 import pytest
 from fastmcp import FastMCP as RuntimeFastMCP
 from pydantic import BaseModel
-from starlette.requests import ClientDisconnect
+from starlette.requests import ClientDisconnect, Request
 from starlette.testclient import TestClient
 
 from butlers.credentials import CredentialError
@@ -44,6 +44,7 @@ from butlers.daemon import (
     ButlerDaemon,
     _McpSseDisconnectGuard,
 )
+from butlers.mcp_patches import apply_streamable_http_disconnect_patch
 from butlers.modules.base import Module
 from butlers.modules.registry import ModuleRegistry
 
@@ -731,6 +732,67 @@ async def test_sse_disconnect_guard(
 
     with pytest.raises(RuntimeError):
         await guard2(scope2, receive, noop_send)
+
+
+async def test_streamable_http_disconnect_patch_suppresses_standalone_writer_error(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closed standalone SSE streams should not be logged as transport errors."""
+    import mcp.server.streamable_http as streamable_http
+
+    apply_streamable_http_disconnect_patch()
+
+    transport = streamable_http.StreamableHTTPServerTransport(mcp_session_id=None)
+    transport._read_stream_writer = object()
+    transport._create_event_data = lambda _event: {"event": "message", "data": "{}"}
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(_message: dict[str, Any]) -> None:
+        return None
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/mcp",
+            "headers": [(b"accept", b"text/event-stream")],
+        },
+        receive,
+    )
+
+    class FakeEventSourceResponse:
+        def __init__(self, *, content: Any, data_sender_callable: Any, headers: Any) -> None:
+            self._content = content
+            self._data_sender_callable = data_sender_callable
+            self._headers = headers
+
+        async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+            del scope, receive, send
+            await self._content.aclose()
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(self._data_sender_callable)
+                for _ in range(100):
+                    if streamable_http.GET_STREAM_KEY in transport._request_streams:
+                        break
+                    await anyio.sleep(0)
+                else:
+                    pytest.fail("standalone GET stream was not registered")
+
+                await transport._request_streams[streamable_http.GET_STREAM_KEY][0].send(object())
+
+    monkeypatch.setattr(streamable_http, "EventSourceResponse", FakeEventSourceResponse)
+
+    with caplog.at_level(logging.DEBUG, logger="mcp.server.streamable_http"):
+        await transport._handle_get_request(request, send)
+
+    assert any(
+        "Standalone SSE stream closed during client disconnect" in rec.message
+        for rec in caplog.records
+    )
+    assert not any("Error in standalone SSE writer" in rec.message for rec in caplog.records)
 
 
 # ---------------------------------------------------------------------------
