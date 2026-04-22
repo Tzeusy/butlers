@@ -59,6 +59,7 @@ from butlers.core.model_routing import (
 )
 from butlers.core.runtimes import DEFAULT_RUNTIME_TYPE
 from butlers.core.runtimes.base import RuntimeAdapter
+from butlers.core.runtimes.codex import MCPToolDiscoveryError
 from butlers.core.session_process_logs import write as session_process_log_write
 from butlers.core.sessions import session_complete, session_create
 from butlers.core.skills import read_system_prompt
@@ -361,6 +362,11 @@ def _merge_tool_call_records(
             merged.append(parsed_call)
 
     return _dedup_tool_calls_by_id(merged)
+
+
+def _has_non_command_tool_calls(tool_calls: list[dict[str, Any]]) -> bool:
+    """Return whether the record set includes any non-bash tool call."""
+    return any(str(call.get("name", "") or "") != "command_execution" for call in tool_calls)
 
 
 def _compose_system_prompt(
@@ -1470,6 +1476,7 @@ class Spawner:
             else:
                 timeout_s = _FALLBACK_SESSION_TIMEOUT_S
             invoke_kwargs["timeout"] = timeout_s
+            merged_runtime_capture = False
             try:
                 result_text, tool_calls, usage = await asyncio.wait_for(
                     runtime.invoke(**invoke_kwargs),
@@ -1480,7 +1487,42 @@ class Spawner:
                     f"Session timed out after {timeout_s}s "
                     f"(model={model}, butler={self._config.name})"
                 )
-            if runtime_session_id:
+            except MCPToolDiscoveryError as exc:
+                executed_tool_calls = (
+                    consume_runtime_session_tool_calls(runtime_session_id)
+                    if runtime_session_id
+                    else []
+                )
+                merged_tool_calls = _merge_tool_call_records(
+                    exc.tool_calls,
+                    executed_tool_calls,
+                    butler_name=self._config.name,
+                )
+                if not _has_non_command_tool_calls(merged_tool_calls):
+                    raise
+
+                logger.warning(
+                    "Recovered Codex MCP discovery false-negative for butler=%s session=%s; "
+                    "runtime capture confirmed %d MCP tool call(s)",
+                    self._config.name,
+                    session_id,
+                    len(
+                        [
+                            c
+                            for c in merged_tool_calls
+                            if c.get("name") != "command_execution"
+                        ]
+                    ),
+                )
+                result_text, tool_calls, usage = exc.result_text, merged_tool_calls, exc.usage
+                merged_runtime_capture = True
+                proc_info = runtime.last_process_info
+                if proc_info is not None:
+                    proc_info["mcp_connection_failed"] = False
+                    proc_info["retry_succeeded"] = True
+                    proc_info["result_source"] = "runtime_capture"
+
+            if runtime_session_id and not merged_runtime_capture:
                 executed_tool_calls = consume_runtime_session_tool_calls(runtime_session_id)
                 tool_calls = _merge_tool_call_records(
                     tool_calls,

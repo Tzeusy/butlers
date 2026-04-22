@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from butlers.config import ButlerConfig
+from butlers.core.runtimes.codex import MCPToolDiscoveryError
 from butlers.core.runtimes.base import RuntimeAdapter
 from butlers.core.spawner import Spawner
 from butlers.core.tool_call_capture import _captured_tool_calls
@@ -231,6 +232,67 @@ class _FailWithRetryInfoAdapter(RuntimeAdapter):
         return ""
 
 
+class _CodexDiscoveryFalseNegativeAdapter(RuntimeAdapter):
+    """Adapter that raises MCP discovery exhaustion after actual tool execution."""
+
+    @property
+    def binary_name(self) -> str:
+        return "codex"
+
+    @property
+    def last_process_info(self) -> dict[str, Any] | None:
+        return self._last_process_info
+
+    def __init__(self, *, capture_tool_call: bool) -> None:
+        self._capture_tool_call = capture_tool_call
+        self._last_process_info = {
+            "pid": 42,
+            "exit_code": 0,
+            "command": "codex exec ...",
+            "stderr": "",
+            "runtime_type": "codex",
+            "mcp_connection_failed": True,
+            "retry_attempted": True,
+            "retry_succeeded": False,
+            "result_source": "first",
+            "attempt_count": 3,
+        }
+
+    async def invoke(
+        self,
+        prompt: str,
+        system_prompt: str,
+        mcp_servers: dict[str, Any],
+        env: dict[str, str],
+        **kwargs: Any,
+    ) -> tuple[str | None, list[dict[str, Any]], dict[str, Any] | None]:
+        if self._capture_tool_call:
+            from butlers.core.tool_call_capture import _capture_lock
+
+            with _capture_lock:
+                for session_id_key in list(_captured_tool_calls):
+                    _captured_tool_calls[session_id_key].append(
+                        {"name": "route_to_butler", "input": {"butler": "relationship"}}
+                    )
+        raise MCPToolDiscoveryError(
+            (
+                "MCP tool discovery failed after 3 attempts. "
+                "This session cannot proceed without MCP tools."
+            ),
+            result_text="recovered response",
+            tool_calls=[],
+            usage={"input_tokens": 12, "output_tokens": 3},
+        )
+
+    def build_config_file(self, mcp_servers: dict[str, Any], tmp_dir: Path) -> Path:
+        config_path = tmp_dir / "cfg.json"
+        config_path.write_text("{}")
+        return config_path
+
+    def parse_system_prompt_file(self, config_dir: Path) -> str:
+        return ""
+
+
 async def test_failure_path_forwards_retry_provenance_to_process_log(tmp_path: Path) -> None:
     """session_process_log_write() receives retry provenance fields on failure path."""
     config_dir = tmp_path / "config"
@@ -267,3 +329,87 @@ async def test_failure_path_forwards_retry_provenance_to_process_log(tmp_path: P
     assert log_call["retry_succeeded"] is False
     assert log_call["result_source"] == "first"
     assert log_call["attempt_count"] == 2
+
+
+async def test_codex_mcp_discovery_false_negative_recovers_from_runtime_capture(
+    tmp_path: Path,
+) -> None:
+    """Spawner should recover when daemon capture proves MCP tools actually ran."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    pool = AsyncMock()
+    session_id = uuid.UUID("00000000-0000-0000-0000-000000000004")
+
+    spawner = Spawner(
+        config=_make_config(),
+        config_dir=config_dir,
+        pool=pool,
+        runtime=_CodexDiscoveryFalseNegativeAdapter(capture_tool_call=True),
+    )
+
+    complete_calls: list[dict] = []
+    log_write_calls: list[dict] = []
+
+    async def _capture_complete(_pool, _sid, *, tool_calls, **kwargs):
+        complete_calls.append({"tool_calls": list(tool_calls), **kwargs})
+
+    async def _capture_log_write(_pool, _sid, **kwargs):
+        log_write_calls.append(dict(kwargs))
+
+    with (
+        patch(
+            "butlers.core.spawner.session_create", new_callable=AsyncMock, return_value=session_id
+        ),
+        patch("butlers.core.spawner.session_complete", side_effect=_capture_complete),
+        patch("butlers.core.spawner.session_process_log_write", side_effect=_capture_log_write),
+        patch("butlers.core.spawner.write_audit_entry", new_callable=AsyncMock),
+    ):
+        result = await spawner.trigger("test prompt", "tick")
+
+    assert result.success is True
+    assert result.output == "recovered response"
+    assert any(tc.get("name") == "route_to_butler" for tc in result.tool_calls)
+    assert len(complete_calls) == 1
+    assert complete_calls[0]["success"] is True
+    assert any(tc.get("name") == "route_to_butler" for tc in complete_calls[0]["tool_calls"])
+    assert len(log_write_calls) == 1
+    assert log_write_calls[0]["retry_succeeded"] is True
+    assert log_write_calls[0]["result_source"] == "runtime_capture"
+
+
+async def test_codex_mcp_discovery_failure_still_fails_without_runtime_capture(
+    tmp_path: Path,
+) -> None:
+    """Spawner should still fail when neither parser nor runtime capture sees MCP calls."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    pool = AsyncMock()
+    session_id = uuid.UUID("00000000-0000-0000-0000-000000000005")
+
+    spawner = Spawner(
+        config=_make_config(),
+        config_dir=config_dir,
+        pool=pool,
+        runtime=_CodexDiscoveryFalseNegativeAdapter(capture_tool_call=False),
+    )
+
+    complete_calls: list[dict] = []
+
+    async def _capture_complete(_pool, _sid, *, tool_calls, **kwargs):
+        complete_calls.append({"tool_calls": list(tool_calls), **kwargs})
+
+    with (
+        patch(
+            "butlers.core.spawner.session_create", new_callable=AsyncMock, return_value=session_id
+        ),
+        patch("butlers.core.spawner.session_complete", side_effect=_capture_complete),
+        patch("butlers.core.spawner.session_process_log_write", new_callable=AsyncMock),
+        patch("butlers.core.spawner.write_audit_entry", new_callable=AsyncMock),
+    ):
+        result = await spawner.trigger("test prompt", "tick")
+
+    assert result.success is False
+    assert "MCP tool discovery failed after 3 attempts" in (result.error or "")
+    assert len(complete_calls) == 1
+    assert complete_calls[0]["success"] is False
+    assert complete_calls[0]["tool_calls"] == []

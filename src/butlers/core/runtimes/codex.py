@@ -41,6 +41,28 @@ _SAFE_MCP_SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _MCP_RETRY_DELAYS: tuple[float, ...] = (2.0, 5.0)
 
 
+class MCPToolDiscoveryError(RuntimeError):
+    """Codex exhausted MCP-discovery retries but still has partial session output.
+
+    The Codex adapter can only infer MCP success from its parsed JSON stream.
+    The spawner may later reconcile this with daemon-side runtime-session tool
+    capture, so preserve the partial result on the exception.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        result_text: str | None,
+        tool_calls: list[dict[str, Any]],
+        usage: dict[str, Any] | None,
+    ) -> None:
+        super().__init__(message)
+        self.result_text = result_text
+        self.tool_calls = list(tool_calls)
+        self.usage = dict(usage) if isinstance(usage, dict) else None
+
+
 def _infer_mcp_transport_from_url(url: str) -> str | None:
     """Infer MCP transport from URL path conventions.
 
@@ -712,6 +734,9 @@ class CodexAdapter(RuntimeAdapter):
                         cmd_for_log,
                         mcp_servers,
                     )
+                    # Preserve the most recent partial result so higher layers
+                    # can reconcile parser output with daemon-side tool-call capture.
+                    result_text, tool_calls, usage = retry_text, retry_calls, retry_usage
                     if _has_mcp_tool_calls(retry_calls):
                         logger.info(
                             "MCP retry succeeded — tools discovered on attempt %d",
@@ -735,11 +760,16 @@ class CodexAdapter(RuntimeAdapter):
                     )
 
                 if not retry_succeeded:
-                    raise RuntimeError(
-                        f"MCP tool discovery failed after {attempt_count} attempts. "
-                        "The butler's MCP server was configured but the Codex CLI "
-                        "could not connect to it. This session cannot proceed "
-                        "without MCP tools."
+                    raise MCPToolDiscoveryError(
+                        (
+                            f"MCP tool discovery failed after {attempt_count} attempts. "
+                            "The butler's MCP server was configured but the Codex CLI "
+                            "could not connect to it. This session cannot proceed "
+                            "without MCP tools."
+                        ),
+                        result_text=result_text,
+                        tool_calls=tool_calls,
+                        usage=usage,
                     )
             else:
                 if self._last_process_info:
