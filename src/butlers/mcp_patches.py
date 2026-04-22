@@ -1,98 +1,83 @@
-"""Local compatibility patches for third-party MCP transports."""
+"""Local compatibility patches for third-party MCP transports.
+
+Downgrade standalone-SSE-writer client-disconnect errors in
+``mcp.server.streamable_http`` from ERROR to DEBUG without re-vendoring the
+upstream method body. The upstream handler logs every failure of its
+``standalone_sse_writer`` task via ``logger.exception(...)`` with message
+``"Error in standalone SSE writer"``. When the cause is an expected
+``anyio.ClosedResourceError`` / ``BrokenResourceError`` (client closed the
+SSE stream), the stack trace is noise that pollutes QA error dashboards.
+
+This module installs a single ``logging.Filter`` on the
+``mcp.server.streamable_http`` logger. The filter inspects ``record.exc_info``
+and, if it matches the disconnect exception types AND the record targets the
+known writer log message, rewrites the record to DEBUG level with an
+unambiguous message and no traceback. All other records pass through
+untouched, so we do not hide unrelated errors.
+
+Scope: tracks MCP 1.26.0. If MCP upstream changes the log message or adds new
+disconnect paths, this filter becomes a no-op for those paths — it is failsafe
+by construction (nothing gets silenced that does not match BOTH the exception
+type and the exact message).
+"""
 
 from __future__ import annotations
 
-from typing import Any
+import logging
 
 import anyio
-from starlette.requests import Request
+
+_WRITER_ERROR_MESSAGE = "Error in standalone SSE writer"
+_WRITER_DISCONNECT_DEBUG_MESSAGE = "Standalone SSE stream closed during client disconnect"
+_DISCONNECT_EXC_TYPES: tuple[type[BaseException], ...] = (
+    anyio.ClosedResourceError,
+    anyio.BrokenResourceError,
+)
+
+
+class _StandaloneSseDisconnectFilter(logging.Filter):
+    """Downgrade expected client-disconnect tracebacks from the MCP SSE writer.
+
+    Matches log records emitted by ``mcp.server.streamable_http`` where:
+
+    * ``record.msg`` equals the upstream "Error in standalone SSE writer" text.
+    * ``record.exc_info`` is set and the raised exception is an
+      ``anyio.ClosedResourceError`` or ``anyio.BrokenResourceError``.
+
+    Matching records are rewritten in-place: level set to ``DEBUG``, message
+    replaced with a terse client-disconnect note, and ``exc_info`` cleared so
+    the traceback does not surface. All other records pass through unchanged.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.msg != _WRITER_ERROR_MESSAGE:
+            return True
+        exc_info = record.exc_info
+        if not exc_info:
+            return True
+        exc = exc_info[1]
+        if not isinstance(exc, _DISCONNECT_EXC_TYPES):
+            return True
+
+        record.levelno = logging.DEBUG
+        record.levelname = "DEBUG"
+        record.msg = _WRITER_DISCONNECT_DEBUG_MESSAGE
+        record.args = None
+        record.exc_info = None
+        record.exc_text = None
+        return True
 
 
 def apply_streamable_http_disconnect_patch() -> None:
-    """Downgrade expected standalone SSE disconnects in streamable-http sessions."""
+    """Install the disconnect log filter on the MCP streamable-http logger.
+
+    Idempotent: repeated calls leave exactly one filter attached.
+    """
+
     import mcp.server.streamable_http as streamable_http
 
-    transport_cls = streamable_http.StreamableHTTPServerTransport
-    if getattr(transport_cls, "_butlers_disconnect_patch_applied", False):
-        return
-
-    async def _patched_handle_get_request(
-        self: Any,
-        request: Request,
-        send: Any,
-    ) -> None:
-        writer = self._read_stream_writer
-        if writer is None:
-            raise ValueError("No read stream writer available. Ensure connect() is called first.")
-
-        _, has_sse = self._check_accept_headers(request)
-        if not has_sse:
-            response = self._create_error_response(
-                "Not Acceptable: Client must accept text/event-stream",
-                streamable_http.HTTPStatus.NOT_ACCEPTABLE,
-            )
-            await response(request.scope, request.receive, send)
+    logger = streamable_http.logger
+    for existing in logger.filters:
+        if isinstance(existing, _StandaloneSseDisconnectFilter):
             return
-
-        if not await self._validate_request_headers(request, send):
-            return
-
-        if last_event_id := request.headers.get(streamable_http.LAST_EVENT_ID_HEADER):
-            await self._replay_events(last_event_id, request, send)
-            return
-
-        headers = {
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "Content-Type": streamable_http.CONTENT_TYPE_SSE,
-        }
-        if self.mcp_session_id:
-            headers[streamable_http.MCP_SESSION_ID_HEADER] = self.mcp_session_id
-
-        if streamable_http.GET_STREAM_KEY in self._request_streams:
-            response = self._create_error_response(
-                "Conflict: Only one SSE stream is allowed per session",
-                streamable_http.HTTPStatus.CONFLICT,
-            )
-            await response(request.scope, request.receive, send)
-            return
-
-        sse_stream_writer, sse_stream_reader = anyio.create_memory_object_stream[dict[str, str]](0)
-
-        async def standalone_sse_writer() -> None:
-            try:
-                self._request_streams[streamable_http.GET_STREAM_KEY] = (
-                    anyio.create_memory_object_stream[streamable_http.EventMessage](0)
-                )
-                standalone_stream_reader = self._request_streams[streamable_http.GET_STREAM_KEY][1]
-
-                async with sse_stream_writer, standalone_stream_reader:
-                    async for event_message in standalone_stream_reader:
-                        event_data = self._create_event_data(event_message)
-                        await sse_stream_writer.send(event_data)
-            except (anyio.ClosedResourceError, anyio.BrokenResourceError):
-                streamable_http.logger.debug(
-                    "Standalone SSE stream closed during client disconnect"
-                )
-            except Exception:
-                streamable_http.logger.exception("Error in standalone SSE writer")
-            finally:
-                streamable_http.logger.debug("Closing standalone SSE writer")
-                await self._clean_up_memory_streams(streamable_http.GET_STREAM_KEY)
-
-        response = streamable_http.EventSourceResponse(
-            content=sse_stream_reader,
-            data_sender_callable=standalone_sse_writer,
-            headers=headers,
-        )
-
-        try:
-            await response(request.scope, request.receive, send)
-        except Exception:
-            streamable_http.logger.exception("Error in standalone SSE response")
-            await sse_stream_writer.aclose()
-            await sse_stream_reader.aclose()
-            await self._clean_up_memory_streams(streamable_http.GET_STREAM_KEY)
-
-    transport_cls._handle_get_request = _patched_handle_get_request
-    transport_cls._butlers_disconnect_patch_applied = True
+    logger.addFilter(_StandaloneSseDisconnectFilter())

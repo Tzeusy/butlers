@@ -34,7 +34,7 @@ import anyio
 import pytest
 from fastmcp import FastMCP as RuntimeFastMCP
 from pydantic import BaseModel
-from starlette.requests import ClientDisconnect, Request
+from starlette.requests import ClientDisconnect
 from starlette.testclient import TestClient
 
 from butlers.credentials import CredentialError
@@ -734,65 +734,86 @@ async def test_sse_disconnect_guard(
         await guard2(scope2, receive, noop_send)
 
 
-async def test_streamable_http_disconnect_patch_suppresses_standalone_writer_error(
+async def test_streamable_http_disconnect_patch_is_idempotent() -> None:
+    """Repeated calls MUST leave exactly one filter instance attached."""
+    import mcp.server.streamable_http as streamable_http
+
+    from butlers.mcp_patches import _StandaloneSseDisconnectFilter
+
+    apply_streamable_http_disconnect_patch()
+    apply_streamable_http_disconnect_patch()
+    apply_streamable_http_disconnect_patch()
+
+    filters = [
+        f for f in streamable_http.logger.filters if isinstance(f, _StandaloneSseDisconnectFilter)
+    ]
+    assert len(filters) == 1
+
+
+async def test_streamable_http_disconnect_patch_downgrades_client_disconnect(
     caplog: pytest.LogCaptureFixture,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Closed standalone SSE streams should not be logged as transport errors."""
+    """Expected client-disconnect tracebacks MUST be downgraded to DEBUG.
+
+    Exercises the upstream logger directly so we catch behavior regressions
+    regardless of how ``_handle_get_request`` evolves internally. We log
+    exactly what upstream logs from its ``standalone_sse_writer`` inner
+    coroutine (message + exc_info) and assert the filter rewrites the record.
+    """
     import mcp.server.streamable_http as streamable_http
 
     apply_streamable_http_disconnect_patch()
 
-    transport = streamable_http.StreamableHTTPServerTransport(mcp_session_id=None)
-    transport._read_stream_writer = object()
-    transport._create_event_data = lambda _event: {"event": "message", "data": "{}"}
+    logger = streamable_http.logger
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        try:
+            raise anyio.ClosedResourceError()
+        except anyio.ClosedResourceError:
+            logger.exception("Error in standalone SSE writer")
 
-    async def receive() -> dict[str, Any]:
-        return {"type": "http.request", "body": b"", "more_body": False}
+    target = [rec for rec in caplog.records if rec.name == logger.name]
+    assert target, "expected at least one log record on the streamable_http logger"
+    rec = target[-1]
+    # Filter rewrites msg to the disconnect text at DEBUG level and strips exc_info.
+    assert rec.levelno == logging.DEBUG
+    assert rec.exc_info is None
+    assert rec.exc_text is None
+    assert rec.getMessage() == "Standalone SSE stream closed during client disconnect"
+    # The original upstream error message MUST NOT appear anywhere.
+    assert not any("Error in standalone SSE writer" in r.getMessage() for r in target)
 
-    async def send(_message: dict[str, Any]) -> None:
-        return None
 
-    request = Request(
-        {
-            "type": "http",
-            "method": "GET",
-            "path": "/mcp",
-            "headers": [(b"accept", b"text/event-stream")],
-        },
-        receive,
-    )
+async def test_streamable_http_disconnect_patch_preserves_unrelated_errors(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unrelated exceptions on the same logger MUST surface normally."""
+    import mcp.server.streamable_http as streamable_http
 
-    class FakeEventSourceResponse:
-        def __init__(self, *, content: Any, data_sender_callable: Any, headers: Any) -> None:
-            self._content = content
-            self._data_sender_callable = data_sender_callable
-            self._headers = headers
+    apply_streamable_http_disconnect_patch()
 
-        async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-            del scope, receive, send
-            await self._content.aclose()
-            async with anyio.create_task_group() as tg:
-                tg.start_soon(self._data_sender_callable)
-                for _ in range(100):
-                    if streamable_http.GET_STREAM_KEY in transport._request_streams:
-                        break
-                    await anyio.sleep(0)
-                else:
-                    pytest.fail("standalone GET stream was not registered")
+    logger = streamable_http.logger
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        try:
+            raise RuntimeError("boom")
+        except RuntimeError:
+            logger.exception("Error in standalone SSE writer")
 
-                await transport._request_streams[streamable_http.GET_STREAM_KEY][0].send(object())
+        # Different message + disconnect exc — also should pass through unchanged.
+        try:
+            raise anyio.ClosedResourceError()
+        except anyio.ClosedResourceError:
+            logger.exception("Something else entirely")
 
-    monkeypatch.setattr(streamable_http, "EventSourceResponse", FakeEventSourceResponse)
+    records = [rec for rec in caplog.records if rec.name == logger.name]
+    # Unrelated RuntimeError keeps its ERROR level and traceback.
+    runtime_rec = next(r for r in records if r.getMessage() == "Error in standalone SSE writer")
+    assert runtime_rec.levelno == logging.ERROR
+    assert runtime_rec.exc_info is not None
 
-    with caplog.at_level(logging.DEBUG, logger="mcp.server.streamable_http"):
-        await transport._handle_get_request(request, send)
-
-    assert any(
-        "Standalone SSE stream closed during client disconnect" in rec.message
-        for rec in caplog.records
-    )
-    assert not any("Error in standalone SSE writer" in rec.message for rec in caplog.records)
+    # Disconnect under a different message is untouched.
+    other_rec = next(r for r in records if r.getMessage() == "Something else entirely")
+    assert other_rec.levelno == logging.ERROR
+    assert other_rec.exc_info is not None
 
 
 # ---------------------------------------------------------------------------
