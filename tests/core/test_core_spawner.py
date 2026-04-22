@@ -733,7 +733,7 @@ class TestSpawnerInvocation:
 
         assert result.success is False
         assert result.error is not None
-        assert "MCP tool discovery failed after multiple attempts" in result.error
+        assert "MCP tool discovery failed after 3 attempts" in result.error
         assert mock_complete.await_args.kwargs["success"] is False
 
     async def test_runtime_worker_factory_used_per_trigger(self, tmp_path: Path):

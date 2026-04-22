@@ -736,7 +736,7 @@ class CodexAdapter(RuntimeAdapter):
 
                 if not retry_succeeded:
                     raise RuntimeError(
-                        "MCP tool discovery failed after multiple attempts. "
+                        f"MCP tool discovery failed after {attempt_count} attempts. "
                         "The butler's MCP server was configured but the Codex CLI "
                         "could not connect to it. This session cannot proceed "
                         "without MCP tools."

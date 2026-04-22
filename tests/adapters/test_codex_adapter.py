@@ -343,7 +343,7 @@ async def test_retry_all_fail_raises_runtime_error():
         patch(_EXEC, side_effect=_mock_exec),
         patch("butlers.core.runtimes.codex._MCP_RETRY_DELAYS", (0, 0)),
     ):
-        with pytest.raises(RuntimeError, match="MCP tool discovery failed after multiple attempts"):
+        with pytest.raises(RuntimeError, match=r"MCP tool discovery failed after 3 attempts"):
             await adapter.invoke(
                 prompt="route this",
                 system_prompt="",
@@ -492,7 +492,7 @@ async def test_retry_provenance_result_source_first():
         patch(_EXEC, side_effect=_mock_exec),
         patch("butlers.core.runtimes.codex._MCP_RETRY_DELAYS", (0, 0)),
     ):
-        with pytest.raises(RuntimeError, match="MCP tool discovery failed after multiple attempts"):
+        with pytest.raises(RuntimeError, match=r"MCP tool discovery failed after 3 attempts"):
             await adapter.invoke(
                 prompt="route this",
                 system_prompt="",
