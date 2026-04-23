@@ -96,12 +96,24 @@ def test_repo_skill_files_use_yaml_frontmatter() -> None:
             continue
 
         frontmatter = lines[1:closing_index]
-        name_line = next((line for line in frontmatter if line.startswith("name:")), None)
+        name_line = next(
+            (line for line in frontmatter if line and line.lstrip().startswith("name:")),
+            None,
+        )
         if name_line is None:
             missing_name.append(rel_path)
             continue
 
-        skill_name = name_line.split(":", 1)[1].strip()
+        parts = name_line.split(":", 1)
+        if len(parts) < 2:
+            missing_name.append(rel_path)
+            continue
+
+        skill_name = parts[1].strip().strip("'\"")
+        if not skill_name:
+            missing_name.append(rel_path)
+            continue
+
         expected_name = skill_file.parent.name
         if skill_name != expected_name:
             mismatched_name.append(f"{rel_path} -> {skill_name!r} != {expected_name!r}")
