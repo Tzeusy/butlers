@@ -84,16 +84,6 @@ def _parse_date_from_db(value: Any) -> date | None:
     return None
 
 
-async def _table_exists(db_pool: asyncpg.Pool, table_name: str) -> bool:
-    """Return whether a fully-qualified table exists."""
-    try:
-        exists = await db_pool.fetchval("SELECT to_regclass($1) IS NOT NULL", table_name)
-    except Exception:
-        logger.debug("interaction_sync: failed to check table availability for %s", table_name)
-        return False
-    return bool(exists)
-
-
 # ---------------------------------------------------------------------------
 # Main insight scan job
 # ---------------------------------------------------------------------------
@@ -1084,39 +1074,32 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
     # Step 4: Scan public.calendar_events for confirmed events within the
     # scan window, extract attendees, and log interactions.
     # -----------------------------------------------------------------------
-    calendar_events_available = await _table_exists(db_pool, "public.calendar_events")
-    if not calendar_events_available:
+    try:
+        cal_rows = await db_pool.fetch(
+            """
+            SELECT
+                id,
+                title,
+                starts_at,
+                metadata
+            FROM public.calendar_events
+            WHERE status = 'confirmed'
+              AND starts_at >= $1
+              AND starts_at <= now()
+              AND metadata->'attendees' IS NOT NULL
+            ORDER BY starts_at DESC
+            """,
+            scan_window_start,
+        )
+    except asyncpg.exceptions.UndefinedTableError:
         logger.info(
             "interaction_sync: public.calendar_events unavailable; skipping calendar-based sync"
         )
         cal_rows = []
-    else:
-        try:
-            cal_rows = await db_pool.fetch(
-                """
-                SELECT
-                    id,
-                    title,
-                    starts_at,
-                    metadata
-                FROM public.calendar_events
-                WHERE status = 'confirmed'
-                  AND starts_at >= $1
-                  AND starts_at <= now()
-                  AND metadata->'attendees' IS NOT NULL
-                ORDER BY starts_at DESC
-                """,
-                scan_window_start,
-            )
-        except asyncpg.exceptions.UndefinedTableError:
-            logger.info(
-                "interaction_sync: public.calendar_events unavailable; skipping calendar-based sync"
-            )
-            cal_rows = []
-        except Exception:
-            logger.exception("interaction_sync: failed to query public.calendar_events")
-            stats["errors"] += 1
-            cal_rows = []
+    except Exception:
+        logger.exception("interaction_sync: failed to query public.calendar_events")
+        stats["errors"] += 1
+        cal_rows = []
 
     # -----------------------------------------------------------------------
     # Pre-process all calendar rows: parse metadata, skip declined/no-attendee
