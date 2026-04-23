@@ -41,6 +41,7 @@ import json
 import logging
 import os
 import socket
+import time
 import uuid
 from pathlib import Path
 from typing import Annotated, Any, NotRequired, TypedDict
@@ -121,6 +122,9 @@ from butlers.scheduled_jobs import (
 from butlers.storage import S3BlobStore
 
 logger = logging.getLogger(__name__)
+
+_MCP_SERVER_START_TIMEOUT_S = 5.0
+_MCP_SERVER_START_POLL_INTERVAL_S = 0.01
 
 # Tool surface is now controlled by the core_groups mechanism in the
 # runtime_config table (see RFC 0002 §Core Tool Gating via core_groups).
@@ -573,6 +577,40 @@ class ButlerDaemon:
         self._mcp_socket = sock
         self._server = uvicorn.Server(config)
         self._server_task = asyncio.create_task(self._server.serve(sockets=[sock]))
+        deadline = time.monotonic() + _MCP_SERVER_START_TIMEOUT_S
+        while True:
+            if getattr(self._server, "started", False):
+                break
+            if self._server_task.done():
+                try:
+                    await self._server_task
+                finally:
+                    self._server_task = None
+                    self._server = None
+                    if self._mcp_socket is not None:
+                        self._mcp_socket.close()
+                        self._mcp_socket = None
+                raise RuntimeError(
+                    f"MCP server task exited before startup completed for {self.config.name}"
+                )
+            if time.monotonic() >= deadline:
+                self._server.should_exit = True
+                self._server_task.cancel()
+                try:
+                    await self._server_task
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    self._server_task = None
+                    self._server = None
+                    if self._mcp_socket is not None:
+                        self._mcp_socket.close()
+                        self._mcp_socket = None
+                raise TimeoutError(
+                    f"MCP server did not become ready within {_MCP_SERVER_START_TIMEOUT_S:.1f}s "
+                    f"for {self.config.name}"
+                )
+            await asyncio.sleep(_MCP_SERVER_START_POLL_INTERVAL_S)
 
     @staticmethod
     def _route_signature(route: Any) -> tuple[str, str | None, tuple[str, ...] | None]:
