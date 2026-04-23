@@ -262,9 +262,7 @@ def _resolve_canonical_home(real_home: str | None) -> Path | None:
     cleaned up and can also cause Codex to create temp dirs inside temp dirs.
     """
     env_home = (
-        Path(real_home).expanduser()
-        if isinstance(real_home, str) and real_home.strip()
-        else None
+        Path(real_home).expanduser() if isinstance(real_home, str) and real_home.strip() else None
     )
     if env_home and env_home.parent.name == ".tmp" and env_home.parent.parent.name == ".codex":
         return _pwd_home() or env_home.parent.parent.parent
