@@ -21,7 +21,6 @@ from types import ModuleType
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import asyncpg
 import pytest
 
 # The roster job modules are loaded dynamically via the root conftest using
@@ -241,12 +240,8 @@ async def test_empty_inbox_logs_nothing():
 async def test_missing_calendar_table_is_skipped_without_error():
     """Missing public.calendar_events should not increment errors."""
     pool = _make_pool()
-    pool.fetch = AsyncMock(
-        side_effect=[
-            [],
-            asyncpg.UndefinedTableError('relation "public.calendar_events" does not exist'),
-        ]
-    )
+    pool.fetch = AsyncMock(side_effect=[[]])
+    pool.fetchval = AsyncMock(return_value=False)
 
     mod = _get_rjobs()
     run_fn = mod.run_interaction_sync
@@ -275,6 +270,7 @@ async def test_missing_calendar_table_is_skipped_without_error():
 
     assert stats["calendar_events_scanned"] == 0
     assert stats["errors"] == 0
+    assert pool.fetch.await_count == 1
     mock_log.assert_not_called()
 
 
