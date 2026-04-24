@@ -261,13 +261,9 @@ class TestScopeSetSelector:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
-            resp_default = await client.get(
-                "/api/oauth/google/start", params={"redirect": "false"}
-            )
+            resp_default = await client.get("/api/oauth/google/start", params={"redirect": "false"})
         assert resp_default.status_code == 200
-        default_scopes = set(
-            _extract_scope_param(resp_default.json()["authorization_url"])
-        )
+        default_scopes = set(_extract_scope_param(resp_default.json()["authorization_url"]))
         # Default composition must cover gmail, calendar, drive, contacts, and base.
         assert self._BASE_SCOPES.issubset(default_scopes)
         assert "https://www.googleapis.com/auth/gmail.modify" in default_scopes

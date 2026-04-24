@@ -222,9 +222,7 @@ GOOGLE_SCOPE_SETS: dict[str, list[str]] = {
 _DEFAULT_SCOPE_SETS: tuple[str, ...] = ("base", "gmail", "calendar", "contacts", "drive")
 _DEFAULT_SCOPES = " ".join(
     dict.fromkeys(
-        scope
-        for set_name in _DEFAULT_SCOPE_SETS
-        for scope in GOOGLE_SCOPE_SETS[set_name]
+        scope for set_name in _DEFAULT_SCOPE_SETS for scope in GOOGLE_SCOPE_SETS[set_name]
     )
 )
 
@@ -276,6 +274,7 @@ def _compose_scopes_from_sets(set_names: list[str]) -> str:
         for scope in GOOGLE_SCOPE_SETS[set_name]:
             scopes.setdefault(scope, None)
     return " ".join(scopes)
+
 
 # ---------------------------------------------------------------------------
 # In-memory CSRF state store
@@ -542,8 +541,7 @@ async def oauth_google_start(
     authorization_url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
 
     logger.info(
-        "Google OAuth flow started (state=%s..., account_hint=%s, force_consent=%s, "
-        "scope_set=%s)",
+        "Google OAuth flow started (state=%s..., account_hint=%s, force_consent=%s, scope_set=%s)",
         state[:8],
         account_hint,
         force_consent,
