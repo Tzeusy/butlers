@@ -2,7 +2,7 @@
 
 Receives a ``wellness/google_health`` ingest.v1 envelope (delivered by the connector
 via the Switchboard → ``route.execute`` path) and deterministically converts it into
-a single fact stored via ``memory_store_fact``.
+one or more facts stored via ``memory_store_fact``.
 
 Predicate taxonomy (mem_003):
   sleep_session, sleep_stage_summary,
@@ -10,8 +10,13 @@ Predicate taxonomy (mem_003):
   measurement_breathing_rate, measurement_steps, measurement_active_minutes,
   measurement_vo2_max
 
-Prometheus counter ``health_wellness_ingest_total`` is incremented per call with
-labels ``predicate`` and ``outcome`` (success | error | skipped_* | rejected_*).
+Fan-out: the ``activity`` resource emits two facts per envelope —
+  ``measurement_steps`` and ``measurement_active_minutes`` — with distinct
+  idempotency keys suffixed ``:steps`` and ``:active_minutes``.
+
+Prometheus counter ``health_wellness_ingest_total`` is incremented once per
+emitted fact with labels ``predicate`` and ``outcome``
+(success | error | skipped_* | rejected_*).
 """
 
 from __future__ import annotations
@@ -28,26 +33,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Predicate routing table
 #
-# Maps the resource segment of ``event.external_event_id`` (the part before the
-# second colon, e.g. ``"sleep"`` from ``"google_health:sleep_session:abc123"``)
-# to the canonical mem_003 predicate name.
+# Maps the resource segment of ``event.external_event_id`` to a tuple of
+# canonical mem_003 predicate names.  Most resources map to a single predicate;
+# ``activity`` fans out to two facts.
 #
 # The connector emits external_event_id in these forms:
 #   google_health:sleep_session:<session_id>   (sleep)
 #   google_health:<resource>:<date>            (daily summaries)
+#
+# Keys MUST match the second colon-segment of the external_event_id exactly.
+# Dead-code keys that no connector emits ("sleep", "sleep_stage", "steps",
+# "active_minutes") have been removed.
 # ---------------------------------------------------------------------------
 
-_RESOURCE_TO_PREDICATE: dict[str, str] = {
-    "sleep": "sleep_session",
-    "sleep_session": "sleep_session",
-    "sleep_stage": "sleep_stage_summary",
-    "resting_hr": "measurement_resting_hr",
-    "hrv": "measurement_hrv",
-    "spo2": "measurement_spo2",
-    "breathing_rate": "measurement_breathing_rate",
-    "steps": "measurement_steps",
-    "active_minutes": "measurement_active_minutes",
-    "vo2_max": "measurement_vo2_max",
+_RESOURCE_TO_PREDICATES: dict[str, tuple[str, ...]] = {
+    "sleep_session": ("sleep_session",),
+    "activity": ("measurement_steps", "measurement_active_minutes"),
+    "resting_hr": ("measurement_resting_hr",),
+    "hrv": ("measurement_hrv",),
+    "spo2": ("measurement_spo2",),
+    "breathing_rate": ("measurement_breathing_rate",),
+    "vo2_max": ("measurement_vo2_max",),
 }
 
 # ---------------------------------------------------------------------------
@@ -115,10 +121,38 @@ _PREDICATE_UNIT: dict[str, str] = {
     "measurement_spo2": "%",
     "measurement_breathing_rate": "breaths/min",
     "measurement_steps": "steps",
-    "measurement_active_minutes": "minutes",
+    "measurement_active_minutes": "min",
     "measurement_vo2_max": "ml/kg/min",
     "sleep_stage_summary": "",
 }
+
+
+def _extract_steps_metadata(raw: dict[str, Any]) -> dict[str, Any]:
+    """Extract step-count metadata from an activity daily-summary record."""
+    value = None
+    for key in ("steps", "step_count", "stepCount", "value", "count"):
+        val = raw.get(key)
+        if val is not None:
+            value = val
+            break
+    meta: dict[str, Any] = {"unit": "steps"}
+    if value is not None:
+        meta["value"] = value
+    return meta
+
+
+def _extract_active_minutes_metadata(raw: dict[str, Any]) -> dict[str, Any]:
+    """Extract active-minutes metadata from an activity daily-summary record."""
+    value = None
+    for key in ("active_minutes", "activeMinutes", "activeDurationMinutes", "duration_min"):
+        val = raw.get(key)
+        if val is not None:
+            value = val
+            break
+    meta: dict[str, Any] = {"unit": "min"}
+    if value is not None:
+        meta["value"] = value
+    return meta
 
 
 def _extract_metadata(predicate: str, raw: dict[str, Any]) -> dict[str, Any]:
@@ -127,6 +161,10 @@ def _extract_metadata(predicate: str, raw: dict[str, Any]) -> dict[str, Any]:
         return _extract_sleep_session_metadata(raw)
     if predicate == "sleep_stage_summary":
         return _extract_sleep_stage_metadata(raw)
+    if predicate == "measurement_steps":
+        return _extract_steps_metadata(raw)
+    if predicate == "measurement_active_minutes":
+        return _extract_active_minutes_metadata(raw)
     unit = _PREDICATE_UNIT.get(predicate, "")
     return _extract_scalar_metadata(raw, unit)
 
@@ -191,7 +229,7 @@ async def translate_wellness_envelope(
     embedding_engine: Any,
     envelope: dict[str, Any],
 ) -> dict[str, Any]:
-    """Translate a wellness ingest.v1 envelope into a stored memory fact.
+    """Translate a wellness ingest.v1 envelope into one or more stored memory facts.
 
     Parameters
     ----------
@@ -204,7 +242,10 @@ async def translate_wellness_envelope(
 
     Returns
     -------
-    dict with ``status`` and, on success, ``fact_id`` and ``predicate``.
+    dict with ``status`` and, on success, ``facts_written`` (int) and ``facts``
+    (list of per-predicate result dicts).  Single-predicate resources also include
+    top-level ``fact_id`` and ``predicate`` for backwards compatibility.
+
     Possible statuses: ``ok``, ``rejected_non_primary_sender``,
     ``skipped_unknown_predicate``, ``skipped_malformed_payload``, ``error``.
     """
@@ -255,15 +296,15 @@ async def translate_wellness_envelope(
         return {"status": "error", "reason": "owner_entity_not_found"}
 
     # ------------------------------------------------------------------
-    # Step 3: Derive predicate from external_event_id
+    # Step 3: Derive predicates from external_event_id
     # ------------------------------------------------------------------
     external_event_id: str = envelope.get("event", {}).get("external_event_id", "")
     # Format: "google_health:<resource>:<date_or_id>"
     parts = external_event_id.split(":", 2)
     resource_segment = parts[1] if len(parts) >= 2 else ""
 
-    predicate = _RESOURCE_TO_PREDICATE.get(resource_segment)
-    if predicate is None:
+    predicates = _RESOURCE_TO_PREDICATES.get(resource_segment)
+    if predicates is None:
         logger.warning(
             "wellness_ingest: unknown resource segment %r in external_event_id %r; skipping",
             resource_segment,
@@ -275,74 +316,95 @@ async def translate_wellness_envelope(
         return {"status": "skipped_unknown_predicate"}
 
     # ------------------------------------------------------------------
-    # Step 4: Extract valid_at and metadata
+    # Step 4: Extract shared envelope fields
     # ------------------------------------------------------------------
     payload = envelope.get("payload", {})
     raw: dict[str, Any] = payload.get("raw") or {}
     observed_at: str = envelope.get("event", {}).get("observed_at", "")
     normalized_text: str = payload.get("normalized_text", "")
-
-    valid_at = _extract_valid_at(predicate, raw, observed_at)
-
-    try:
-        metadata = _extract_metadata(predicate, raw)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "wellness_ingest: metadata extraction failed for predicate=%r: %s",
-            predicate,
-            exc,
-        )
-        health_wellness_ingest_total.labels(
-            predicate=predicate, outcome="skipped_malformed_payload"
-        ).inc()
-        return {"status": "skipped_malformed_payload"}
-
-    if not metadata:
-        logger.warning(
-            "wellness_ingest: empty metadata for predicate=%r; skipping",
-            predicate,
-        )
-        health_wellness_ingest_total.labels(
-            predicate=predicate, outcome="skipped_malformed_payload"
-        ).inc()
-        return {"status": "skipped_malformed_payload"}
+    base_idempotency_key: str = envelope.get("control", {}).get("idempotency_key", "")
 
     # ------------------------------------------------------------------
-    # Step 5: Build content string and idempotency key
+    # Step 5: Fan-out — write one fact per predicate
     # ------------------------------------------------------------------
-    content = normalized_text or f"wellness:{predicate}:{valid_at}"
-    idempotency_key: str = envelope.get("control", {}).get("idempotency_key", "")
+    fan_out = len(predicates) > 1
+    written_facts: list[dict[str, Any]] = []
+
+    for predicate in predicates:
+        # Idempotency key — suffix with predicate suffix for fan-out cases so
+        # each fact gets its own unique key while replay still deduplicates.
+        if fan_out and base_idempotency_key:
+            # Use a stable short suffix derived from the predicate name:
+            # measurement_steps → :steps, measurement_active_minutes → :active_minutes
+            suffix = predicate.split("_", 1)[-1] if "_" in predicate else predicate
+            ikey: str | None = f"{base_idempotency_key}:{suffix}"
+        else:
+            ikey = base_idempotency_key or None
+
+        valid_at = _extract_valid_at(predicate, raw, observed_at)
+
+        try:
+            metadata = _extract_metadata(predicate, raw)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "wellness_ingest: metadata extraction failed for predicate=%r: %s",
+                predicate,
+                exc,
+            )
+            health_wellness_ingest_total.labels(
+                predicate=predicate, outcome="skipped_malformed_payload"
+            ).inc()
+            return {"status": "skipped_malformed_payload"}
+
+        if not metadata:
+            logger.warning(
+                "wellness_ingest: empty metadata for predicate=%r; skipping",
+                predicate,
+            )
+            health_wellness_ingest_total.labels(
+                predicate=predicate, outcome="skipped_malformed_payload"
+            ).inc()
+            return {"status": "skipped_malformed_payload"}
+
+        content = normalized_text or f"wellness:{predicate}:{valid_at}"
+
+        try:
+            result = await memory_store_fact(
+                pool,
+                embedding_engine,
+                subject="owner",
+                predicate=predicate,
+                content=content,
+                scope="health",
+                permanence="standard",
+                valid_at=valid_at,
+                entity_id=owner_entity_id_str,
+                idempotency_key=ikey,
+                retention_class="operational",
+                sensitivity="normal",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "wellness_ingest: memory_store_fact failed for predicate=%r: %s",
+                predicate,
+                exc,
+            )
+            health_wellness_ingest_total.labels(predicate=predicate, outcome="error").inc()
+            return {"status": "error", "reason": str(exc)}
+
+        health_wellness_ingest_total.labels(predicate=predicate, outcome="success").inc()
+        written_facts.append({"fact_id": result.get("id"), "predicate": predicate})
 
     # ------------------------------------------------------------------
-    # Step 6: Store fact
+    # Step 6: Return summary (backwards-compat: single-predicate path keeps
+    # top-level fact_id/predicate fields alongside the new facts list).
     # ------------------------------------------------------------------
-    try:
-        result = await memory_store_fact(
-            pool,
-            embedding_engine,
-            subject="owner",
-            predicate=predicate,
-            content=content,
-            scope="health",
-            permanence="standard",
-            valid_at=valid_at,
-            entity_id=owner_entity_id_str,
-            idempotency_key=idempotency_key or None,
-            retention_class="operational",
-            sensitivity="normal",
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "wellness_ingest: memory_store_fact failed for predicate=%r: %s",
-            predicate,
-            exc,
-        )
-        health_wellness_ingest_total.labels(predicate=predicate, outcome="error").inc()
-        return {"status": "error", "reason": str(exc)}
-
-    health_wellness_ingest_total.labels(predicate=predicate, outcome="success").inc()
-    return {
+    response: dict[str, Any] = {
         "status": "ok",
-        "fact_id": result.get("id"),
-        "predicate": predicate,
+        "facts_written": len(written_facts),
+        "facts": written_facts,
     }
+    if len(written_facts) == 1:
+        response["fact_id"] = written_facts[0]["fact_id"]
+        response["predicate"] = written_facts[0]["predicate"]
+    return response

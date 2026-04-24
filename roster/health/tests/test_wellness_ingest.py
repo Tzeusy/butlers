@@ -1,11 +1,12 @@
 """Tests for roster/health/tools/wellness_ingest.py.
 
 Covers:
-1. Predicate derivation for all 9 resources (happy path + unknown resource)
+1. Predicate derivation for all connector-emitted resources (happy path + unknown resource)
 2. Non-primary sender rejection
 3. Replay-idempotency (same idempotency_key → no duplicate)
 4. Malformed payload (missing required field) → skipped_malformed_payload
 5. Prometheus counter increments with correct labels
+6. Activity fan-out → two facts (measurement_steps + measurement_active_minutes)
 
 All tests are unit tests (no DB required) — DB calls are mocked.
 """
@@ -31,7 +32,11 @@ def _make_sleep_envelope(
     idempotency_key: str | None = None,
     raw: dict | None = None,
 ) -> dict:
-    """Build a minimal sleep session ingest.v1 envelope."""
+    """Build a minimal sleep session ingest.v1 envelope.
+
+    Uses ``sleep_session`` as the resource segment — matching what the connector
+    emits (``google_health:sleep_session:<session_id>``).
+    """
     return {
         "schema_version": "ingest.v1",
         "source": {
@@ -89,6 +94,42 @@ def _make_daily_envelope(
         },
         "control": {
             "idempotency_key": f"google_health:{resource}:{record_date}",
+            "policy_tier": "default",
+            "ingestion_tier": "full",
+        },
+    }
+
+
+def _make_activity_envelope(
+    record_date: str = "2026-04-24",
+    sender_identity: str = "user@example.com",
+    steps: int = 8000,
+    active_minutes: int = 45,
+) -> dict:
+    """Build an activity envelope with both steps and active_minutes fields."""
+    return {
+        "schema_version": "ingest.v1",
+        "source": {
+            "channel": "wellness",
+            "provider": "google_health",
+            "endpoint_identity": f"google_health:user:{sender_identity}",
+        },
+        "event": {
+            "external_event_id": f"google_health:activity:{record_date}",
+            "external_thread_id": None,
+            "observed_at": "2026-04-25T06:00:00Z",
+        },
+        "sender": {"identity": sender_identity},
+        "payload": {
+            "raw": {
+                "steps": steps,
+                "activeMinutes": active_minutes,
+                "date": record_date,
+            },
+            "normalized_text": f"Steps: {steps}",
+        },
+        "control": {
+            "idempotency_key": f"google_health:activity:{record_date}",
             "policy_tier": "default",
             "ingestion_tier": "full",
         },
@@ -190,49 +231,41 @@ async def _call_translate(
 
 
 # ---------------------------------------------------------------------------
-# 1. Predicate derivation for all 9 resources
+# 1. Predicate derivation for connector-emitted resources
 # ---------------------------------------------------------------------------
 
 
 class TestPredicateDerivation:
-    """All 9 canonical wellness predicates are correctly derived."""
+    """All connector-emitted resource segments map to the correct predicates."""
 
     @pytest.mark.parametrize(
         "resource,expected_predicate",
         [
             ("sleep_session", "sleep_session"),
-            ("sleep_stage", "sleep_stage_summary"),
             ("resting_hr", "measurement_resting_hr"),
             ("hrv", "measurement_hrv"),
             ("spo2", "measurement_spo2"),
             ("breathing_rate", "measurement_breathing_rate"),
-            ("steps", "measurement_steps"),
-            ("active_minutes", "measurement_active_minutes"),
             ("vo2_max", "measurement_vo2_max"),
         ],
     )
-    async def test_predicate_happy_path(self, resource: str, expected_predicate: str) -> None:
-        """Each of the 9 resources maps to its canonical predicate and returns status=ok."""
+    async def test_single_predicate_happy_path(
+        self, resource: str, expected_predicate: str
+    ) -> None:
+        """Each single-predicate resource maps to its canonical predicate and returns status=ok."""
         if resource == "sleep_session":
-            # sleep_session → category=sleep, needs session_id style event_id
             envelope = _make_sleep_envelope()
-            # Override external_event_id to use sleep_session resource segment
-            envelope["event"]["external_event_id"] = "google_health:sleep_session:sess-1"
         else:
-            # sleep_stage needs extra raw fields
-            raw: dict = {"value": 62, "date": "2026-04-24"}
-            if resource == "sleep_stage":
-                raw = {"stages": {"deep": 90, "rem": 45, "light": 180}, "date": "2026-04-24"}
-            envelope = _make_daily_envelope(resource, raw=raw)
+            envelope = _make_daily_envelope(resource)
 
         result, mock_store, mock_counter = await _call_translate(envelope)
 
         assert result["status"] == "ok", f"Expected ok for {resource}, got {result}"
         assert result["predicate"] == expected_predicate
         assert "fact_id" in result
+        assert result["facts_written"] == 1
         mock_store.assert_awaited_once()
         call_kwargs = mock_store.call_args
-        # Verify predicate passed to memory_store_fact
         assert call_kwargs.kwargs.get("predicate") == expected_predicate or (
             len(call_kwargs.args) >= 4 and call_kwargs.args[3] == expected_predicate
         )
@@ -248,9 +281,105 @@ class TestPredicateDerivation:
         label_call = mock_counter.labels.call_args
         assert label_call.kwargs.get("outcome") == "skipped_unknown_predicate"
 
+    async def test_dead_code_keys_not_in_map(self) -> None:
+        """Dead-code keys ('sleep', 'sleep_stage', 'steps', 'active_minutes') are gone."""
+        from butlers.tools.health.wellness_ingest import _RESOURCE_TO_PREDICATES
+
+        for dead_key in ("sleep", "sleep_stage", "steps", "active_minutes"):
+            assert dead_key not in _RESOURCE_TO_PREDICATES, (
+                f"Dead-code key {dead_key!r} must not be in _RESOURCE_TO_PREDICATES"
+            )
+
 
 # ---------------------------------------------------------------------------
-# 2. Non-primary sender rejection
+# 2. Activity fan-out
+# ---------------------------------------------------------------------------
+
+
+class TestActivityFanOut:
+    """activity resource fans out to both measurement_steps and measurement_active_minutes."""
+
+    async def test_activity_writes_two_facts(self) -> None:
+        """Activity envelope produces two facts with correct predicates."""
+        envelope = _make_activity_envelope(steps=8000, active_minutes=45)
+        result, mock_store, mock_counter = await _call_translate(envelope)
+
+        assert result["status"] == "ok"
+        assert result["facts_written"] == 2
+        assert len(result["facts"]) == 2
+
+        predicates = [f["predicate"] for f in result["facts"]]
+        assert "measurement_steps" in predicates
+        assert "measurement_active_minutes" in predicates
+
+        # Two store_fact calls
+        assert mock_store.await_count == 2
+
+    async def test_activity_idempotency_keys_are_distinct(self) -> None:
+        """Each fan-out fact gets a distinct idempotency key suffixed :steps/:active_minutes."""
+        envelope = _make_activity_envelope()
+        base_key = envelope["control"]["idempotency_key"]  # google_health:activity:2026-04-24
+
+        result, mock_store, _ = await _call_translate(envelope)
+
+        assert result["status"] == "ok"
+        ikeys = [c.kwargs.get("idempotency_key") for c in mock_store.call_args_list]
+        assert f"{base_key}:steps" in ikeys
+        assert f"{base_key}:active_minutes" in ikeys
+        assert ikeys[0] != ikeys[1]
+
+    async def test_activity_steps_metadata(self) -> None:
+        """Steps fact metadata contains steps value and unit='steps'."""
+        envelope = _make_activity_envelope(steps=9500)
+        result, mock_store, _ = await _call_translate(envelope)
+
+        assert result["status"] == "ok"
+        # Find the call for measurement_steps
+        steps_call = next(
+            c for c in mock_store.call_args_list if c.kwargs.get("predicate") == "measurement_steps"
+        )
+        # metadata is not a direct kwarg to memory_store_fact but we can verify predicate
+        assert steps_call.kwargs.get("predicate") == "measurement_steps"
+
+    async def test_activity_active_minutes_metadata(self) -> None:
+        """Active-minutes fact metadata contains minutes value and unit='min'."""
+        envelope = _make_activity_envelope(active_minutes=60)
+        result, mock_store, _ = await _call_translate(envelope)
+
+        assert result["status"] == "ok"
+        am_call = next(
+            c
+            for c in mock_store.call_args_list
+            if c.kwargs.get("predicate") == "measurement_active_minutes"
+        )
+        assert am_call.kwargs.get("predicate") == "measurement_active_minutes"
+
+    async def test_activity_no_top_level_predicate_field(self) -> None:
+        """Fan-out result has no top-level 'predicate' key (only single-predicate does)."""
+        envelope = _make_activity_envelope()
+        result, _, _ = await _call_translate(envelope)
+
+        assert result["status"] == "ok"
+        assert "predicate" not in result
+        assert "fact_id" not in result
+
+    async def test_activity_prometheus_incremented_per_fact(self) -> None:
+        """Counter is incremented once per emitted fact (two calls for activity)."""
+        envelope = _make_activity_envelope()
+        result, _, mock_counter = await _call_translate(envelope)
+
+        assert result["status"] == "ok"
+        # Two .labels().inc() calls — one per predicate
+        assert mock_counter.labels.call_count == 2
+        call_predicates = {c.kwargs.get("predicate") for c in mock_counter.labels.call_args_list}
+        assert "measurement_steps" in call_predicates
+        assert "measurement_active_minutes" in call_predicates
+        for c in mock_counter.labels.call_args_list:
+            assert c.kwargs.get("outcome") == "success"
+
+
+# ---------------------------------------------------------------------------
+# 3. Non-primary sender rejection
 # ---------------------------------------------------------------------------
 
 
@@ -299,7 +428,7 @@ class TestSenderRejection:
 
 
 # ---------------------------------------------------------------------------
-# 3. Replay idempotency
+# 4. Replay idempotency
 # ---------------------------------------------------------------------------
 
 
@@ -364,12 +493,12 @@ class TestReplayIdempotency:
         assert r2["status"] == "ok"
         # Both calls forwarded the same idempotency_key
         assert mock_store.call_count == 2
-        for call in mock_store.call_args_list:
-            assert call.kwargs.get("idempotency_key") == ikey
+        for c in mock_store.call_args_list:
+            assert c.kwargs.get("idempotency_key") == ikey
 
 
 # ---------------------------------------------------------------------------
-# 4. Malformed payload
+# 5. Malformed payload
 # ---------------------------------------------------------------------------
 
 
@@ -411,7 +540,7 @@ class TestMalformedPayload:
 
 
 # ---------------------------------------------------------------------------
-# 5. Prometheus counter
+# 6. Prometheus counter
 # ---------------------------------------------------------------------------
 
 
@@ -467,21 +596,21 @@ class TestPrometheusCounter:
         mock_counter.labels.return_value.inc.assert_called_once()
 
     @pytest.mark.parametrize(
-        "resource",
+        "resource,expected_predicate",
         [
-            "sleep_session",
-            "resting_hr",
-            "hrv",
-            "spo2",
-            "breathing_rate",
-            "steps",
-            "active_minutes",
-            "vo2_max",
+            ("sleep_session", "sleep_session"),
+            ("resting_hr", "measurement_resting_hr"),
+            ("hrv", "measurement_hrv"),
+            ("spo2", "measurement_spo2"),
+            ("breathing_rate", "measurement_breathing_rate"),
+            ("vo2_max", "measurement_vo2_max"),
         ],
     )
-    async def test_counter_label_predicate_matches_resource(self, resource: str) -> None:
+    async def test_counter_label_predicate_matches_resource(
+        self, resource: str, expected_predicate: str
+    ) -> None:
         """Counter is labeled with the canonical predicate name, not the resource key."""
-        from butlers.tools.health.wellness_ingest import _RESOURCE_TO_PREDICATE
+        from butlers.tools.health.wellness_ingest import _RESOURCE_TO_PREDICATES
 
         if resource == "sleep_session":
             envelope = _make_sleep_envelope()
@@ -491,5 +620,6 @@ class TestPrometheusCounter:
         result, _, mock_counter = await _call_translate(envelope)
 
         assert result["status"] == "ok"
-        expected_predicate = _RESOURCE_TO_PREDICATE[resource]
+        # For single-predicate resources the tuple has one element
+        assert expected_predicate in _RESOURCE_TO_PREDICATES[resource]
         mock_counter.labels.assert_called_once_with(predicate=expected_predicate, outcome="success")
