@@ -101,6 +101,9 @@ def _looks_like_transport_failure(error_detail: str) -> bool:
     lowered = error_detail.lower()
     markers = (
         "rmcp startup failed",
+        "transport channel closed",
+        "connect error",
+        "connection refused",
         "streamable_http",
         "text/event-stream",
         "method not allowed",
@@ -170,6 +173,47 @@ def _augment_transport_error_detail(error_detail: str, mcp_servers: dict[str, An
 def _has_mcp_tool_calls(tool_calls: list[dict[str, Any]]) -> bool:
     """Return True when at least one non-bash MCP tool call is present."""
     return any(tc.get("name") != "command_execution" for tc in tool_calls)
+
+
+def _looks_like_mcp_tool_unavailable_message(result_text: str | None) -> bool:
+    """Best-effort detection for replies saying configured MCP tools were unavailable."""
+    if not isinstance(result_text, str) or not result_text.strip():
+        return False
+
+    lowered = result_text.lower()
+    if "tool list" in lowered and "not available" in lowered:
+        return True
+    if "tool list" in lowered and "access to" in lowered:
+        return True
+    if "do not have access to" in lowered and "tool" in lowered:
+        return True
+    if "don't have access to" in lowered and "tool" in lowered:
+        return True
+    if "cannot access" in lowered and "tool" in lowered:
+        return True
+    return False
+
+
+def _should_retry_mcp_discovery(
+    *,
+    mcp_servers: dict[str, Any],
+    tool_calls: list[dict[str, Any]],
+    result_text: str | None,
+    stderr: str,
+) -> bool:
+    """Retry only when the CLI shows evidence MCP tools were unavailable.
+
+    A successful session may legitimately make zero MCP calls. Treating "no
+    MCP tool calls" as a failure-by-itself causes false-positive
+    ``MCPToolDiscoveryError`` crashes for plain-text answers. Retries should
+    only trigger when the CLI emitted concrete MCP transport diagnostics or
+    the agent explicitly reports that a requested tool was unavailable.
+    """
+    if not mcp_servers or _has_mcp_tool_calls(tool_calls):
+        return False
+    return _looks_like_transport_failure(stderr) or _looks_like_mcp_tool_unavailable_message(
+        result_text
+    )
 
 
 def _looks_like_tool_call_event(obj: dict[str, Any]) -> bool:
@@ -758,11 +802,20 @@ class CodexAdapter(RuntimeAdapter):
                 prompt_input,
             )
 
-            # Retry with exponential backoff when MCP tools were configured
-            # but the CLI failed to discover them (intermittent MCP connection
-            # failure).  Codex CLI v0.121.0 has a race where it can start
-            # processing the prompt before MCP tools are fully registered.
-            mcp_failed = mcp_servers and not _has_mcp_tool_calls(tool_calls)
+            # Retry only when the CLI shows evidence that configured MCP tools
+            # were unavailable. A plain-text answer with zero MCP tool calls is
+            # not itself a transport failure.
+            stderr_text = ""
+            if self._last_process_info:
+                raw_stderr = self._last_process_info.get("stderr")
+                if isinstance(raw_stderr, str):
+                    stderr_text = raw_stderr
+            mcp_failed = _should_retry_mcp_discovery(
+                mcp_servers=mcp_servers,
+                tool_calls=tool_calls,
+                result_text=result_text,
+                stderr=stderr_text,
+            )
             if mcp_failed:
                 # Snapshot first-attempt process info before retries overwrite it.
                 first_info = dict(self._last_process_info) if self._last_process_info else None

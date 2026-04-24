@@ -25,9 +25,11 @@ from butlers.core.runtimes.codex import (
     _find_codex_binary,
     _has_mcp_tool_calls,
     _infer_mcp_transport_from_url,
+    _looks_like_mcp_tool_unavailable_message,
     _parse_codex_output,
     _resolve_canonical_home,
     _select_error_detail,
+    _should_retry_mcp_discovery,
 )
 
 pytestmark = pytest.mark.unit
@@ -309,6 +311,38 @@ def test_has_mcp_tool_calls():
     assert _has_mcp_tool_calls([{"name": "command_execution"}, {"name": "route_to_butler"}])
 
 
+def test_should_retry_mcp_discovery_requires_real_failure_signal():
+    """Zero MCP tool calls alone should not trigger discovery retries."""
+    assert not _should_retry_mcp_discovery(
+        mcp_servers=_MCP_SERVERS,
+        tool_calls=[],
+        result_text="Here is a direct answer with no tool use.",
+        stderr="",
+    )
+    assert _should_retry_mcp_discovery(
+        mcp_servers=_MCP_SERVERS,
+        tool_calls=[],
+        result_text="`route_to_butler` is not available in the tool list I have access to.",
+        stderr="",
+    )
+    assert _should_retry_mcp_discovery(
+        mcp_servers=_MCP_SERVERS,
+        tool_calls=[],
+        result_text="Here is a direct answer.",
+        stderr="ERROR rmcp::transport::worker: connection refused",
+    )
+
+
+def test_looks_like_mcp_tool_unavailable_message():
+    """Tool-list denial phrasing should be recognized as MCP unavailability."""
+    assert _looks_like_mcp_tool_unavailable_message(
+        "`route_to_butler` is not available in the tool list I have access to."
+    )
+    assert not _looks_like_mcp_tool_unavailable_message(
+        "The requested report is not available in the database."
+    )
+
+
 def test_select_error_detail_filters_benign_stdin_notice():
     """Benign stdin notices should not become the reported failure headline."""
     detail = _select_error_detail(
@@ -373,6 +407,29 @@ def _make_bash_only_stdout() -> bytes:
     ).encode()
 
 
+def _make_text_only_stdout(text: str = "Here is the answer.") -> bytes:
+    """Build Codex JSON-lines output with only an agent message."""
+    return (
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "msg1",
+                    "type": "agent_message",
+                    "text": text,
+                },
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "type": "turn.completed",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }
+        )
+    ).encode()
+
+
 _MCP_SERVERS = {"switchboard": {"url": "http://localhost:41100/mcp"}}
 
 
@@ -388,9 +445,16 @@ async def test_retry_on_mcp_connection_failure():
         proc = AsyncMock()
         proc.returncode = 0
         proc.pid = 100 + call_count
-        # First call: bash only (MCP failure). Second call: MCP tools present.
+        # First call: transport error with no MCP tools. Second call: MCP tools present.
         if call_count == 1:
-            proc.communicate = AsyncMock(return_value=(_make_bash_only_stdout(), b""))
+            proc.communicate = AsyncMock(
+                return_value=(
+                    _make_text_only_stdout(
+                        "`route_to_butler` is not available in the tool list I have access to."
+                    ),
+                    b"ERROR rmcp::transport::worker: connection refused",
+                )
+            )
         else:
             proc.communicate = AsyncMock(return_value=(_make_mcp_stdout(), b""))
         return proc
@@ -414,6 +478,75 @@ async def test_retry_on_mcp_connection_failure():
     assert info["retry_succeeded"] is True
 
 
+async def test_no_retry_when_mcp_servers_configured_but_no_failure_signal():
+    """A plain-text reply with zero MCP calls should still succeed."""
+    adapter = CodexAdapter(codex_binary="/usr/bin/codex")
+
+    call_count = 0
+
+    async def _mock_exec(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        proc = AsyncMock()
+        proc.returncode = 0
+        proc.pid = 42
+        proc.communicate = AsyncMock(return_value=(_make_text_only_stdout(), b""))
+        return proc
+
+    with patch(_EXEC, side_effect=_mock_exec):
+        result_text, tool_calls, usage = await adapter.invoke(
+            prompt="answer directly",
+            system_prompt="",
+            mcp_servers=_MCP_SERVERS,
+            env={},
+        )
+
+    assert call_count == 1, "Should not retry without a concrete MCP failure signal"
+    assert result_text == "Here is the answer."
+    assert tool_calls == []
+    assert usage == {"input_tokens": 10, "output_tokens": 5}
+    info = adapter.last_process_info
+    assert info["attempt_count"] == 1
+    assert info["mcp_connection_failed"] is False
+
+
+async def test_retry_on_mcp_tool_unavailable_signal():
+    """Retry when Codex says the configured MCP tool is unavailable."""
+    adapter = CodexAdapter(codex_binary="/usr/bin/codex")
+
+    call_count = 0
+
+    async def _mock_exec(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        proc = AsyncMock()
+        proc.returncode = 0
+        proc.pid = 42
+        proc.communicate = AsyncMock(
+            return_value=(
+                _make_text_only_stdout(
+                    "`route_to_butler` is not available in the tool list I have access to."
+                ),
+                b"",
+            )
+        )
+        return proc
+
+    with (
+        patch(_EXEC, side_effect=_mock_exec),
+        patch("butlers.core.runtimes.codex._MCP_RETRY_DELAYS", (0, 0)),
+    ):
+        with pytest.raises(RuntimeError, match=r"MCP tool discovery failed after 3 attempts"):
+            await adapter.invoke(
+                prompt="route this",
+                system_prompt="",
+                mcp_servers=_MCP_SERVERS,
+                env={},
+            )
+
+    assert call_count == 3, "Should have tried 3 times (initial + 2 retries)"
+
+
 async def test_retry_all_fail_raises_runtime_error():
     """When all retries fail, invoke() raises so the spawner records a failed session."""
     adapter = CodexAdapter(codex_binary="/usr/bin/codex")
@@ -426,7 +559,14 @@ async def test_retry_all_fail_raises_runtime_error():
         proc = AsyncMock()
         proc.returncode = 0
         proc.pid = 42
-        proc.communicate = AsyncMock(return_value=(_make_bash_only_stdout(), b""))
+        proc.communicate = AsyncMock(
+            return_value=(
+                _make_text_only_stdout(
+                    "`route_to_butler` is not available in the tool list I have access to."
+                ),
+                b"ERROR rmcp::transport::worker: connection refused",
+            )
+        )
         return proc
 
     with (
@@ -543,8 +683,18 @@ async def test_retry_provenance_result_source_retry():
         proc.pid = 100 + call_count
         proc.communicate = AsyncMock(
             return_value=(
-                _make_bash_only_stdout() if call_count == 1 else _make_mcp_stdout(),
-                b"",
+                (
+                    _make_text_only_stdout(
+                        "`route_to_butler` is not available in the tool list I have access to."
+                    )
+                    if call_count == 1
+                    else _make_mcp_stdout()
+                ),
+                (
+                    b"ERROR rmcp::transport::worker: connection refused"
+                    if call_count == 1
+                    else b""
+                ),
             )
         )
         return proc
@@ -575,7 +725,14 @@ async def test_retry_provenance_result_source_first():
         proc = AsyncMock()
         proc.returncode = 0
         proc.pid = 42
-        proc.communicate = AsyncMock(return_value=(_make_bash_only_stdout(), b""))
+        proc.communicate = AsyncMock(
+            return_value=(
+                _make_text_only_stdout(
+                    "`route_to_butler` is not available in the tool list I have access to."
+                ),
+                b"ERROR rmcp::transport::worker: connection refused",
+            )
+        )
         return proc
 
     with (

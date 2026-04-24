@@ -693,19 +693,24 @@ class TestSpawnerInvocation:
                             {
                                 "type": "item.completed",
                                 "item": {
-                                    "id": "cmd1",
-                                    "type": "command_execution",
-                                    "command": "/bin/bash -lc true",
-                                    "status": "completed",
-                                    "exit_code": 0,
-                                    "aggregated_output": "",
+                                    "id": "msg1",
+                                    "type": "agent_message",
+                                    "text": (
+                                        "`route_to_butler` is not available in the tool list "
+                                        "I have access to."
+                                    ),
                                 },
                             }
                         )
                         + "\n"
-                        + json.dumps({"type": "result", "result": "MCP tools called: none."})
+                        + json.dumps(
+                            {
+                                "type": "turn.completed",
+                                "usage": {"input_tokens": 10, "output_tokens": 5},
+                            }
+                        )
                     ).encode(),
-                    b"",
+                    b"ERROR rmcp::transport::worker: connection refused",
                 )
             )
             return proc
