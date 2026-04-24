@@ -690,11 +690,7 @@ async def test_retry_provenance_result_source_retry():
                     if call_count == 1
                     else _make_mcp_stdout()
                 ),
-                (
-                    b"ERROR rmcp::transport::worker: connection refused"
-                    if call_count == 1
-                    else b""
-                ),
+                (b"ERROR rmcp::transport::worker: connection refused" if call_count == 1 else b""),
             )
         )
         return proc
