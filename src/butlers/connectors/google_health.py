@@ -1129,6 +1129,7 @@ class GoogleHealthConnector:
                     next_due = min(next_due, state.next_poll_monotonic)
                     continue
                 except Exception as exc:  # noqa: BLE001
+                    self._last_source_api_ok = False
                     logger.warning(
                         "GoogleHealthConnector: poll error resource=%s (non-fatal): %s",
                         state.bundle.resource,
@@ -1207,7 +1208,8 @@ class GoogleHealthConnector:
             if record_id is None:
                 continue
             if state.last_cursor and record_id == state.last_cursor:
-                # Same record as cursor — no new event, but refresh cursor age.
+                # Same record as cursor — spec mandates no duplicate emission.
+                # Cursor value stays unchanged; poll timestamp updated below.
                 continue
 
             if bundle.category == "sleep":
