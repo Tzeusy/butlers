@@ -163,9 +163,15 @@ class CoreSessionsAdapter(ProjectionAdapter):
             logger.exception("Failed reading sessions for schema %s", schema)
             return None, None
 
+        # Advance the watermark only by started_at so that batched runs
+        # ordered by started_at do not skip sessions whose started_at falls
+        # between the last-fetched started_at and a later completed_at.
+        # The query already re-fetches rows with completed_at > since, so
+        # open sessions that close after the watermark are picked up on the
+        # next run regardless of this choice.
         watermark: datetime | None = None
         for r in rows:
-            candidate = r["completed_at"] or r["started_at"]
+            candidate = r["started_at"]
             if candidate is not None and (watermark is None or candidate > watermark):
                 watermark = candidate
         return list(rows), watermark
