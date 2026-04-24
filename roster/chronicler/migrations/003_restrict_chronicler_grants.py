@@ -1,7 +1,7 @@
 """restrict_butler_chronicler_rw_cross_schema_access
 
-Revision ID: chronicler_002
-Revises: chronicler_001
+Revision ID: chronicler_003
+Revises: chronicler_002
 Create Date: 2026-04-24 00:00:00.000000
 
 Replaces the broad ``GRANT SELECT ON ALL TABLES IN SCHEMA <butler_schema>``
@@ -35,8 +35,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "chronicler_002"
-down_revision = "chronicler_001"
+revision = "chronicler_003"
+down_revision = "chronicler_002"
 branch_labels = None
 depends_on = None
 
@@ -116,11 +116,21 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Restore blanket SELECT grants so adapters continue working on rollback.
     # A full privilege repair also requires re-running scripts/init-db.sql.
+    # Use current_user (via DO/EXECUTE) for the ALTER DEFAULT PRIVILEGES grantor
+    # so this works regardless of whether the migration user is named "butlers"
+    # or something else (see scripts/init-db.sql _migration_user detection).
     for schema in _BUTLER_SCHEMAS:
         op.execute(f"GRANT SELECT ON ALL TABLES IN SCHEMA {_q(schema)} TO {_role()}")
         op.execute(f"""
-            ALTER DEFAULT PRIVILEGES FOR ROLE butlers IN SCHEMA {_q(schema)}
-            GRANT SELECT ON TABLES TO {_role()}
+            DO $$
+            BEGIN
+                EXECUTE format(
+                    'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA {_q(schema)} '
+                    'GRANT SELECT ON TABLES TO {_role()}',
+                    current_user
+                );
+            END
+            $$
         """)
 
 

@@ -108,6 +108,7 @@ DECLARE
     _db_name TEXT := current_database();
     _schema TEXT;
     _role TEXT;
+    _table TEXT;
     _idx INTEGER;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = _migration_user) THEN
@@ -292,19 +293,19 @@ BEGIN
 
     -- Connectors evidence surfaces for PLANNED adapters (grant when tables exist).
     EXECUTE format('GRANT USAGE ON SCHEMA %I TO %I', _connector_schema, 'butler_chronicler_rw');
-    FOREACH _schema IN ARRAY ARRAY[
+    FOREACH _table IN ARRAY ARRAY[
         'steam_play_history',
         'owntracks_points',
         'home_assistant_history'
     ] LOOP
         IF EXISTS (
             SELECT 1 FROM information_schema.tables
-            WHERE table_schema = _connector_schema AND table_name = _schema
+            WHERE table_schema = _connector_schema AND table_name = _table
         ) THEN
             EXECUTE format(
                 'GRANT SELECT ON TABLE %I.%I TO butler_chronicler_rw',
                 _connector_schema,
-                _schema
+                _table
             );
         END IF;
     END LOOP;
