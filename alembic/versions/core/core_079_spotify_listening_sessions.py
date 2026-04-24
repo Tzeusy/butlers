@@ -1,7 +1,7 @@
 """spotify_listening_sessions: durable Spotify session-summary evidence table.
 
-Revision ID: core_078
-Revises: core_077
+Revision ID: core_079
+Revises: core_078
 Create Date: 2026-04-24 00:00:00.000000
 
 Creates ``connectors.spotify_listening_sessions`` — the long-retention
@@ -43,8 +43,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "core_078"
-down_revision = "core_077"
+revision = "core_079"
+down_revision = "core_078"
 branch_labels = None
 depends_on = None
 
