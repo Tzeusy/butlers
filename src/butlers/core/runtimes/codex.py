@@ -856,13 +856,6 @@ class CodexAdapter(RuntimeAdapter):
                 if self._last_process_info:
                     self._last_process_info["mcp_connection_failed"] = not mcp_servers
                     self._last_process_info["attempt_count"] = 1
-                    # Ensure timing fields are present on the success-without-retry path.
-                    if "spawn_latency_ms" not in self._last_process_info:
-                        self._last_process_info["spawn_latency_ms"] = int(
-                            (time.monotonic() - _spawn_start) * 1000
-                        )
-                    if "mcp_server_count" not in self._last_process_info:
-                        self._last_process_info["mcp_server_count"] = len(mcp_servers)
 
             return result_text, tool_calls, usage
         finally:

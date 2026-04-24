@@ -28,6 +28,7 @@ be correlated with session MCP-discovery failure rates:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -76,8 +77,6 @@ async def _warmup_endpoint(url: str, *, butler_name: str) -> dict[str, Any]:
     }
 
     try:
-        import asyncio
-
         t0 = time.monotonic()
 
         async with httpx.AsyncClient(timeout=_WARMUP_TIMEOUT_S) as client:
@@ -92,10 +91,7 @@ async def _warmup_endpoint(url: str, *, butler_name: str) -> dict[str, Any]:
                     "clientInfo": _CLIENT_INFO,
                 },
             }
-            init_resp = await asyncio.wait_for(
-                client.post(url, json=init_payload),
-                timeout=_WARMUP_TIMEOUT_S,
-            )
+            init_resp = await client.post(url, json=init_payload)
             init_resp.raise_for_status()
 
             # Extract session token from initialize response headers (streamable HTTP).
@@ -112,10 +108,7 @@ async def _warmup_endpoint(url: str, *, butler_name: str) -> dict[str, Any]:
             if session_token:
                 extra_headers["mcp-session-id"] = session_token
 
-            tools_resp = await asyncio.wait_for(
-                client.post(url, json=tools_payload, headers=extra_headers),
-                timeout=_WARMUP_TIMEOUT_S,
-            )
+            tools_resp = await client.post(url, json=tools_payload, headers=extra_headers)
             tools_resp.raise_for_status()
 
             latency_ms = int((time.monotonic() - t0) * 1000)
@@ -183,8 +176,6 @@ async def warmup_mcp_endpoints(
     if _is_disabled():
         logger.info("MCP warmup disabled (%s=1) for butler=%s", _KILL_SWITCH_ENV, butler_name)
         return []
-
-    import asyncio
 
     own_url = f"http://localhost:{butler_port}/mcp"
     all_urls = [own_url] + list(extra_urls or [])
