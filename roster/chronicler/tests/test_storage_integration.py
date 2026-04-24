@@ -881,3 +881,101 @@ async def test_sessions_adapter_per_schema_watermarks_advance_independently(
     # Schema B watermark unchanged — no new sessions.
     assert cp_b2 is not None
     assert cp_b2.watermark == cp_b.watermark
+
+
+async def test_sessions_adapter_global_watermark_is_conservative(
+    chronicler_pool,
+) -> None:
+    """Global summary watermark must not skip ahead of idle schemas.
+
+    When Schema A advances (new sessions) and Schema B is idle, the
+    global result.watermark must equal Schema B's existing watermark
+    (the minimum), not Schema A's new watermark. Otherwise a newly
+    registered Schema C would use the inflated global as its fallback
+    and skip data that arrived between B's watermark and A's new one.
+    """
+    schema_a = "gwm_test_alpha"
+    schema_b = "gwm_test_beta"
+    now = datetime.now(UTC)
+
+    async def _make_sessions_table(conn, schema: str) -> None:
+        await conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+        await conn.execute(f"""
+            CREATE TABLE IF NOT EXISTS "{schema}".sessions (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                prompt TEXT NOT NULL,
+                trigger_source TEXT NOT NULL,
+                model TEXT,
+                success BOOLEAN,
+                error TEXT,
+                result TEXT,
+                tool_calls JSONB NOT NULL DEFAULT '[]'::jsonb,
+                duration_ms INTEGER,
+                request_id TEXT NOT NULL,
+                started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                completed_at TIMESTAMPTZ
+            )
+        """)
+
+    async with chronicler_pool.acquire() as conn:
+        await _make_sessions_table(conn, schema_a)
+        await _make_sessions_table(conn, schema_b)
+
+        # Schema A: old session (30 days ago).
+        old_time = now - timedelta(days=30)
+        await conn.execute(
+            f"""
+            INSERT INTO "{schema_a}".sessions (
+                prompt, trigger_source, request_id, started_at, completed_at
+            ) VALUES ('old-a', 'external', 'r-gwm-a', $1, $2)
+            """,
+            old_time,
+            old_time + timedelta(minutes=5),
+        )
+        # Schema B: session also 30 days ago (same baseline).
+        await conn.execute(
+            f"""
+            INSERT INTO "{schema_b}".sessions (
+                prompt, trigger_source, request_id, started_at, completed_at
+            ) VALUES ('old-b', 'external', 'r-gwm-b', $1, $2)
+            """,
+            old_time,
+            old_time + timedelta(minutes=5),
+        )
+
+    adapter = CoreSessionsAdapter(butler_schemas=(schema_a, schema_b))
+    result = await adapter.run(pool=chronicler_pool, chronicler_pool=chronicler_pool)
+    assert result.success
+    assert result.rows_projected == 2
+
+    cp_a = await get_checkpoint_subsource(chronicler_pool, "core.sessions", schema_a)
+    cp_b = await get_checkpoint_subsource(chronicler_pool, "core.sessions", schema_b)
+    assert cp_a is not None and cp_a.watermark is not None
+    assert cp_b is not None and cp_b.watermark is not None
+
+    # Second run: add a new session to schema A only (1 minute ago).
+    # Schema B stays silent.
+    new_a_time = now - timedelta(minutes=1)
+    async with chronicler_pool.acquire() as conn:
+        await conn.execute(
+            f"""
+            INSERT INTO "{schema_a}".sessions (
+                prompt, trigger_source, request_id, started_at, completed_at
+            ) VALUES ('new-a', 'external', 'r-gwm-a2', $1, $2)
+            """,
+            new_a_time,
+            new_a_time + timedelta(minutes=1),
+        )
+    result2 = await adapter.run(pool=chronicler_pool, chronicler_pool=chronicler_pool)
+    assert result2.success
+
+    # The global summary watermark must be the MINIMUM of all schemas —
+    # Schema B's watermark (old_time) not Schema A's new watermark (new_a_time).
+    # Without the fix, schema_watermarks would only contain new_a_time and
+    # result2.watermark would jump to ~new_a_time, silently skipping old_time
+    # for any schema that joins after this run.
+    assert result2.watermark is not None
+    assert abs((result2.watermark - cp_b.watermark).total_seconds()) < 1, (
+        f"Global watermark {result2.watermark} should equal Schema B's existing "
+        f"watermark {cp_b.watermark}, not Schema A's new watermark {new_a_time}"
+    )

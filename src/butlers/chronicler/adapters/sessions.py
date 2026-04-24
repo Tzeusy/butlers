@@ -122,6 +122,10 @@ class CoreSessionsAdapter(ProjectionAdapter):
                     rows_projected=len(schema_rows),
                 )
                 schema_watermarks.append(schema_watermark)
+            elif schema_since is not None:
+                # Include the existing watermark for schemas with no new rows
+                # to keep the global summary conservative.
+                schema_watermarks.append(schema_since)
 
         # Report the minimum per-schema watermark so the base class writes a
         # conservative global summary. A schema with no new rows contributes
