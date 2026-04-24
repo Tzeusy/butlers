@@ -1607,6 +1607,24 @@ export interface DeleteCredentialsResponse {
   message: string;
 }
 
+/**
+ * Response shape for GET /api/connectors/google-health/status.
+ *
+ * `test_mode` is derived from `metadata.google_health_test_mode` on the
+ * primary Google account row. In test mode, refresh tokens expire 7 days
+ * after issue (Google OAuth test-mode restriction).
+ */
+export interface GoogleHealthStatusResponse {
+  connected: boolean;
+  state: "healthy" | "degraded" | "error";
+  scopes_granted: string[];
+  last_ingest_at: string | null;
+  last_token_refresh_at: string | null;
+  rate_limit_remaining: number | null;
+  /** True when the OAuth client is in Google's test mode (tokens expire ~7 days). */
+  test_mode: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // CLI auth (device-code flow) types
 // ---------------------------------------------------------------------------

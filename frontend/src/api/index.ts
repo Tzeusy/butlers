@@ -533,6 +533,10 @@ export type {
   OwnTracksTokenResponse,
 } from "./types.ts";
 
+export { getGoogleHealthStatus } from "./client.ts";
+
+export type { GoogleHealthStatusResponse } from "./types.ts";
+
 export {
   configureHomeAssistant,
   deleteHomeAssistantConfig,

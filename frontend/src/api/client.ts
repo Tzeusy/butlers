@@ -218,6 +218,7 @@ import type {
   RuntimeConfigPatchResponse,
   HealingAttempt,
   HealingAttemptsParams,
+  GoogleHealthStatusResponse,
 } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -2906,6 +2907,15 @@ export function generateOwnTracksToken(): Promise<OwnTracksTokenResponse> {
   return apiFetch<OwnTracksTokenResponse>("/connectors/owntracks/token/generate", {
     method: "POST",
   });
+}
+
+// ---------------------------------------------------------------------------
+// Google Health connector API
+// ---------------------------------------------------------------------------
+
+/** GET /api/connectors/google-health/status — connector state, token age, ingest counts */
+export function getGoogleHealthStatus(): Promise<GoogleHealthStatusResponse> {
+  return apiFetch<GoogleHealthStatusResponse>("/connectors/google-health/status");
 }
 
 // ---------------------------------------------------------------------------
