@@ -15,6 +15,7 @@ import ast
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import asyncpg
 import pytest
 
 from butlers.chronicler.adapters.spotify import (
@@ -330,6 +331,36 @@ async def test_missing_evidence_table_returns_skipped_result() -> None:
     assert result.skipped_reason is not None
     assert "not found" in result.skipped_reason
     assert result.rows_projected == 0
+    mock_upsert.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_undefined_table_exception_returns_skipped_result() -> None:
+    """When the DB raises UndefinedTableError (asyncpg.PostgresError subclass),
+    the adapter must not crash — it returns skipped=True without advancing the
+    watermark or upsetting any episode.
+
+    This exercises the ``except asyncpg.PostgresError`` branch directly,
+    distinct from the ``information_schema`` table-existence check.
+    """
+    conn = AsyncMock()
+    conn.fetchval = AsyncMock(
+        side_effect=asyncpg.exceptions.UndefinedTableError(
+            'relation "connectors.spotify_listening_sessions" does not exist'
+        )
+    )
+    pool = AsyncMock()
+    pool.acquire = MagicMock(return_value=_AsyncCtx(conn))
+
+    adapter = SpotifySessionAdapter()
+    cp = _chronicler_pool()
+
+    with patch("butlers.chronicler.adapters.spotify.upsert_episode") as mock_upsert:
+        result = await adapter.project(pool, chronicler_pool=cp, since=None)
+
+    assert result.skipped is True
+    assert result.rows_projected == 0
+    assert result.watermark is None
     mock_upsert.assert_not_called()
 
 
