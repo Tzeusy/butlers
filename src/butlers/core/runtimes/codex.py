@@ -205,13 +205,21 @@ def _should_retry_mcp_discovery(
             stderr = str(raw_stderr)
 
     lowered = stderr.lower()
+    # Use specific failure-state phrases rather than bare tokens like "mcp" or
+    # "connect", which appear in benign progress/status diagnostics (e.g.
+    # "MCP connection established") and would otherwise re-introduce the false
+    # positives this helper exists to prevent.
     markers = (
-        "mcp",
+        "mcp tool discovery failed",
+        "mcp discovery failed",
+        "mcp connection failed",
+        "failed to connect",
+        "failed to start mcp",
         "rmcp",
         "connection refused",
-        "connect",
+        "connection reset",
         "timed out",
-        "transport",
+        "transport error",
         "streamable_http",
         "text/event-stream",
         "method not allowed",

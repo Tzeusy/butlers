@@ -387,7 +387,9 @@ def _make_text_only_stdout() -> bytes:
             }
         )
         + "\n"
-        + json.dumps({"type": "result", "result": "Here is a direct answer that does not need tools."})
+        + json.dumps(
+            {"type": "result", "result": "Here is a direct answer that does not need tools."}
+        )
     ).encode()
 
 
