@@ -546,7 +546,7 @@ class TestHealthTestModeHelpers:
         monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_TEST_MODE", raising=False)
         assert _is_google_health_test_mode() is False
 
-    @pytest.mark.parametrize("val", ["1", "true", "True", "TRUE", "yes", "YES"])
+    @pytest.mark.parametrize("val", ["1", "true", "True", "TRUE", "yes", "YES", "on", "ON"])
     def test_test_mode_truthy_values(self, monkeypatch, val):
         monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_TEST_MODE", val)
         assert _is_google_health_test_mode() is True

@@ -388,7 +388,7 @@ def _is_google_health_test_mode() -> bool:
         expiry deterministically in the token-exchange response.
     """
     val = os.environ.get("GOOGLE_OAUTH_CLIENT_TEST_MODE", "").strip().lower()
-    return val in ("1", "true", "yes")
+    return val in {"1", "true", "yes", "on"}
 
 
 def _has_health_scope(scope_str: str | None) -> bool:
@@ -424,7 +424,7 @@ async def _set_account_health_test_mode(
             """
             UPDATE public.google_accounts
             SET metadata = jsonb_set(
-                COALESCE(metadata, '{}'::jsonb),
+                metadata,
                 '{google_health_test_mode}',
                 'true'::jsonb,
                 true
