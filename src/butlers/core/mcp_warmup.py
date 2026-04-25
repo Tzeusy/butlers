@@ -178,9 +178,7 @@ async def warmup_mcp_urls(
         return []
 
     all_urls = list(
-        dict.fromkeys(
-            url.strip() for url in urls if isinstance(url, str) and url.strip()
-        )
+        dict.fromkeys(url.strip() for url in urls if isinstance(url, str) and url.strip())
     )
     if not all_urls:
         return []
