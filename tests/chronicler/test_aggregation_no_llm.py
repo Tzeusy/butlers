@@ -82,31 +82,27 @@ def _violations_in_file(path: Path) -> list[str]:
                 root = alias.name.split(".")[0]
                 full = alias.name
                 if root in _FORBIDDEN_MODULE_ROOTS or full in _FORBIDDEN_MODULE_FULL:
-                    violations.append(
-                        f"{rel}:{node.lineno}: forbidden import {alias.name!r}"
-                    )
+                    violations.append(f"{rel}:{node.lineno}: forbidden import {alias.name!r}")
 
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             root = module.split(".")[0]
             if root in _FORBIDDEN_MODULE_ROOTS or module in _FORBIDDEN_MODULE_FULL:
-                violations.append(
-                    f"{rel}:{node.lineno}: forbidden import from {module!r}"
-                )
+                violations.append(f"{rel}:{node.lineno}: forbidden import from {module!r}")
+
+            for alias in node.names:
+                if alias.name in _FORBIDDEN_IDENTIFIERS:
+                    violations.append(f"{rel}:{node.lineno}: forbidden import of {alias.name!r}")
 
         # ── Name (bare identifier) ────────────────────────────────────────
         elif isinstance(node, ast.Name):
             if node.id in _FORBIDDEN_IDENTIFIERS:
-                violations.append(
-                    f"{rel}:{node.lineno}: forbidden identifier {node.id!r}"
-                )
+                violations.append(f"{rel}:{node.lineno}: forbidden identifier {node.id!r}")
 
         # ── Attribute (e.g. foo.interpret, foo.anthropic) ─────────────────
         elif isinstance(node, ast.Attribute):
             if node.attr in _FORBIDDEN_IDENTIFIERS:
-                violations.append(
-                    f"{rel}:{node.lineno}: forbidden attribute .{node.attr!r}"
-                )
+                violations.append(f"{rel}:{node.lineno}: forbidden attribute .{node.attr!r}")
 
     return violations
 
