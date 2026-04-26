@@ -124,6 +124,13 @@ export default function ChroniclesPage() {
         return
       }
 
+      // Never plot coordinates for sensitive events — consistent with MapWidgetInner's
+      // sensitive-point exclusion and the bu-ig72b.29 masking policy.
+      if (snappedEvent.canonical_privacy === "sensitive") {
+        setPlayheadPoint(null)
+        return
+      }
+
       const lat = snappedEvent.payload.lat
       const lon = snappedEvent.payload.lon ?? snappedEvent.payload.lng
       if (typeof lat === "number" && typeof lon === "number") {
