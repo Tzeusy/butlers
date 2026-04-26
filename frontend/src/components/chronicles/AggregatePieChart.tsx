@@ -112,6 +112,7 @@ function PieChartSkeleton() {
     <div
       className="flex h-64 items-center justify-center"
       data-testid="pie-skeleton"
+      role="status"
       aria-label="Loading pie chart"
     >
       {/* Circle placeholder for the pie */}

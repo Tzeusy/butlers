@@ -132,6 +132,7 @@ function StackedBarSkeleton() {
     <div
       className="flex h-[280px] flex-col gap-2 py-4"
       data-testid="stacked-bar-skeleton"
+      role="status"
       aria-label="Loading stacked bar chart"
     >
       {/* Y-axis + bar columns side by side */}

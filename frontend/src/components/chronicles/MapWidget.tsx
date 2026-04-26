@@ -35,6 +35,7 @@ function MapLoadingSkeleton({ height = "h-80" }: { height?: string }) {
     <Skeleton
       className={`w-full ${height} rounded-md`}
       data-testid="map-skeleton"
+      role="status"
       aria-label="Loading map"
     />
   )

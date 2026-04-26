@@ -38,6 +38,7 @@ function GanttLoadingSkeleton() {
     <div
       className="space-y-2"
       data-testid="gantt-skeleton"
+      role="status"
       aria-label="Loading Gantt chart"
     >
       {/* Simulate 4 swimlane rows */}

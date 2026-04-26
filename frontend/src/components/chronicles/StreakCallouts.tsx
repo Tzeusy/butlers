@@ -49,6 +49,7 @@ export function StreakCallouts({ episodeParams, refetchInterval }: StreakCallout
       <div
         className="flex flex-wrap gap-2 mb-4"
         data-testid="streak-skeleton"
+        role="status"
         aria-label="Loading streaks"
       >
         {Array.from({ length: 3 }, (_, i) => (
