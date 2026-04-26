@@ -22,6 +22,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 // maplibre-gl mock (required for MapWidgetInner)
 vi.mock("maplibre-gl", async () => {
   class MockMap {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     constructor(..._args: unknown[]) {}
     isStyleLoaded() { return true }
     fitBounds() {}
@@ -30,15 +31,20 @@ vi.mock("maplibre-gl", async () => {
     off() {}
   }
   class MockMarker {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     setLngLat(..._args: unknown[]) { return this }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     addTo(..._args: unknown[]) { return this }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     setPopup(..._args: unknown[]) { return this }
     remove() {}
   }
   class MockPopup {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     setText(..._args: unknown[]) { return this }
   }
   class MockLngLatBounds {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     extend(..._args: unknown[]) { return this }
   }
   const mock = { Map: MockMap, Marker: MockMarker, Popup: MockPopup, LngLatBounds: MockLngLatBounds }
@@ -53,7 +59,8 @@ vi.mock("recharts", () => {
     React.createElement("div", { "data-testid": "recharts-pie-chart" }, children)
   const ResponsiveContainer = ({ children }: { children: React.ReactNode }) =>
     React.createElement("div", { "data-testid": "recharts-responsive-container" }, children)
-  const Pie = ({ data, children }: { data: unknown[]; children?: React.ReactNode }) =>
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const Pie = ({ data: _data, children }: { data: unknown[]; children?: React.ReactNode }) =>
     React.createElement("div", { "data-testid": "recharts-pie" }, children)
   const Cell = ({ fill }: { fill?: string }) =>
     React.createElement("span", { "data-testid": "recharts-cell", fill })
@@ -207,6 +214,30 @@ describe("AggregatePieChart — empty state", () => {
     )
     expect(html).not.toContain("pie-skeleton")
     expect(html).not.toContain("pie-error")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// AggregatePieChart — loading takes priority over data
+// ---------------------------------------------------------------------------
+
+describe("AggregatePieChart — state priority", () => {
+  it("shows skeleton even when buckets are non-empty while loading", () => {
+    const buckets = [makeBucket("work", 3600)]
+    const html = renderToStaticMarkup(
+      <AggregatePieChart buckets={buckets} isLoading={true} />,
+    )
+    expect(html).toContain("pie-skeleton")
+    expect(html).not.toContain("pie-chart-container")
+  })
+
+  it("shows error even when buckets are non-empty while error", () => {
+    const buckets = [makeBucket("work", 3600)]
+    const html = renderToStaticMarkup(
+      <AggregatePieChart buckets={buckets} isError={true} />,
+    )
+    expect(html).toContain("pie-error")
+    expect(html).not.toContain("pie-chart-container")
   })
 })
 
