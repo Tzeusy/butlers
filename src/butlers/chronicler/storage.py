@@ -898,7 +898,7 @@ async def save_carryover(
             source_name,
             json.dumps(carryover),
         )
-    except asyncpg.exceptions.UndefinedColumnError:
+    except asyncpg.PostgresError:
         return
 
 
