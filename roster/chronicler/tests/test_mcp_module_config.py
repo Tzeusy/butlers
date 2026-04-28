@@ -12,12 +12,13 @@ from butlers.modules.registry import default_registry
 
 pytestmark = pytest.mark.unit
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ROSTER_DIR = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_chronicler_mcp_module_is_selected_for_startup() -> None:
     """The day-close prompt depends on the ``chronicler_day_close_bundle`` MCP tool."""
-    config_dir = PROJECT_ROOT / "roster" / "chronicler"
+    config_dir = ROSTER_DIR
     config = load_config(config_dir)
 
     assert config.modules.get("chronicler") == {}
