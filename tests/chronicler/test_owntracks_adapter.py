@@ -928,7 +928,7 @@ async def test_stale_since_id_is_cleared_from_successful_result() -> None:
 
 
 @pytest.mark.asyncio
-async def test_watermark_id_preserved_when_no_rows() -> None:
+async def test_watermark_id_cleared_when_no_rows() -> None:
     """When no rows are returned, stale ``since_id`` is not preserved."""
     conn = AsyncMock()
     conn.fetchval = AsyncMock(return_value=True)
