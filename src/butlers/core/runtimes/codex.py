@@ -222,9 +222,7 @@ def _is_safe_mcp_server_name(server_name: str) -> bool:
 
 def _toml_number(value: Any) -> str | None:
     """Render a positive TOML number from trusted numeric config values."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    if value <= 0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         return None
     return str(int(value)) if float(value).is_integer() else str(float(value))
 
