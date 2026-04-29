@@ -28,7 +28,9 @@ Environment variables:
 - CONNECTOR_HEALTH_PORT (default: 40087)
 - HA_BASE_URL: HA instance base URL (overrides entity_info)
 - HA_ACCESS_TOKEN: HA long-lived access token (overrides entity_info)
-- HA_DOMAIN_ALLOWLIST: comma-separated domain allowlist
+- HA_DOMAIN_ALLOWLIST: comma-separated domain allowlist (default does NOT include
+  ``person``; add ``person`` to capture presence/location data into
+  ``connectors.home_assistant_history``)
 - HA_POLL_INTERVAL_S (default: 60): REST fallback poll interval
 - HA_CHECKPOINT_OVERLAP_S (default: 30): checkpoint resume safety margin
 - HA_WS_PING_INTERVAL_S (default: 30): WebSocket keepalive ping interval
@@ -1593,12 +1595,12 @@ async def _main() -> None:
 
         # state_changed: extract old/new state and run filter pipeline
         old_state_data: dict[str, Any] = event_data.get("old_state") or {}
-        new_state_data2: dict[str, Any] = event_data.get("new_state") or {}
+        new_state_data: dict[str, Any] = event_data.get("new_state") or {}
         old_state_str: str | None = old_state_data.get("state") or None
-        new_state_str: str | None = new_state_data2.get("state") or None
-        new_attrs: dict[str, Any] = new_state_data2.get("attributes") or {}
+        new_state_str: str | None = new_state_data.get("state") or None
+        new_attrs: dict[str, Any] = new_state_data.get("attributes") or {}
         device_class: str | None = new_attrs.get("device_class") or None
-        friendly_name2: str | None = new_attrs.get("friendly_name") or None
+        friendly_name: str | None = new_attrs.get("friendly_name") or None
         unit_of_measurement: str | None = new_attrs.get("unit_of_measurement") or None
 
         time_fired_ts = event_ts.timestamp()
@@ -1606,7 +1608,7 @@ async def _main() -> None:
         # Build normalized_text for discretion (and envelope)
         normalized_text = build_state_changed_normalized_text(
             entity_id=entity_id,
-            friendly_name=friendly_name2,
+            friendly_name=friendly_name,
             old_state=old_state_str,
             new_state=new_state_str,
             unit_of_measurement=unit_of_measurement,
@@ -1635,9 +1637,9 @@ async def _main() -> None:
                     domain=domain,
                     ha_event=event,
                     time_fired=time_fired,
-                    friendly_name=friendly_name2,
+                    friendly_name=friendly_name,
                     old_state=old_state_data or None,
-                    new_state=new_state_data2 or None,
+                    new_state=new_state_data or None,
                 )
             elif result.stage == "significance_filter":
                 # Extract delta from filter_reason: "insignificant_delta:<cls>:<delta>"
@@ -1652,18 +1654,18 @@ async def _main() -> None:
                     delta=delta_val,
                     ha_event=event,
                     time_fired=time_fired,
-                    friendly_name=friendly_name2,
+                    friendly_name=friendly_name,
                     old_state=old_state_data or None,
-                    new_state=new_state_data2 or None,
+                    new_state=new_state_data or None,
                 )
             elif result.stage == "discretion":
                 ha_filter_persistence.record_discretion_ignore(
                     entity_id=entity_id,
                     ha_event=event,
                     time_fired=time_fired,
-                    friendly_name=friendly_name2,
+                    friendly_name=friendly_name,
                     old_state=old_state_data or None,
-                    new_state=new_state_data2 or None,
+                    new_state=new_state_data or None,
                     domain=domain,
                     device_class=device_class,
                 )
@@ -1678,9 +1680,9 @@ async def _main() -> None:
             entity_id=entity_id,
             time_fired=time_fired,
             ha_event=event,
-            friendly_name=friendly_name2,
+            friendly_name=friendly_name,
             old_state=old_state_data or None,
-            new_state=new_state_data2 or None,
+            new_state=new_state_data or None,
             domain=domain,
             device_class=device_class,
             unit_of_measurement=unit_of_measurement,
