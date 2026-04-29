@@ -18,7 +18,7 @@ export default function ContactDetailPage() {
       {/* Breadcrumbs */}
       <Breadcrumbs
         items={[
-          { label: "Contacts", href: "/contacts" },
+          { label: "Contacts", href: "/butlers/relationship/contacts" },
           { label: contact?.full_name ?? contactId ?? "Contact" },
         ]}
       />
