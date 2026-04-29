@@ -15,13 +15,16 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import asyncpg
 
 logger = logging.getLogger(__name__)
 
 
 async def is_primary_contact(
-    pool: Any,
+    pool: asyncpg.Pool,
     contact_id: uuid.UUID,
     channel_type: str,
     channel_value: str,
