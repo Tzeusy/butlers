@@ -72,7 +72,7 @@ class TestGetEmailContext:
 
 
 # ---------------------------------------------------------------------------
-# _is_primary_email unit tests
+# is_primary_contact unit tests (email channel)
 # ---------------------------------------------------------------------------
 
 
