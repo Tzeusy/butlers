@@ -98,5 +98,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP TABLE IF EXISTS deferred_notifications")
-    op.execute("DROP TABLE IF EXISTS delivery_preferences")
+    # Intentional no-op: this revision uses CREATE TABLE IF NOT EXISTS to
+    # backfill schemas that core_012 missed, but in schemas where core_012
+    # already created these tables (the original fixed schema list) a DROP
+    # here would destroy live data. Leave the tables in place on downgrade
+    # and let core_012's own downgrade handle removal where appropriate.
+    pass

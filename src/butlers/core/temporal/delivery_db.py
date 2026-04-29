@@ -27,10 +27,10 @@ _VALID_STATUSES = frozenset({"pending", "delivered", "expired", "cancelled"})
 
 def _is_missing_delivery_schema(exc: Exception) -> bool:
     """Return True for optional delivery tables absent from an older schema."""
-    return exc.__class__.__name__ in {
-        "InvalidSchemaNameError",
-        "UndefinedTableError",
-    }
+    return isinstance(
+        exc,
+        (asyncpg.UndefinedTableError, asyncpg.InvalidSchemaNameError),
+    )
 
 
 def validate_timezone(tz_name: str) -> str:
@@ -69,7 +69,7 @@ async def get_delivery_preferences(
             """,
             butler_name,
         )
-    except Exception as exc:
+    except asyncpg.PostgresError as exc:
         if _is_missing_delivery_schema(exc):
             return None
         raise
