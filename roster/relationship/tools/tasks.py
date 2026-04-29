@@ -262,5 +262,3 @@ async def task_delete(pool: asyncpg.Pool, task_id: uuid.UUID) -> None:
         "UPDATE facts SET validity = 'retracted' WHERE id = $1",
         task_id,
     )
-
-

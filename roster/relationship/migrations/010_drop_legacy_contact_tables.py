@@ -3,8 +3,8 @@
 Drop the five legacy contact-keyed tables (notes, interactions, gifts, loans,
 activity_feed) that have been superseded by the SPO facts layer.
 
-Revision ID: rel_009
-Revises: rel_008
+Revision ID: rel_010
+Revises: rel_009
 Create Date: 2026-04-30 00:00:00.000000
 
 Migration steps:
@@ -33,8 +33,8 @@ from sqlalchemy import text
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "rel_009"
-down_revision = "rel_008"
+revision = "rel_010"
+down_revision = "rel_009"
 branch_labels = None
 depends_on = None
 
@@ -72,7 +72,8 @@ def downgrade() -> None:
 
     # Recreate the five tables with original schemas from rel_001.
     # All tables are created empty; data is not restored.
-    conn.execute(text("""
+    conn.execute(
+        text("""
         CREATE TABLE IF NOT EXISTS notes (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
@@ -80,9 +81,11 @@ def downgrade() -> None:
             emotion TEXT,
             created_at TIMESTAMPTZ DEFAULT now()
         )
-    """))
+    """)
+    )
 
-    conn.execute(text("""
+    conn.execute(
+        text("""
         CREATE TABLE IF NOT EXISTS interactions (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
@@ -91,13 +94,17 @@ def downgrade() -> None:
             occurred_at TIMESTAMPTZ DEFAULT now(),
             created_at TIMESTAMPTZ DEFAULT now()
         )
-    """))
-    conn.execute(text("""
+    """)
+    )
+    conn.execute(
+        text("""
         CREATE INDEX IF NOT EXISTS idx_interactions_contact_occurred
             ON interactions (contact_id, occurred_at)
-    """))
+    """)
+    )
 
-    conn.execute(text("""
+    conn.execute(
+        text("""
         CREATE TABLE IF NOT EXISTS gifts (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
@@ -108,9 +115,11 @@ def downgrade() -> None:
             created_at TIMESTAMPTZ DEFAULT now(),
             updated_at TIMESTAMPTZ DEFAULT now()
         )
-    """))
+    """)
+    )
 
-    conn.execute(text("""
+    conn.execute(
+        text("""
         CREATE TABLE IF NOT EXISTS loans (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
@@ -121,9 +130,11 @@ def downgrade() -> None:
             created_at TIMESTAMPTZ DEFAULT now(),
             settled_at TIMESTAMPTZ
         )
-    """))
+    """)
+    )
 
-    conn.execute(text("""
+    conn.execute(
+        text("""
         CREATE TABLE IF NOT EXISTS activity_feed (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
@@ -131,11 +142,14 @@ def downgrade() -> None:
             description TEXT NOT NULL,
             created_at TIMESTAMPTZ DEFAULT now()
         )
-    """))
-    conn.execute(text("""
+    """)
+    )
+    conn.execute(
+        text("""
         CREATE INDEX IF NOT EXISTS idx_activity_feed_contact_created
             ON activity_feed (contact_id, created_at)
-    """))
+    """)
+    )
 
 
 # ---------------------------------------------------------------------------
