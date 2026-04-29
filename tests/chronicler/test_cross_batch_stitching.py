@@ -652,7 +652,9 @@ async def test_ot_future_carryover_is_discarded_for_replayed_older_batch() -> No
     row1_ts = _NOW
     row2_ts = _NOW + timedelta(minutes=10)
     future_ts = _NOW + timedelta(hours=4)
-    future_source_ref = f"connectors.owntracks_points:movement:{_ENDPOINT}:{int(future_ts.timestamp())}"
+    future_source_ref = (
+        f"connectors.owntracks_points:movement:{_ENDPOINT}:{int(future_ts.timestamp())}"
+    )
     future_carryover = {
         _ENDPOINT: {
             "source_ref": future_source_ref,

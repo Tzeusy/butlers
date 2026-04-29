@@ -409,9 +409,7 @@ class OwnTracksPointAdapter(ProjectionAdapter):
                 new_carry = prior_carryover.get(new_endpoint)
                 if new_carry:
                     try:
-                        parsed_new_prior_start_at = datetime.fromisoformat(
-                            new_carry["start_at"]
-                        )
+                        parsed_new_prior_start_at = datetime.fromisoformat(new_carry["start_at"])
                         new_prior_end_at = datetime.fromisoformat(new_carry["end_at"])
                         if self._carryover_continues(
                             row_ts=row["ts"],
@@ -517,11 +515,11 @@ class OwnTracksPointAdapter(ProjectionAdapter):
         gap: timedelta,
     ) -> bool:
         """Return True only when carryover is chronologically continuous."""
-        if prior_end_at < prior_start_at:
+        if prior_start_at > prior_end_at:
             return False
-        if row_ts < prior_end_at:
+        if prior_end_at > row_ts:
             return False
-        return row_ts - prior_end_at <= gap
+        return (row_ts - prior_end_at) <= gap
 
 
 __all__ = [
