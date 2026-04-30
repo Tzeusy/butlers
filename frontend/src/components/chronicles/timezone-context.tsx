@@ -1,16 +1,10 @@
 // ---------------------------------------------------------------------------
-// ChroniclesTimezoneContext — owner timezone propagation (bu-k18cm)
+// ChroniclesTimezoneProvider — injects owner timezone into context (bu-k18cm)
 //
 // Resolves the owner's configured timezone once per Chronicles page render.
 // Default: "Asia/Singapore" (matches the briefing.py SGT constant).
 //
 // Source: GET /api/settings/general → data.timezone (IANA name).
-//
-// Two provider variants:
-//   - ChroniclesTimezoneProvider (with `timezone` prop): injects a static tz.
-//     Used in production (ChroniclesPage pre-fetches via useGeneralSettings
-//     and passes ownerTz down) and in tests (explicit tz string, no API call).
-//   - No-prop variant not exposed — callers always supply the resolved value.
 //
 // Usage (production):
 //   const { data } = useGeneralSettings()
@@ -19,21 +13,12 @@
 //
 // Usage (tests):
 //   <ChroniclesTimezoneProvider timezone="Asia/Singapore">...</ChroniclesTimezoneProvider>
+//
+// To read the timezone in a consumer, use useChroniclesTimezone() from
+// ./use-chronicles-timezone.
 // ---------------------------------------------------------------------------
 
-import { createContext, useContext } from "react"
-
-// ---------------------------------------------------------------------------
-// Default and context
-// ---------------------------------------------------------------------------
-
-export const DEFAULT_TZ = "Asia/Singapore"
-
-const ChroniclesTimezoneContext = createContext<string>(DEFAULT_TZ)
-
-// ---------------------------------------------------------------------------
-// Provider
-// ---------------------------------------------------------------------------
+import { ChroniclesTimezoneContext } from "./timezone-context-internal"
 
 interface ChroniclesTimezoneProviderProps {
   children: React.ReactNode
@@ -61,17 +46,4 @@ export function ChroniclesTimezoneProvider({
       {children}
     </ChroniclesTimezoneContext.Provider>
   )
-}
-
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
-
-/**
- * Returns the owner's configured timezone (IANA name).
- * Must be called inside a ChroniclesTimezoneProvider.
- * Defaults to "Asia/Singapore" if the provider is absent.
- */
-export function useChroniclesTimezone(): string {
-  return useContext(ChroniclesTimezoneContext)
 }

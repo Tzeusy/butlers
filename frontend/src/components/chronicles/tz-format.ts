@@ -13,6 +13,12 @@ import { startOfDay, endOfDay } from "date-fns"
 export { formatInTimeZone }
 
 /**
+ * Default IANA timezone for the owner's configured zone.
+ * Matches the SGT constant in briefing.py.
+ */
+export const DEFAULT_TZ = "Asia/Singapore"
+
+/**
  * Format an ISO string or ms timestamp as "HH:mm" in the given timezone.
  * Returns "?" if the input is falsy or unparseable.
  */

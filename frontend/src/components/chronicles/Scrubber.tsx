@@ -29,7 +29,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import type { ChroniclerPointEvent } from "@/api/types"
-import { useChroniclesTimezone } from "./timezone-context"
+import { useChroniclesTimezone } from "./use-chronicles-timezone"
 import { formatScrubberLabel } from "./tz-format"
 
 // ---------------------------------------------------------------------------

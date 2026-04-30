@@ -41,7 +41,8 @@ import { AutoRefreshToggle } from "@/components/ui/auto-refresh-toggle"
 import { ManualRefreshButton } from "@/components/chronicles/ManualRefreshButton"
 import type { ChroniclerEventsParams } from "@/api/types"
 import { MapPanContext, useMapPanContextValue } from "@/components/chronicles/map-pan-store"
-import { ChroniclesTimezoneProvider, DEFAULT_TZ } from "@/components/chronicles/timezone-context"
+import { ChroniclesTimezoneProvider } from "@/components/chronicles/timezone-context"
+import { DEFAULT_TZ } from "@/components/chronicles/tz-format"
 import { useGeneralSettings } from "@/hooks/use-general-settings"
 
 // ---------------------------------------------------------------------------

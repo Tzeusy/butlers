@@ -39,7 +39,7 @@ import {
   useChroniclerEpisodeEvents,
   useChroniclerExplain,
 } from "@/hooks/use-chronicles"
-import { useChroniclesTimezone } from "./timezone-context"
+import { useChroniclesTimezone } from "./use-chronicles-timezone"
 import { formatDateTimeInTz } from "./tz-format"
 
 function formatDuration(startIso: string, endIso: string | null | undefined): string {
