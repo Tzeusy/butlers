@@ -167,6 +167,10 @@ function resolveSmartMode(date: Date): { useRelative: boolean } {
  * @example
  * // Always show absolute, day precision
  * <Time value={fact.created_at} mode="absolute" precision="day" />
+ *
+ * @example
+ * // Compact absolute — no year or timezone, for dense table cells
+ * <Time value={row.created_at} mode="absolute" compact />
  */
 export function Time({
   value,
