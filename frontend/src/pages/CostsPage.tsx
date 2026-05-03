@@ -43,7 +43,7 @@ export default function CostsPage() {
     <Page
       archetype="overview"
       title="Costs & Usage"
-      loading={summaryLoading && dailyLoading}
+      loading={summaryLoading || dailyLoading}
     >
       {/* Summary Stats */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
