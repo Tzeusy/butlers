@@ -34,10 +34,11 @@ describe("ButlersPage", () => {
     vi.resetAllMocks();
   });
 
-  it("renders explicit loading state", () => {
+  it("renders loading skeleton via Page primitive", () => {
     setQueryState({ isLoading: true });
     const html = renderPage();
-    expect(html).toContain("Loading butlers...");
+    // Page primitive renders aria-label="Loading" when loading=true
+    expect(html).toContain('aria-label="Loading"');
   });
 
   it("renders butler links to detail pages", () => {
@@ -59,7 +60,7 @@ describe("ButlersPage", () => {
     expect(html).toContain('href="/butlers/switchboard"');
   });
 
-  it("renders explicit empty state", () => {
+  it("renders empty state when no butlers returned", () => {
     setQueryState({
       data: {
         data: [],
@@ -71,14 +72,14 @@ describe("ButlersPage", () => {
     expect(html).toContain("No butlers found");
   });
 
-  it("renders explicit error state", () => {
+  it("renders full-page error when no cached data exists", () => {
     setQueryState({
       isError: true,
       error: new Error("network offline"),
     });
 
     const html = renderPage();
-    expect(html).toContain("Failed to load butlers.");
+    expect(html).toContain("Something went wrong");
     expect(html).toContain("network offline");
   });
 
