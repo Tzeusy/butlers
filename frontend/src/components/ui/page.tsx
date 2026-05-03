@@ -202,16 +202,30 @@ export function Page({
   skeletonSectionCount = 2,
   children,
 }: PageProps) {
-  // Manage document.title automatically
+  // Manage document.title automatically; restore previous title on unmount
   useEffect(() => {
+    const previousTitle = document.title;
     document.title = `${title} | Butlers`;
+    return () => {
+      document.title = previousTitle;
+    };
   }, [title]);
+
+  // Warn in development when list pages pass empty (should handle inline)
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production" && archetype === "list" && empty != null) {
+      console.warn(
+        "[Page] archetype=\"list\" with a non-null `empty` prop is unsupported. " +
+          "List pages must handle empty state inside their <Card> body and pass empty={null} to <Page>.",
+      );
+    }
+  }, [archetype, empty]);
 
   // -- Loading state ---------------------------------------------------------
   if (loading) {
     return (
       <ArchetypeWrapper archetype={archetype}>
-        <div className="space-y-6">
+        <div className="space-y-6" role="status" aria-label="Loading">
           <HeadingBlockSkeleton />
           {archetype === "overview" && <OverviewSkeleton />}
           {archetype === "list" && <ListSkeleton />}
@@ -235,7 +249,7 @@ export function Page({
             breadcrumbs={breadcrumbs}
             actions={actions}
           />
-          <Card className="border-destructive">
+          <Card className="border-destructive" role="alert">
             <CardHeader>
               <p className="font-semibold text-destructive">Something went wrong</p>
             </CardHeader>

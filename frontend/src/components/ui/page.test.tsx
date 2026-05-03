@@ -1,18 +1,21 @@
+// @vitest-environment jsdom
 /**
  * Tests for <Page> primitive.
  *
- * Uses renderToStaticMarkup (SSR-safe, no DOM setup required) consistent with
- * the project's other component/page tests.
+ * Static-markup tests use renderToStaticMarkup (no DOM lifecycle needed).
+ * A small set of DOM tests (document.title, Retry click) use createRoot + act,
+ * following the project pattern in EntitiesPage.test.tsx and time.test.tsx.
  */
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { act } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 
 import { Page, type PageProps } from "@/components/ui/page";
 
-// useEffect is a no-op in renderToStaticMarkup; we just need to avoid
-// "document is not defined" errors when the effect fires in test.  Since
-// renderToStaticMarkup never calls useEffect we don't need to stub anything.
+// useEffect is a no-op in renderToStaticMarkup; the static-markup tests need no
+// DOM setup. DOM lifecycle tests (document.title, click) use createRoot + act.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -389,18 +392,120 @@ describe("Page -- children", () => {
 });
 
 // ---------------------------------------------------------------------------
-// document.title (smoke-check that the effect does not blow up during SSR)
+// document.title (DOM tests -- require createRoot + act)
 // ---------------------------------------------------------------------------
 
 describe("Page -- document.title", () => {
+  let container: HTMLElement;
+  let root: Root;
+
   afterEach(() => {
-    // Reset title after each test
-    if (typeof document !== "undefined") {
-      document.title = "";
-    }
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    document.title = "";
   });
 
-  it("renders without throwing when title is provided", () => {
-    expect(() => render({ title: "My Settings" })).not.toThrow();
+  it("sets document.title to '<title> | Butlers' on mount", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <Page title="My Settings" archetype="editor">
+            <div>content</div>
+          </Page>
+        </MemoryRouter>,
+      );
+    });
+    expect(document.title).toBe("My Settings | Butlers");
+  });
+
+  it("updates document.title when title prop changes", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <Page title="First Title" archetype="overview">
+            <div>content</div>
+          </Page>
+        </MemoryRouter>,
+      );
+    });
+    expect(document.title).toBe("First Title | Butlers");
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <Page title="Second Title" archetype="overview">
+            <div>content</div>
+          </Page>
+        </MemoryRouter>,
+      );
+    });
+    expect(document.title).toBe("Second Title | Butlers");
+  });
+
+  it("restores previous document.title on unmount", async () => {
+    document.title = "Before Mount";
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <Page title="Active Page" archetype="overview">
+            <div>content</div>
+          </Page>
+        </MemoryRouter>,
+      );
+    });
+    expect(document.title).toBe("Active Page | Butlers");
+    act(() => {
+      root.unmount();
+    });
+    expect(document.title).toBe("Before Mount");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// onRetry click (DOM test -- requires createRoot + act)
+// ---------------------------------------------------------------------------
+
+describe("Page -- onRetry click", () => {
+  let container: HTMLElement;
+  let root: Root;
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("calls onRetry when Retry button is clicked", async () => {
+    const onRetry = vi.fn();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <Page title="Error Page" archetype="overview" error={new Error("Failed")} onRetry={onRetry}>
+            <div>hidden</div>
+          </Page>
+        </MemoryRouter>,
+      );
+    });
+    const retryBtn = container.querySelector("button");
+    expect(retryBtn).not.toBeNull();
+    expect(retryBtn?.textContent).toBe("Retry");
+    act(() => {
+      retryBtn!.click();
+    });
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 });
