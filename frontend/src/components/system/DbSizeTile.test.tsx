@@ -166,7 +166,7 @@ describe("DbSizeTile -- happy path", () => {
     }
     const html = render()
     expect(html).toContain("db-size-tile-content")
-    expect(html).not.toContain("Schema breakdown")
+    expect(html).not.toContain("Largest schemas")
   })
 
   it("limits breakdown to top 5 schemas", () => {

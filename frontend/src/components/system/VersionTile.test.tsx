@@ -126,6 +126,7 @@ describe("VersionTile -- happy path", () => {
   it("renders 'unknown' when version is empty string", () => {
     mockResult = { isPending: false, data: makeInstanceFacts({ version: "" }) }
     const html = render()
+    expect(html).toContain("unknown")
     expect(html).not.toContain("1.2.3")
   })
 })

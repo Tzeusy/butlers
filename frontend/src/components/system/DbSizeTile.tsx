@@ -123,7 +123,7 @@ export function DbSizeTile() {
 
           {topSchemas.length > 0 && (
             <div>
-              <dt className="text-muted-foreground text-xs mb-2">Schema breakdown</dt>
+              <dt className="text-muted-foreground text-xs mb-2">Largest schemas (top 5)</dt>
               <dd>
                 <ul className="space-y-1.5">
                   {topSchemas.map((schema) => (

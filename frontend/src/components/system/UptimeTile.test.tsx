@@ -85,7 +85,7 @@ describe("formatUptimeParts", () => {
     expect(formatUptimeParts(90 * 60)).toBe("1h 30m")
   })
 
-  it("returns hours only for exact hours (no trailing 0m)", () => {
+  it("includes trailing 0m for exact hours", () => {
     expect(formatUptimeParts(2 * 3600)).toBe("2h 0m")
   })
 

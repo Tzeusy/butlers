@@ -84,7 +84,7 @@ export function VersionTile() {
           <div>
             <dt className="text-muted-foreground text-xs">Package version</dt>
             <dd className="font-mono text-lg font-semibold tabular-nums">
-              {facts?.version ?? "unknown"}
+              {facts?.version || "unknown"}
             </dd>
           </div>
           {facts?.started_at && (
