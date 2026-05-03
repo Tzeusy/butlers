@@ -3545,7 +3545,7 @@ export interface DatabaseFacts {
   total_size_bytes: number;
   schemas: SchemaSize[];
   largest_tables: TableSize[];
-  growth_rate_bytes_per_day: null;
+  growth_rate_bytes_per_day: number | null;
 }
 
 /** Single backup event in the backup history list. */
