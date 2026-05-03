@@ -43,8 +43,10 @@ export default function PageHeader({ title, breadcrumbs, hideBreadcrumbs = false
   const { isSupplyingBreadcrumbs } = useBreadcrumbsControl()
 
   const crumbs = breadcrumbs ?? buildBreadcrumbs(location.pathname)
-  // Suppress shell auto-builder when the active <Page> supplies its own crumbs
-  const shouldHideBreadcrumbs = hideBreadcrumbs || isSupplyingBreadcrumbs
+  // Suppress shell auto-builder only when the active <Page> supplies breadcrumbs
+  // AND this header has no explicit breadcrumbs prop of its own. If the header
+  // is given its own breadcrumbs they should always render.
+  const shouldHideBreadcrumbs = hideBreadcrumbs || (isSupplyingBreadcrumbs && breadcrumbs == null)
 
   const toggleTheme = () => {
     if (theme === 'system') {

@@ -1975,17 +1975,22 @@ export default function EntityDetailPage() {
       (f) => f.predicate === "dunbar_tier_override" && f.validity === "active",
     ) ?? false;
 
+  const breadcrumbs = useMemo(
+    () => [
+      { label: "Home", href: "/" },
+      { label: "Entities", href: "/entities" },
+      { label: entity?.canonical_name ?? entityId ?? "Entity" },
+    ],
+    [entity?.canonical_name, entityId],
+  );
+
   return (
     <Page
       archetype="detail"
-      title={entity?.canonical_name ?? "Entity"}
+      title={entity?.canonical_name ?? entityId ?? "Entity"}
       loading={isLoading}
       error={error ?? null}
-      breadcrumbs={[
-        { label: "Home", href: "/" },
-        { label: "Entities", href: "/entities" },
-        { label: entity?.canonical_name ?? "Entity" },
-      ]}
+      breadcrumbs={breadcrumbs}
     >
       {entity && entityId && (
         <>

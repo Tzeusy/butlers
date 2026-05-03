@@ -217,13 +217,15 @@ export function Page({
   // Tell PageHeader to suppress its URL-segment auto-builder when this page
   // supplies explicit breadcrumbs. Reset on unmount so transitioning to a page
   // that does not supply breadcrumbs restores the auto-builder.
+  // Derive a stable boolean to avoid re-running the effect on every render when
+  // an inline array is passed.
+  const supplyingBreadcrumbs = breadcrumbs != null && breadcrumbs.length > 0;
   useEffect(() => {
-    const supplying = breadcrumbs != null && breadcrumbs.length > 0;
-    setSupplyingBreadcrumbs(supplying);
+    setSupplyingBreadcrumbs(supplyingBreadcrumbs);
     return () => {
       setSupplyingBreadcrumbs(false);
     };
-  }, [breadcrumbs, setSupplyingBreadcrumbs]);
+  }, [supplyingBreadcrumbs, setSupplyingBreadcrumbs]);
 
   // Warn in development when list pages pass empty (should handle inline)
   useEffect(() => {
@@ -240,6 +242,11 @@ export function Page({
     return (
       <ArchetypeWrapper archetype={archetype}>
         <div className="space-y-6" role="status" aria-label="Loading">
+          {/* Render breadcrumbs even while loading so the shell auto-builder
+              stays suppressed and navigation context is visible immediately. */}
+          {breadcrumbs && breadcrumbs.length > 0 && (
+            <Breadcrumbs items={breadcrumbs} />
+          )}
           <HeadingBlockSkeleton />
           {archetype === "overview" && <OverviewSkeleton />}
           {archetype === "list" && <ListSkeleton />}
