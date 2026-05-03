@@ -35,7 +35,11 @@ function StatItem({ label, value }: { label: string; value: string | number }) {
 
 function StatStripSkeleton() {
   return (
-    <div className="flex items-center gap-6 py-2">
+    <div
+      className="flex flex-wrap items-center gap-x-6 gap-y-1 border-t border-border pt-3"
+      role="status"
+      aria-label="Loading stats"
+    >
       {Array.from({ length: 4 }).map((_, i) => (
         <div key={i} className="h-4 w-20 animate-pulse rounded bg-muted" />
       ))}
