@@ -703,6 +703,17 @@ async def store_session_episode(
         return False
 
 
+def _derive_llm_provider(model: str | None) -> str:
+    """Derive the LLM provider name from a model string.
+
+    The model string may be prefixed with a provider name separated by a
+    forward slash (e.g. ``"ollama/llama3"`` → ``"ollama"``).  If no prefix
+    is present the default runtime is the Anthropic API, so ``"anthropic"``
+    is returned.
+    """
+    return model.split("/", 1)[0] if model and "/" in model else "anthropic"
+
+
 async def resolve_provider_config(
     pool: Any | None,
     model_id: str | None,
@@ -1745,15 +1756,12 @@ class Spawner:
             )
 
             # Emit egress audit entry for the outbound LLM API call.
-            # provider is derived from the model string (e.g. "ollama/..." → "ollama",
-            # everything else is "anthropic" since the default runtime uses the Anthropic API).
-            _llm_provider = model.split("/", 1)[0] if model and "/" in model else "anthropic"
             await write_audit_entry(
                 self._audit_pool,
                 self._config.name,
                 "llm_api_call",
                 {
-                    "provider": _llm_provider,
+                    "provider": _derive_llm_provider(model),
                     "model": model,
                     "session_id": str(session_id) if session_id else None,
                     "input_tokens": input_tokens,
@@ -1872,13 +1880,12 @@ class Spawner:
             )
 
             # Emit egress audit entry for the attempted LLM API call (error path).
-            _llm_provider_err = model.split("/", 1)[0] if model and "/" in model else "anthropic"
             await write_audit_entry(
                 self._audit_pool,
                 self._config.name,
                 "llm_api_call",
                 {
-                    "provider": _llm_provider_err,
+                    "provider": _derive_llm_provider(model),
                     "model": model,
                     "session_id": str(session_id) if session_id else None,
                 },
