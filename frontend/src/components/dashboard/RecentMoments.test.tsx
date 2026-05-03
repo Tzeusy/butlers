@@ -5,6 +5,7 @@
 // Coverage:
 //   - Loading state: skeleton rendered, no session rows
 //   - Empty state: empty message, no skeleton
+//   - Error state: error message rendered, no list or skeleton
 //   - Single moment: row rendered with butler glyph, prompt, time, link
 //   - Multi-moment: all rows rendered
 //   - limit prop: correct number of skeleton rows; hook called with limit
@@ -18,7 +19,7 @@ import type { SessionSummary } from "@/api/types"
 import { RecentMoments } from "./RecentMoments"
 
 // ---------------------------------------------------------------------------
-// Mock useSessions — controlled per-test via the module-level ref below
+// Mock useSessions — captures last call args so we can assert forwarding.
 // ---------------------------------------------------------------------------
 
 import type { UseQueryResult } from "@tanstack/react-query"
@@ -27,9 +28,13 @@ import type { PaginatedResponse } from "@/api/types"
 type SessionsResult = Partial<UseQueryResult<PaginatedResponse<SessionSummary>, Error>>
 
 let mockQueryResult: SessionsResult = { isPending: false, data: undefined }
+let lastSessionsArgs: unknown[] = []
 
 vi.mock("@/hooks/use-sessions", () => ({
-  useSessions: () => mockQueryResult,
+  useSessions: (...args: unknown[]) => {
+    lastSessionsArgs = args
+    return mockQueryResult
+  },
 }))
 
 // ---------------------------------------------------------------------------
@@ -140,7 +145,27 @@ describe("RecentMoments — empty state", () => {
 })
 
 // ---------------------------------------------------------------------------
-// 3. Single moment
+// 3. Error state
+// ---------------------------------------------------------------------------
+
+describe("RecentMoments — error state", () => {
+  it("renders error message when isError=true", () => {
+    mockQueryResult = { isPending: false, isError: true, data: undefined }
+    const html = render()
+    expect(html).toContain("Could not load recent activity")
+  })
+
+  it("does not render list or skeleton when isError=true", () => {
+    mockQueryResult = { isPending: false, isError: true, data: undefined }
+    const html = render()
+    expect(html).not.toContain("recent-moments-list")
+    expect(html).not.toContain("recent-moments-skeleton")
+    expect(html).not.toContain("No recent activity")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 4. Single moment
 // ---------------------------------------------------------------------------
 
 describe("RecentMoments — single moment", () => {
@@ -179,14 +204,14 @@ describe("RecentMoments — single moment", () => {
     expect(html).toContain("2026-05-03T08:00:00Z")
   })
 
-  it("renders a link to the session detail page", () => {
+  it("renders a link to the session detail page with butler query param", () => {
     const html = render()
-    expect(html).toContain(`href="/sessions/sess-abc"`)
+    expect(html).toContain(`href="/sessions/sess-abc?butler=general"`)
   })
 })
 
 // ---------------------------------------------------------------------------
-// 4. Multi-moment
+// 5. Multi-moment
 // ---------------------------------------------------------------------------
 
 describe("RecentMoments — multi-moment", () => {
@@ -214,16 +239,16 @@ describe("RecentMoments — multi-moment", () => {
     expect(html).toContain(">S<") // switchboard
   })
 
-  it("renders a detail link for each session", () => {
+  it("renders a detail link with butler query param for each session", () => {
     const html = render()
-    expect(html).toContain('href="/sessions/sess-1"')
-    expect(html).toContain('href="/sessions/sess-2"')
-    expect(html).toContain('href="/sessions/sess-3"')
+    expect(html).toContain('href="/sessions/sess-1?butler=general"')
+    expect(html).toContain('href="/sessions/sess-2?butler=health"')
+    expect(html).toContain('href="/sessions/sess-3?butler=switchboard"')
   })
 })
 
 // ---------------------------------------------------------------------------
-// 5. limit prop
+// 6. limit prop — forwarding to useSessions
 // ---------------------------------------------------------------------------
 
 describe("RecentMoments — limit prop", () => {
@@ -246,5 +271,17 @@ describe("RecentMoments — limit prop", () => {
     const html = render({ limit: 10 })
     const matches = html.match(/aria-hidden="true"/g)
     expect(matches).toHaveLength(10)
+  })
+
+  it("forwards limit prop to useSessions as the query param", () => {
+    mockQueryResult = { isPending: true, data: undefined }
+    render({ limit: 5 })
+    expect(lastSessionsArgs[0]).toMatchObject({ limit: 5 })
+  })
+
+  it("forwards default limit=7 to useSessions when no prop given", () => {
+    mockQueryResult = { isPending: true, data: undefined }
+    render()
+    expect(lastSessionsArgs[0]).toMatchObject({ limit: 7 })
   })
 })

@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { Link } from "react-router"
-import { ExternalLinkIcon } from "lucide-react"
+import { ArrowRightIcon } from "lucide-react"
 
 import type { SessionSummary } from "@/api/types"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -34,28 +34,28 @@ export interface RecentMomentsProps {
 // ---------------------------------------------------------------------------
 
 /**
- * Categorical color slots (8) mapped to CSS token classes.
+ * Categorical color slots (8) using the shared CSS token system.
  * Same slot count as ActivityFeed and SessionTable to keep color assignments
- * visually consistent across the dashboard.
+ * visually consistent across the dashboard (and correct under dark mode).
  */
-const GLYPH_COLORS = [
-  "bg-[oklch(0.623_0.214_259.0)] text-white",  // category-1: blue
-  "bg-[oklch(0.581_0.234_292.5)] text-white",  // category-2: violet
-  "bg-[oklch(0.769_0.189_84.0)]  text-white",  // category-3: amber
-  "bg-[oklch(0.706_0.145_183.5)] text-white",  // category-4: teal
-  "bg-[oklch(0.641_0.271_11.2)]  text-white",  // category-5: rose
-  "bg-[oklch(0.585_0.233_278.0)] text-white",  // category-6: indigo
-  "bg-[oklch(0.717_0.184_208.5)] text-white",  // category-7: cyan
-  "bg-[oklch(0.737_0.213_58.0)]  text-white",  // category-8: orange
+const GLYPH_COLOR_VARS = [
+  "var(--category-1)",
+  "var(--category-2)",
+  "var(--category-3)",
+  "var(--category-4)",
+  "var(--category-5)",
+  "var(--category-6)",
+  "var(--category-7)",
+  "var(--category-8)",
 ] as const
 
 /** Deterministic slot for a butler name based on a simple djb2-style hash. */
-function butlerColorSlot(name: string): number {
+function butlerColorVar(name: string): string {
   let hash = 0
   for (let i = 0; i < name.length; i++) {
     hash = (hash * 31 + name.charCodeAt(i)) | 0
   }
-  return Math.abs(hash) % GLYPH_COLORS.length
+  return GLYPH_COLOR_VARS[Math.abs(hash) % GLYPH_COLOR_VARS.length]
 }
 
 /** Single uppercase letter used as the visual glyph for a butler. */
@@ -74,6 +74,13 @@ function truncatePrompt(text: string, max = 72): string {
   return firstLine.slice(0, max) + "…"
 }
 
+/** Build a session detail href including the butler query param. */
+function sessionDetailHref(session: SessionSummary): string {
+  const butlerName = session.butler
+  const query = butlerName ? `?butler=${encodeURIComponent(butlerName)}` : ""
+  return `/sessions/${encodeURIComponent(session.id)}${query}`
+}
+
 // ---------------------------------------------------------------------------
 // Skeleton row
 // ---------------------------------------------------------------------------
@@ -81,7 +88,7 @@ function truncatePrompt(text: string, max = 72): string {
 function SkeletonRow() {
   return (
     <div className="flex items-center gap-3 py-2" aria-hidden="true">
-      <Skeleton className="h-4 w-16 shrink-0" />
+      <Skeleton className="h-4 w-24 shrink-0" />
       <Skeleton className="h-6 w-6 shrink-0 rounded-full" />
       <Skeleton className="h-4 flex-1" />
       <Skeleton className="h-4 w-4 shrink-0" />
@@ -102,6 +109,18 @@ function EmptyState() {
 }
 
 // ---------------------------------------------------------------------------
+// Error state
+// ---------------------------------------------------------------------------
+
+function ErrorState() {
+  return (
+    <p className="py-4 text-sm text-destructive">
+      Could not load recent activity.
+    </p>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Single moment row
 // ---------------------------------------------------------------------------
 
@@ -111,8 +130,7 @@ interface MomentRowProps {
 
 function MomentRow({ session }: MomentRowProps) {
   const butlerName = session.butler ?? "unknown"
-  const slot = butlerColorSlot(butlerName)
-  const colorClass = GLYPH_COLORS[slot]
+  const colorVar = butlerColorVar(butlerName)
 
   return (
     <div
@@ -126,16 +144,13 @@ function MomentRow({ session }: MomentRowProps) {
         value={session.started_at}
         mode="relative"
         showTitle={true}
-        className="w-16 shrink-0 text-xs text-muted-foreground tabular-nums"
+        className="w-24 shrink-0 text-xs text-muted-foreground tabular-nums"
       />
 
-      {/* Butler glyph */}
+      {/* Butler glyph — color via CSS token so dark-mode overrides apply */}
       <span
-        className={cn(
-          "flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
-          "text-xs font-semibold leading-none",
-          colorClass,
-        )}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold leading-none text-white"
+        style={{ backgroundColor: colorVar }}
         title={butlerName}
         aria-label={butlerName}
       >
@@ -150,17 +165,17 @@ function MomentRow({ session }: MomentRowProps) {
         {truncatePrompt(session.prompt)}
       </span>
 
-      {/* Detail link */}
+      {/* Detail link — always visible on touch; hover accent on desktop */}
       <Link
-        to={`/sessions/${session.id}`}
+        to={sessionDetailHref(session)}
         className={cn(
           "shrink-0 text-muted-foreground",
-          "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+          "opacity-40 group-hover:opacity-100 focus-visible:opacity-100",
           "transition-opacity",
         )}
-        aria-label={`View session details`}
+        aria-label="View session details"
       >
-        <ExternalLinkIcon className="h-3.5 w-3.5" />
+        <ArrowRightIcon className="h-3.5 w-3.5" />
       </Link>
     </div>
   )
@@ -181,12 +196,10 @@ function MomentRow({ session }: MomentRowProps) {
  * <RecentMoments limit={5} />
  */
 export function RecentMoments({ limit = 7 }: RecentMomentsProps) {
-  const { data, isPending } = useSessions(
+  const { data, isPending, isError } = useSessions(
     { limit, status: "all" },
     { refetchInterval: 30_000 },
   )
-
-  const sessions = data?.data ?? []
 
   if (isPending) {
     return (
@@ -197,6 +210,12 @@ export function RecentMoments({ limit = 7 }: RecentMomentsProps) {
       </div>
     )
   }
+
+  if (isError) {
+    return <ErrorState />
+  }
+
+  const sessions = data?.data ?? []
 
   if (sessions.length === 0) {
     return <EmptyState />
