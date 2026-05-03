@@ -65,10 +65,10 @@ function formatDate(iso: string): string {
   return format(new Date(iso), "MMM d, yyyy");
 }
 
-/** Return a Tailwind-friendly color class for a role badge. */
+/** Return inline style properties for a role badge. */
 function roleBadgeStyle(role: string): React.CSSProperties {
   // Role-specific semantic colors; no category/severity/permanence token fits these.
-  // A future --role-owner/admin/default token set could replace them (see bu-v1tt2.3).
+  // A future --role-owner/admin/default token set could replace them (see bu-azzsf).
   switch (role.toLowerCase()) {
     case "owner":
       return { backgroundColor: "#7c3aed", color: "#fff" }; // violet-700

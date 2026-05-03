@@ -98,7 +98,7 @@ const DUNBAR_TIER_LABELS: Record<number, string> = {
 function dunbarTierBadgeStyle(tier: number): React.CSSProperties {
   // Dunbar tier colors are ordinal (innermost = warmest). No category/severity/permanence
   // token maps to this ordered warm→cool ramp; leaving as-is until a --tier-* token set
-  // is added (see follow-up from bu-v1tt2.3).
+  // is added (follow-up bu-azzsf).
   switch (tier) {
     case 5:
       return { backgroundColor: "#b91c1c", color: "#fff" }; // red-700   (innermost)
@@ -328,7 +328,7 @@ function UnidentifiedEntitiesSection({
               <CardTitle className="flex items-center gap-2">
                 Unidentified Entities
                 <Badge
-                  // orange-600: unidentified-entity warning state; no existing token fits (follow-up bu-v1tt2.3)
+                  // orange-600: unidentified-entity warning state; no existing token fits (follow-up bu-azzsf)
                   style={{ backgroundColor: "#ea580c", color: "#fff" }}
                   className="text-xs"
                 >
@@ -759,7 +759,7 @@ export default function EntitiesPage() {
                             </Link>
                             {entity.roles?.includes("owner") && (
                               <Badge
-                                // violet-700: owner role; no existing token fits (follow-up bu-v1tt2.3)
+                                // violet-700: owner role; no existing token fits (follow-up bu-azzsf)
                                 style={{ backgroundColor: "#7c3aed", color: "#fff" }}
                                 className="text-xs"
                               >
@@ -768,7 +768,7 @@ export default function EntitiesPage() {
                             )}
                             {entity.unidentified && (
                               <Badge
-                                // orange-600: unidentified-entity state; no existing token fits (follow-up bu-v1tt2.3)
+                                // orange-600: unidentified-entity state; no existing token fits (follow-up bu-azzsf)
                                 style={{ backgroundColor: "#ea580c", color: "#fff" }}
                                 className="text-xs"
                               >
