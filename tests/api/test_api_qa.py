@@ -12,7 +12,7 @@ import pytest
 
 from butlers.api.app import create_app
 from butlers.api.db import DatabaseManager
-from butlers.api.routers.qa import _get_db_manager, _get_force_patrol_fn
+from butlers.api.routers.qa import _get_credentials_status_fn, _get_db_manager, _get_force_patrol_fn
 
 pytestmark = pytest.mark.unit
 
@@ -232,7 +232,7 @@ async def _call(app: Any, method: str, path: str, **kwargs: Any) -> httpx.Respon
 class TestGetQaSummary:
     async def test_summary_shape_stats_and_circuit_breaker(self) -> None:
         """Empty DB → nulls/zeros; patrol+stats populated; 503 on DB failure;
-        CB trips on 5 consecutive failures; resets on success; anonymization_failed counts."""
+        CB trips on 5 consecutive failures."""
         # Empty DB
         body = (await _call(_build_summary_app()[0], "get", "/api/qa/summary")).json()
         assert (
@@ -274,6 +274,16 @@ class TestGetQaSummary:
         ).json()
         assert body3["data"]["circuit_breaker"]["tripped"] is True
         assert body3["data"]["staffer_status"] == "circuit_breaker_tripped"
+
+        # credentials_status: token_present=True → gh_token_present reflected; no hint
+        async def _creds_fn() -> dict:
+            return {"gh_token_present": True}
+
+        app4, _ = _build_summary_app()
+        app4.dependency_overrides[_get_credentials_status_fn] = lambda: _creds_fn
+        creds = (await _call(app4, "get", "/api/qa/summary")).json()["data"]["credentials_status"]
+        assert creds["gh_token_present"] is True
+        assert creds["provisioning_hint"] is None
 
 
 class TestListPatrols:
@@ -450,7 +460,7 @@ class TestGetFindingByAttempt:
 
 class TestListInvestigations:
     async def test_investigations_shape_filters_and_optional_fields(self) -> None:
-        """Empty list; PR info populated; status filter valid/invalid; 503; optional fields exposed; null/0 when absent."""
+        """Empty list; PR info populated; status filter valid/invalid; 503; optional fields serialized when present."""
         assert (
             await _call(
                 _build_app(fetch_rows=[], fetchval_result=0)[0], "get", "/api/qa/investigations"
@@ -476,6 +486,15 @@ class TestListInvestigations:
         assert inv["pr_number"] == 42
         assert inv["qa_patrol_id"] == str(patrol_id)
 
+        # valid status filter accepted
+        r_valid = await _call(
+            _build_app(fetch_rows=[], fetchval_result=0)[0],
+            "get",
+            "/api/qa/investigations",
+            params={"status": "anonymization_failed"},
+        )
+        assert r_valid.status_code == 200
+
         # invalid/removed status rejected
         for bad_status in ("not_a_status", "dispatch_pending"):
             r_bad = await _call(
@@ -485,7 +504,7 @@ class TestListInvestigations:
 
         assert (await _call(_make_503_app(), "get", "/api/qa/investigations")).status_code == 503
 
-        # optional fields exposed and null when absent
+        # optional fields serialized when present
         cycle_patrol_id = uuid.uuid4()
         row2 = _make_investigation_row(
             status="pr_open",
@@ -598,6 +617,15 @@ class TestListKnownIssues:
         ).json()["meta"]
         assert meta["total"] == 42 and meta["limit"] == 10
 
+        # dismissed filter forwarded (True = show only dismissed; request succeeds)
+        r_dismissed = await _call(
+            _build_app(fetchval_result=1, fetch_side_effect=[[_r(agg_row)], [_r(dismissal)]])[0],
+            "get",
+            "/api/qa/known-issues",
+            params={"dismissed": "true"},
+        )
+        assert r_dismissed.status_code == 200
+
 
 class TestKnownIssueDismissal:
     async def test_dismiss_and_undismiss(self) -> None:
@@ -652,7 +680,7 @@ class TestKnownIssueDismissal:
 
 class TestForcePatrol:
     async def test_force_patrol_standalone_and_with_fn(self) -> None:
-        """Standalone (no fn): 202 accepted=False. With fn: accepted=True with status in message. Skipped: accepted=False. Raising fn: 503."""
+        """Standalone (no fn): 202 accepted=False. With fn: accepted=True with status in message. Raising fn: 503."""
         # Standalone mode
         r = await _call(_build_app()[0], "post", "/api/qa/force-patrol")
         assert (
@@ -734,6 +762,49 @@ class TestDeleteDismissal:
             )
         ).status_code == 404
         assert (await _call(_make_503_app(), "delete", "/api/qa/dismissals/abc")).status_code == 503
+
+
+def _make_trend_row(
+    *,
+    date: str = "2026-04-05",
+    patrols_completed: int = 5,
+    total_findings: int = 10,
+    novel_findings: int = 3,
+    dispatched_count: int = 2,
+    clean_count: int = 4,
+) -> dict[str, Any]:
+    return {
+        "date": date,
+        "patrols_completed": patrols_completed,
+        "total_findings": total_findings,
+        "novel_findings": novel_findings,
+        "dispatched_count": dispatched_count,
+        "clean_count": clean_count,
+    }
+
+
+def _make_source_row(source_type: str = "log_scanner", count: int = 7) -> dict[str, Any]:
+    return {"source_type": source_type, "count": count}
+
+
+class TestGetQaTrends:
+    async def test_trends_shape_and_success_rate(self) -> None:
+        """Empty DB returns empty lists; success_rate computed; source_breakdown returned."""
+        app, _ = _build_app(fetch_side_effect=[[], []])
+        assert (await _call(app, "get", "/api/qa/trends")).json()["data"]["days"] == []
+
+        app2, _ = _build_app(
+            fetch_side_effect=[[_r(_make_trend_row(patrols_completed=4, clean_count=3))], []]
+        )
+        assert (await _call(app2, "get", "/api/qa/trends")).json()["data"]["days"][0][
+            "success_rate"
+        ] == pytest.approx(0.75, abs=0.001)
+
+        app3, _ = _build_app(fetch_side_effect=[[], [_r(_make_source_row("log_scanner", 12))]])
+        breakdown = (await _call(app3, "get", "/api/qa/trends", params={"days": 14})).json()[
+            "data"
+        ]["source_breakdown"]
+        assert breakdown[0]["source_type"] == "log_scanner" and breakdown[0]["count"] == 12
 
 
 class TestListMetaReviewFindings:
