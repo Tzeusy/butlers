@@ -1744,6 +1744,25 @@ class Spawner:
                 },
             )
 
+            # Emit egress audit entry for the outbound LLM API call.
+            # provider is derived from the model string (e.g. "ollama/..." → "ollama",
+            # everything else is "anthropic" since the default runtime uses the Anthropic API).
+            _llm_provider = (
+                model.split("/", 1)[0] if model and "/" in model else "anthropic"
+            )
+            await write_audit_entry(
+                self._audit_pool,
+                self._config.name,
+                "llm_api_call",
+                {
+                    "provider": _llm_provider,
+                    "model": model,
+                    "session_id": str(session_id) if session_id else None,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                },
+            )
+
             # Store episode via module-local memory tools (failure doesn't block)
             if memory_enabled and spawner_result.success and spawner_result.output:
                 await store_session_episode(
@@ -1849,6 +1868,23 @@ class Spawner:
                     "runtime_type": resolved_runtime_type,
                     "complexity": str(complexity),
                     "resolution_source": resolution_source,
+                },
+                result="error",
+                error=error_msg,
+            )
+
+            # Emit egress audit entry for the attempted LLM API call (error path).
+            _llm_provider_err = (
+                model.split("/", 1)[0] if model and "/" in model else "anthropic"
+            )
+            await write_audit_entry(
+                self._audit_pool,
+                self._config.name,
+                "llm_api_call",
+                {
+                    "provider": _llm_provider_err,
+                    "model": model,
+                    "session_id": str(session_id) if session_id else None,
                 },
                 result="error",
                 error=error_msg,
