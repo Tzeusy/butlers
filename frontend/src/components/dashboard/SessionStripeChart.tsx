@@ -7,6 +7,7 @@
 // Color: deterministic mapping butler-name -> --category-1..8 CSS tokens
 // ---------------------------------------------------------------------------
 
+import { useMemo } from "react"
 import {
   Bar,
   BarChart,
@@ -41,11 +42,19 @@ const CATEGORY_VARS = [
   "var(--category-8)",
 ] as const
 
-/** Deterministic butler-name to color token mapping. */
+/** Deterministic butler-name to color token mapping.
+ * Known butlers use their index in the roster; unlisted butlers use a
+ * name hash so multiple unlisted butlers get distinct colors.
+ */
 function butlerColor(name: string, allButlers: readonly ButlerSummary[]): string {
   const idx = allButlers.findIndex((b) => b.name === name)
-  if (idx === -1) return CATEGORY_VARS[0]
-  return CATEGORY_VARS[idx % CATEGORY_VARS.length]
+  if (idx !== -1) return CATEGORY_VARS[idx % CATEGORY_VARS.length]
+  // Fallback: deterministic hash for unlisted butlers
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return CATEGORY_VARS[Math.abs(hash) % CATEGORY_VARS.length]
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +155,25 @@ export interface SessionStripeChartProps {
 export function SessionStripeChart({ window, butlers }: SessionStripeChartProps) {
   const { data, isLoading, isError } = useSessionStripeData(window)
 
+  const sessions = data?.data ?? []
+
+  // Memoize the pivot and name-ordering so they don't rerun on every render.
+  const { unit, rows, orderedNames } = useMemo(() => {
+    const u = bucketUnit(window.from, window.to)
+    const r = pivotSessionsIntoRows(sessions, window.from, window.to, u)
+
+    const present = new Set<string>()
+    for (const s of sessions) {
+      if (s.butler) present.add(s.butler)
+    }
+    const knownSet = new Set(butlers.map((b) => b.name))
+    const ordered = [
+      ...butlers.map((b) => b.name).filter((n) => present.has(n)),
+      ...Array.from(present).filter((n) => !knownSet.has(n)).sort(),
+    ]
+    return { unit: u, rows: r, orderedNames: ordered }
+  }, [sessions, window.from, window.to, butlers])
+
   if (isLoading) {
     return <SessionStripeChartSkeleton />
   }
@@ -161,8 +189,6 @@ export function SessionStripeChart({ window, butlers }: SessionStripeChartProps)
     )
   }
 
-  const sessions = data?.data ?? []
-
   if (sessions.length === 0) {
     return (
       <div
@@ -173,17 +199,6 @@ export function SessionStripeChart({ window, butlers }: SessionStripeChartProps)
       </div>
     )
   }
-
-  const unit = bucketUnit(window.from, window.to)
-  const rows = pivotSessionsIntoRows(sessions, window.from, window.to, unit)
-
-  // Discover which butler names are present in the data. Use the butlers prop
-  // order for known names; fall back to alphabetical for any unlisted names.
-  const presentNames = new Set(sessions.map((s) => s.butler).filter(Boolean) as string[])
-  const orderedNames = [
-    ...butlers.map((b) => b.name).filter((n) => presentNames.has(n)),
-    ...[...presentNames].filter((n) => !butlers.some((b) => b.name === n)).sort(),
-  ]
 
   return (
     <div data-testid="session-stripe-chart">

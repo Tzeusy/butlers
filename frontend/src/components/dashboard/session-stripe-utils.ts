@@ -74,7 +74,7 @@ export function formatBucketKey(key: string, unit: "hour" | "day"): string {
   // key format: YYYY-MM-DD (UTC noon to avoid offset edge-cases)
   const [year, month, day] = key.split("-").map(Number)
   const d = new Date(Date.UTC(year, month - 1, day, 12, 0, 0))
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })
 }
 
 // ---------------------------------------------------------------------------
@@ -112,8 +112,8 @@ export function pivotSessionsIntoRows(
 // Data fetch hook
 // ---------------------------------------------------------------------------
 
-/** Maximum sessions fetched per request (avoids massive payloads). */
-const MAX_SESSIONS_LIMIT = 2000
+/** Maximum sessions fetched per request — capped at 200 (backend Query constraint). */
+const MAX_SESSIONS_LIMIT = 200
 
 /** Fetch sessions for the given time window, with client-side aggregation. */
 export function useSessionStripeData(window: { from: Date; to: Date }) {
