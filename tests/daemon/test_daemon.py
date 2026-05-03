@@ -805,6 +805,40 @@ async def test_sse_disconnect_guard(
         await guard2(scope2, receive, noop_send)
 
 
+async def test_sse_disconnect_guard_completes_started_response() -> None:
+    """ClientDisconnect after response start MUST finish the response body only."""
+    sent_messages: list[dict[str, Any]] = []
+
+    async def disconnecting_after_start(
+        scope: dict[str, Any], receive: Any, send: Any
+    ) -> None:
+        await send({"type": "http.response.start", "status": 202, "headers": []})
+        raise ClientDisconnect()
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent_messages.append(message)
+
+    guard = _McpSseDisconnectGuard(disconnecting_after_start, butler_name="test-butler")
+    await guard(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/messages/",
+            "query_string": b"session_id=abc123",
+        },
+        receive,
+        send,
+    )
+
+    assert sent_messages == [
+        {"type": "http.response.start", "status": 202, "headers": []},
+        {"type": "http.response.body", "body": b""},
+    ]
+
+
 async def test_streamable_http_disconnect_patch_is_idempotent() -> None:
     """Repeated calls MUST leave exactly one filter instance attached."""
     import mcp.server.streamable_http as streamable_http
