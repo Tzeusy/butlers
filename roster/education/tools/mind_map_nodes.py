@@ -275,12 +275,8 @@ async def mind_map_node_update(
     param_idx = 1
 
     for key, val in updates.items():
-        if key == "metadata":
-            set_parts.append(f"metadata = ${param_idx}")
-            values.append(val)
-        else:
-            set_parts.append(f"{key} = ${param_idx}")
-            values.append(val)
+        set_parts.append(f"{key} = ${param_idx}")
+        values.append(val)
         param_idx += 1
 
     # Always update updated_at
