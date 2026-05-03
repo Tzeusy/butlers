@@ -696,6 +696,21 @@ class TestKnownIssueDismissal:
         assert r.status_code == 200
         assert r.json()["data"]["dismissed_by"] == "owner"
 
+        # explicit dismissed_until expiry accepted and round-tripped
+        expiry = datetime(2027, 1, 1, 0, 0, 0, tzinfo=UTC)
+        fp_exp = "g" * 64
+        app_exp, _ = _build_app(
+            fetchrow_result=_make_dismissal_row(fingerprint=fp_exp, dismissed_until=expiry)
+        )
+        r_exp = await _call(
+            app_exp,
+            "post",
+            f"/api/qa/known-issues/{fp_exp}/dismiss",
+            json={"dismissed_until": expiry.isoformat(), "dismissed_by": "owner"},
+        )
+        assert r_exp.status_code == 200
+        assert r_exp.json()["data"]["fingerprint"] == fp_exp
+
         # empty body → defaults → 200
         fp2 = "i" * 64
         app2, _ = _build_app(fetchrow_result=_make_dismissal_row(fingerprint=fp2))
