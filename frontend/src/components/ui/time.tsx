@@ -60,7 +60,7 @@ export interface TimeProps {
    * tooltip via the HTML title attribute.
    * @default true
    */
-  title?: boolean
+  showTitle?: boolean
   /** Additional className forwarded to the <time> element. */
   className?: string
 }
@@ -110,7 +110,10 @@ function formatRelative(date: Date): string {
  * formatter without calling Date.now() itself.
  */
 function resolveSmartMode(date: Date): { useRelative: boolean } {
-  const ageMs = Date.now() - date.getTime()
+  // Use Math.abs so that future dates are also bounded by the threshold —
+  // without this, negative ageMs would always pass the < check and render
+  // far-future dates (e.g. "in 5 years") as relative.
+  const ageMs = Math.abs(Date.now() - date.getTime())
   return { useRelative: ageMs < SMART_THRESHOLD_MS }
 }
 
@@ -138,13 +141,24 @@ export function Time({
   mode = "smart",
   precision = "minute",
   timezone,
-  title = true,
+  showTitle = true,
   className,
 }: TimeProps) {
   const contextTz = useChroniclesTimezone()
   const tz = timezone ?? contextTz
 
   const date = toDate(value)
+
+  // Guard: invalid date (e.g. malformed ISO string) — render a safe placeholder
+  // rather than throwing a RangeError from toISOString().
+  if (Number.isNaN(date.getTime())) {
+    return (
+      <time className={className}>
+        {String(value)}
+      </time>
+    )
+  }
+
   const isoString = date.toISOString()
 
   let text: string
@@ -153,7 +167,8 @@ export function Time({
   } else if (mode === "absolute") {
     text = formatAbsolute(date, precision, tz)
   } else {
-    // smart: relative for < 24 h, absolute for older
+    // smart: relative for < 24 h, absolute for older.
+    // Math.abs ensures future dates obey the threshold symmetrically.
     const { useRelative } = resolveSmartMode(date)
     text = useRelative
       ? formatRelative(date)
@@ -163,7 +178,7 @@ export function Time({
   return (
     <time
       dateTime={isoString}
-      title={title ? isoString : undefined}
+      title={showTitle ? isoString : undefined}
       className={className}
     >
       {text}

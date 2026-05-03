@@ -170,7 +170,7 @@ describe("relative mode", () => {
     expect(text).toMatch(/\d+ minutes? ago/)
   })
 
-  it("renders an ISO string for a far-future Date (date-fns will say 'in X ...')", () => {
+  it("renders relative text ('in X ...') for a near-future date in relative mode", () => {
     vi.setSystemTime(FIXED_DATE)
     // 1 hour in the future
     const futureIso = new Date(FIXED_DATE.getTime() + 60 * 60 * 1_000).toISOString()
@@ -220,6 +220,38 @@ describe("smart mode (< 24 h → relative, >= 24 h → absolute)", () => {
 })
 
 // ---------------------------------------------------------------------------
+// 4b. smart mode — future date threshold symmetry
+// ---------------------------------------------------------------------------
+
+describe("smart mode — future dates obey the same threshold", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("renders relative for a future date within 24 h", () => {
+    vi.setSystemTime(FIXED_DATE)
+    // 1 hour in the future — within threshold → should be relative
+    const futureIso = new Date(FIXED_DATE.getTime() + 60 * 60 * 1_000).toISOString()
+    const { text } = parseTime(render({ value: futureIso, mode: "smart" }))
+    expect(text).toMatch(/in/)
+    expect(text).not.toContain("2026")
+  })
+
+  it("renders absolute for a future date beyond 24 h", () => {
+    vi.setSystemTime(FIXED_DATE)
+    // 25 hours in the future — beyond threshold → should be absolute
+    const futureIso = new Date(FIXED_DATE.getTime() + 25 * 60 * 60 * 1_000).toISOString()
+    const { text } = parseTime(render({ value: futureIso, mode: "smart" }))
+    expect(text).toContain("2026")
+    expect(text).not.toMatch(/^in\s/)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // 5. datetime attribute is ISO 8601
 // ---------------------------------------------------------------------------
 
@@ -247,8 +279,8 @@ describe("title attribute", () => {
     expect(title).toBe(FIXED_DATE.toISOString())
   })
 
-  it("is absent when title=false", () => {
-    const { title } = parseTime(render({ value: FIXED_ISO, mode: "absolute", title: false }))
+  it("is absent when showTitle=false", () => {
+    const { title } = parseTime(render({ value: FIXED_ISO, mode: "absolute", showTitle: false }))
     expect(title).toBeNull()
   })
 })
@@ -268,5 +300,25 @@ describe("className forwarding", () => {
   it("renders without className when not provided", () => {
     const { className } = parseTime(render({ value: FIXED_ISO, mode: "absolute" }))
     expect(className).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 8. invalid date guard
+// ---------------------------------------------------------------------------
+
+describe("invalid date guard", () => {
+  it("renders a safe placeholder instead of throwing for an invalid date string", () => {
+    // "not-a-date" parses to an Invalid Date; toISOString() would throw RangeError
+    // without the guard. Verify the component renders the raw value instead.
+    const html = render({ value: "not-a-date" })
+    const div = document.createElement("div")
+    div.innerHTML = html
+    const el = div.querySelector("time")
+    expect(el).not.toBeNull()
+    // No datetime attribute on invalid dates
+    expect(el!.getAttribute("datetime")).toBeNull()
+    // Raw value surfaced as text
+    expect(el!.textContent).toBe("not-a-date")
   })
 })
