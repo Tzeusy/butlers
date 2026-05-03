@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Link } from "react-router";
 import { Time } from "@/components/ui/time";
 
@@ -152,16 +151,6 @@ export default function DashboardPage() {
   const issues = issuesResponse?.data ?? [];
   const pendingApprovals = approvalMetricsResponse?.data.total_pending ?? 0;
 
-  // 24-hour window for the hero stripe chart -- captured once at mount via
-  // lazy state init so Date.now() is not called during render (impure call)
-  const [heroWindow] = useState(() => {
-    const now = Date.now();
-    return {
-      from: new Date(now - 24 * 60 * 60 * 1000),
-      to: new Date(now),
-    };
-  });
-
   return (
     <Page archetype="overview" title="Overview">
       {/* Hero region: session stripe chart (primary visualization) */}
@@ -171,7 +160,7 @@ export default function DashboardPage() {
           <CardDescription>Butler activity over the past 24 hours</CardDescription>
         </CardHeader>
         <CardContent>
-          <SessionStripeChart window={heroWindow} butlers={butlers} />
+          <SessionStripeChart butlers={butlers} />
         </CardContent>
       </Card>
 
