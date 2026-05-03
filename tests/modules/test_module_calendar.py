@@ -447,7 +447,9 @@ class TestCalendarWriteAuditEmit:
             butler_name="test-butler",
         )
 
-        with patch("butlers.modules.calendar.write_audit_entry", new_callable=AsyncMock) as mock_emit:
+        with patch(
+            "butlers.modules.calendar.write_audit_entry", new_callable=AsyncMock
+        ) as mock_emit:
             await mcp.tools["calendar_create_event"](
                 title="Meeting",
                 start_at=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
@@ -466,9 +468,7 @@ class TestCalendarWriteAuditEmit:
 
         class _DeleteCapableProvider(_ProviderDouble):
             async def delete_event(self, *, calendar_id, event_id, send_updates=None):
-                self.delete_calls.append(
-                    {"calendar_id": calendar_id, "event_id": event_id}
-                )
+                self.delete_calls.append({"calendar_id": calendar_id, "event_id": event_id})
 
         provider = _DeleteCapableProvider(event=existing)
         mod = self._make_module_with_provider(provider)
@@ -482,7 +482,9 @@ class TestCalendarWriteAuditEmit:
             butler_name="test-butler",
         )
 
-        with patch("butlers.modules.calendar.write_audit_entry", new_callable=AsyncMock) as mock_emit:
+        with patch(
+            "butlers.modules.calendar.write_audit_entry", new_callable=AsyncMock
+        ) as mock_emit:
             await mcp.tools["calendar_delete_event"](event_id="evt-1")
 
         audit_calls = [c for c in mock_emit.await_args_list if c.args[2] == "google_calendar_write"]

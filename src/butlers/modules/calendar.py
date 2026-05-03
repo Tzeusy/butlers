@@ -3246,9 +3246,7 @@ class CalendarModule(Module):
                     "entity_ids": entity_ids if entity_ids is not None else event.entity_ids,
                 }
             )
-            await module._emit_calendar_audit(
-                "update", event.title or title, resolved_calendar_id
-            )
+            await module._emit_calendar_audit("update", event.title or title, resolved_calendar_id)
             result = {
                 "status": "updated",
                 "provider": provider.name,

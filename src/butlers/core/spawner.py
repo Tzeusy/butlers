@@ -1747,9 +1747,7 @@ class Spawner:
             # Emit egress audit entry for the outbound LLM API call.
             # provider is derived from the model string (e.g. "ollama/..." → "ollama",
             # everything else is "anthropic" since the default runtime uses the Anthropic API).
-            _llm_provider = (
-                model.split("/", 1)[0] if model and "/" in model else "anthropic"
-            )
+            _llm_provider = model.split("/", 1)[0] if model and "/" in model else "anthropic"
             await write_audit_entry(
                 self._audit_pool,
                 self._config.name,
@@ -1874,9 +1872,7 @@ class Spawner:
             )
 
             # Emit egress audit entry for the attempted LLM API call (error path).
-            _llm_provider_err = (
-                model.split("/", 1)[0] if model and "/" in model else "anthropic"
-            )
+            _llm_provider_err = model.split("/", 1)[0] if model and "/" in model else "anthropic"
             await write_audit_entry(
                 self._audit_pool,
                 self._config.name,

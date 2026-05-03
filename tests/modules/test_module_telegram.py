@@ -107,7 +107,9 @@ class TestTelegramSendAuditEmit:
         fake_resp.json.return_value = {"ok": True}
 
         with (
-            patch("butlers.modules.telegram.write_audit_entry", new_callable=AsyncMock) as mock_emit,
+            patch(
+                "butlers.modules.telegram.write_audit_entry", new_callable=AsyncMock
+            ) as mock_emit,
             patch.object(mod, "_get_client") as mock_get_client,
             patch.object(mod, "_base_url", return_value="https://api.telegram.org/bot<token>"),
         ):
@@ -139,7 +141,9 @@ class TestTelegramSendAuditEmit:
         )
 
         with (
-            patch("butlers.modules.telegram.write_audit_entry", new_callable=AsyncMock) as mock_emit,
+            patch(
+                "butlers.modules.telegram.write_audit_entry", new_callable=AsyncMock
+            ) as mock_emit,
             patch.object(mod, "_get_client") as mock_get_client,
             patch.object(mod, "_base_url", return_value="https://api.telegram.org/bot<token>"),
         ):

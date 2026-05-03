@@ -103,7 +103,9 @@ class TestGmailSendAuditEmit:
 
         with (
             patch("butlers.modules.email.write_audit_entry", new_callable=AsyncMock) as mock_emit,
-            patch.object(mod, "_smtp_send", return_value={"status": "sent", "to": "a@b.com", "subject": "Hi"}),
+            patch.object(
+                mod, "_smtp_send", return_value={"status": "sent", "to": "a@b.com", "subject": "Hi"}
+            ),
         ):
             result = await mod._send_email("a@b.com", "Hi", "body")
 
