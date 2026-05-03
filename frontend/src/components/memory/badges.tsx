@@ -20,15 +20,23 @@ export function permanenceBadge(p: string) {
   return <Badge className={cls}>{p}</Badge>;
 }
 
-interface PermanenceProgressBarProps {
+interface PercentageProgressBarProps {
   value: number;
   label?: string;
 }
 
-export function PermanenceProgressBar({ value, label }: PermanenceProgressBarProps) {
-  const pct = Math.round(value * 100);
+export function PercentageProgressBar({ value, label }: PercentageProgressBarProps) {
+  const raw = Math.round(value * 100);
+  const pct = Number.isNaN(raw) ? 0 : Math.min(100, Math.max(0, raw));
   const bar = (
-    <div className="flex items-center gap-2">
+    <div
+      className="flex items-center gap-2"
+      role="progressbar"
+      aria-valuenow={pct}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={label}
+    >
       <div className="bg-muted h-2 w-24 overflow-hidden rounded-full">
         <div
           className="bg-primary h-full rounded-full"

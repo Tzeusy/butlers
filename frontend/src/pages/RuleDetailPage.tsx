@@ -10,7 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { permanenceBadge, PermanenceProgressBar } from "@/components/memory/badges";
+import { permanenceBadge, PercentageProgressBar } from "@/components/memory/badges";
 import { useRule } from "@/hooks/use-memory";
 
 function maturityBadge(m: string) {
@@ -108,7 +108,7 @@ export default function RuleDetailPage() {
 
               {/* Effectiveness */}
               <div className="flex flex-wrap items-end gap-6">
-                <PermanenceProgressBar value={rule.effectiveness_score} label="Effectiveness" />
+                <PercentageProgressBar value={rule.effectiveness_score} label="Effectiveness" />
                 <div className="text-sm">
                   <span className="text-muted-foreground">Applied: </span>
                   <span className="tabular-nums">{rule.applied_count}</span>
@@ -125,7 +125,7 @@ export default function RuleDetailPage() {
 
               {/* Confidence */}
               <div className="flex flex-wrap items-end gap-6">
-                <PermanenceProgressBar value={rule.confidence} label="Confidence" />
+                <PercentageProgressBar value={rule.confidence} label="Confidence" />
                 <div className="text-sm">
                   <span className="text-muted-foreground">Decay rate: </span>
                   <span className="tabular-nums">{rule.decay_rate}</span>

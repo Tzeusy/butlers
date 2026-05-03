@@ -10,7 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { permanenceBadge, PermanenceProgressBar } from "@/components/memory/badges";
+import { permanenceBadge, PercentageProgressBar } from "@/components/memory/badges";
 import { useFact } from "@/hooks/use-memory";
 
 function validityBadge(v: string) {
@@ -108,12 +108,7 @@ export default function FactDetailPage() {
 
               {/* Status row */}
               <div className="flex flex-wrap items-center gap-4">
-                <div>
-                  <p className="text-muted-foreground mb-1 text-xs font-medium">
-                    Confidence
-                  </p>
-                  <PermanenceProgressBar value={fact.confidence} />
-                </div>
+                <PercentageProgressBar value={fact.confidence} label="Confidence" />
                 <div>
                   <p className="text-muted-foreground mb-1 text-xs font-medium">
                     Permanence
