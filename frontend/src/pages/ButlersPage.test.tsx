@@ -17,6 +17,7 @@ function setQueryState(state: Partial<UseButlersResult>) {
     isLoading: false,
     isError: false,
     error: null,
+    refetch: vi.fn().mockResolvedValue(undefined),
     ...state,
   } as UseButlersResult);
 }

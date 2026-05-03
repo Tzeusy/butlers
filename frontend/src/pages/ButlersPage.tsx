@@ -83,7 +83,7 @@ function ButlerCard({ butler }: { butler: ButlerSummary }) {
 }
 
 export default function ButlersPage() {
-  const { data: response, isLoading, isError, error } = useButlers();
+  const { data: response, isLoading, isError, error, refetch } = useButlers();
   const { butlers, staffers, onlineCount } = useMemo(() => {
     const allSorted = [...(response?.data ?? [])].sort((a, b) => a.name.localeCompare(b.name));
     const butlerList = allSorted.filter((b) => b.type !== "staffer");
@@ -104,7 +104,7 @@ export default function ButlersPage() {
       description="Browse all registered butlers and jump directly to detail views."
       loading={isLoading}
       error={pageError}
-      onRetry={() => {}}
+      onRetry={pageError != null ? () => void refetch() : undefined}
     >
       {/* Partial-data stale-fetch banner */}
       {isError && hasData && (
