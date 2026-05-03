@@ -262,7 +262,6 @@ class TestEgressEndpoint:
         *,
         has_owner: bool = True,
         audit_rows: list[dict] | None = None,
-        oldest_at: datetime | None = None,
         owner_query_fails: bool = False,
         audit_query_fails: bool = False,
     ) -> DatabaseManager:
@@ -297,14 +296,8 @@ class TestEgressEndpoint:
                 raise RuntimeError("DB error")
             return [_make_record(r) for r in audit_rows]
 
-        async def _fetchval(sql, *args):
-            if "min(created_at)" in sql.lower():
-                return oldest_at or _NOW
-            return None
-
         pool.fetchrow = AsyncMock(side_effect=_fetchrow)
         pool.fetch = AsyncMock(side_effect=_fetch)
-        pool.fetchval = AsyncMock(side_effect=_fetchval)
 
         mock_db = MagicMock(spec=DatabaseManager)
         mock_db.pool.return_value = pool
@@ -410,9 +403,19 @@ class TestEgressEndpoint:
         assert other["display_name"] == "Other / Unrecognized"
 
     async def test_catalog_covers_from_is_oldest_audit_timestamp(self):
-        """catalog_covers_from reflects the oldest audit log entry."""
+        """catalog_covers_from reflects the oldest first_seen_at in audit rows."""
         earliest = datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
-        mock_db = self._make_db_with_owner(has_owner=True, oldest_at=earliest)
+        mock_db = self._make_db_with_owner(
+            has_owner=True,
+            audit_rows=[
+                {
+                    "operation": "llm_api_call",
+                    "last_seen_at": _NOW,
+                    "total_calls": 42,
+                    "first_seen_at": earliest,
+                },
+            ],
+        )
         app = _make_app_with_db(mock_db)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"

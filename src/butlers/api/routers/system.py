@@ -36,6 +36,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from butlers.api.db import DatabaseManager
+from butlers.api.models import ApiResponse
 
 logger = logging.getLogger(__name__)
 
@@ -180,8 +181,8 @@ _UNKNOWN_ACTOR_NAME = "Other / Unrecognized"
 # ---------------------------------------------------------------------------
 
 
-@router.get("/instance")
-async def get_instance_facts() -> dict:
+@router.get("/instance", response_model=ApiResponse[InstanceFacts])
+async def get_instance_facts() -> ApiResponse[InstanceFacts]:
     """Return software version, process uptime, and start timestamp.
 
     Version is read from importlib.metadata or the package __version__
@@ -200,13 +201,13 @@ async def get_instance_facts() -> dict:
     now = datetime.now(UTC)
     uptime = (now - _PROCESS_START).total_seconds()
 
-    return {
-        "data": InstanceFacts(
+    return ApiResponse(
+        data=InstanceFacts(
             version=version,
             uptime_seconds=uptime,
             started_at=_PROCESS_START.isoformat(),
-        ).model_dump()
-    }
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -214,10 +215,10 @@ async def get_instance_facts() -> dict:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/database")
+@router.get("/database", response_model=ApiResponse[DatabaseFacts])
 async def get_database_facts(
     db: DatabaseManager = Depends(_get_db_manager),
-) -> dict:
+) -> ApiResponse[DatabaseFacts]:
     """Return PostgreSQL catalog size facts for the current database.
 
     Queries:
@@ -250,7 +251,7 @@ async def get_database_facts(
                 count(*) AS table_count,
                 coalesce(
                     sum(pg_total_relation_size(
-                        quote_ident(t.table_schema) || '.' || quote_ident(t.table_name)
+                        (quote_ident(t.table_schema) || '.' || quote_ident(t.table_name))::regclass
                     )),
                     0
                 ) AS size_bytes
@@ -283,7 +284,7 @@ async def get_database_facts(
                 t.table_schema AS schema_name,
                 t.table_name,
                 pg_total_relation_size(
-                    quote_ident(t.table_schema) || '.' || quote_ident(t.table_name)
+                    (quote_ident(t.table_schema) || '.' || quote_ident(t.table_name))::regclass
                 ) AS size_bytes
             FROM information_schema.tables t
             WHERE t.table_schema NOT IN ('pg_catalog', 'information_schema',
@@ -306,13 +307,13 @@ async def get_database_facts(
         logger.warning("Failed to query table sizes: %s", exc)
         raise HTTPException(status_code=503, detail="Table size query failed")
 
-    return {
-        "data": DatabaseFacts(
+    return ApiResponse(
+        data=DatabaseFacts(
             total_size_bytes=total_bytes,
             schemas=schemas,
             largest_tables=largest_tables,
-        ).model_dump()
-    }
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -320,8 +321,8 @@ async def get_database_facts(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/backups")
-async def get_backup_facts() -> dict:
+@router.get("/backups", response_model=ApiResponse[BackupFacts])
+async def get_backup_facts() -> ApiResponse[BackupFacts]:
     """Return backup recency and source reachability.
 
     In v1, no backup strategy has been configured in this codebase (no
@@ -332,14 +333,14 @@ async def get_backup_facts() -> dict:
     Graceful degradation: always returns HTTP 200 with null fields when the
     backup source is unreachable or unconfigured, never HTTP 503.
     """
-    return {
-        "data": BackupFacts(
+    return ApiResponse(
+        data=BackupFacts(
             last_backup_at=None,
             last_backup_size_bytes=None,
             backup_source_reachable=False,
             backup_history=[],
-        ).model_dump()
-    }
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -392,10 +393,10 @@ async def _assert_owner_contact(pool) -> None:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/egress")
+@router.get("/egress", response_model=ApiResponse[EgressCatalog])
 async def get_egress_catalog(
     db: DatabaseManager = Depends(_get_db_manager),
-) -> dict:
+) -> ApiResponse[EgressCatalog]:
     """Return the data-egress catalog for this instance (owner-only).
 
     Aggregates switchboard.dashboard_audit_log by operation, mapping each
@@ -430,16 +431,18 @@ async def get_egress_catalog(
         logger.warning("Egress catalog query failed: %s", exc)
         raise HTTPException(status_code=503, detail="Egress catalog query failed")
 
-    # Derive catalog_covers_from from oldest record in the log
+    # Derive catalog_covers_from from the oldest first_seen_at already in the result set.
+    # No second query needed -- we already have min(created_at) per operation above.
     catalog_covers_from: str | None = None
-    try:
-        oldest = await sw_pool.fetchval("SELECT min(created_at) FROM dashboard_audit_log")
-        if oldest is not None:
+    if rows:
+        oldest_raw = min(
+            (row["first_seen_at"] for row in rows if row["first_seen_at"] is not None),
+            default=None,
+        )
+        if oldest_raw is not None:
             catalog_covers_from = (
-                oldest.isoformat() if hasattr(oldest, "isoformat") else str(oldest)
+                oldest_raw.isoformat() if hasattr(oldest_raw, "isoformat") else str(oldest_raw)
             )
-    except Exception:
-        pass  # non-fatal; omit covers_from rather than surfacing a 500
 
     # Aggregate rows by actor_id
     actor_buckets: dict[str, dict] = {}
@@ -498,12 +501,12 @@ async def get_egress_catalog(
         if a["last_seen_at"] is not None
     ]
 
-    return {
-        "data": EgressCatalog(
+    return ApiResponse(
+        data=EgressCatalog(
             actors=egress_actors,
             catalog_covers_from=catalog_covers_from,
-        ).model_dump()
-    }
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -511,10 +514,10 @@ async def get_egress_catalog(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/butlers/heartbeat")
+@router.get("/butlers/heartbeat", response_model=ApiResponse[HeartbeatFacts])
 async def get_butlers_heartbeat(
     db: DatabaseManager = Depends(_get_db_manager),
-) -> dict:
+) -> ApiResponse[HeartbeatFacts]:
     """Return per-butler liveness registry snapshots and session facts.
 
     Reads from the switchboard's butler_registry table for heartbeat timestamps
@@ -608,4 +611,4 @@ async def get_butlers_heartbeat(
             )
         )
 
-    return {"data": HeartbeatFacts(butlers=entries).model_dump()}
+    return ApiResponse(data=HeartbeatFacts(butlers=entries))
