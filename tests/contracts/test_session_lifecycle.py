@@ -123,7 +123,7 @@ class TestRequestIdOtelPropagation:
         """
         from butlers.core.utils import generate_uuid7_string
 
-        # Multiple calls must produce increasing UUIDs (time-ordered property)
+        # Multiple calls must produce v7 UUIDs
         ids = [generate_uuid7_string() for _ in range(5)]
         uuid_objs = [uuid.UUID(i) for i in ids]
 
@@ -131,9 +131,11 @@ class TestRequestIdOtelPropagation:
         for u in uuid_objs:
             assert u.version == 7, "Session request_id must be UUIDv7 (RFC 0001)"
 
-        # UUIDv7 is time-ordered: later UUIDs should compare greater than earlier ones
-        # (This holds when generated within the same millisecond boundary too)
-        for i in range(len(ids) - 1):
-            assert ids[i] <= ids[i + 1] or True, (
-                "UUIDv7 IDs are time-ordered — later IDs are >= earlier IDs (RFC 0001)"
+        # UUIDv7 millisecond timestamps must be non-decreasing across calls.
+        # The 48-bit ms timestamp occupies the high 48 bits of the 128-bit UUID int.
+        # (Random sub-ms bits may vary, so we check only the timestamp portion.)
+        timestamps = [u.int >> 80 for u in uuid_objs]
+        for i in range(len(timestamps) - 1):
+            assert timestamps[i] <= timestamps[i + 1], (
+                "UUIDv7 millisecond timestamps must be non-decreasing — later IDs are >= earlier IDs (RFC 0001)"
             )

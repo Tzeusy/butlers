@@ -139,6 +139,4 @@ class TestCascadeFailure:
         # Daemon must handle module failures without aborting startup
         assert "module" in src.lower() and (
             "disabled" in src.lower() or "unavailable" in src.lower() or "failed" in src.lower()
-        ), (
-            "ButlerDaemon must handle module startup failures non-fatally (RFC 0001)"
-        )
+        ), "ButlerDaemon must handle module startup failures non-fatally (RFC 0001)"

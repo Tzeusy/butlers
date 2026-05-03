@@ -224,9 +224,7 @@ class TestContextSupersession:
             "set_context must update superseded_at = NULL to reactivate signals (RFC 0009)"
         )
         # The confidence value is updated on conflict
-        assert "confidence" in src, (
-            "set_context must update confidence on conflict (RFC 0009)"
-        )
+        assert "confidence" in src, "set_context must update confidence on conflict (RFC 0009)"
 
     def test_confidence_field_is_tiebreaker_in_queries(self):
         """RFC 0009: get_active_context() orders by confidence DESC to surface higher-confidence signals.
@@ -280,9 +278,7 @@ class TestContextSupersession:
         # Both functions must filter on superseded_at IS NULL AND expires_at > now()
         for fn in [get_active_context, is_user_in_context]:
             src = inspect.getsource(fn)
-            assert "superseded_at IS NULL" in src or "superseded_at" in src, (
+            assert "superseded_at IS NULL" in src, (
                 f"{fn.__name__} must filter superseded_at IS NULL (RFC 0009)"
             )
-            assert "expires_at" in src, (
-                f"{fn.__name__} must filter by expires_at (RFC 0009)"
-            )
+            assert "expires_at" in src, f"{fn.__name__} must filter by expires_at (RFC 0009)"

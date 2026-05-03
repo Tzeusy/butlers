@@ -103,15 +103,17 @@ class TestTriageRuleEvaluation:
         # RFC 0003: "Rules are evaluated in priority ASC, created_at ASC, id ASC order."
         # Verify: lower priority integer = evaluated first (higher precedence)
         rules_ordered = [
-            {"priority": 1, "action": "skip"},      # highest precedence
+            {"priority": 1, "action": "skip"},  # highest precedence
             {"priority": 2, "action": "route_to"},  # lower precedence
             {"priority": 10, "action": "pass_through"},  # lowest precedence
         ]
 
         # First match wins: priority 1 rule is evaluated before priority 10
-        assert rules_ordered[0]["priority"] < rules_ordered[1]["priority"] < rules_ordered[2]["priority"], (
-            "Rules must be evaluated in priority ASC order (RFC 0003)"
-        )
+        assert (
+            rules_ordered[0]["priority"]
+            < rules_ordered[1]["priority"]
+            < rules_ordered[2]["priority"]
+        ), "Rules must be evaluated in priority ASC order (RFC 0003)"
 
         # The evaluation ORDER clause: priority ASC, created_at ASC, id ASC
         order_clause = "priority ASC, created_at ASC, id ASC"

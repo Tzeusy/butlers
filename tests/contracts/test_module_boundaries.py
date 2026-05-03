@@ -182,7 +182,7 @@ class TestModuleStartupFailureHandling:
 
         # credential_store must be optional (modules without secrets still work)
         default = sig.parameters["credential_store"].default
-        assert default is None or default == inspect.Parameter.empty or default is None, (
+        assert default in (None, inspect.Parameter.empty), (
             "credential_store param must have a default (optional for modules without secrets)"
         )
 

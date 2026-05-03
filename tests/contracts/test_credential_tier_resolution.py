@@ -187,6 +187,6 @@ class TestCredentialSecurityConstraints:
         )
 
         default_fallback = params["env_fallback"].default
-        assert default_fallback is False or default_fallback == False, (  # noqa: E712
+        assert default_fallback is False, (
             "env_fallback must default to False — DB always takes precedence (RFC 0006)"
         )

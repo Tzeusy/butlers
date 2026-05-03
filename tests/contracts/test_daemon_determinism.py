@@ -106,9 +106,7 @@ class TestCrashRecoveryAndGlobalConcurrency:
 
         # The recovery function scans both accepted and processing states
         src = inspect.getsource(recover_route_inbox)
-        assert "accepted" in src, (
-            "crash recovery must scan 'accepted' rows (RFC 0001)"
-        )
+        assert "accepted" in src, "crash recovery must scan 'accepted' rows (RFC 0001)"
         assert "processing" in src or "grace" in src, (
             "crash recovery must scan 'processing' rows or use grace period filter (RFC 0001)"
         )
@@ -134,9 +132,7 @@ class TestCrashRecoveryAndGlobalConcurrency:
         # Default max global sessions documented in RFC 0001
         from butlers.core.spawner import _DEFAULT_MAX_GLOBAL_SESSIONS
 
-        assert _DEFAULT_MAX_GLOBAL_SESSIONS == 3, (
-            "Default max global sessions must be 3 (RFC 0001)"
-        )
+        assert _DEFAULT_MAX_GLOBAL_SESSIONS == 3, "Default max global sessions must be 3 (RFC 0001)"
 
     def test_route_inbox_state_machine_transitions(self):
         r"""RFC 0001: route_inbox row transitions: accepted -> processing -> processed/errored.
@@ -174,22 +170,14 @@ class TestCrashRecoveryAndGlobalConcurrency:
 
         from butlers.core.spawner import Spawner
 
-        assert hasattr(Spawner, "drain"), (
-            "Spawner must have drain() method (RFC 0001)"
-        )
-        assert asyncio.iscoroutinefunction(Spawner.drain), (
-            "Spawner.drain must be async (RFC 0001)"
-        )
+        assert hasattr(Spawner, "drain"), "Spawner must have drain() method (RFC 0001)"
+        assert asyncio.iscoroutinefunction(Spawner.drain), "Spawner.drain must be async (RFC 0001)"
 
         # drain() signature must accept timeout parameter
         sig = inspect.signature(Spawner.drain)
         params = list(sig.parameters.keys())
-        assert "timeout" in params, (
-            "Spawner.drain must accept timeout parameter (RFC 0001)"
-        )
+        assert "timeout" in params, "Spawner.drain must accept timeout parameter (RFC 0001)"
 
         # Default timeout must be 30s per RFC 0001
         default_timeout = sig.parameters["timeout"].default
-        assert default_timeout == 30.0, (
-            "Spawner.drain default timeout must be 30.0s (RFC 0001)"
-        )
+        assert default_timeout == 30.0, "Spawner.drain default timeout must be 30.0s (RFC 0001)"

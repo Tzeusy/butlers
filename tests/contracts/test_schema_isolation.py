@@ -196,9 +196,9 @@ class TestRoleEnforcementContracts:
             "_setup_connection must be async for use as asyncpg pool setup callback (RFC 0006)"
         )
 
-        # Source must reference SET ROLE or similar role assumption
+        # Source must reference SET ROLE — search_path alone is insufficient
         src = inspect.getsource(db._setup_connection)
-        assert "role" in src.lower() or "SET ROLE" in src, (
+        assert "SET ROLE" in src, (
             "_setup_connection must execute SET ROLE for schema isolation (RFC 0006)"
         )
 

@@ -209,9 +209,7 @@ class TestShutdownSequenceContracts:
 
         sig = inspect.signature(Spawner.drain)
         default_timeout = sig.parameters["timeout"].default
-        assert default_timeout == 30.0, (
-            "Default drain timeout must be 30.0s per RFC 0001"
-        )
+        assert default_timeout == 30.0, "Default drain timeout must be 30.0s per RFC 0001"
 
     def test_on_shutdown_is_async(self):
         """RFC 0001: Module.on_shutdown() must be async for the shutdown protocol."""
@@ -288,9 +286,7 @@ class TestConcreteModuleShutdown:
         from butlers.core.spawner import Spawner
 
         # drain() must be async and accept a timeout parameter
-        assert asyncio.iscoroutinefunction(Spawner.drain), (
-            "Spawner.drain must be async (RFC 0001)"
-        )
+        assert asyncio.iscoroutinefunction(Spawner.drain), "Spawner.drain must be async (RFC 0001)"
         sig = inspect.signature(Spawner.drain)
         params = list(sig.parameters.keys())
         assert "timeout" in params, "Spawner.drain must accept timeout parameter (RFC 0001)"

@@ -366,9 +366,16 @@ class TestToolBudgetDiscipline:
         """
         # Known core groups per RFC 0002
         core_groups = {
-            "infra", "state", "scheduling", "sessions",
-            "notifications", "media", "temporal", "module_mgmt",
-            "switchboard_routing", "switchboard_backfill",
+            "infra",
+            "state",
+            "scheduling",
+            "sessions",
+            "notifications",
+            "media",
+            "temporal",
+            "module_mgmt",
+            "switchboard_routing",
+            "switchboard_backfill",
         }
         assert len(core_groups) >= 8, "RFC 0002 defines at least 8 core groups"
         assert "infra" in core_groups, "infra group must be defined (RFC 0002)"

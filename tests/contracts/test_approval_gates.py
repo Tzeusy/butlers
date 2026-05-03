@@ -216,6 +216,4 @@ class TestApprovalRuleMatching:
         }
 
         result = match_rules_from_list("send_email", {"to": "anyone@example.com"}, [expired_rule])
-        assert result is None, (
-            "Expired rule must NOT match — timeout is denial (security.md)"
-        )
+        assert result is None, "Expired rule must NOT match — timeout is denial (security.md)"
