@@ -160,7 +160,9 @@ the "your data has been seen by these endpoints" surface.
   (`switchboard.dashboard_audit_log`) -- no new write path is introduced. There is no
   `audit.events` table in the current codebase; all audit records go to
   `switchboard.dashboard_audit_log`. Actor identity is derived from the `operation`
-  field and `request_summary` JSONB via the server-side actor registry.
+  field via the server-side actor registry. (`request_summary` JSONB is not used for
+  actor derivation in v1; the registry maps `operation` strings directly to actor
+  identifiers and display names.)
 - **AND** only records whose `operation` value maps to an external actor in the
   actor registry are included (e.g., `"llm_api_call"`, `"telegram_send"`,
   `"google_calendar_write"`, `"gmail_send"`); the implementation bead MUST define
