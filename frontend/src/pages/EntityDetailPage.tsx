@@ -34,8 +34,8 @@ import {
 } from "@/api/index";
 import { OwnerSetupBanner } from "@/components/relationship/OwnerSetupBanner";
 import { Badge } from "@/components/ui/badge";
-import { Breadcrumbs } from "@/components/ui/breadcrumbs";
 import { Button } from "@/components/ui/button";
+import { Page } from "@/components/ui/page";
 import {
   Card,
   CardContent,
@@ -1976,28 +1976,17 @@ export default function EntityDetailPage() {
     ) ?? false;
 
   return (
-    <div className="space-y-8">
-      <Breadcrumbs
-        items={[
-          { label: "Entities", href: "/entities" },
-          { label: entity?.canonical_name ?? entityId ?? "Entity" },
-        ]}
-      />
-
-      {isLoading && (
-        <div className="space-y-4">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-64 w-full" />
-        </div>
-      )}
-
-      {error && (
-        <div className="text-destructive py-12 text-center text-sm">
-          Failed to load entity. {(error as Error).message}
-        </div>
-      )}
-
+    <Page
+      archetype="detail"
+      title={entity?.canonical_name ?? "Entity"}
+      loading={isLoading}
+      error={error ?? null}
+      breadcrumbs={[
+        { label: "Home", href: "/" },
+        { label: "Entities", href: "/entities" },
+        { label: entity?.canonical_name ?? "Entity" },
+      ]}
+    >
       {entity && entityId && (
         <>
           {/* Identity hero — name, type, badges, aliases, roles */}
@@ -2302,6 +2291,6 @@ export default function EntityDetailPage() {
           </PracticalDrawer>
         </>
       )}
-    </div>
+    </Page>
   );
 }

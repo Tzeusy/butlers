@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 
 import { Breadcrumbs } from "@/components/ui/breadcrumbs";
+import { useBreadcrumbsControl } from "@/components/ui/breadcrumbs-control";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -202,6 +203,8 @@ export function Page({
   skeletonSectionCount = 2,
   children,
 }: PageProps) {
+  const { setSupplyingBreadcrumbs } = useBreadcrumbsControl();
+
   // Manage document.title automatically; restore previous title on unmount
   useEffect(() => {
     const previousTitle = document.title;
@@ -210,6 +213,17 @@ export function Page({
       document.title = previousTitle;
     };
   }, [title]);
+
+  // Tell PageHeader to suppress its URL-segment auto-builder when this page
+  // supplies explicit breadcrumbs. Reset on unmount so transitioning to a page
+  // that does not supply breadcrumbs restores the auto-builder.
+  useEffect(() => {
+    const supplying = breadcrumbs != null && breadcrumbs.length > 0;
+    setSupplyingBreadcrumbs(supplying);
+    return () => {
+      setSupplyingBreadcrumbs(false);
+    };
+  }, [breadcrumbs, setSupplyingBreadcrumbs]);
 
   // Warn in development when list pages pass empty (should handle inline)
   useEffect(() => {
