@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 
@@ -9,9 +9,9 @@ import SocialMapPage from "@/pages/SocialMapPage";
 import { useDunbarRanking } from "@/hooks/use-memory";
 import type { DunbarEntry, DunbarRankingResponse } from "@/api/types";
 
-// jsdom does not implement ResizeObserver. Stub it before any module loads.
-// The stub needs to call the callback immediately so useElementSize returns
-// non-zero dimensions and the canvas is actually rendered.
+// jsdom does not implement ResizeObserver. Stub it so useElementSize fires
+// immediately and returns non-zero dimensions before the component mounts.
+const _originalResizeObserver = (globalThis as typeof globalThis & { ResizeObserver?: unknown }).ResizeObserver;
 (globalThis as typeof globalThis & { ResizeObserver?: unknown }).ResizeObserver =
   class {
     private _cb: ResizeObserverCallback;
@@ -28,8 +28,25 @@ import type { DunbarEntry, DunbarRankingResponse } from "@/api/types";
   };
 
 // Return 800x600 for all element size queries so the canvas renders in jsdom.
+const _originalClientWidthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+const _originalClientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
 Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 800 });
 Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 600 });
+
+afterAll(() => {
+  // Restore globals so this file's module-scope stubs don't leak into other workers.
+  (globalThis as typeof globalThis & { ResizeObserver?: unknown }).ResizeObserver = _originalResizeObserver;
+  if (_originalClientWidthDescriptor) {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", _originalClientWidthDescriptor);
+  } else {
+    delete (HTMLElement.prototype as Partial<HTMLElement>).clientWidth;
+  }
+  if (_originalClientHeightDescriptor) {
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", _originalClientHeightDescriptor);
+  } else {
+    delete (HTMLElement.prototype as Partial<HTMLElement>).clientHeight;
+  }
+});
 
 import type { Tier } from "@/components/memory/concentric-circles-constants";
 

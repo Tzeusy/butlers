@@ -494,7 +494,10 @@ export function ConcentricCirclesCanvas({
                 return (
                   <g
                     style={{ cursor: "pointer" }}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => onTierExpand(tier)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onTierExpand(tier); } }}
                     aria-label={`Show ${hiddenCount} more contacts in ${TIER_NAMES[tier]}`}
                   >
                     <circle
