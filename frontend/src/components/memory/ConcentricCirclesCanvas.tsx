@@ -60,13 +60,12 @@ function TierNode({ entry, x, y, tier, showName, radius, dimmed, onNavigate }: T
   const clipId = `avatar-clip-${entry.entity_id}`;
 
   return (
-    <TooltipProvider key={entry.entity_id}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <g
-            style={{ cursor: "pointer", opacity: dimmed ? 0.3 : 1, transition: "opacity 150ms ease" }}
-            onClick={() => onNavigate(entry.entity_id)}
-          >
+    <Tooltip key={entry.entity_id}>
+      <TooltipTrigger asChild>
+        <g
+          style={{ cursor: "pointer", opacity: dimmed ? 0.3 : 1, transition: "opacity 150ms ease" }}
+          onClick={() => onNavigate(entry.entity_id)}
+        >
             {showAvatar && (
               <defs>
                 <clipPath id={clipId}>
@@ -130,16 +129,15 @@ function TierNode({ entry, x, y, tier, showName, radius, dimmed, onNavigate }: T
               </text>
             )}
           </g>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={8}>
-          <p className="font-medium">{entry.canonical_name}</p>
-          <p className="text-xs opacity-75">
-            Tier {tier} · Score {entry.dunbar_score.toFixed(2)}
-            {entry.dunbar_tier_override && " · pinned"}
-          </p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={8}>
+        <p className="font-medium">{entry.canonical_name}</p>
+        <p className="text-xs opacity-75">
+          Tier {tier} · Score {entry.dunbar_score.toFixed(2)}
+          {entry.dunbar_tier_override && " · pinned"}
+        </p>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -157,6 +155,12 @@ export interface ConcentricCirclesCanvasProps {
   searchQuery: string;
   /** Tier to animate the viewport toward. Null = no pending focus. */
   focusTier: Tier | null;
+  /**
+   * Monotonic counter incremented each time the parent wants to (re-)trigger
+   * the jump animation. Incrementing this even with the same focusTier fires
+   * the animation again without remounting the canvas.
+   */
+  focusTrigger: number;
   /** Tiers currently expanded to show all contacts (not just top 5). */
   expandedTiers: Set<Tier>;
   onNavigate: (entityId: string) => void;
@@ -175,6 +179,7 @@ export function ConcentricCirclesCanvas({
   height,
   searchQuery,
   focusTier,
+  focusTrigger,
   expandedTiers,
   onNavigate,
   onTierExpand,
@@ -197,7 +202,6 @@ export function ConcentricCirclesCanvas({
   } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  const prevFocusTierRef = useRef<Tier | null>(null);
   const animFrameRef = useRef<number | null>(null);
 
   // Derived geometry
@@ -233,10 +237,11 @@ export function ConcentricCirclesCanvas({
   }, [width, height]);
 
   // Animate jump-to-tier: ease-out-expo pan + zoom to center the ring.
+  // focusTrigger is a monotonic counter incremented by the parent each time it
+  // wants to fire the animation, including repeated jumps to the same tier.
   // Reads the current viewBox via ref to avoid stale closure issues.
   useEffect(() => {
-    if (focusTier === null || focusTier === prevFocusTierRef.current) return;
-    prevFocusTierRef.current = focusTier;
+    if (focusTier === null) return;
 
     const tierR = maxR * TIER_RADIUS_FRACTIONS[focusTier];
     const targetScale = (Math.min(width, height) * 0.7) / (tierR * 2);
@@ -269,7 +274,8 @@ export function ConcentricCirclesCanvas({
     return () => {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [focusTier, cx, cy, maxR, width, height]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTrigger, cx, cy, maxR, width, height]);
 
   function handleMouseDown(e: React.MouseEvent<SVGSVGElement>) {
     if (e.button !== 0) return;
@@ -341,6 +347,7 @@ export function ConcentricCirclesCanvas({
   };
 
   return (
+    <TooltipProvider>
     <div className="relative w-full h-full">
       <div className="absolute top-2 right-2 z-10 flex items-center gap-1.5 rounded-md border bg-background/80 backdrop-blur px-2 py-1 text-xs text-muted-foreground shadow-sm">
         <span>Scroll to zoom &middot; drag to pan</span>
@@ -450,11 +457,15 @@ export function ConcentricCirclesCanvas({
           const ringR = prevR + nodeR;
 
           const showName = tier <= 15;
-          const showAll = tier <= 15 || expandedTiers.has(tier);
+          // Always show all entries when a search is active so matches in
+          // collapsed outer rings are not hidden from the user.
+          const isExpanded = tier <= 15 || expandedTiers.has(tier);
+          const showAll = isExpanded || searchQuery.length > 0;
           const displayEntries = showAll ? tierEntries : tierEntries.slice(0, 5);
           const hiddenCount = showAll ? 0 : tierEntries.length - 5;
 
           const positions = circlePositions(displayEntries.length, ringR, cx, cy);
+          const color = TIER_RING_COLORS[tier];
 
           return (
             <g key={tier}>
@@ -474,6 +485,7 @@ export function ConcentricCirclesCanvas({
                   />
                 );
               })}
+              {/* Show "+N" expand button for collapsed tiers */}
               {hiddenCount > 0 && (
                 <g
                   style={{ cursor: "pointer" }}
@@ -483,9 +495,9 @@ export function ConcentricCirclesCanvas({
                     cx={cx + ringR}
                     cy={cy}
                     r={nodeRadius}
-                    fill={TIER_RING_COLORS[tier]}
+                    fill={color}
                     fillOpacity={0.25}
-                    stroke={TIER_RING_COLORS[tier]}
+                    stroke={color}
                     strokeWidth={1}
                   />
                   <text
@@ -495,9 +507,38 @@ export function ConcentricCirclesCanvas({
                     dominantBaseline="central"
                     fontSize={7}
                     fontWeight="700"
-                    fill={TIER_RING_COLORS[tier]}
+                    fill={color}
                   >
                     +{hiddenCount}
+                  </text>
+                </g>
+              )}
+              {/* Show collapse button for manually expanded tiers (not inner rings and not search-expanded) */}
+              {isExpanded && tier > 15 && searchQuery.length === 0 && (
+                <g
+                  style={{ cursor: "pointer" }}
+                  onClick={() => onTierExpand(tier)}
+                >
+                  <circle
+                    cx={cx - ringR}
+                    cy={cy}
+                    r={nodeRadius}
+                    fill={color}
+                    fillOpacity={0.15}
+                    stroke={color}
+                    strokeWidth={1}
+                    strokeDasharray="2,2"
+                  />
+                  <text
+                    x={cx - ringR}
+                    y={cy}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fontSize={7}
+                    fontWeight="700"
+                    fill={color}
+                  >
+                    &minus;
                   </text>
                 </g>
               )}
@@ -544,5 +585,6 @@ export function ConcentricCirclesCanvas({
         )}
       </svg>
     </div>
+    </TooltipProvider>
   );
 }

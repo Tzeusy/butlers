@@ -16,7 +16,7 @@
  * legend inside the header area. Follows the dashboard's existing layout.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ArrowLeftIcon, CrosshairIcon, PinIcon, SearchIcon } from "lucide-react";
 
@@ -111,6 +111,7 @@ function JumpToTierChips({ onJump, activeTier }: JumpToTierChipsProps) {
           ].join(" ")}
           style={activeTier === tier ? {} : { borderColor: TIER_RING_COLORS[tier] + "80" }}
           title={TIER_NAMES[tier]}
+          aria-label={`Jump to ${TIER_NAMES[tier]} (tier ${tier})`}
         >
           {tier}
         </button>
@@ -155,22 +156,29 @@ export default function SocialMapPage() {
   const ownerEntry = entries.find((e) => e.entity_id === ownerEntityId);
   const ownerName = ownerEntry?.canonical_name ?? "You";
 
-  // Tier groups for legend
-  const tierGroups: Record<Tier, DunbarEntry[]> = {
-    5: [],
-    15: [],
-    50: [],
-    150: [],
-    500: [],
-    1500: [],
-  };
-  for (const entry of entries) {
-    if (entry.entity_id === ownerEntityId) continue;
-    const tier = entry.dunbar_tier as Tier;
-    if (tierGroups[tier]) tierGroups[tier].push(entry);
-  }
-
-  const hasPinnedOverride = entries.some((e) => e.dunbar_tier_override);
+  // Tier groups for legend — memoized to avoid O(N) work on every render.
+  // Depends on the raw `data` object (stable reference from TanStack Query) so
+  // the memo only recomputes when the server response changes.
+  const { tierGroups, hasPinnedOverride } = useMemo(() => {
+    const rawEntries = data?.entries ?? [];
+    const rawOwner = data?.owner_entity_id ?? null;
+    const groups: Record<Tier, DunbarEntry[]> = {
+      5: [],
+      15: [],
+      50: [],
+      150: [],
+      500: [],
+      1500: [],
+    };
+    let pinned = false;
+    for (const entry of rawEntries) {
+      if (entry.entity_id === rawOwner) continue;
+      const tier = entry.dunbar_tier as Tier;
+      if (groups[tier]) groups[tier].push(entry);
+      if (entry.dunbar_tier_override) pinned = true;
+    }
+    return { tierGroups: groups, hasPinnedOverride: pinned };
+  }, [data]);
 
   // Sync debounced search back to URL
   useEffect(() => {
@@ -254,13 +262,10 @@ export default function SocialMapPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput, navigate]);
 
-  // The canvas key re-mounts when stage dimensions change to reset internal state
+  // The canvas key re-mounts when stage dimensions change to reset internal state.
+  // focusTrigger is passed as a separate prop so repeated jumps to the same tier
+  // re-fire the animation without unmounting the canvas (preserving pan/zoom state).
   const canvasKey = `${stageSize.width}x${stageSize.height}`;
-
-  // focusTier prop changes trigger the animation; use focusTrigger to create
-  // a unique object reference that the canvas useEffect will detect even when
-  // the same tier is selected twice.
-  const canvasFocusTier = focusTier;
 
   return (
     <div className="flex flex-col h-full space-y-4">
@@ -333,14 +338,15 @@ export default function SocialMapPage() {
         )}
         {!isLoading && !isError && stageSize.width > 0 && stageSize.height > 0 && (
           <ConcentricCirclesCanvas
-            key={`${canvasKey}-${focusTrigger}`}
+            key={canvasKey}
             entries={entries}
             ownerEntityId={ownerEntityId}
             ownerName={ownerName}
             width={stageSize.width}
             height={stageSize.height}
             searchQuery={debouncedSearch}
-            focusTier={canvasFocusTier}
+            focusTier={focusTier}
+            focusTrigger={focusTrigger}
             expandedTiers={expandedTiers}
             onNavigate={handleNavigate}
             onTierExpand={handleTierExpand}
