@@ -4,7 +4,7 @@ Covers:
 - Single meal → single eating_event point event (no episode shape).
 - Event field schema correctness and title format.
 - Payload omits null nutrition/notes (schema cleanliness).
-- Watermark advance with tuple-precision (eaten_at, seq).
+- Watermark advances to max eaten_at across batch.
 - Missing evidence surface graceful degradation.
 - No-LLM AST scan.
 - Contracts registration: health.meals SUPPORTED.
@@ -302,9 +302,7 @@ async def test_missing_evidence_table_returns_skipped_result() -> None:
 async def test_undefined_table_exception_returns_skipped_result() -> None:
     conn = AsyncMock()
     conn.fetchval = AsyncMock(
-        side_effect=asyncpg.exceptions.UndefinedTableError(
-            'relation "health.meals" does not exist'
-        )
+        side_effect=asyncpg.exceptions.UndefinedTableError('relation "health.meals" does not exist')
     )
     pool = AsyncMock()
     pool.acquire = MagicMock(return_value=_AsyncCtx(conn))

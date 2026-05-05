@@ -7,7 +7,7 @@ Covers:
 - Missing evidence surface graceful degradation (fetchval=False, UndefinedTableError).
 - Watermark advances to max recorded_at across batch.
 - No-LLM AST scan.
-- Contracts registration: steam.play_history SUPPORTED.
+- Adapter export from package.
 """
 
 from __future__ import annotations
@@ -264,6 +264,7 @@ async def test_negative_playtime_row_is_skipped_and_watermarked() -> None:
     assert result.episodes_closed == 0
     assert result.watermark == _NOW
     assert len(result.warnings) == 1
+    assert "negative playtime_minutes" in result.warnings[0]
     mock_upsert.assert_not_called()
 
 

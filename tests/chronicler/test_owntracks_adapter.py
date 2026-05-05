@@ -6,7 +6,6 @@ Covers:
 - Gap detection: points beyond the threshold start a new episode.
 - Endpoint identity change starts a new episode.
 - Nonfinite coordinate handling (skip + warn).
-- Replay / idempotency (same source_ref on repeated runs).
 - Missing evidence surface graceful degradation.
 - Checkpoint advance / resume (watermark advances by ts).
 - Clock-skew clamping: implausible device timestamps clamped to recorded_at.

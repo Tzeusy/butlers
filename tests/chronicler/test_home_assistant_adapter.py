@@ -2,13 +2,13 @@
 
 Covers:
 - Presence detection from state changes (person.user: away → home → away).
-- Multi-entity transitions (two person entities simultaneously).
 - Non-person entities are filtered.
 - Watermark advances across all rows (not just presence rows).
 - Missing evidence surface graceful degradation (fetchval=False, UndefinedTableError).
 - Episode title and taxonomy contract tests.
 - No-LLM AST scan.
-- Contracts registration: home_assistant.history SUPPORTED.
+- Adapter export from package.
+- Regression: UUID id rows never set watermark_id (asyncpg DataError guard).
 """
 
 from __future__ import annotations

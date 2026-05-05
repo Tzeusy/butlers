@@ -10,7 +10,7 @@ Covers:
 - Missing evidence surface (health.facts absent) → graceful degradation.
 - No-LLM invariant (AST scan of adapter source).
 - _derive_end_at end-time parsing (ISO strings, Z suffix, duration fallback).
-- Contracts registration: google_health.measurements SUPPORTED.
+- Adapter export from package.
 """
 
 from __future__ import annotations
