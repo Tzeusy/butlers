@@ -466,8 +466,8 @@ describe("Sidebar", () => {
     it("brand: only one brand span is in the accessibility tree when expanded", () => {
       render();
 
-      // Brand area is the first child div of the sidebar
-      const brandDiv = container.querySelector(".flex.h-14.items-center");
+      // Brand area identified by stable test hook
+      const brandDiv = container.querySelector("[data-testid='sidebar-brand']");
       expect(brandDiv).toBeTruthy();
 
       const spans = Array.from(brandDiv!.querySelectorAll("span"));
@@ -494,7 +494,7 @@ describe("Sidebar", () => {
         );
       });
 
-      const brandDiv = container.querySelector(".flex.h-14.items-center");
+      const brandDiv = container.querySelector("[data-testid='sidebar-brand']");
       expect(brandDiv).toBeTruthy();
 
       const spans = Array.from(brandDiv!.querySelectorAll("span"));

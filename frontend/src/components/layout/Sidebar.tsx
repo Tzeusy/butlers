@@ -355,7 +355,7 @@ export default function Sidebar({ collapsed = false, onToggleCollapse, onNavClic
   return (
     <div className="flex h-full flex-col">
       {/* Brand */}
-      <div className="flex h-14 items-center border-b border-border px-4">
+      <div data-testid="sidebar-brand" className="flex h-14 items-center border-b border-border px-4">
         <span
           aria-hidden={collapsed}
           className={`text-lg font-semibold transition-opacity duration-base ease-out-quart ${
