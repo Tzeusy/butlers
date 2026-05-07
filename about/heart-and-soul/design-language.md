@@ -275,7 +275,7 @@ the use case before being treated as binding.
 
 ---
 
-## Theme Commitment
+## Theme commitment
 
 > Status: **settled** (bu-iaw5h.1).
 
