@@ -23,8 +23,8 @@ To support that opening without coupling the page to LLM latency, the dashboard 
 
 ## Impact
 
-- **New API router**: `src/butlers/dashboard/api/briefing.py` (registered under the existing dashboard API router tree).
-- **New module**: `src/butlers/dashboard/briefing/{__init__,classify,prompts,fallback}.py`.
+- **New API router**: `src/butlers/api/routers/dashboard_briefing.py` (added to the registration list in `src/butlers/api/app.py`, following the same pattern as `routers/system.py` and the other dashboard routers).
+- **New module**: `src/butlers/api/briefing/{__init__,classify,prompts,fallback}.py`. Co-locates classifier, prompt, fallback table, and voice lint with the router that consumes them. Distinct from `src/butlers/jobs/briefing.py` (the cross-butler daily aggregation job), which is a different capability.
 - **New frontend types**: `Briefing` in `frontend/src/api/types.ts`, `getDashboardBriefing()` in `frontend/src/api/client.ts`, `useBriefing()` hook in `frontend/src/hooks/use-briefing.ts`. The hook ships as a stub in this change (no consumer yet), so the implementation PR can wire it without contract churn.
 - **No database schema changes**: classification reads existing tables (`*.notifications`, `*.issues`, `*.sessions`, `core.butlers`).
 - **Page restructure deferred**: the editorial archetype landing for `/` is a follow-up change. This change is endpoint-only.

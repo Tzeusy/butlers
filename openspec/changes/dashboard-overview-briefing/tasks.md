@@ -5,8 +5,8 @@
 
 ## 2. Backend: Endpoint
 
-- [ ] 2.1 Create `src/butlers/dashboard/api/briefing.py` exposing `GET /api/dashboard/briefing` and registering with the existing dashboard API router.
-- [ ] 2.2 Create `src/butlers/dashboard/briefing/__init__.py`, `classify.py`, `prompts.py`, `fallback.py`. Implement `classify(state) -> state_class` and `headline_for(state_class) -> body` per the tables in `design.md`.
+- [ ] 2.1 Create `src/butlers/api/routers/dashboard_briefing.py` exposing `GET /api/dashboard/briefing`. Register it in `src/butlers/api/app.py` alongside the other dashboard routers (follow the `system_router` pattern). Distinct from `src/butlers/jobs/briefing.py`, which is the cross-butler daily aggregation job.
+- [ ] 2.2 Create `src/butlers/api/briefing/__init__.py`, `classify.py`, `prompts.py`, `fallback.py`. Implement `classify(state) -> state_class` and `headline_for(state_class, n)` per the tables in `design.md`. The classifier reads from existing tables: `*.notifications`, `*.issues`, `*.sessions`, `core.butlers`.
 - [ ] 2.3 Implement the LLM call against Claude Haiku 4.5 with the pinned prompt, `max_tokens=120`, `temperature=0.4`, `timeout=4.0` seconds.
 - [ ] 2.4 Implement `elaborate_fallback(state, state_class)`. Cover all five `state_class` values; verify each fallback string complies with the voice rules.
 - [ ] 2.5 Implement the post-generation voice lint (D5). Reject responses containing banned tokens; emit `briefing.elaboration.rejected` and `briefing.elaboration.fallback` metrics.

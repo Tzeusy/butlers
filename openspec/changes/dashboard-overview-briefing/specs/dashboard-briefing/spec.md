@@ -21,7 +21,7 @@ The endpoint `GET /api/dashboard/briefing` SHALL return a JSON object with exact
 - **AND** `headline` is the templated body for the computed `state_class`
 - **AND** `source` is one of `"llm"` or `"fallback"`
 - **AND** `state_class` is one of `"urgent"`, `"busy"`, `"mild"`, `"degraded-quiet"`, `"quiet"`
-- **AND** `generated_at` is an ISO 8601 timestamp
+- **AND** `generated_at` is an ISO 8601 timestamp recording the wall-clock time at which the Briefing object was finalized, set once per composition regardless of whether `source` is `"llm"` or `"fallback"` and regardless of how long the underlying LLM call took
 
 ### Requirement: State Classification
 

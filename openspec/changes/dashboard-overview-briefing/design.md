@@ -51,13 +51,15 @@ The Briefing has two parts: a templated headline (greeting + body) and an LLM-el
 
 `headline_for(state_class)` returns a `body` string:
 
-| state_class       | body                                                              |
-|-------------------|-------------------------------------------------------------------|
-| `urgent`          | "{n} things need you now." (or "One thing needs you now." for n == 1) |
-| `busy`            | "Things are busy with {total} items waiting."                     |
-| `mild`            | "Things are quiet, with {n} exception(s)."                        |
-| `degraded-quiet`  | "Quiet, but {n} butler(s) {is/are} degraded."                     |
-| `quiet`           | "Everything is in hand."                                          |
+| state_class       | body (singular form)                                | body (plural form)                                  |
+|-------------------|-----------------------------------------------------|-----------------------------------------------------|
+| `urgent`          | "One thing needs you now."                          | "{n} things need you now."                          |
+| `busy`            | "Things are busy with {total} items waiting."       | "Things are busy with {total} items waiting."       |
+| `mild`            | "Things are quiet, with {n} exception."             | "Things are quiet, with {n} exceptions."            |
+| `degraded-quiet`  | "Quiet, but {n} butler is degraded."                | "Quiet, but {n} butlers are degraded."              |
+| `quiet`           | "Everything is in hand."                            | "Everything is in hand."                            |
+
+Singular form fires when the count or item is exactly 1; plural form otherwise. `mild` is bounded at one or two attention items by the classifier, so the plural form covers `n == 2` only. `busy` ranges over `total >= 3` and uses the plural phrasing in all cases.
 
 `greet` is `"Good {time_of_day}."`. The frontend renders `greet` muted and `body` in foreground, on two lines under the Display headline.
 
