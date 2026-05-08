@@ -219,9 +219,16 @@ the use case before being treated as binding.
    `<Page>` shell that owns title, description, breadcrumbs, action
    bar, loading state, error state, and empty state. Pages compose
    sections inside it; they do not reinvent the chrome.
-   - **H1 size is `text-2xl font-bold tracking-tight`.** Settled per
-     the detail-page audit and adopted by `<Page>`. Pages currently
-     using `text-3xl` get demoted during their migration.
+   - **Standard H1 size is `text-2xl font-bold tracking-tight`.**
+     Settled per the detail-page audit and adopted by `<Page>`. Pages
+     currently using `text-3xl` get demoted during their migration.
+   - **Editorial archetype gets a Display tier.** The Overview opens
+     with a Display headline (44px, sans 500, tracking -0.025em,
+     leading 1.08) instead of the standard H1. The Display tier is
+     reserved for editorial pages where the system is speaking in
+     sentences (see [Editorial archetype](#editorial-archetype)). It
+     is not available to drilldown, workspace, feed, log, or graph
+     archetypes; those keep the `text-2xl` H1.
    - **Type ratio is 1.2** (product-register override of impeccable's
      shared `≥1.25` floor). Per `impeccable/reference/product.md`:
      "tighter scale ratio. 1.125–1.2 between steps is typical for
@@ -268,9 +275,10 @@ the use case before being treated as binding.
 - Whether the breadcrumb autobuilder is worth keeping (it produces
   awkward output: "Qa / Investigations") or whether each page should
   own its breadcrumbs explicitly.
-- Whether a typographic scale (one or two custom families, defined
-  sizes) is worth introducing, or whether the current system stack
-  is part of the dashboard's "operator-tool" charm.
+
+(The typographic-scale debate item from earlier drafts is resolved.
+See [Type system](#type-system) below for the settled three-family
+stack and scale.)
 
 ---
 
@@ -493,6 +501,34 @@ already know. Do not soften things that are just facts.
 | Nothing to show yet | "No sessions today." |
 | A dangerous operation | "This will delete the connector and all its history." |
 
+### Tense, person, and address
+
+These rules sharpen the register above. They are part of the settled
+voice doctrine, integrated from the editorial archetype work.
+
+- **Past tense for events, present tense for state.** No future tense
+  in interface copy: "is" or "did," not "will be" or "is going to."
+  The dashboard reports what happened and what is true now; it does
+  not promise.
+- **No first person.** "I," "we," "us," "our" do not appear in
+  rendered copy. The system is a third party. Write "Authentication
+  failed," not "I could not authenticate."
+- **Avoid "your" when "the" works.** "The calendar is paused," not
+  "Your calendar is paused." The owner already knows whose dashboard
+  this is. "Your" stays only when contrast matters ("Your timezone
+  is Asia/Singapore. The butler runs in UTC.").
+- **No hedging adverbs.** Strike: currently, presently, just, simply,
+  basically, actually, essentially. Write "Loaded 14 sessions," not
+  "Currently showing 14 sessions."
+- **No celebration.** No checkmarks, no green-check moments, no
+  "Nice work," no "All set." Quiet success is the success state.
+  When everything is fine the page says it once and stops.
+- **No filler.** "Welcome back" is filler. "Today, in numbers" is a
+  fact. Delete the filler, keep the fact.
+- **Numbers are exact.** "2 things need you," not "a few things." But
+  do not state precision the data does not have: "2.0" when the
+  source is integer is wrong, and so is "approximately 2."
+
 ### Capitalization
 
 Sentence case for everything except proper nouns and product names.
@@ -524,14 +560,21 @@ the copy does not need to amplify it.
 State the fact, then offer the next action. Avoid prose sentences
 that describe what the user could do if they were not there.
 
-Pattern: `{Noun} + verb phrase` as the title. One short sentence of
-context if needed. A single action button.
+**Page-level empty states** use `{Noun} + verb phrase` as the title,
+one short sentence of context if needed, and a single action button.
 
 | Bad | Good |
 |---|---|
 | "No butlers found. Butlers are long-running agents that act on your behalf. Add one to get started!" | Title: "No butlers active." Action: "Open setup guide" |
 | "Patrol cycles will dispatch investigations when novel issues are detected." | "No active investigations." |
 | `"Browse the knowledge graph — people, organizations, places, and more."` | "Knowledge graph is empty." |
+
+**Inline empty states inside a Voice surface** (the briefing column,
+the attention list when there is nothing to attend to, the Next list
+when nothing is upcoming) use a single serif italic sentence in muted
+color, no period of explanation, no action button. Example:
+*"Nothing waiting."* The Voice surface is the place the system
+literally speaks; one quiet line is the entire response.
 
 Empty states do not get exclamation marks. They do not use em-dashes.
 They do not editorialize.
@@ -675,6 +718,173 @@ After: `"Request curriculum"`
 Before: `"Patrol cycles will dispatch investigations when novel issues are detected."`
 
 After (EmptyState title): `"No active investigations."`
+
+---
+
+## Type system
+
+> Status: **settled** (resolves the typographic-scale debate from
+> Candidate Doctrine and the de-facto observation that there is "no
+> type scale documented").
+
+The dashboard adopts a three-family type system. The split is meaningful:
+sans is the system speaking in data, serif is the system speaking in
+sentences, mono is the system speaking in numerals.
+
+| Family            | Role                                                         |
+|-------------------|--------------------------------------------------------------|
+| **Inter Tight**   | UI: display, body, labels, numbers in tables and lists.      |
+| **Source Serif 4**| Voice: LLM prose, briefing elaboration, empty-state lines.   |
+| **JetBrains Mono**| Numerals: timestamps, IDs, deltas, KPI mega-numbers, eyebrows, code, file paths. |
+
+Inter *Tight* is the deliberate pick over plain Inter; the compressed
+metrics carry the operator-tool register. Generic stacks (Inter,
+Roboto, Arial, Helvetica, system-ui as a primary face) are not in the
+language. A page may use one, two, or all three families; never invent
+a fourth.
+
+The fonts load via Google Fonts in `frontend/index.html` and resolve
+through `--font-sans`, `--font-serif`, `--font-mono` tokens declared in
+`frontend/src/index.css`.
+
+### Scale
+
+| Role        | Family   | Size  | Weight | Tracking | Leading | Notes |
+|-------------|----------|-------|--------|----------|---------|-------|
+| Display     | sans     | 44px  | 500    | -0.025em | 1.08    | Editorial archetype only (Non-negotiable rule 2). |
+| Title (H1)  | sans     | 24px (`text-2xl`) | 700 (`font-bold`) | tight (`tracking-tight`) | 1.2 | Standard archetype default. |
+| Body        | sans     | 14px  | 400    | normal   | 1.5     | |
+| Body small  | sans     | 13px  | 400    | normal   | 1.5     | |
+| Voice       | serif    | 16px  | 400    | normal   | 1.6     | LLM prose. Italic for empty states; roman for briefings. |
+| Eyebrow     | mono     | 10px  | 400    | 0.14em   | 1.0     | Uppercase. Section header substitute. |
+| Mono inline | mono     | 11px  | 400    | normal   | 1.4     | Inline IDs, file paths, deltas. |
+
+Display weight is **500, not 700**. Tight tracking does the work that
+weight would do; bold display reads as loud, which violates the calm
+contract.
+
+### Numerals
+
+Every numeric value renders with `font-variant-numeric: tabular-nums`.
+Costs, counts, deltas, KPI mega-numbers, mono timestamps, badge
+digits. Lists of numbers must align without alignment hacks. A
+`.tnum` utility class in `index.css` exposes the variant; use it on
+every numeric element.
+
+### Eyebrows
+
+`10px / mono / uppercase / 0.14em letter-spacing / muted color`.
+Eyebrows title sections in lieu of a heading; they establish rhythm
+without adding shouting weight. They are not subtitles, they are the
+section's name.
+
+---
+
+## Editorial archetype
+
+> Status: **settled** (governs the Overview surface and any future
+> page that opens with a system-spoken briefing). Companion to the
+> Type system above and to the Voice and Copy section.
+
+The dashboard supports a small set of page archetypes (Non-negotiable
+rule 3). The **editorial archetype** is the one used by the Overview:
+a two-column page whose left column is the system speaking in
+sentences and whose right column is a quiet index of facts.
+
+### Layout
+
+- Two columns: `1.4fr / 1fr`, gap `56px`, max-width `1280px`,
+  page padding `48px 56px`.
+- Left column carries the narrative: date eyebrow + briefing status
+  pill, Display headline, Voice paragraph, attention list, KPI strip.
+- Right column carries the index: eyebrow-titled lists (Butlers, Next).
+- The two columns read as separate documents that share a page.
+
+### Reading widths
+
+- Display headline: `max-width: 14ch`. The constraint forces the
+  dramatic line break that gives the page its shape.
+- Voice paragraph: `max-width: 50ch`. Readable measure for prose.
+- Lists span the full width of their column.
+
+### The Voice surface (briefing prose)
+
+The Overview headline plus its serif elaboration is a distinct surface
+type called the **Voice**. Reserve it for places the system literally
+speaks in sentences:
+
+- Overview briefing.
+- Empty states ("Nothing waiting.").
+- Process glosses where the system explains its own shape.
+
+Voice is serif italic for empty states, serif roman for briefings.
+It is never decorative. If a serif paragraph feels like it would
+"fill" a quiet page, the page is not actually quiet enough; the
+serif paragraph is wrong.
+
+### The status pill
+
+Anywhere the system reports on its own process (cache age, last sync,
+model version, briefing source), use a status pill: `9px mono / dot +
+label + ↻`. Three states for the briefing pill: `composing…` (amber),
+`llm · cached 5m` (green), `templated` (dim). Click to refresh. The
+pill is always honest about what is rendering.
+
+### Attention list
+
+The dashboard's canonical list primitive: a CSS grid of
+`mark / 1fr title+detail / meta` separated by hairlines, no card
+chrome. Variants:
+
+- **Attention rows** (read carefully): 24px severity glyph / 1fr
+  title + serif detail / auto action arrow. Vertical padding 18px.
+- **Butler index rows** (scanned): 8px status dot / 1fr name / auto
+  sessions / auto cost. Vertical padding 10px.
+- **Next list rows** (scheduled): 50px mono time / 1fr label / auto
+  kind tag.
+
+Empty state for the attention list: `Nothing waiting.` in serif
+italic, muted, no period of explanation. No celebration, no
+illustration.
+
+### KPI strip
+
+Four-column grid divided by hairline borders. Each cell:
+
+```
+mono eyebrow   (10px, muted, uppercase)
+mega number    (32px, sans 500, tracking -0.03em, tnum)
+mono delta     (10px, muted)
+```
+
+No background fills. No card chrome. Deltas line up vertically across
+columns because every numeric cell is tabular.
+
+### Butler hue scope
+
+Each butler has one hue from `--category-1..8` (defined in
+`frontend/src/index.css`). The hue appears **only on the butler
+letter-mark** (the colored squircle with the initial). It does not
+appear on backgrounds, borders, buttons, headers, or any other chrome.
+This rule is what keeps the dashboard from reading like a SaaS
+product. It augments the existing token rule (Non-negotiable 1):
+named hues only resolve onto the letter-mark.
+
+Canonical butler-to-hue mapping is owned by
+`frontend/src/components/ui/ButlerMark.tsx` (or its successor) and
+not duplicated here; consult that source for the assignment table.
+
+### Motion budget
+
+The editorial archetype obeys the existing motion contract (see
+[Motion](#motion)). The two motion events the briefing introduces:
+
+- Voice paragraph cross-fade on briefing refresh: `duration-base`
+  (200ms), `ease-out-quart`, opacity-only.
+- Briefing status pill icon rotation while loading: continuous,
+  transform-only, `ease-out-quart`.
+
+No staggered entries, no count-up animations, no scale-in.
 
 ---
 
