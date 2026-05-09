@@ -26,7 +26,7 @@ The author is responsible for:
 - stating what verification actually ran
 - filing follow-up work in beads instead of leaving informal TODO debt
 
-## Spec Discipline
+## Spec discipline
 
 UI mockups that propose a tab list, hero block, or panel set not already
 present in `openspec/specs/dashboard-*` require a cited existing capability

@@ -230,16 +230,16 @@ the use case before being treated as binding.
      archetypes; those keep the `text-2xl` H1. Display tier sizing
      lives in [`about/lay-and-land/frontend.md`](../lay-and-land/frontend.md)
      under the Type tokens section.
-   - **Workspace-grade record pages do not get a Tier-2 Hero.**
+   - **Workspace-grade record pages do not get a tier-2 hero.**
      Butler detail, contact detail, conversation detail, and similar
      operator record pages keep identity in the `<Page>` shell title
-     and in the Overview tab's identity card. Status pills and primary
+     and in the overview tab's identity card. Status pills and primary
      actions belong in the `<Page>` actions slot when they need page
      reach. Do not introduce a page-level identity strip, letter-mark
      hero, or second header tier between the shell and the tab body.
-     This is the settled Gate A A2 rule from `bu-rx6c2`: the Tier-1
+     This is the settled Gate A A2 rule from `bu-rx6c2`: the tier-1
      header keeps title and breadcrumbs, actions migrate into the
-     shell, and the Overview tab remains the identity surface.
+     shell, and the overview tab remains the identity surface.
    - **Type ratio is 1.2** (product-register override of impeccable's
      shared `≥1.25` floor). Per `impeccable/reference/product.md`:
      "tighter scale ratio. 1.125–1.2 between steps is typical for
@@ -489,6 +489,8 @@ These were open questions in the first draft. The owner has answered.
    operator surface needs them. Butler detail preserves the ten
    spec-mandated base tabs in operator mode: Overview, Sessions,
    Config, Skills, Schedules, Trigger, MCP, State, CRM, and Memory.
+   It also preserves non-spec operator tabs that already carry
+   capability, including Models.
    Resident mode may be the default narrow view and may use the
    Dispatch vocabulary, but it is a filtered projection of the
    operator surface, not a replacement for it. Deep links and
