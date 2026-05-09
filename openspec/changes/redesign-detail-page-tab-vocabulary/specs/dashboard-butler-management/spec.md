@@ -11,15 +11,16 @@ the full administrative vocabulary.
 
 - **WHEN** a user navigates to `/butlers/:name?tab=<value>`
 - **THEN** the active tab is set to the `tab` query parameter value when that
-  value is available in the active mode or can be made available by
-  auto-promoting to operator mode
+  value is available in the stored mode or can be made available by resolving a
+  mode-exclusive tab to its owning mode
 - **AND** when `tab` is absent or invalid, the default tab is `overview`
 - **AND** tab changes update the URL via `replaceState` with no history entry
 
 #### Scenario: Breadcrumb navigation
 
 - **WHEN** the butler detail page renders
-- **THEN** a breadcrumb trail is shown: Overview > Butlers > {butler name}
+- **THEN** a breadcrumb trail is shown with the displayed, titleized butler
+  name: Overview > Butlers > {Titleized butler name}
 
 #### Scenario: Resident mode is the default tab vocabulary
 
@@ -28,7 +29,7 @@ the full administrative vocabulary.
 - **AND** the following resident base tabs are visible: Overview, Activity,
   Logs, Approvals, Spend, Config, Memory
 - **AND** the resident mode is persisted in `localStorage` under
-  `butlers.detail.mode` when the user selects it explicitly
+  `butlers:detail:mode` when the user selects it explicitly
 
 #### Scenario: Operator mode preserves the administrative vocabulary
 
@@ -37,13 +38,13 @@ the full administrative vocabulary.
   Sessions, Config, Skills, Schedules, Trigger, MCP, State, CRM, Memory
 - **AND** these tabs are rendered inside the primary slot's `<TabsList>`
 - **AND** the operator mode is persisted in `localStorage` under
-  `butlers.detail.mode`
+  `butlers:detail:mode`
 
 #### Scenario: Stored mode is restored
 
-- **WHEN** `localStorage["butlers.detail.mode"]` is `resident`
+- **WHEN** `localStorage["butlers:detail:mode"]` is `resident`
 - **THEN** the page loads in resident mode
-- **WHEN** `localStorage["butlers.detail.mode"]` is `operator`
+- **WHEN** `localStorage["butlers:detail:mode"]` is `operator`
 - **THEN** the page loads in operator mode
 - **WHEN** the stored value is absent or any other value
 - **THEN** the page loads in resident mode
@@ -57,7 +58,17 @@ the full administrative vocabulary.
 - **THEN** the page switches to operator mode
 - **AND** the requested tab is selected instead of falling back to Overview
 - **AND** the promoted operator mode is persisted in `localStorage` under
-  `butlers.detail.mode`
+  `butlers:detail:mode`
+
+#### Scenario: Deep links to resident-only tabs select resident mode
+
+- **WHEN** the page would otherwise load in operator mode
+- **AND** the `tab` query parameter is one of `activity`, `logs`, `approvals`,
+  or `spend`
+- **THEN** the page switches to resident mode
+- **AND** the requested tab is selected instead of falling back to Overview
+- **AND** the resident mode is persisted in `localStorage` under
+  `butlers:detail:mode`
 
 #### Scenario: Non-spec Models tab is operator-only while exposed
 
@@ -99,12 +110,12 @@ the full administrative vocabulary.
 
 #### Scenario: Lazy-loaded tabs for performance
 
-- **WHEN** a non-default tab is selected for the first time
+- **WHEN** a tab whose body is implemented as a lazy-loaded component is
+  selected for the first time
 - **THEN** its component is loaded on demand via React `lazy()` with a centered
   "Loading {tab}..." fallback
-- **AND** lazy loading remains available for operator-only, resident-only, and
-  conditional tab bodies whose implementation is not bundled into the initial
-  page load
+- **AND** this requirement applies only to tab bodies intentionally implemented
+  with React `lazy()`, rather than forcing every non-default tab to become lazy
 
 #### Scenario: Tab URL semantics and deep-linking
 
@@ -118,6 +129,10 @@ the full administrative vocabulary.
   `reviews`, `routing-log`, `registry`), and `models` while current code
   exposes it
 - **AND** deep links to operator-only tab keys auto-promote to operator mode
+- **AND** deep links to resident-only tab keys switch to resident mode when the
+  stored mode is operator
+- **AND** invalid `tab` values fall back to `overview` without forcing a mode
+  switch
 - **AND** tab changes update the URL via `replaceState` without creating
   browser history entries
 
@@ -129,10 +144,13 @@ as follows:
 - **Primary slot:** The `<Tabs>` block, containing `TabsList` for all visible
   tab triggers in the active mode and `TabsContent` for each reachable tab. This
   is the entire interactive surface for the butler workspace.
-- **No hero slot:** The butler identity (name, status, description, port) is
-  rendered inside the Overview tab's identity card, not in a page-level hero
-  tier. The overview tab IS the identity surface; no separate hero tier is
-  needed at the page layer.
+- **No additional body-level hero slot:** The `<Page>` / `<DetailPage>` shell
+  still owns the record identity chrome: its title or `record.title` MUST be the
+  displayed, titleized butler name and shell actions remain in the Tier 1 page
+  header. The tab body MUST NOT add a second hero, identity strip, or action
+  strip above the tabs. Detailed butler identity fields (status, description,
+  port, eligibility, heartbeat, and related operational facts) are rendered
+  inside the Overview tab's identity card.
 - **No drawer slot:** Credential and advanced configuration content lives
   inside individual tabs (Config tab, State tab). No top-level practical drawer
   is needed.

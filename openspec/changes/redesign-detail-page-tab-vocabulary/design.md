@@ -30,7 +30,7 @@ eleventh base tab, but implementation cannot ignore it while the route exists.
 ## Decisions
 
 1. **Mode storage.** The selected detail-page mode is persisted in browser
-   `localStorage` under `butlers.detail.mode`. Missing, invalid, or unsupported
+   `localStorage` under `butlers:detail:mode`. Missing, invalid, or unsupported
    stored values resolve to `resident`.
 
 2. **Resident tabs.** Resident mode shows the Dispatch vocabulary:
@@ -41,10 +41,14 @@ eleventh base tab, but implementation cannot ignore it while the route exists.
    Overview, Sessions, Config, Skills, Schedules, Trigger, MCP, State, CRM,
    Memory. This preserves the existing operator control plane.
 
-4. **Deep-link auto-promotion.** If `?tab=` names an operator-only tab while the
-   stored mode is resident, the page switches to operator mode and renders the
-   requested tab. This applies to Skills, Schedules, Trigger, MCP, State, CRM,
-   Sessions, and Models while Models exists.
+4. **Mode-exclusive deep links.** The `?tab=` value wins over the stored mode
+   when it names a tab that only exists in one mode. If it names an
+   operator-only tab while the stored mode is resident, the page switches to
+   operator mode and renders the requested tab. This applies to Skills,
+   Schedules, Trigger, MCP, State, CRM, Sessions, and Models while Models
+   exists. If it names a resident-only tab while the stored mode is operator,
+   the page switches to resident mode and renders the requested tab. Invalid
+   tab values still fall back to Overview without forcing a mode switch.
 
 5. **Conditional tabs.** Conditional tabs are appended after the active mode's
    base tabs and are visible in both resident and operator modes. They do not
@@ -63,7 +67,7 @@ eleventh base tab, but implementation cannot ignore it while the route exists.
 - Resident tabs named Activity, Logs, Approvals, and Spend may need new or
   remapped tab bodies because current code is still organized around Sessions,
   Skills, Schedules, Trigger, MCP, State, CRM, Memory, and Models.
-- Existing bookmarks to operator-only tabs will change stored mode as a side
+- Existing bookmarks to mode-exclusive tabs can change stored mode as a side
   effect. This is intentional so valid deep links remain useful.
 - Tests must cover both mode-specific tab lists and conditional tabs, otherwise
   future tab consolidation could accidentally remove operator capabilities.

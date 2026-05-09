@@ -16,7 +16,7 @@
 - [ ] 2.1 Split butler detail base-tab configuration into resident and operator
       tab sets.
 - [ ] 2.2 Make resident mode the default and persist the selected mode in
-      `localStorage` under `butlers.detail.mode`.
+      `localStorage` under `butlers:detail:mode`.
 - [ ] 2.3 Add an accessible operator/resident toggle in the detail page shell
       actions or an equivalent page-level control.
 - [ ] 2.4 Render resident mode with Overview, Activity, Logs, Approvals, Spend,
@@ -32,13 +32,16 @@
       tab, including Models while exposed.
 - [ ] 2.9 Keep invalid `?tab=` values falling back to Overview without forcing
       operator mode.
+- [ ] 2.10 Switch to resident mode when `?tab=` targets a resident-only tab
+      while stored mode is operator.
 
 ## 3. Verification
 
 - [ ] 3.1 Add or update React tests for default resident mode, operator mode,
       localStorage persistence, and the mode toggle.
 - [ ] 3.2 Add or update React tests for deep-link auto-promotion to
-      operator-only tabs.
+      operator-only tabs and resident-only tab resolution from stored operator
+      mode.
 - [ ] 3.3 Add or update React tests proving conditional tabs remain visible in
       both modes.
 - [ ] 3.4 Add or update React tests for the current Models tab behavior while it
