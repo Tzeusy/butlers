@@ -89,22 +89,12 @@ function ButlerCard({
   return (
     <Link
       to={detailPath}
-      aria-label={butler.name}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      className="grid grid-cols-[40px_1fr_auto] gap-6 py-[22px] items-start no-underline text-inherit transition-[margin-inline,padding-inline] duration-[120ms] ease-in-out"
       style={{
-        display: "grid",
-        gridTemplateColumns: "40px 1fr auto",
-        gap: "24px",
-        padding: "22px 0",
-        color: "inherit",
-        textDecoration: "none",
-        alignItems: "start",
-        transition:
-          "margin-inline 120ms ease, padding-inline 120ms ease, background 120ms ease",
         marginInline: hover ? "-16px" : "0",
         paddingInline: hover ? "16px" : "0",
-        background: "transparent",
       }}
     >
       {/* Col 1: ButlerMark glyph */}
@@ -121,10 +111,7 @@ function ButlerCard({
           {statusPill(butler.status)}
         </div>
         {butler.description ? (
-          <p
-            className="text-sm text-muted-foreground mt-1 leading-snug max-w-[52ch]"
-            style={{ fontStyle: "italic", fontFamily: "var(--font-serif, serif)" }}
-          >
+          <p className="text-sm text-muted-foreground mt-1 leading-snug max-w-[52ch] italic font-[family-name:var(--font-serif,serif)]">
             {butler.description}
           </p>
         ) : null}
