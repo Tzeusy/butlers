@@ -39,7 +39,7 @@
 - [ ] 3.5 Preserve heartbeat display from existing system heartbeat data.
 - [ ] 3.6 Preserve cost telemetry and add recent-sessions card using existing
       data hooks.
-- [ ] 3.7 Verify there is no Tier-2 Hero block above the tabs after the Overview
+- [ ] 3.7 Verify there is no Tier 2 Hero block above the tabs after the Overview
       redesign lands.
 
 ## 4. Reconciliation

@@ -9,11 +9,11 @@ surface.
 The Dispatch mockup put status pills, identity metadata, and action buttons in a
 body-level Hero between the Page header and the tabs. Gate A (bu-rx6c2) rejected
 that shape and chose A2: move controls into the Page shell action area while
-preserving no Tier-2 identity card.
+preserving no Tier 2 identity card.
 
 ## Goals
 
-- Preserve the no Tier-2 hero/body identity-card rule for Butler detail pages.
+- Preserve the no Tier 2 hero/body identity-card rule for Butler detail pages.
 - Make Gate A option A2 explicit in the `dashboard-butler-management` spec.
 - Keep the existing Overview-tab identity clauses intact for Epic 04.
 - Keep the change narrow enough that Epic 01 and Epic 04 can implement against
@@ -21,9 +21,9 @@ preserving no Tier-2 identity card.
 
 ## Non-Goals
 
-- Do not introduce Gate A option A3 or a sanctioned Tier-2 identity-card shape.
-- Do not change tab vocabulary, tab count, or conditional-tab behavior; Gate B
-  owns that in a sibling OpenSpec change.
+- Do not introduce Gate A option A3 or a sanctioned Tier 2 identity-card shape.
+- Do not add or remove tabs; Gate B owns the tab vocabulary, tab count, and
+  conditional-tab behavior in a sibling OpenSpec change.
 - Do not specify new process facts, Overview cards, backend fields, or tests in
   detail here; sibling OpenSpec changes and Epic 04 own those surfaces.
 
@@ -31,7 +31,7 @@ preserving no Tier-2 identity card.
 
 ### A2 maps Dispatch controls to Tier 1
 
-Status pills and ActionBar buttons from the Dispatch Hero prototype are Tier-1
+Status pills and ActionBar buttons from the Dispatch Hero prototype are Tier 1
 Page header actions for Butler detail. The Page shell keeps title and
 breadcrumbs, and the page supplies the control cluster through the existing
 `actions` slot. This keeps action controls visible without creating a body-level
