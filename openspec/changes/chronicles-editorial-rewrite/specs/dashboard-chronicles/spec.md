@@ -16,8 +16,8 @@ in `about/heart-and-soul/design-language.md` for its landing surface.
 - **THEN** the dashboard shell SHALL render with the sidebar present
 - **AND** the page content SHALL render the editorial archetype layout: a
   serif Voice column on the left (DateEyebrow, status pill, Display
-  headline, Voice paragraph, attention list) and a quiet index column on
-  the right (KPI strip and recent-days index)
+  headline, Voice paragraph) and an index rail on the right (KPI strip,
+  attention list, and recent-days index)
 - **AND** the existing workspace components (Gantt, Map, Scrubber,
   Aggregations, Drawer) SHALL be reachable via a `<ChroniclesDrilldownPanel>`
   mounted below the editorial fold and lazy-loaded on first interaction
@@ -35,8 +35,9 @@ in `about/heart-and-soul/design-language.md` for its landing surface.
 
 ### Requirement: Page-Level Invariants
 
-Chronicles page handlers (frontend hooks, render components) AND backend
-briefing / attention / KPI handlers SHALL NOT introduce LLM invocations
+The Chronicles page SHALL keep frontend hooks, render components, and
+backend briefing / attention / KPI handlers inside Chronicler's existing
+ownership boundaries. These handlers SHALL NOT introduce LLM invocations
 or cross-schema reads beyond what Chronicler already owns.
 
 #### Scenario: No new LLM call paths
@@ -132,14 +133,14 @@ templated fallback. The endpoint SHALL NOT initiate an LLM call.
 The chronicler API SHALL expose `GET /api/chronicler/attention` returning
 the list of attention items the briefing surfaces.
 
-#### Scenario: Anomaly source — short sleep
+#### Scenario: Anomaly source: short sleep
 
 - **WHEN** today's sleep_minutes is less than 0.7 × the median sleep_minutes
   of the prior seven days
 - **THEN** an attention item with `kind = anomaly`, severity `medium`,
   and a title naming "Short sleep" is included
 
-#### Scenario: Anomaly source — waking gap
+#### Scenario: Anomaly source: waking gap
 
 - **WHEN** the contiguous gap between consecutive episodes within the
   window exceeds six hours during waking hours (06:00–22:00 in the

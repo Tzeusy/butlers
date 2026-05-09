@@ -16,12 +16,12 @@ Two distinct problems remain:
    automated lanes (calendar, conversations) and under-represents the lived
    shape of the day.
 2. **Gaps.** Three sources are missing entirely:
-   - **Physical activity / health** — `google_health` adapter exists at
+   - **Physical activity / health**: `google_health` adapter exists at
      `src/butlers/chronicler/adapters/google_health.py` but only projects
      sleep. Steps, heart rate, and workouts never reach Chronicler.
-   - **Focus / deep-work blocks** — never captured. Long single-context
+   - **Focus / deep-work blocks**: never captured. Long single-context
      work sessions are not surfaced as their own shape.
-   - **Reading / learning sessions** — never captured.
+   - **Reading / learning sessions**: never captured.
 
 Pipeline patches will not fix this because the surface itself is wrong:
 the page shows facts before it speaks. The fix is to swap the page

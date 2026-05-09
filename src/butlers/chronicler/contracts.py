@@ -115,6 +115,32 @@ INITIAL_SOURCES: tuple[SourceAdapterState, ...] = (
         ),
         optional_schema=True,
     ),
+    # Inferred chronicler-derived sources (bu-i29ix). Both read from
+    # chronicler's own episodes table to derive higher-level shapes
+    # (focus / reading), keeping inference deterministic and
+    # self-contained. They produce the focus_block and reading_block
+    # episode types that fold into the existing 'tasks' lane.
+    SourceAdapterState(
+        source_name="chronicler.focus_inferred",
+        chronicler_compatibility=Compatibility.SUPPORTED,
+        read_surface="chronicler.episodes (own-schema)",
+        boundary_semantics=(
+            "focus_block episode per qualifying source episode; "
+            "reuses the source episode (start_at, end_at); "
+            "signal: long task session OR calendar-titled focus block"
+        ),
+        optional_schema=False,
+    ),
+    SourceAdapterState(
+        source_name="chronicler.reading_inferred",
+        chronicler_compatibility=Compatibility.SUPPORTED,
+        read_surface="chronicler.episodes + health.facts (predicate=reading_session)",
+        boundary_semantics=(
+            "reading_block episode per qualifying calendar-titled or "
+            "fact-derived row; (start_at, end_at) per source"
+        ),
+        optional_schema=True,
+    ),
     # Explicitly not time-bearing.
     SourceAdapterState(
         source_name="core.session_process_logs",

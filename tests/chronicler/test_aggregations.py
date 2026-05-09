@@ -36,8 +36,12 @@ _D1_PAIRS: list[tuple[str, str, str | None, str]] = [
     ("steam.play_history", "play_episode", None, "gaming"),
     ("owntracks.points", "movement_episode", None, "travel"),
     ("google_health.measurements", "sleep_episode", None, "sleep"),
+    ("google_health.measurements", "workout_episode", None, "other"),
     ("health.meals", "eating_event", None, "meal"),
     ("home_assistant.history", "presence_episode", None, "home"),
+    # Inferred chronicler-derived sources (bu-i29ix). Both fold into 'tasks'.
+    ("chronicler.focus_inferred", "focus_block", None, "tasks"),
+    ("chronicler.reading_inferred", "reading_block", None, "tasks"),
 ]
 
 
@@ -45,15 +49,17 @@ _D1_PAIRS: list[tuple[str, str, str | None, str]] = [
 def test_category_for_known_pairs(
     source_name: str, episode_type: str, trigger_source: str | None, expected: str
 ) -> None:
-    """Every D1 mapping must return a non-'other' category."""
+    """Every D1 mapping must return its declared category.
+
+    Most entries map to a specific lane; a small set explicitly maps to
+    ``other`` (e.g. ``workout_episode`` per bu-i29ix owner direction:
+    no taxonomy reshape, workouts ride in the existing ``other`` lane
+    while payload metadata distinguishes activity_type).
+    """
     result = category_for(source_name, episode_type, trigger_source=trigger_source)
     assert result == expected, (
         f"category_for({source_name!r}, {episode_type!r}, trigger_source={trigger_source!r}) "
         f"→ {result!r}; expected {expected!r}"
-    )
-    assert result != "other", (
-        f"Mapping for ({source_name!r}, {episode_type!r}, trigger_source={trigger_source!r}) "
-        "must not be 'other'"
     )
 
 

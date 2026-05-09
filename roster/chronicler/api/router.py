@@ -2084,9 +2084,7 @@ def _kpi_to_pydantic(kpi: Any) -> ChroniclesKpi:
         longest_episode_title=kpi.longest_episode_title,
         longest_gap_minutes=kpi.longest_gap_minutes,
         sleep_minutes=kpi.sleep_minutes,
-        streaks=ChroniclesStreaks(
-            sleep=kpi.streaks.sleep, exercise=kpi.streaks.exercise
-        ),
+        streaks=ChroniclesStreaks(sleep=kpi.streaks.sleep, exercise=kpi.streaks.exercise),
     )
 
 
@@ -2102,9 +2100,7 @@ def _recent_days_to_pydantic(rows: list[Any]) -> list[ChroniclesRecentDay]:
     ]
 
 
-async def _voice_paragraph_from_cache(
-    pool: Any, target: date
-) -> tuple[str | None, str]:
+async def _voice_paragraph_from_cache(pool: Any, target: date) -> tuple[str | None, str]:
     """Return (paragraph, source) read from the day-close Tier-2 cache.
 
     source is one of 'llm·cached', 'stale', or 'templated'. When the cache

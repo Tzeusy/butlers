@@ -139,9 +139,7 @@ def templated_voice_paragraph(payload: BriefingPayload) -> str:
     top = payload.kpi.hours_by_top_lanes[:2]
     if top:
         if len(top) == 1:
-            parts.append(
-                f"The day was led by {top[0].lane} at {top[0].hours:.1f} hours."
-            )
+            parts.append(f"The day was led by {top[0].lane} at {top[0].hours:.1f} hours.")
         else:
             parts.append(
                 f"The day was led by {top[0].lane} ({top[0].hours:.1f}h) and "
@@ -265,8 +263,9 @@ async def _fetch_recent_days(
         d_start_utc, d_end_utc = day_window_utc(d, tz_name)
         episodes = await _fetch_window_episodes(pool, d_start_utc, d_end_utc)
         if not episodes:
-            out.append(RecentDay(date=d.isoformat(), total_minutes=0,
-                                 top_lane=None, episode_count=0))
+            out.append(
+                RecentDay(date=d.isoformat(), total_minutes=0, top_lane=None, episode_count=0)
+            )
             continue
         # Compute totals per lane and overall episode count.
         from butlers.chronicler.aggregations import category_for
@@ -298,9 +297,7 @@ async def _fetch_recent_days(
     return out
 
 
-async def _compute_streaks(
-    pool: asyncpg.Pool, end_utc: datetime, tz_name: str
-) -> Streaks:
+async def _compute_streaks(pool: asyncpg.Pool, end_utc: datetime, tz_name: str) -> Streaks:
     """Compute consecutive-day streaks for sleep and workout episodes."""
     try:
         tz = zoneinfo.ZoneInfo(tz_name)
@@ -490,10 +487,7 @@ def _detect_waking_gaps(
         # Confirm at least part of the gap intersects waking hours.
         local_prev_end = prev_end.astimezone(tz)
         local_curr_start = curr_start.astimezone(tz)
-        if (
-            local_prev_end.hour < WAKING_HOUR_END
-            or local_curr_start.hour >= WAKING_HOUR_START
-        ):
+        if local_prev_end.hour < WAKING_HOUR_END or local_curr_start.hour >= WAKING_HOUR_START:
             flagged.append(int(gap_seconds // 60))
     return flagged
 

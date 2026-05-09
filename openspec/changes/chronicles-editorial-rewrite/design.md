@@ -16,10 +16,15 @@ in `about/heart-and-soul/design-language.md` and laid out in
 │   (sourced from day-close cache  │   longest-gap                   │
 │    or templated fallback)        │   sleep-duration                │
 │                                  ├──────────────────────────────────┤
-│ Attention list                   │ Recent days index               │
-│   anomalies                      │   last 7 days, eyebrow-titled   │
-│   source-health                  │                                  │
-│   open corrections               │ Drilldown launcher              │
+│                                  │ Attention list                  │
+│                                  │   anomalies                     │
+│                                  │   source-health                 │
+│                                  │   open corrections              │
+│                                  ├──────────────────────────────────┤
+│                                  │ Recent days index               │
+│                                  │   last 7 days, eyebrow-titled   │
+│                                  │                                  │
+│                                  │ Drilldown launcher              │
 │                                  │   "Open Gantt for window"       │
 │                                  │   "Open Map"                    │
 │                                  │   "Open day-close drawer"       │
@@ -28,9 +33,10 @@ in `about/heart-and-soul/design-language.md` and laid out in
                   Existing Gantt / Map / Aggregations / Drawer
 ```
 
-The right column hosts only quiet indices (KPI, recent days, drilldown
-launcher). The left column is the Voice column. The drilldown panel
-defers everything that used to be the workspace surface.
+The left column is the Voice surface: date eyebrow, status pill, Display
+headline, and serif paragraph. The right column is the index rail: KPI
+strip, attention list, recent-days index, and drilldown launcher. The
+drilldown panel defers everything that used to be the workspace surface.
 
 ## API contracts
 
@@ -41,7 +47,7 @@ Returns:
 ```json
 {
   "date": "2026-05-08",
-  "state_class": "full" | "busy" | "mild" | "quiet",
+  "state_class": "urgent" | "busy" | "mild" | "quiet",
   "headline": "string",
   "voice_paragraph": "string",
   "voice_source": "llm·cached" | "templated" | "stale",
@@ -70,7 +76,7 @@ Returns:
 
 `state_class` is deterministic from attention-item severity counts and
 total episode density. The headline templates are owned by the API and
-keyed by `state_class` (sentence case, no exclamation, no em-dash).
+keyed by `state_class` (sentence case, no exclamation, no em dash).
 
 `voice_paragraph` is read from `chronicler.tier2_cache` for
 `cache_key = day_close:{date}`. If the cache row is fresh
@@ -181,9 +187,9 @@ change: `DateEyebrow`, `BriefingStatus`, `Headline`, `Elaboration`,
 chronicles-flavoured data.
 
 New chronicles-only components:
-- `RecentDaysIndex.tsx` — eyebrow-titled list of `recent_days`. Right
+- `RecentDaysIndex.tsx`: eyebrow-titled list of `recent_days`. Right
   column.
-- `ChroniclesDrilldownPanel.tsx` — lazy host that mounts the existing
+- `ChroniclesDrilldownPanel.tsx`: lazy host that mounts the existing
   Gantt/Map/Aggregations/Drawer triumvirate when the user opens it.
 
 New hooks:
@@ -198,13 +204,32 @@ with `'editorial'` and route it to a Display-headline heading block
 (per the editorial archetype layout in
 `about/lay-and-land/frontend.md`).
 
+## Child implementation boundaries
+
+The OpenSpec package owns the full contract and keeps implementation
+boundaries explicit for the child beads:
+
+- **Adapter boundary**: health, focus, and reading projection are separate
+  deterministic adapter slices. They may add episode types and point-event
+  sources, but they do not reshape lane taxonomy, add database schema, or
+  invoke LLMs.
+- **API boundary**: briefing, attention, and KPI endpoints are additive
+  Chronicler API reads. They compose only from `chronicler.*` relations and
+  from the existing day-close Tier-2 cache.
+- **Frontend boundary**: `/chronicles` changes the landing archetype to
+  editorial while preserving existing Gantt, map, aggregation, source-state,
+  and drawer components inside the drilldown panel.
+- **Integration boundary**: the final integration pass owns cross-slice
+  type alignment, guardrail tests, frontend quality gates, and any needed
+  documentation drift fixes.
+
 ## What is preserved
 
 - All chronicler API routes that exist today.
 - All chronicler adapters that exist today.
 - Existing chronicles components retained as drilldown surfaces.
 - Privacy contract (sensitive episodes hatched in Gantt, masked in
-  drawer; restricted hidden server-side) — drilldown obeys this.
+  drawer; restricted hidden server-side): drilldown obeys this.
 - Manifesto invariants: deterministic projection, no per-event LLM,
   Tier-2 only on explicit day-close paths.
 
