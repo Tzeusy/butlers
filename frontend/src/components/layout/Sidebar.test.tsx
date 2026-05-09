@@ -6,10 +6,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 
 import Sidebar from "@/components/layout/Sidebar";
-import { useButlers } from "@/hooks/use-butlers";
 import { useCostSummary } from "@/hooks/use-costs";
 import { useBadgeCounts } from "@/hooks/use-qa-badge";
-import type { ButlerSummary } from "@/api/types";
+import { resetUseButlersMock, setUseButlersState } from "@/test-utils/use-butlers";
 
 vi.mock("@/hooks/use-butlers", () => ({
   useButlers: vi.fn(),
@@ -35,32 +34,7 @@ vi.mock("radix-ui", async (importOriginal) => {
   };
 });
 
-type UseButlersResult = ReturnType<typeof useButlers>;
-type TestButlerSummary = Omit<ButlerSummary, "sessions_24h"> &
-  Partial<Pick<ButlerSummary, "sessions_24h">>;
-type TestUseButlersResult = Partial<
-  Omit<UseButlersResult, "data"> & {
-    data: { data: TestButlerSummary[]; meta: Record<string, unknown> };
-  }
->;
-
-function setButlersState(state: TestUseButlersResult) {
-  const { data: rawData, ...rest } = state;
-  const data = rawData
-    ? {
-        ...rawData,
-        data: rawData.data.map((butler) => ({ sessions_24h: 0, ...butler })),
-      }
-    : undefined;
-
-  vi.mocked(useButlers).mockReturnValue({
-    isLoading: false,
-    isError: false,
-    error: null,
-    ...rest,
-    data,
-  } as UseButlersResult);
-}
+const setButlersState = setUseButlersState;
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -71,6 +45,7 @@ describe("Sidebar", () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    resetUseButlersMock();
     // Default cost mock — must be re-set after resetAllMocks
     vi.mocked(useCostSummary).mockReturnValue({
       data: { data: { total_cost_usd: 26.27 } },
