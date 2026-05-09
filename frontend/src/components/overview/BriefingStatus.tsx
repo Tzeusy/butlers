@@ -10,7 +10,9 @@
  * Geometry: 9px mono, dot + label + refresh icon.
  *
  * Motion: the refresh icon rotates continuously while isFetching using
- * CSS @keyframes spin (transform-only, ease-out-quart).
+ * CSS @keyframes spin (transform-only, linear — continuous rotation must be
+ * linear to avoid per-loop stutter; ease-out-quart applies to state transitions
+ * only).
  *
  * Topology: about/lay-and-land/frontend.md §Status pill
  * Doctrine: about/heart-and-soul/design-language.md §The status pill
@@ -26,8 +28,10 @@ interface BriefingStatusProps {
 }
 
 function ageLabel(generatedAt: string): string {
-  const ageMs = Date.now() - new Date(generatedAt).getTime();
-  const minutes = Math.round(ageMs / 60_000);
+  const ts = new Date(generatedAt).getTime();
+  if (isNaN(ts)) return "cached";
+  const ageMs = Date.now() - ts;
+  const minutes = Math.floor(ageMs / 60_000);
   if (minutes < 1) return "cached <1m";
   return `cached ${minutes}m`;
 }
@@ -49,8 +53,8 @@ function pillContent(
 }
 
 const DOT_COLORS: Record<"amber" | "green" | "dim", string> = {
-  amber: "oklch(0.769 0.189 84.0)",
-  green: "oklch(0.723 0.198 148.2)",
+  amber: "var(--severity-medium)", // oklch(0.769 0.189 84.0)
+  green: "var(--severity-low)",    // oklch(0.723 0.198 148.2)
   dim: "var(--muted-foreground)",
 };
 

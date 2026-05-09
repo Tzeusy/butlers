@@ -29,7 +29,7 @@ function severityGlyph(severity: string): { char: string; color: string } {
     case "medium":
     case "warning":
     case "warn":
-      return { char: "~", color: "oklch(0.769 0.189 84.0)" }; // amber
+      return { char: "~", color: "var(--severity-medium)" }; // amber
     default:
       return { char: "·", color: "var(--muted-foreground)" };
   }
