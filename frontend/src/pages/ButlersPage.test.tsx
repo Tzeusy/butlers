@@ -4,21 +4,37 @@ import { MemoryRouter } from "react-router";
 
 import ButlersPage from "@/pages/ButlersPage";
 import { useButlers } from "@/hooks/use-butlers";
+import type { ButlerSummary } from "@/api/types";
 
 vi.mock("@/hooks/use-butlers", () => ({
   useButlers: vi.fn(),
 }));
 
 type UseButlersResult = ReturnType<typeof useButlers>;
+type TestButlerSummary = Omit<ButlerSummary, "sessions_24h"> &
+  Partial<Pick<ButlerSummary, "sessions_24h">>;
+type TestUseButlersResult = Partial<
+  Omit<UseButlersResult, "data"> & {
+    data: { data: TestButlerSummary[]; meta: Record<string, unknown> };
+  }
+>;
 
-function setQueryState(state: Partial<UseButlersResult>) {
+function setQueryState(state: TestUseButlersResult) {
+  const { data: rawData, ...rest } = state;
+  const data = rawData
+    ? {
+        ...rawData,
+        data: rawData.data.map((butler) => ({ sessions_24h: 0, ...butler })),
+      }
+    : undefined;
+
   vi.mocked(useButlers).mockReturnValue({
-    data: undefined,
     isLoading: false,
     isError: false,
     error: null,
     refetch: vi.fn().mockResolvedValue(undefined),
-    ...state,
+    ...rest,
+    data,
   } as UseButlersResult);
 }
 
