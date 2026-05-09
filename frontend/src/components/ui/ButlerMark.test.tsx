@@ -65,7 +65,7 @@ describe("butlerHueVar: unknown butler names", () => {
     expect(token).toMatch(/^var\(--category-[1-8]\)$/)
   })
 
-  it("the same unknown name always resolves to the same token (deterministic hash)", () => {
+  it("the same unknown name always resolves to the same token (deterministic multiplier-31 hash)", () => {
     expect(butlerHueVar("mystery")).toBe(butlerHueVar("mystery"))
   })
 

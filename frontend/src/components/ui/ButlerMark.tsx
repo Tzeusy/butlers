@@ -11,8 +11,12 @@
 // string should use the exported `butlerHueVar(name)` helper instead of
 // importing the component itself.
 //
-// Non-negotiable rule: butler hues from --category-1..8 appear only on the
-// butler letter-mark. Never on backgrounds, borders, buttons, or other chrome.
+// Doctrine: each butler's hue from --category-1..8 appears only on the butler
+// letter-mark (colored squircle with initial). Never on backgrounds, borders,
+// buttons, headers, or other chrome. This rule applies to butler hues.
+// The categoryHueVar() helper uses the same token pool for non-butler entity
+// coloring (contact labels, tags) — that is a documented exception, not a
+// violation of the butler-hue rule.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -58,7 +62,7 @@ export const KNOWN_BUTLERS: readonly string[] = [
   "travel",
 ]
 
-/** djb2-style hash: maps any string to a non-negative integer. */
+/** Multiplier-31 rolling hash: maps any string to a non-negative integer. */
 function hashName(name: string): number {
   let h = 0
   for (let i = 0; i < name.length; i++) {
