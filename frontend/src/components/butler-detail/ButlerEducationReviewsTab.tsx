@@ -22,9 +22,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   useMindMaps,
-  usePendingReviews,
-  useMasterySummary,
-  useFrontierNodes,
+  useAllPendingReviews,
+  useAllMasterySummaries,
+  useAllFrontierNodes,
 } from "@/hooks/use-education";
 import type { PendingReviewNode, MindMapNode, MasterySummary } from "@/api/index.ts";
 
@@ -57,29 +57,12 @@ interface AggregatedData {
 function useReviewsTabData(): AggregatedData {
   const { data: mapsResp, isLoading: mapsLoading } = useMindMaps({ status: "active" });
   const maps = mapsResp?.data ?? [];
+  const mapIds = maps.map((m) => m.id);
 
-  // Fixed-count hooks required by React hook rules (no conditional hooks in loops).
-  const r0 = usePendingReviews(maps[0]?.id ?? null);
-  const r1 = usePendingReviews(maps[1]?.id ?? null);
-  const r2 = usePendingReviews(maps[2]?.id ?? null);
-  const r3 = usePendingReviews(maps[3]?.id ?? null);
-  const r4 = usePendingReviews(maps[4]?.id ?? null);
-
-  const s0 = useMasterySummary(maps[0]?.id ?? null);
-  const s1 = useMasterySummary(maps[1]?.id ?? null);
-  const s2 = useMasterySummary(maps[2]?.id ?? null);
-  const s3 = useMasterySummary(maps[3]?.id ?? null);
-  const s4 = useMasterySummary(maps[4]?.id ?? null);
-
-  const f0 = useFrontierNodes(maps[0]?.id ?? null);
-  const f1 = useFrontierNodes(maps[1]?.id ?? null);
-  const f2 = useFrontierNodes(maps[2]?.id ?? null);
-  const f3 = useFrontierNodes(maps[3]?.id ?? null);
-  const f4 = useFrontierNodes(maps[4]?.id ?? null);
-
-  const pendingResults = [r0, r1, r2, r3, r4];
-  const summaryResults = [s0, s1, s2, s3, s4];
-  const frontierResults = [f0, f1, f2, f3, f4];
+  // useQueries handles a dynamic number of queries without violating hook rules.
+  const pendingResults = useAllPendingReviews(mapIds);
+  const summaryResults = useAllMasterySummaries(mapIds);
+  const frontierResults = useAllFrontierNodes(mapIds);
 
   const isLoading =
     mapsLoading ||
@@ -89,7 +72,7 @@ function useReviewsTabData(): AggregatedData {
 
   return useMemo(() => {
     const pendingEntries: ReviewEntry[] = [];
-    for (let i = 0; i < Math.min(maps.length, 5); i++) {
+    for (let i = 0; i < maps.length; i++) {
       const nodes = pendingResults[i]?.data ?? [];
       for (const node of nodes) {
         pendingEntries.push({
@@ -105,7 +88,6 @@ function useReviewsTabData(): AggregatedData {
     );
 
     const summaries = summaryResults
-      .slice(0, maps.length)
       .map((r) => r.data)
       .filter((s): s is MasterySummary => s != null);
 
@@ -130,7 +112,7 @@ function useReviewsTabData(): AggregatedData {
           );
 
     const frontierEntries: FrontierEntry[] = [];
-    for (let i = 0; i < Math.min(maps.length, 5); i++) {
+    for (let i = 0; i < maps.length; i++) {
       const nodes = frontierResults[i]?.data ?? [];
       for (const node of nodes) {
         frontierEntries.push({
@@ -143,8 +125,7 @@ function useReviewsTabData(): AggregatedData {
     frontierEntries.sort((a, b) => a.mastery_score - b.mastery_score);
 
     return { pendingEntries, mastery, frontierEntries, isLoading };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [maps, r0, r1, r2, r3, r4, s0, s1, s2, s3, s4, f0, f1, f2, f3, f4, isLoading]);
+  }, [maps, pendingResults, summaryResults, frontierResults, isLoading]);
 }
 
 // ---------------------------------------------------------------------------
