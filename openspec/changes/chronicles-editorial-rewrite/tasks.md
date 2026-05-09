@@ -19,22 +19,22 @@
 
 - [x] 3.1 `bu-018re`: add Pydantic models for `ChroniclesBriefing`, `ChroniclesAttentionItem`, `ChroniclesRecentDay`, `ChroniclesKpi` in `roster/chronicler/api/models.py`.
 - [x] 3.2 Add three endpoints to `roster/chronicler/api/router.py`: `/briefing`, `/attention`, `/kpi`. Briefing reads `chronicler.tier2_cache` for the `voice_paragraph`; falls back to a templated paragraph when missing or stale. No new LLM call paths.
-- [ ] 3.3 Add API tests under `tests/chronicler/test_briefing_endpoint.py`, `test_attention_endpoint.py`, `test_kpi_endpoint.py`.
+- [x] 3.3 Add API tests under `tests/chronicler/test_editorial_api.py` covering briefing, attention, and KPI endpoints.
 
 ## 4. Frontend child work
 
-- [ ] 4.1 `bu-l1eg1`: add `'editorial'` to the `<Page archetype>` discriminant; route it to a Display-headline heading block.
-- [ ] 4.2 Add hooks `use-chronicles-briefing.ts`, `use-chronicles-attention.ts`, `use-chronicles-kpi.ts` under `frontend/src/hooks/`.
-- [ ] 4.3 Add `RecentDaysIndex.tsx` and `ChroniclesDrilldownPanel.tsx` under `frontend/src/components/chronicles/`.
-- [ ] 4.4 Rewrite `frontend/src/pages/ChroniclesPage.tsx` as the editorial-archetype consumer. Compose `DateEyebrow`, `BriefingStatus`, `Headline`, `Elaboration`, `KpiStrip`, `AttentionList`, `RecentDaysIndex`, `ChroniclesDrilldownPanel`.
-- [ ] 4.5 Add frontend tests under `frontend/src/pages/ChroniclesPage.test.tsx` and components as needed.
+- [x] 4.1 `bu-l1eg1`: add `'editorial'` to the `<Page archetype>` discriminant and let the Chronicles consumer own its Display-headline heading block.
+- [x] 4.2 Add hooks `use-chronicles-briefing.ts`, `use-chronicles-attention.ts`, `use-chronicles-kpi.ts` under `frontend/src/hooks/`.
+- [x] 4.3 Add `RecentDaysIndex.tsx` and `ChroniclesDrilldownPanel.tsx` under `frontend/src/components/chronicles/`.
+- [x] 4.4 Rewrite `frontend/src/pages/ChroniclesPage.tsx` as the editorial-archetype consumer. Compose the owner-date eyebrow, status pill, `Headline`, `Elaboration`, `KpiStrip`, `AttentionList`, `RecentDaysIndex`, and `ChroniclesDrilldownPanel`.
+- [x] 4.5 Add frontend tests under `frontend/src/pages/ChroniclesPage.test.tsx` and components as needed.
 
 ## 5. Integration and verification
 
-- [ ] 5.1 `bu-nwvwy`: run `uv run ruff check src/ tests/ roster/ conftest.py --output-format concise`.
-- [ ] 5.2 Run `uv run ruff format --check src/ tests/ roster/ conftest.py -q`.
-- [ ] 5.3 Run `uv run pytest tests/chronicler --ignore=tests/e2e -q --maxfail=3 --tb=short`.
-- [ ] 5.4 Run `cd frontend && npx tsc --noEmit && npx vitest run`.
+- [x] 5.1 `bu-nwvwy`: run `uv run ruff check src/ tests/ roster/ conftest.py --output-format concise`.
+- [x] 5.2 Run `uv run ruff format --check src/ tests/ roster/ conftest.py -q`.
+- [x] 5.3 Run `uv run pytest tests/chronicler --ignore=tests/e2e -q --maxfail=3 --tb=short`.
+- [x] 5.4 Run `cd frontend && npx tsc --noEmit && npx vitest run`.
 
 ## 6. Out of scope
 
