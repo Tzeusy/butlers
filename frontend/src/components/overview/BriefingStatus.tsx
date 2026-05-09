@@ -10,7 +10,7 @@
  * Geometry: 9px mono, dot + label + refresh icon.
  *
  * Motion: the refresh icon rotates continuously while isFetching using
- * CSS @keyframes spin (transform-only, linear — continuous rotation must be
+ * CSS @keyframes spin (transform-only, linear; continuous rotation must be
  * linear to avoid per-loop stutter; ease-out-quart applies to state transitions
  * only).
  *
