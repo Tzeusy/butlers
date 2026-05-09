@@ -18,7 +18,9 @@ from butlers.chronicler.adapters.base import AdapterResult, ProjectionAdapter
 from butlers.chronicler.adapters.calendar import CalendarCompletedAdapter
 from butlers.chronicler.adapters.focus import FocusInferredAdapter
 from butlers.chronicler.adapters.google_health import (
+    GoogleHealthHeartRateAdapter,
     GoogleHealthSleepAdapter,
+    GoogleHealthStepsAdapter,
     GoogleHealthWorkoutAdapter,
 )
 from butlers.chronicler.adapters.home_assistant import HomeAssistantHistoryAdapter
@@ -34,7 +36,9 @@ __all__ = [
     "CalendarCompletedAdapter",
     "CoreSessionsAdapter",
     "FocusInferredAdapter",
+    "GoogleHealthHeartRateAdapter",
     "GoogleHealthSleepAdapter",
+    "GoogleHealthStepsAdapter",
     "GoogleHealthWorkoutAdapter",
     "HomeAssistantHistoryAdapter",
     "MealsAdapter",

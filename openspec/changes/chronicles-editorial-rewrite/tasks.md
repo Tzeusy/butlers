@@ -8,17 +8,17 @@
 
 ## 2. Adapter child work
 
-- [ ] 2.1 `bu-7uiei`: extend `src/butlers/chronicler/adapters/google_health.py` with workout / steps / heart-rate projection.
-- [ ] 2.2 `bu-x1no2`: add `src/butlers/chronicler/adapters/focus.py` with `FocusInferredAdapter`.
-- [ ] 2.3 `bu-g6qqh`: add `src/butlers/chronicler/adapters/reading.py` with `ReadingInferredAdapter`.
-- [ ] 2.4 Update `src/butlers/chronicler/aggregations.py` with three new mappings (`workout_episode -> other`, `focus_block -> tasks`, `reading_block -> tasks`).
-- [ ] 2.5 Register the four new adapters in `src/butlers/chronicler/adapters/__init__.py` and `src/butlers/chronicler/jobs.py`.
-- [ ] 2.6 Add scoped adapter tests under `tests/chronicler/`.
+- [x] 2.1 `bu-7uiei`: extend `src/butlers/chronicler/adapters/google_health.py` with workout / steps / heart-rate projection.
+- [x] 2.2 `bu-x1no2`: add `src/butlers/chronicler/adapters/focus.py` with `FocusInferredAdapter`.
+- [x] 2.3 `bu-g6qqh`: add `src/butlers/chronicler/adapters/reading.py` with `ReadingInferredAdapter`.
+- [x] 2.4 Update `src/butlers/chronicler/aggregations.py` with three new mappings (`workout_episode -> other`, `focus_block -> tasks`, `reading_block -> tasks`).
+- [x] 2.5 Register the four new adapters in `src/butlers/chronicler/adapters/__init__.py` and `src/butlers/chronicler/jobs.py`.
+- [x] 2.6 Add scoped adapter tests under `tests/chronicler/`.
 
 ## 3. API child work
 
-- [ ] 3.1 `bu-018re`: add Pydantic models for `ChroniclesBriefing`, `ChroniclesAttentionItem`, `ChroniclesRecentDay`, `ChroniclesKpi` in `roster/chronicler/api/models.py`.
-- [ ] 3.2 Add three endpoints to `roster/chronicler/api/router.py`: `/briefing`, `/attention`, `/kpi`. Briefing reads `chronicler.tier2_cache` for the `voice_paragraph`; falls back to a templated paragraph when missing or stale. No new LLM call paths.
+- [x] 3.1 `bu-018re`: add Pydantic models for `ChroniclesBriefing`, `ChroniclesAttentionItem`, `ChroniclesRecentDay`, `ChroniclesKpi` in `roster/chronicler/api/models.py`.
+- [x] 3.2 Add three endpoints to `roster/chronicler/api/router.py`: `/briefing`, `/attention`, `/kpi`. Briefing reads `chronicler.tier2_cache` for the `voice_paragraph`; falls back to a templated paragraph when missing or stale. No new LLM call paths.
 - [ ] 3.3 Add API tests under `tests/chronicler/test_briefing_endpoint.py`, `test_attention_endpoint.py`, `test_kpi_endpoint.py`.
 
 ## 4. Frontend child work

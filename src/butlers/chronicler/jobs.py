@@ -12,7 +12,9 @@ from butlers.chronicler.adapters import (
     CalendarCompletedAdapter,
     CoreSessionsAdapter,
     FocusInferredAdapter,
+    GoogleHealthHeartRateAdapter,
     GoogleHealthSleepAdapter,
+    GoogleHealthStepsAdapter,
     GoogleHealthWorkoutAdapter,
     HomeAssistantHistoryAdapter,
     MealsAdapter,
@@ -287,6 +289,34 @@ async def run_project_google_health_workout(
     return await _run_adapter(db_pool=db_pool, adapter=adapter)
 
 
+async def run_project_google_health_steps(
+    db_pool: asyncpg.Pool,
+    job_args: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Project Google Health step-count facts into Chronicler point events."""
+    options = _parse_job_args(
+        "chronicler_project_google_health_steps",
+        job_args,
+        supported_fields=("batch_limit",),
+    )
+    adapter = GoogleHealthStepsAdapter(**options)
+    return await _run_adapter(db_pool=db_pool, adapter=adapter)
+
+
+async def run_project_google_health_heart_rate(
+    db_pool: asyncpg.Pool,
+    job_args: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Project Google Health heart-rate facts into Chronicler point events."""
+    options = _parse_job_args(
+        "chronicler_project_google_health_heart_rate",
+        job_args,
+        supported_fields=("batch_limit",),
+    )
+    adapter = GoogleHealthHeartRateAdapter(**options)
+    return await _run_adapter(db_pool=db_pool, adapter=adapter)
+
+
 async def run_project_focus_inferred(
     db_pool: asyncpg.Pool,
     job_args: dict[str, Any] | None,
@@ -320,7 +350,9 @@ __all__ = [
     "_DEFAULT_SESSION_SCHEMAS",
     "run_project_calendar",
     "run_project_focus_inferred",
+    "run_project_google_health_heart_rate",
     "run_project_google_health_sleep",
+    "run_project_google_health_steps",
     "run_project_google_health_workout",
     "run_project_home_assistant",
     "run_project_meals",

@@ -60,15 +60,40 @@ INITIAL_SOURCES: tuple[SourceAdapterState, ...] = (
         ),
         optional_schema=True,
     ),
-    # Google Health sleep-session projection — adapter landed in bu-yhs2c.
+    # Google Health sleep/workout projection — sleep landed in bu-yhs2c,
+    # workout promotion in bu-i29ix.
     SourceAdapterState(
         source_name="google_health.measurements",
         chronicler_compatibility=Compatibility.SUPPORTED,
-        read_surface="health.facts (predicate=sleep_session)",
+        read_surface="health.facts (predicate=sleep_session|workout_session)",
         boundary_semantics=(
             "one sleep_episode per sleep_session fact; "
+            "one workout_episode per workout_session fact; "
             "(valid_at, end_time or valid_at+duration_ms) bound the episode; "
             "precision=minute (wearable device clock)"
+        ),
+        optional_schema=True,
+    ),
+    SourceAdapterState(
+        source_name="health.steps",
+        chronicler_compatibility=Compatibility.SUPPORTED,
+        read_surface="health.facts (predicate=measurement_steps|daily_steps)",
+        boundary_semantics=(
+            "daily_steps point event per step-count fact; "
+            "valid_at is the day/window anchor; precision=day"
+        ),
+        optional_schema=True,
+    ),
+    SourceAdapterState(
+        source_name="health.heart_rate",
+        chronicler_compatibility=Compatibility.SUPPORTED,
+        read_surface=(
+            "health.facts "
+            "(predicate=measurement_resting_hr|heart_rate_summary|measurement_heart_rate)"
+        ),
+        boundary_semantics=(
+            "heart_rate_summary point event per heart-rate fact; "
+            "daily summaries use precision=day, manual point measurements use precision=minute"
         ),
         optional_schema=True,
     ),

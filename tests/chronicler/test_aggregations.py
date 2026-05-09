@@ -83,12 +83,13 @@ def test_category_for_result_is_always_in_taxonomy() -> None:
 
 
 def test_all_supported_sources_have_non_other_category() -> None:
-    """Every SUPPORTED source in contracts.py must map to a non-'other' category.
+    """Every lane-bearing SUPPORTED source in contracts.py must map to a category.
 
     This test enforces that adding a new SUPPORTED source requires also
-    wiring it in the D1 mapping table. The episode_type is derived from
-    the adapter constants collected in _D1_PAIRS source names.
+    wiring it in the D1 mapping table unless it is explicitly point-event-only.
+    Point-event-only sources can still be SUPPORTED without becoming lanes.
     """
+    point_event_only_sources = {"health.steps", "health.heart_rate"}
     supported_source_names = {
         s.source_name
         for s in INITIAL_SOURCES
@@ -96,8 +97,8 @@ def test_all_supported_sources_have_non_other_category() -> None:
     }
     d1_source_names = {pair[0] for pair in _D1_PAIRS}
 
-    # Every SUPPORTED source must have at least one D1 entry.
-    missing = supported_source_names - d1_source_names
+    # Every lane-bearing SUPPORTED source must have at least one D1 entry.
+    missing = supported_source_names - d1_source_names - point_event_only_sources
     assert not missing, (
         f"SUPPORTED sources without D1 mapping entries: {sorted(missing)}. "
         "Add the (source_name, episode_type) → category mapping to "

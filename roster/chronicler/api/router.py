@@ -2037,29 +2037,18 @@ def _parse_date_param(date_param: str | None) -> date:
         ) from exc
 
 
-async def _resolve_owner_tz(db: DatabaseManager) -> str:
-    """Resolve the owner timezone via core/general settings, falling back to UTC.
+def _resolve_owner_tz_default() -> str:
+    """Default timezone when the caller does not pass one.
 
-    The chronicler API does not own timezone configuration. The dashboard
-    settings router stores it in ``public.system_settings`` (or similar);
-    the frontend already passes a timezone in most call paths. We keep this
-    helper conservative so endpoints work even when the settings table is
-    absent.
+    The chronicler page-level invariant (dashboard-chronicles spec) bars
+    cross-schema reads from page-driven endpoints. The frontend already
+    fetches the owner timezone via the dashboard settings router and
+    passes it explicitly to chronicler endpoints, so this helper only
+    needs to provide a stable fallback when the caller omits ``tz``.
+    Default matches the SGT fallback used elsewhere in the chronicler
+    surface.
     """
-    try:
-        async with db.pool("core").acquire() as conn:
-            tz_value = await conn.fetchval(
-                """
-                SELECT value
-                FROM system_settings
-                WHERE key = 'general.timezone'
-                """
-            )
-            if isinstance(tz_value, str) and tz_value:
-                return tz_value
-    except Exception:  # noqa: BLE001 — tolerate missing settings table or pool
-        pass
-    return "UTC"
+    return "Asia/Singapore"
 
 
 def _attention_to_pydantic(items: list[Any]) -> list[ChroniclesAttentionItem]:
@@ -2169,7 +2158,7 @@ async def get_briefing(
     )
 
     target = _parse_date_param(date_param)
-    tz_name = tz or await _resolve_owner_tz(db)
+    tz_name = tz or _resolve_owner_tz_default()
 
     pool = _pool(db)
     payload = await compose_briefing_payload(pool, target, tz_name)
@@ -2209,7 +2198,7 @@ async def get_attention(
     from butlers.chronicler.editorial import compose_briefing_payload
 
     target = _parse_date_param(date_param)
-    tz_name = tz or await _resolve_owner_tz(db)
+    tz_name = tz or _resolve_owner_tz_default()
     pool = _pool(db)
     payload = await compose_briefing_payload(pool, target, tz_name)
     return ApiResponse(data=_attention_to_pydantic(payload.attention_items))
@@ -2230,7 +2219,7 @@ async def get_kpi(
     from butlers.chronicler.editorial import compose_briefing_payload
 
     target = _parse_date_param(date_param)
-    tz_name = tz or await _resolve_owner_tz(db)
+    tz_name = tz or _resolve_owner_tz_default()
     pool = _pool(db)
     payload = await compose_briefing_payload(pool, target, tz_name)
     return ApiResponse(data=_kpi_to_pydantic(payload.kpi))

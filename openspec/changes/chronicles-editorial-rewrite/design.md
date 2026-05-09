@@ -120,8 +120,8 @@ existing sleep flow, each with its own job in `chronicler/jobs.py`:
 | Predicate / table fact     | Output                                          |
 |----------------------------|-------------------------------------------------|
 | `workout_session`          | episode `workout_episode`, category `other`    |
-| `daily_steps`              | point event `health.steps` (count + day window)|
-| `heart_rate_summary`       | point event `health.heart_rate` (avg + max)    |
+| `measurement_steps` (`daily_steps` alias) | point event `health.steps` (count + day window)|
+| `measurement_resting_hr` (`heart_rate_summary` alias) | point event `health.heart_rate` (avg + max) |
 
 The sleep adapter class stays. Three new sibling classes
 (`GoogleHealthWorkoutAdapter`, `GoogleHealthStepsAdapter`,
