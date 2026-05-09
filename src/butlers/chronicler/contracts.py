@@ -70,7 +70,8 @@ INITIAL_SOURCES: tuple[SourceAdapterState, ...] = (
             "one sleep_episode per sleep_session fact; "
             "one workout_episode per workout_session fact; "
             "(valid_at, end_time or valid_at+duration_ms) bound the episode; "
-            "precision=minute (wearable device clock)"
+            "precision=minute (wearable device clock); "
+            "workouts carrying heart-rate metadata are privacy=sensitive"
         ),
         optional_schema=True,
     ),

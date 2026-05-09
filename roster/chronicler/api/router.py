@@ -2113,8 +2113,8 @@ async def _voice_paragraph_from_cache(pool: Any, target: date) -> tuple[str | No
     cache_built_at = row["cache_built_at"]
     start_at = row["start_at"]
     end_at = row["end_at"]
-    # Light staleness check: any episode/point_event tombstoned or updated
-    # within the cached window after cache_built_at means stale. This is a
+    # Light staleness check: any episode tombstoned or updated within the
+    # cached window after cache_built_at means stale. This is a
     # subset of the full check in get_day_close_cache; for the briefing we
     # do not need the corrected_start_at expansion paths.
     async with pool.acquire() as conn:
@@ -2141,7 +2141,7 @@ async def get_briefing(
     ),
     tz: str | None = Query(
         None,
-        description="IANA timezone name. Defaults to owner-tz from settings, then UTC.",
+        description="IANA timezone name. Defaults to Chronicler's stable fallback.",
     ),
     db: DatabaseManager = Depends(_get_db_manager),
 ) -> ChroniclesBriefing:

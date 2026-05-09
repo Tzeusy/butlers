@@ -629,6 +629,44 @@ async def test_workout_fact_projects_episode() -> None:
 
 
 @pytest.mark.asyncio
+async def test_workout_fact_with_heart_rate_metadata_is_sensitive() -> None:
+    start = datetime(2026, 4, 25, 8, 0, tzinfo=UTC)
+    row = _make_row(
+        row_id="workout-hr-001",
+        idempotency_key="google_health:workout:run-hr-1",
+        valid_at=start,
+        metadata={
+            "activity_type": "run",
+            "duration_ms": 45 * 60_000,
+            "average_heart_rate": 151,
+            "max_heart_rate": 177,
+        },
+    )
+    row["predicate"] = "workout_session"
+    row["content"] = "Run (45m)"
+
+    adapter = GoogleHealthWorkoutAdapter()
+    upserted: list[Episode] = []
+
+    async def _fake_upsert(conn: object, episode: Episode) -> Episode:
+        upserted.append(episode)
+        return episode
+
+    pool = _pool_returning(row)
+    cp = _chronicler_pool()
+
+    with patch(
+        "butlers.chronicler.adapters.google_health.upsert_episode",
+        side_effect=_fake_upsert,
+    ):
+        result = await adapter.project(pool, chronicler_pool=cp, since=None)
+
+    assert result.rows_projected == 1
+    assert upserted[0].privacy == Privacy.SENSITIVE
+    assert upserted[0].payload["average_heart_rate"] == 151
+
+
+@pytest.mark.asyncio
 async def test_steps_fact_projects_point_event() -> None:
     row = _make_row(
         row_id="steps-001",

@@ -18,7 +18,11 @@ from butlers.chronicler.editorial import (
     KpiSnapshot,
     LaneHours,
     Streaks,
+    _compute_streaks,
     _detect_waking_gaps,
+    _fetch_recent_days,
+    _fetch_sleep_median_prior_week,
+    _fetch_source_health_items,
     classify_state,
     day_window_utc,
     headline_for,
@@ -177,6 +181,18 @@ def test_day_window_utc_invalid_tz_falls_back_to_utc() -> None:
     assert end == datetime(2026, 5, 9, 0, 0, tzinfo=UTC)
 
 
+def test_day_window_utc_uses_next_local_midnight_across_dst_start() -> None:
+    start, end = day_window_utc(date(2026, 3, 8), "America/New_York")
+    assert start == datetime(2026, 3, 8, 5, 0, tzinfo=UTC)
+    assert end == datetime(2026, 3, 9, 4, 0, tzinfo=UTC)
+
+
+def test_day_window_utc_uses_next_local_midnight_across_dst_end() -> None:
+    start, end = day_window_utc(date(2026, 11, 1), "America/New_York")
+    assert start == datetime(2026, 11, 1, 4, 0, tzinfo=UTC)
+    assert end == datetime(2026, 11, 2, 5, 0, tzinfo=UTC)
+
+
 # ── _detect_waking_gaps ──────────────────────────────────────────────────
 
 
@@ -247,3 +263,147 @@ def test_waking_gap_overlapping_episodes_merged() -> None:
     ]
     gaps = _detect_waking_gaps(episodes, start, end, "UTC")
     assert len(gaps) == 1
+
+
+def test_waking_gap_clips_to_waking_hours_before_threshold() -> None:
+    start = datetime(2026, 5, 8, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 5, 8, 23, 59, tzinfo=UTC)
+    episodes = [
+        _FakeRow(
+            s_at=datetime(2026, 5, 8, 4, 0, tzinfo=UTC),
+            e_at=datetime(2026, 5, 8, 5, 0, tzinfo=UTC),
+        ),
+        _FakeRow(
+            s_at=datetime(2026, 5, 8, 13, 0, tzinfo=UTC),
+            e_at=datetime(2026, 5, 8, 14, 0, tzinfo=UTC),
+        ),
+    ]
+
+    assert _detect_waking_gaps(episodes, start, end, "UTC") == [7 * 60]
+
+
+def test_waking_gap_ignores_long_gap_with_short_waking_overlap() -> None:
+    start = datetime(2026, 5, 8, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 5, 9, 23, 59, tzinfo=UTC)
+    episodes = [
+        _FakeRow(
+            s_at=datetime(2026, 5, 8, 21, 0, tzinfo=UTC),
+            e_at=datetime(2026, 5, 8, 23, 0, tzinfo=UTC),
+        ),
+        _FakeRow(
+            s_at=datetime(2026, 5, 9, 8, 0, tzinfo=UTC),
+            e_at=datetime(2026, 5, 9, 9, 0, tzinfo=UTC),
+        ),
+    ]
+
+    assert _detect_waking_gaps(episodes, start, end, "UTC") == []
+
+
+# ── Batched editorial reads ───────────────────────────────────────────────
+
+
+class _FetchConn:
+    def __init__(self, rows: list[_FakeRow] | None = None) -> None:
+        self.rows = rows or []
+        self.fetch_calls: list[tuple[object, ...]] = []
+        self.fetchval_calls: list[tuple[object, ...]] = []
+
+    async def fetch(self, *args: object) -> list[_FakeRow]:
+        self.fetch_calls.append(args)
+        return self.rows
+
+    async def fetchval(self, *args: object) -> object:
+        self.fetchval_calls.append(args)
+        return False
+
+
+class _FetchAcquire:
+    def __init__(self, conn: _FetchConn) -> None:
+        self.conn = conn
+
+    async def __aenter__(self) -> _FetchConn:
+        return self.conn
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+
+class _FetchPool:
+    def __init__(self, conn: _FetchConn) -> None:
+        self.conn = conn
+
+    def acquire(self) -> _FetchAcquire:
+        return _FetchAcquire(self.conn)
+
+
+@pytest.mark.asyncio
+async def test_fetch_recent_days_batches_episode_query() -> None:
+    conn = _FetchConn()
+
+    days = await _fetch_recent_days(
+        _FetchPool(conn),
+        datetime(2026, 5, 9, 0, 0, tzinfo=UTC),
+        days=7,
+        tz_name="UTC",
+    )
+
+    assert [d.date for d in days] == [
+        "2026-05-08",
+        "2026-05-07",
+        "2026-05-06",
+        "2026-05-05",
+        "2026-05-04",
+        "2026-05-03",
+        "2026-05-02",
+    ]
+    assert len(conn.fetch_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_compute_streaks_batches_presence_query() -> None:
+    conn = _FetchConn()
+
+    streaks = await _compute_streaks(
+        _FetchPool(conn),
+        datetime(2026, 5, 9, 0, 0, tzinfo=UTC),
+        "UTC",
+    )
+
+    assert streaks == Streaks(sleep=0, exercise=0)
+    assert len(conn.fetch_calls) == 1
+    assert conn.fetchval_calls == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_sleep_median_prior_week_batches_day_query() -> None:
+    conn = _FetchConn()
+
+    median = await _fetch_sleep_median_prior_week(
+        _FetchPool(conn),
+        datetime(2026, 5, 9, 0, 0, tzinfo=UTC),
+        "UTC",
+    )
+
+    assert median == 0
+    assert len(conn.fetch_calls) == 1
+    assert conn.fetchval_calls == []
+
+
+@pytest.mark.asyncio
+async def test_source_health_items_link_to_connectors_tab() -> None:
+    conn = _FetchConn(
+        [
+            _FakeRow(
+                source_name="spotify.session_summary",
+                active=True,
+                inactive_reason=None,
+                last_run_at=datetime.now(UTC),
+                last_error="oauth failed",
+            )
+        ]
+    )
+
+    items = await _fetch_source_health_items(_FetchPool(conn))
+
+    assert items[0].kind == "source_health"
+    assert items[0].action_href == "/ingestion?tab=connectors"

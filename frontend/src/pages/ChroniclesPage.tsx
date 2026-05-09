@@ -73,6 +73,31 @@ function fmtMinutes(total: number): string {
   return `${h}h ${m.toString().padStart(2, "0")}m`;
 }
 
+function formatDateInTimeZone(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${lookup.year}-${lookup.month}-${lookup.day}`;
+}
+
+function previousIsoCalendarDate(dateIso: string): string {
+  const [year, month, day] = dateIso.split("-").map(Number);
+  const previous = new Date(Date.UTC(year, month - 1, day - 1));
+  return previous.toISOString().slice(0, 10);
+}
+
+function yesterdayInTimeZone(timeZone: string): string {
+  try {
+    return previousIsoCalendarDate(formatDateInTimeZone(new Date(), timeZone));
+  } catch {
+    return previousIsoCalendarDate(formatDateInTimeZone(new Date(), "UTC"));
+  }
+}
+
 function buildKpiCells(kpi: ChroniclesKpi): React.ComponentProps<typeof KpiStrip>["cells"] {
   const top = kpi.hours_by_top_lanes[0];
   const topLabel = top ? `${top.lane} · ${top.hours.toFixed(1)}h` : "no lane data";
@@ -138,11 +163,7 @@ export default function ChroniclesPage() {
   const ownerTz = useTimezone();
   // Brief default: yesterday in owner-tz. The owner can later add a date
   // picker; for v1 we always show the most recent settled day.
-  const targetDate = useMemo(() => {
-    const now = new Date();
-    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    return yesterday.toISOString().slice(0, 10);
-  }, []);
+  const targetDate = useMemo(() => yesterdayInTimeZone(ownerTz), [ownerTz]);
 
   const { data, isFetching, isError, refetch } = useChroniclesBriefing({
     date: targetDate,

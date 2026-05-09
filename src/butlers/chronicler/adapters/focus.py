@@ -67,6 +67,13 @@ def _title_matches_focus(title: str | None) -> bool:
     return _FOCUS_KEYWORDS_RE.search(title) is not None
 
 
+def _record_value(row: asyncpg.Record, key: str, default: Any = None) -> Any:
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return default
+
+
 class FocusInferredAdapter(ProjectionAdapter):
     """Project focus_block episodes inferred from chronicler.episodes."""
 
@@ -119,12 +126,26 @@ class FocusInferredAdapter(ProjectionAdapter):
                 if since is None:
                     rows = await conn.fetch(
                         """
-                        SELECT id, source_name, source_ref, episode_type,
-                               start_at, end_at, title, payload, created_at
-                        FROM episodes
-                        WHERE tombstone_at IS NULL
-                          AND source_name IN ('core.sessions', 'google_calendar.completed')
-                        ORDER BY created_at ASC, id ASC
+                        SELECT e.id, e.source_name, e.source_ref, e.episode_type,
+                               e.start_at, e.end_at, e.title, e.payload, e.created_at,
+                               EXISTS (
+                                   SELECT 1
+                                   FROM episodes route
+                                   WHERE route.tombstone_at IS NULL
+                                     AND route.source_name = 'core.sessions'
+                                     AND route.episode_type = 'work'
+                                     AND route.payload->>'trigger_source' = 'route'
+                                     AND route.id <> e.id
+                                     AND route.start_at < e.end_at
+                                     AND (
+                                         route.end_at IS NULL
+                                         OR route.end_at > e.start_at
+                                     )
+                               ) AS overlaps_route
+                        FROM episodes e
+                        WHERE e.tombstone_at IS NULL
+                          AND e.source_name IN ('core.sessions', 'google_calendar.completed')
+                        ORDER BY e.created_at ASC, e.id ASC
                         LIMIT $1
                         """,
                         self.batch_limit,
@@ -132,13 +153,27 @@ class FocusInferredAdapter(ProjectionAdapter):
                 else:
                     rows = await conn.fetch(
                         """
-                        SELECT id, source_name, source_ref, episode_type,
-                               start_at, end_at, title, payload, created_at
-                        FROM episodes
-                        WHERE tombstone_at IS NULL
-                          AND source_name IN ('core.sessions', 'google_calendar.completed')
-                          AND created_at > $1
-                        ORDER BY created_at ASC, id ASC
+                        SELECT e.id, e.source_name, e.source_ref, e.episode_type,
+                               e.start_at, e.end_at, e.title, e.payload, e.created_at,
+                               EXISTS (
+                                   SELECT 1
+                                   FROM episodes route
+                                   WHERE route.tombstone_at IS NULL
+                                     AND route.source_name = 'core.sessions'
+                                     AND route.episode_type = 'work'
+                                     AND route.payload->>'trigger_source' = 'route'
+                                     AND route.id <> e.id
+                                     AND route.start_at < e.end_at
+                                     AND (
+                                         route.end_at IS NULL
+                                         OR route.end_at > e.start_at
+                                     )
+                               ) AS overlaps_route
+                        FROM episodes e
+                        WHERE e.tombstone_at IS NULL
+                          AND e.source_name IN ('core.sessions', 'google_calendar.completed')
+                          AND e.created_at > $1
+                        ORDER BY e.created_at ASC, e.id ASC
                         LIMIT $2
                         """,
                         since,
@@ -172,7 +207,7 @@ class FocusInferredAdapter(ProjectionAdapter):
         if source_name == "core.sessions" and episode_type == "work":
             trigger_source = payload.get("trigger_source")
             cat = category_for(source_name, episode_type, trigger_source=trigger_source)
-            if cat == "tasks":
+            if cat == "tasks" and not bool(_record_value(row, "overlaps_route", False)):
                 signal = "long_task_session"
         elif source_name == "google_calendar.completed" and episode_type == "scheduled_block":
             if _title_matches_focus(title):

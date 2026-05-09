@@ -128,6 +128,9 @@ The sleep adapter class stays. Three new sibling classes
 `GoogleHealthHeartRateAdapter`) live in the same module and share
 helpers. Each is registered in `__init__.py` and `jobs.py`.
 Each degrades gracefully when `health.facts` or its predicate is absent.
+Workout episodes remain `normal` privacy for aggregate duration/distance
+facts and escalate to `sensitive` when the source fact carries heart-rate
+metadata.
 
 ### Focus
 

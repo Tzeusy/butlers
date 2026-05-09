@@ -43,7 +43,7 @@ EPISODE_TYPE_READING = "reading_block"
 DEFAULT_BATCH_LIMIT = 500
 
 _READING_KEYWORDS_RE = re.compile(
-    r"\b(read|reading|book:|article:|paper:)\b",
+    r"\b(read|reading)\b|\b(book|article|paper):",
     re.IGNORECASE,
 )
 

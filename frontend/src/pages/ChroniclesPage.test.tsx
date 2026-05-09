@@ -16,7 +16,7 @@
  * component-level tests under frontend/src/components/chronicles/.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -33,14 +33,18 @@ vi.mock("@/components/ui/timezone-context", () => ({
 }));
 
 let _briefing: ChroniclesBriefing | undefined;
+let _briefingArgs: { date?: string; tz?: string } | undefined;
 
 vi.mock("@/hooks/use-chronicles-briefing", () => ({
-  useChroniclesBriefing: () => ({
-    data: _briefing,
-    isFetching: false,
-    isError: false,
-    refetch: vi.fn(),
-  }),
+  useChroniclesBriefing: (args: { date?: string; tz?: string } = {}) => {
+    _briefingArgs = args;
+    return {
+      data: _briefing,
+      isFetching: false,
+      isError: false,
+      refetch: vi.fn(),
+    };
+  },
 }));
 
 // The drilldown panel pulls in heavy modules (Gantt, Map, Scrubber). For these
@@ -106,6 +110,15 @@ function buildBriefing(overrides: Partial<ChroniclesBriefing> = {}): ChroniclesB
 // ---------------------------------------------------------------------------
 
 describe("ChroniclesPage editorial archetype", () => {
+  beforeEach(() => {
+    _briefing = undefined;
+    _briefingArgs = undefined;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders headline, voice paragraph, KPI strip, and recent days", () => {
     _briefing = buildBriefing();
     const html = renderPage();
@@ -173,5 +186,18 @@ describe("ChroniclesPage editorial archetype", () => {
     _briefing = buildBriefing();
     const html = renderPage();
     expect(html).toContain("Nothing waiting.");
+  });
+
+  it("requests yesterday in the owner timezone near UTC day boundaries", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-09T16:30:00.000Z"));
+    _briefing = buildBriefing({ date: "2026-05-09" });
+
+    renderPage();
+
+    expect(_briefingArgs).toEqual({
+      date: "2026-05-09",
+      tz: "Asia/Singapore",
+    });
   });
 });

@@ -491,10 +491,9 @@ class GoogleHealthWorkoutAdapter(ProjectionAdapter):
 
     Falls back to the fact UUID when ``idempotency_key`` is absent.
 
-    Boundary precision is ``minute``. Privacy is ``normal`` — workout
-    facts are aggregate biometric envelopes, not raw sensor data, and
-    the same dashboard-trail rationale that applies to OwnTracks
-    movement episodes (the owner's view of their own day) applies here.
+    Boundary precision is ``minute``. Privacy is ``normal`` for aggregate
+    workout facts, and escalates to ``sensitive`` when the fact carries
+    heart-rate fields.
     """
 
     def __init__(self, *, batch_limit: int = DEFAULT_BATCH_LIMIT) -> None:
@@ -638,6 +637,12 @@ class GoogleHealthWorkoutAdapter(ProjectionAdapter):
             val = metadata.get(field_name)
             if val is not None:
                 payload[field_name] = val
+        privacy = (
+            Privacy.SENSITIVE
+            if payload.get("average_heart_rate") is not None
+            or payload.get("max_heart_rate") is not None
+            else Privacy.NORMAL
+        )
 
         async with chronicler_pool.acquire() as conn:
             episode = await upsert_episode(
@@ -651,7 +656,7 @@ class GoogleHealthWorkoutAdapter(ProjectionAdapter):
                     precision=Precision.MINUTE,
                     title=title,
                     payload=payload,
-                    privacy=Privacy.NORMAL,
+                    privacy=privacy,
                 ),
             )
         return episode

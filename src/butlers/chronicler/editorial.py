@@ -20,7 +20,7 @@ from __future__ import annotations
 import zoneinfo
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 
 import asyncpg
 
@@ -172,7 +172,7 @@ def day_window_utc(target: date, tz_name: str) -> tuple[datetime, datetime]:
     except Exception:
         tz = UTC
     start_local = datetime.combine(target, time.min, tzinfo=tz)
-    end_local = start_local + timedelta(days=1)
+    end_local = datetime.combine(target + timedelta(days=1), time.min, tzinfo=tz)
     return start_local.astimezone(UTC), end_local.astimezone(UTC)
 
 
@@ -252,27 +252,40 @@ async def _fetch_recent_days(
     pool: asyncpg.Pool, end_utc: datetime, days: int, tz_name: str
 ) -> list[RecentDay]:
     """Return up to ``days`` recent calendar days ending at ``end_utc``."""
-    out: list[RecentDay] = []
     try:
         tz = zoneinfo.ZoneInfo(tz_name)
     except Exception:
         tz = UTC
     end_local_date = end_utc.astimezone(tz).date()
-    for offset in range(days):
-        d = end_local_date - timedelta(days=offset + 1)  # skip "today"; recent_days = prior days
+    local_dates = [
+        end_local_date - timedelta(days=offset + 1) for offset in range(days)
+    ]  # skip "today"; recent_days = prior days
+    if not local_dates:
+        return []
+
+    range_start_utc, _ = day_window_utc(local_dates[-1], tz_name)
+    _, range_end_utc = day_window_utc(local_dates[0], tz_name)
+    episodes = await _fetch_window_episodes(pool, range_start_utc, range_end_utc)
+
+    from butlers.chronicler.aggregations import category_for
+
+    out: list[RecentDay] = []
+    for d in local_dates:
         d_start_utc, d_end_utc = day_window_utc(d, tz_name)
-        episodes = await _fetch_window_episodes(pool, d_start_utc, d_end_utc)
-        if not episodes:
+        day_episodes = [
+            r
+            for r in episodes
+            if r["s_at"] < d_end_utc and (r["e_at"] is None or r["e_at"] > d_start_utc)
+        ]
+        if not day_episodes:
             out.append(
                 RecentDay(date=d.isoformat(), total_minutes=0, top_lane=None, episode_count=0)
             )
             continue
         # Compute totals per lane and overall episode count.
-        from butlers.chronicler.aggregations import category_for
-
         lane_seconds: dict[str, float] = {}
         total_seconds = 0.0
-        for r in episodes:
+        for r in day_episodes:
             cat = category_for(
                 r["source_name"],
                 r["episode_type"],
@@ -291,10 +304,55 @@ async def _fetch_recent_days(
                 date=d.isoformat(),
                 total_minutes=int(total_seconds // 60),
                 top_lane=top_lane,
-                episode_count=len(episodes),
+                episode_count=len(day_episodes),
             )
         )
     return out
+
+
+async def _fetch_health_episode_day_seconds(
+    pool: asyncpg.Pool,
+    end_utc: datetime,
+    days: int,
+    tz_name: str,
+    episode_types: Sequence[str],
+) -> dict[tuple[date, str], float]:
+    """Return seconds per local day and health episode type in one DB query."""
+    try:
+        tz = zoneinfo.ZoneInfo(tz_name)
+    except Exception:
+        tz = UTC
+    end_local_date = end_utc.astimezone(tz).date()
+    local_dates = [end_local_date - timedelta(days=offset + 1) for offset in range(days)]
+    if not local_dates:
+        return {}
+
+    range_start_utc, _ = day_window_utc(local_dates[-1], tz_name)
+    _, range_end_utc = day_window_utc(local_dates[0], tz_name)
+    sql = """
+    SELECT episode_type, start_at, end_at
+    FROM episodes
+    WHERE tombstone_at IS NULL
+      AND source_name = 'google_health.measurements'
+      AND episode_type = ANY($3::text[])
+      AND start_at < $2
+      AND (end_at IS NULL OR end_at > $1)
+    """
+    async with pool.acquire() as conn:
+        rows = list(await conn.fetch(sql, range_start_utc, range_end_utc, list(episode_types)))
+
+    seconds_by_day: dict[tuple[date, str], float] = {}
+    for d in local_dates:
+        d_start_utc, d_end_utc = day_window_utc(d, tz_name)
+        for r in rows:
+            episode_type = r["episode_type"]
+            clipped_start = max(r["start_at"], d_start_utc)
+            clipped_end = min(r["end_at"] or range_end_utc, d_end_utc)
+            seconds = max(0.0, (clipped_end - clipped_start).total_seconds())
+            if seconds > 0:
+                key = (d, episode_type)
+                seconds_by_day[key] = seconds_by_day.get(key, 0.0) + seconds
+    return seconds_by_day
 
 
 async def _compute_streaks(pool: asyncpg.Pool, end_utc: datetime, tz_name: str) -> Streaks:
@@ -304,44 +362,26 @@ async def _compute_streaks(pool: asyncpg.Pool, end_utc: datetime, tz_name: str) 
     except Exception:
         tz = UTC
     today_local_date = end_utc.astimezone(tz).date()
+    seconds_by_day = await _fetch_health_episode_day_seconds(
+        pool,
+        end_utc,
+        STREAK_LOOKBACK_DAYS,
+        tz_name,
+        ("sleep_episode", "workout_episode"),
+    )
     sleep_streak = 0
     workout_streak = 0
     sleep_broken = False
     workout_broken = False
     for offset in range(STREAK_LOOKBACK_DAYS):
         d = today_local_date - timedelta(days=offset + 1)
-        d_start, d_end = day_window_utc(d, tz_name)
         if not sleep_broken:
-            sql = """
-            SELECT EXISTS (
-                SELECT 1 FROM episodes
-                WHERE tombstone_at IS NULL
-                  AND source_name = 'google_health.measurements'
-                  AND episode_type = 'sleep_episode'
-                  AND start_at < $2
-                  AND (end_at IS NULL OR end_at > $1)
-            )
-            """
-            async with pool.acquire() as conn:
-                hit = await conn.fetchval(sql, d_start, d_end)
-            if hit:
+            if seconds_by_day.get((d, "sleep_episode"), 0.0) > 0:
                 sleep_streak += 1
             else:
                 sleep_broken = True
         if not workout_broken:
-            sql_w = """
-            SELECT EXISTS (
-                SELECT 1 FROM episodes
-                WHERE tombstone_at IS NULL
-                  AND source_name = 'google_health.measurements'
-                  AND episode_type = 'workout_episode'
-                  AND start_at < $2
-                  AND (end_at IS NULL OR end_at > $1)
-            )
-            """
-            async with pool.acquire() as conn:
-                hit_w = await conn.fetchval(sql_w, d_start, d_end)
-            if hit_w:
+            if seconds_by_day.get((d, "workout_episode"), 0.0) > 0:
                 workout_streak += 1
             else:
                 workout_broken = True
@@ -393,7 +433,7 @@ async def _fetch_source_health_items(pool: asyncpg.Pool) -> list[AttentionItem]:
                     severity="high",
                     title=f"{r['source_name']} projection error",
                     detail=str(last_error)[:140],
-                    action_href=None,
+                    action_href="/ingestion?tab=connectors",
                 )
             )
         elif inactive_reason:
@@ -403,7 +443,7 @@ async def _fetch_source_health_items(pool: asyncpg.Pool) -> list[AttentionItem]:
                     severity="medium",
                     title=f"{r['source_name']} inactive",
                     detail=str(inactive_reason)[:140],
-                    action_href=None,
+                    action_href="/ingestion?tab=connectors",
                 )
             )
     return items
@@ -437,16 +477,38 @@ async def _fetch_sleep_median_prior_week(
     except Exception:
         tz = UTC
     today_local = end_utc.astimezone(tz).date()
-    minutes: list[int] = []
-    for offset in range(1, 8):
-        d = today_local - timedelta(days=offset)
-        ds, de = day_window_utc(d, tz_name)
-        m = await _fetch_sleep_minutes_for_day(pool, ds, de)
-        minutes.append(m)
-    if not minutes:
-        return 0
+    seconds_by_day = await _fetch_health_episode_day_seconds(
+        pool,
+        end_utc,
+        7,
+        tz_name,
+        ("sleep_episode",),
+    )
+    minutes = [
+        int(seconds_by_day.get((today_local - timedelta(days=offset), "sleep_episode"), 0) // 60)
+        for offset in range(1, 8)
+    ]
     s = sorted(minutes)
     return s[len(s) // 2]
+
+
+def _waking_overlap_minutes(gap_start_utc: datetime, gap_end_utc: datetime, tz: tzinfo) -> int:
+    """Return minutes of a UTC gap that overlap local waking windows."""
+    if gap_start_utc >= gap_end_utc:
+        return 0
+    local_start = gap_start_utc.astimezone(tz)
+    local_end = gap_end_utc.astimezone(tz)
+    cursor = local_start.date()
+    total_seconds = 0.0
+    while cursor <= local_end.date():
+        waking_start = datetime.combine(cursor, time(WAKING_HOUR_START), tzinfo=tz).astimezone(UTC)
+        waking_end = datetime.combine(cursor, time(WAKING_HOUR_END), tzinfo=tz).astimezone(UTC)
+        clipped_start = max(gap_start_utc, waking_start)
+        clipped_end = min(gap_end_utc, waking_end)
+        if clipped_start < clipped_end:
+            total_seconds += (clipped_end - clipped_start).total_seconds()
+        cursor += timedelta(days=1)
+    return int(total_seconds // 60)
 
 
 def _detect_waking_gaps(
@@ -481,14 +543,9 @@ def _detect_waking_gaps(
     for i in range(1, len(merged)):
         prev_end = merged[i - 1][1]
         curr_start = merged[i][0]
-        gap_seconds = (curr_start - prev_end).total_seconds()
-        if gap_seconds < WAKING_GAP_ANOMALY_MINUTES * 60:
-            continue
-        # Confirm at least part of the gap intersects waking hours.
-        local_prev_end = prev_end.astimezone(tz)
-        local_curr_start = curr_start.astimezone(tz)
-        if local_prev_end.hour < WAKING_HOUR_END or local_curr_start.hour >= WAKING_HOUR_START:
-            flagged.append(int(gap_seconds // 60))
+        waking_minutes = _waking_overlap_minutes(prev_end, curr_start, tz)
+        if waking_minutes >= WAKING_GAP_ANOMALY_MINUTES:
+            flagged.append(waking_minutes)
     return flagged
 
 
