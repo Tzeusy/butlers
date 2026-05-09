@@ -8,13 +8,15 @@ units: identity card, process facts card, heartbeat row, module health card,
 cost card, recent sessions card, and eligibility row. The stack SHALL use
 existing butler detail, system heartbeat, module health, cost, sessions, and
 switchboard eligibility data surfaces, plus the process-facts fields specified
-by `add-butler-process-facts`.
+by `add-butler-process-facts`. To prevent layout shifts, the tab SHALL
+maintain a unified loading state by combining loading flags from all data
+sources with a logical OR.
 
 #### Scenario: Identity card
 
 - **WHEN** the Overview tab loads for a butler
-- **THEN** the first card SHALL display the butler name, status badge,
-  description when present, and MCP port
+- **THEN** the first card SHALL display the `ButlerMark` identity component,
+  butler name, status badge, and description when present
 - **AND** the card SHALL source its detail data from the existing `useButler`
   hook (`frontend/src/hooks/use-butlers.ts:26-33`) and the butler detail
   endpoint response
@@ -26,8 +28,8 @@ by `add-butler-process-facts`.
 
 - **WHEN** the Overview tab renders the process facts card
 - **THEN** the card SHALL show `container_name`, `port`,
-  `registered_duration_seconds` rendered as a human-readable uptime or liveness
-  duration, and `config_path`
+  `registered_duration_seconds` rendered as a human-readable liveness duration,
+  and `config_path`
 - **AND** the card SHALL follow the sibling process-facts contract and SHALL NOT
   render, type, or request a `pid` field
   (`openspec/changes/add-butler-process-facts/specs/dashboard-butler-management/spec.md:3-38`)

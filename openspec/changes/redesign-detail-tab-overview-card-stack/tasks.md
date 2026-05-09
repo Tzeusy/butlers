@@ -15,7 +15,8 @@
 
 - [ ] 2.1 Implement the identity card at the top of the redesigned Overview tab
       using existing `useButler` detail data.
-- [ ] 2.2 Preserve butler name, status badge, description, and port display.
+- [ ] 2.2 Preserve `ButlerMark` identity component, butler name, status badge,
+      and description display.
 - [ ] 2.3 Preserve eligibility state, restore click behavior, quarantine reason,
       and 24-hour eligibility timeline.
 - [ ] 2.4 Add or update React tests covering the preserved identity and
@@ -26,7 +27,7 @@
 - [ ] 3.1 Consume the sibling process-facts contract from
       `add-butler-process-facts`.
 - [ ] 3.2 Render `container_name`, `port`, `registered_duration_seconds`
-      formatted as uptime/liveness duration, and `config_path`.
+      formatted as liveness duration, and `config_path`.
 - [ ] 3.3 Do not render or type a `pid` field.
 - [ ] 3.4 Add or update React tests asserting the four rows are present and
       `pid` is absent.
@@ -46,8 +47,8 @@
 
 - [ ] 5.1 Preserve the Cost Today card using `useCostSummary("today")`,
       per-butler share, and global total.
-- [ ] 5.2 Add a Recent sessions card using `useButlerSessions(butlerName, { limit:
-      5 })`.
+- [ ] 5.2 Add a Recent sessions card using
+      `useButlerSessions(butlerName, { limit: 5 })`.
 - [ ] 5.3 Render explicit empty states for no spend and no recent sessions.
 - [ ] 5.4 Add or update React tests for cost and recent sessions loading,
       populated, and empty states.
