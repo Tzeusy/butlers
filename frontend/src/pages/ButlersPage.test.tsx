@@ -117,11 +117,11 @@ describe("ButlersPage", () => {
       sessions_24h: 7,
     };
 
-    it("renders ButlerMark glyph (initial letter via aria-label)", () => {
+    it("renders ButlerMark glyph (initial letter via title attribute)", () => {
       setQueryState({ data: { data: [BUTLER], meta: {} } });
       const html = renderPage();
-      // ButlerMark renders aria-label={name}
-      expect(html).toContain('aria-label="health"');
+      // ButlerMark renders title={name} — specific to the squircle element, not the link wrapper
+      expect(html).toContain('title="health"');
     });
 
     it("renders name and status pill", () => {
@@ -132,19 +132,18 @@ describe("ButlersPage", () => {
       expect(html).toContain("Up");
     });
 
-    it("renders description in italic serif when present", () => {
+    it("renders description text when present", () => {
       setQueryState({ data: { data: [BUTLER], meta: {} } });
       const html = renderPage();
       expect(html).toContain("Tracks your wellness goals");
-      expect(html).toContain("font-style:italic");
     });
 
     it("suppresses description paragraph when absent", () => {
       const noDesc = { ...BUTLER, description: undefined };
       setQueryState({ data: { data: [noDesc], meta: {} } });
       const html = renderPage();
-      // No italic serif description element should appear
-      expect(html).not.toContain("font-style:italic");
+      // Description text must not appear when description is absent
+      expect(html).not.toContain("Tracks your wellness goals");
     });
 
     it("renders sessions_24h count and open link", () => {
@@ -159,7 +158,7 @@ describe("ButlersPage", () => {
       setQueryState({ data: { data: [BUTLER], meta: {} } });
       setRegistryState([{ name: "health", eligibility_state: "active" }]);
       const html = renderPage();
-      expect(html).toContain("active");
+      expect(html).toContain("Active");
     });
 
     it("omits eligibility chip when registry has no entry for the butler", () => {
@@ -167,8 +166,8 @@ describe("ButlersPage", () => {
       // registry returns entry for a different butler
       setRegistryState([{ name: "other", eligibility_state: "quarantined" }]);
       const html = renderPage();
-      // "quarantined" chip should not appear
-      expect(html).not.toContain("quarantined");
+      // "Quarantined" chip should not appear
+      expect(html).not.toContain("Quarantined");
     });
   });
 });

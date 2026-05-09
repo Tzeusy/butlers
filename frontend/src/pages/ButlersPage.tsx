@@ -45,21 +45,21 @@ function eligibilityChip(state: string) {
   if (state === "active") {
     return (
       <Badge className="bg-emerald-600 text-white hover:bg-emerald-600/90 text-xs">
-        active
+        Active
       </Badge>
     );
   }
   if (state === "quarantined") {
-    return <Badge variant="destructive" className="text-xs">quarantined</Badge>;
+    return <Badge variant="destructive" className="text-xs">Quarantined</Badge>;
   }
   if (state === "stale") {
     return (
       <Badge variant="outline" className="border-amber-500 text-amber-600 text-xs">
-        stale
+        Stale
       </Badge>
     );
   }
-  return <Badge variant="secondary" className="text-xs">{state}</Badge>;
+  return <Badge variant="secondary" className="text-xs capitalize">{state}</Badge>;
 }
 
 // ---------------------------------------------------------------------------
