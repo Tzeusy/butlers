@@ -137,6 +137,13 @@ export function useAllPendingReviews(mapIds: string[]) {
       queryFn: () => getEducationPendingReviews(id, 14),
       refetchInterval: interval,
       refetchIntervalInBackground: false,
+      // Match staleTime to the scaled polling cadence. Without this, the
+      // global default staleTime (30s) is shorter than the scaled interval
+      // for high map counts, so refetchOnWindowFocus / refetchOnMount would
+      // fire extra requests between scheduled polls and partially undo the
+      // backoff. Pinning staleTime=interval keeps the backoff effective
+      // under focus/mount as well.
+      staleTime: interval,
     })),
   });
 }
@@ -159,6 +166,10 @@ export function useAllMasterySummaries(mapIds: string[]) {
       queryFn: () => getEducationMasterySummary(id),
       refetchInterval: interval,
       refetchIntervalInBackground: false,
+      // See useAllPendingReviews: keep staleTime aligned with the scaled
+      // refetchInterval so focus/mount refetches don't punch through the
+      // backoff for residents with many active maps.
+      staleTime: interval,
     })),
   });
 }
@@ -181,6 +192,10 @@ export function useAllFrontierNodes(mapIds: string[]) {
       queryFn: () => getEducationMindMapFrontier(id),
       refetchInterval: interval,
       refetchIntervalInBackground: false,
+      // See useAllPendingReviews: keep staleTime aligned with the scaled
+      // refetchInterval so focus/mount refetches don't punch through the
+      // backoff for residents with many active maps.
+      staleTime: interval,
     })),
   });
 }

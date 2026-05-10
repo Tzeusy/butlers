@@ -34,7 +34,11 @@ import {
   useAllFrontierNodes,
 } from "@/hooks/use-education";
 
-type QueryOpts = { refetchInterval?: number; refetchIntervalInBackground?: boolean };
+type QueryOpts = {
+  refetchInterval?: number;
+  refetchIntervalInBackground?: boolean;
+  staleTime?: number;
+};
 
 function capturedQueries(): QueryOpts[] {
   const calls = vi.mocked(useQueries).mock.calls;
@@ -135,6 +139,25 @@ describe("useAllPendingReviews — polling interval scales with map count", () =
     const queries = capturedQueries();
     expect(queries[0].refetchIntervalInBackground).toBe(false);
   });
+
+  it("pins staleTime to the scaled interval so focus/mount refetches respect the backoff", () => {
+    // 1 map: interval = 15s; staleTime should match.
+    useAllPendingReviews(["m1"]);
+    let queries = capturedQueries();
+    expect(queries[0].staleTime).toBe(queries[0].refetchInterval);
+    expect(queries[0].staleTime).toBe(15_000);
+
+    // 10 maps: scaled interval = 50s; staleTime must scale with it, not stay
+    // at the global default (30s) which would let focus/mount refetches
+    // punch through the backoff.
+    vi.mocked(useQueries).mockClear();
+    useAllPendingReviews(Array.from({ length: 10 }, (_, i) => `m${i}`));
+    queries = capturedQueries();
+    for (const q of queries) {
+      expect(q.staleTime).toBe(50_000);
+      expect(q.staleTime).toBe(q.refetchInterval);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -175,6 +198,15 @@ describe("useAllMasterySummaries — polling interval scales with map count", ()
 
     expect(manyInterval).toBeGreaterThan(fewInterval);
   });
+
+  it("pins staleTime to the scaled interval", () => {
+    useAllMasterySummaries(Array.from({ length: 10 }, (_, i) => `m${i}`));
+    const queries = capturedQueries();
+    for (const q of queries) {
+      expect(q.staleTime).toBe(100_000);
+      expect(q.staleTime).toBe(q.refetchInterval);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -202,6 +234,15 @@ describe("useAllFrontierNodes — polling interval scales with map count", () =>
     expect(queries).toHaveLength(10);
     for (const q of queries) {
       expect(q.refetchInterval).toBe(100_000);
+    }
+  });
+
+  it("pins staleTime to the scaled interval", () => {
+    useAllFrontierNodes(Array.from({ length: 10 }, (_, i) => `m${i}`));
+    const queries = capturedQueries();
+    for (const q of queries) {
+      expect(q.staleTime).toBe(100_000);
+      expect(q.staleTime).toBe(q.refetchInterval);
     }
   });
 });
