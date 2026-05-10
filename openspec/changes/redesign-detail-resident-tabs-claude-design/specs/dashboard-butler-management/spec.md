@@ -98,7 +98,7 @@ Each KPI cell shows:
    values use 22px. The size is declared per-tab in the requirement below.
 3. An optional sub-line in 11px muted text (e.g., delta vs. prior period, unit).
 4. An optional tone applied as `--severity-high` (red), `--severity-medium`
-   (amber), or a green success token to the value text. No oklch literals.
+   (amber), or `--severity-low` (green) to the value text. No oklch literals.
 
 Tone is applied only when the metric signals a degraded or notable state (e.g.,
 error count > 0 renders the value in `--severity-high`). Normal/neutral values
@@ -130,7 +130,7 @@ render in `--foreground` without tone override.
 
 - **WHEN** a KPI cell carries a comparison sub-line (e.g., "+3 today")
 - **THEN** the sub-line SHALL be rendered at 11px muted text below the value
-- **AND** positive deltas SHALL use the green success token; negative deltas
+- **AND** positive deltas SHALL use `--severity-low`; negative deltas
   SHALL use `--severity-medium` or `--severity-high` per the tab's definition
 
 ---
@@ -261,8 +261,10 @@ Layout (panel-grid frame, 4 columns):
     Only one chip active at a time. ALL is the default.
   - Log list below the chips. Each line is a monospace 11px row with three
     fixed-width columns:
-    - Timestamp: 78px fixed, JetBrains Mono, rendered via `<Time>` formatted
-      as `HH:mm:ss.SSS`.
+    - Timestamp: 78px fixed, JetBrains Mono, rendered via `<Time>` at
+      millisecond-precision (e.g., "08:30:01.234"). This requires a new
+      `precision="ms"` or `format` prop on `<Time>` (tracked as part of
+      bu-iuol4.17 implementation scope).
     - Level: 56px fixed, JetBrains Mono. Color: INFO = `--muted-foreground`,
       DEBUG = `--muted-foreground`, WARN = `--severity-medium`, ERROR =
       `--severity-high`.
@@ -277,7 +279,8 @@ Poll interval: 5 seconds while the tab is visible.
 
 **Doctrine citations:**
 - `about/heart-and-soul/design-language.md` Non-Negotiable 4: all timestamps via
-  `<Time>`; the `HH:mm:ss.SSS` format string is passed as a prop.
+  `<Time>`; millisecond-precision display requires a `<Time>` extension
+  (new `precision="ms"` value) to be landed in bu-iuol4.17.
 - `about/heart-and-soul/design-language.md` Type system: JetBrains Mono for
   timestamps, IDs, and level indicators.
 - `redesign-detail-page-tab-vocabulary`: Logs is a resident-mode tab with no
@@ -449,9 +452,9 @@ bu-iuol4.8/bu-iuol4.9). No new `ButlerSummary` fields.
 ### Requirement: Memory tab
 
 The Memory tab SHALL surface the per-butler memory subsystem state. It replaces the
-current Memory tab stub (which currently renders a tiered memory browser). The new
-layout MUST make counts and recent writes primary via a KPI quartet and a recent-writes
-feed panel.
+current resident-mode Memory tab layout (which renders `MemoryTierCards` + `MemoryBrowser`
+without per-butler scope enforcement). The new layout MUST make counts and recent writes
+primary via a KPI quartet and a recent-writes feed panel.
 
 Layout (panel-grid frame, 4 columns):
 

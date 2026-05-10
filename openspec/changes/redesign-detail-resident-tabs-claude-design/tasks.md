@@ -15,4 +15,4 @@
 
 ## Reconciliation
 
-- [ ] D.18 Reconciliation report: verify all resident-mode tabs (Activity/Logs/Approvals/Spend/Memory/Config) render against live data with no stub content, no hardcoded butler names, no oklch literals in JSX, all timestamps via `<Time>`, no em-dashes in copy. Closes the spec gate opened by this change.
+- [ ] D.18 Reconciliation report (bu-iuol4.18 epic slot): verify all resident-mode tabs (Activity/Logs/Approvals/Spend/Memory/Config) render against live data with no stub content, no hardcoded butler names, no oklch literals in JSX, all timestamps via `<Time>`, no em-dashes in copy. Closes the spec gate opened by this change. Note: numbered D.18 to match the bu-iuol4.18 epic slot, not as a sequential continuation of D.6.
