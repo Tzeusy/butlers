@@ -100,7 +100,7 @@ band composition addendum and visually in each cell's `ButlerMark` component.
     and last active (last heartbeat timestamp from `useButlerHeartbeats`,
     rendered via `<Time>`)
   - A 24h activity stripe pinned to the bottom of the cell, derived from
-    `useSessions({ since: 24h })` bucketed client-side
+    the sessions query (`getSessions({ since: <ISO> })`) bucketed client-side
   - A hover affordance (open arrow or equivalent) linking to the butler detail
     page
 
