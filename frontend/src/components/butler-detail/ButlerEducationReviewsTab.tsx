@@ -42,9 +42,19 @@ interface FrontierEntry extends MindMapNode {
   mind_map_title: string;
 }
 
+/** Aggregated mastery counts across all active mind maps. Only count fields are
+ *  available — per-map identifiers and diagnostic scores are not preserved. */
+interface AggregatedMastery {
+  total_nodes: number;
+  mastered_count: number;
+  learning_count: number;
+  reviewing_count: number;
+  unseen_count: number;
+}
+
 interface AggregatedData {
   pendingEntries: ReviewEntry[];
-  mastery: (MasterySummary & { total_nodes: number; mastered_count: number }) | null;
+  mastery: AggregatedMastery | null;
   frontierEntries: FrontierEntry[];
   isLoading: boolean;
 }

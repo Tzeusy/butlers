@@ -97,6 +97,7 @@ export function useAllPendingReviews(mapIds: string[]) {
       queryKey: ["education", "pending-reviews", id],
       queryFn: () => getEducationPendingReviews(id, 14),
       refetchInterval: 15_000,
+      refetchIntervalInBackground: false,
     })),
   });
 }
@@ -114,6 +115,7 @@ export function useAllMasterySummaries(mapIds: string[]) {
       queryKey: ["education", "mastery-summary", id],
       queryFn: () => getEducationMasterySummary(id),
       refetchInterval: 30_000,
+      refetchIntervalInBackground: false,
     })),
   });
 }
@@ -131,6 +133,7 @@ export function useAllFrontierNodes(mapIds: string[]) {
       queryKey: ["education", "frontier", id],
       queryFn: () => getEducationMindMapFrontier(id),
       refetchInterval: 30_000,
+      refetchIntervalInBackground: false,
     })),
   });
 }
