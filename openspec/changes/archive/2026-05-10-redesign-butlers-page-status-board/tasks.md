@@ -6,7 +6,7 @@
 
 ### B1: Data aggregation hook
 
-- [x] B1 `bu-hb7dh.5` Implement `useButlerStatusBoard()` composite hook that composes `useButlers`, `useRegistry`, `useButlerHeartbeats`, `useCostSummary('today').by_butler`, and `useSessions({ since: 24h })` into a unified `StatusBoardRow[]` array sorted by `sessions_24h` descending then name ascending. Derives activity verb, load%, 24h activity stripe, and eligibility rail colour client-side. No new API calls. Merged: PR #1528 (ece542d1).
+- [x] B1 `bu-hb7dh.5` Implement `useButlerStatusBoard()` composite hook that composes `useButlers`, `useRegistry`, `useButlerHeartbeats`, `useCostSummary('today').by_butler`, and `useQuery(getSessions({ since: <ISO> }))` (rolling 24h window via the existing sessions endpoint) into a unified `StatusBoardRow[]` array sorted by `sessions_24h` descending then name ascending. Derives activity verb, load%, 24h activity stripe, and eligibility rail colour client-side. No new API calls. Merged: PR #1528 (ece542d1).
 
 ### P1: OpenSpec change (this bead)
 
@@ -32,7 +32,7 @@
 
 ### F7: Polling cadences
 
-- [x] F7 `bu-hb7dh.8` Verify polling cadences: butler list 30s, registry/heartbeat 30s, cost 60s, clock ticks every 1s. Ensure no regressions in the stale-data banner or empty-state scenarios. Merged: PR #1534 (e818ad90).
+- [x] F7 `bu-hb7dh.8` Verify polling cadences: butler list 30s, registry/heartbeat 30s, cost 60s, header clock updates every minute via `<Time mode="clock-24h-mono">` (60s interval, aligned to minute boundaries). Ensure no regressions in the stale-data banner or empty-state scenarios. Merged: PR #1534 (e818ad90).
 
 ### Recon: Spec reconciliation
 

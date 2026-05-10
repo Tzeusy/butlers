@@ -21,22 +21,25 @@ Implementation source constraints:
 - **No new `ButlerSummary` fields.** Every cell field MUST be composed from
   existing data surfaces. `ButlerSummary` is defined in
   `src/butlers/api/models/__init__.py:101-120` and exposes `name`, `status`,
-  `port`, `type`, `description`, `sessions_24h`, and `active_session_count`.
+  `port`, `type`, `description`, and `sessions_24h`.
   The list router constructs summaries in
   `src/butlers/api/routers/butlers.py:124-131`.
-- Cell data MUST be composed exclusively from these five existing hooks:
+  Note: `active_session_count` is NOT a `ButlerSummary` field; it comes from
+  `useButlerHeartbeats` (the `ButlerHeartbeat.active_session_count` field,
+  `frontend/src/api/types.ts:3626`).
+- Cell data MUST be composed exclusively from these five existing data surfaces:
   1. `useButlers` -- butler list (`ButlerSummary` fields)
   2. `useRegistry` -- eligibility state (`RegistryEntry.eligibility_state`)
      via `frontend/src/hooks/use-general.ts:24-30`,
      `frontend/src/api/client.ts:1137-1140`,
      `frontend/src/api/types.ts:1055-1063`
-  3. `useButlerHeartbeats` -- last-seen / heartbeat age via
-     `frontend/src/hooks/use-system.ts:71-78`
+  3. `useButlerHeartbeats` -- last-seen / heartbeat age / active session count
+     via `frontend/src/hooks/use-system.ts:71-78`
   4. `useCostSummary('today').by_butler` -- per-butler spend today via
      `frontend/src/hooks/use-costs.ts:31-47`
-  5. `useSessions({ since: 24h })` -- session rows bucketed client-side for
-     the 24h activity stripe (no new endpoint; existing sessions endpoint
-     filtered by time window)
+  5. Sessions for the last 24h -- fetched via `useQuery(getSessions({ since: <ISO> }))`
+     (no new endpoint; the existing sessions endpoint filtered by a rolling ISO
+     timestamp, bucketed client-side for the activity stripe)
   - Per-butler load% denominator (`max_concurrent`) comes from the existing
     `GET /api/butlers/{name}/runtime-config` endpoint.
 - The cell identity mark MUST use the existing `ButlerMark` component from
@@ -62,9 +65,11 @@ Implementation source constraints:
 - **THEN** a header strip SHALL be displayed containing:
   - An eyebrow label (e.g., "Fleet status")
   - An `h1` reading "The staff, at a glance" styled `text-2xl font-bold tracking-tight`
-  - A healthy/total pill (count of butlers with `status=ok` or `status=online`
-    over total registered count)
-  - A clock and date display rendered via `<Time>` that ticks every second
+  - A healthy/total pill (count of healthy butlers over total registered count,
+    where healthy = total minus paused, awaiting, and quarantined counts,
+    derived from `StatusBoardAggregates`)
+  - A clock and date display rendered via `<Time mode="clock-24h-mono">` that
+    updates every minute (aligned to minute boundaries via a 60-second interval)
 
 #### Scenario: Unified cell grid sorted by activity
 
@@ -184,7 +189,8 @@ band composition addendum and visually in each cell's `ButlerMark` component.
   - Registry and heartbeats (`useRegistry`, `useButlerHeartbeats`): every 30
     seconds
   - Cost summary (`useCostSummary`): every 60 seconds
-  - Header strip clock: ticks every 1 second via a client-side interval
+  - Header strip clock: updates every minute via `<Time mode="clock-24h-mono">`,
+    which aligns to the next minute boundary then fires a 60-second interval
 
 ### Requirement: Butler Detail Page Structure
 The `/butlers/:name` page is a tabbed detail view where each butler is treated as a first-class navigable entity.
