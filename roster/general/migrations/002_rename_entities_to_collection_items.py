@@ -19,6 +19,10 @@ Changes:
     idx_entities_data_gin        → idx_collection_items_data_gin
     idx_entities_collection_id   → idx_collection_items_collection_id
 - Add new GIN index on `tags` (used by tag-filter queries in item_search)
+
+All DDL uses existence guards so this migration is idempotent and safe to
+apply against databases that were partially migrated or already in the target
+state (following the pattern established in core_047_rename_shared_indexes.py).
 """
 
 from __future__ import annotations
@@ -33,28 +37,66 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Rename the table.
-    op.execute("ALTER TABLE entities RENAME TO collection_items")
+    # Rename the table (no native IF EXISTS for RENAME; use a DO block).
+    op.execute("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'entities'
+            ) AND NOT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'collection_items'
+            ) THEN
+                ALTER TABLE entities RENAME TO collection_items;
+            END IF;
+        END
+        $$;
+    """)
 
-    # Add the tags column required by runtime code.
+    # Add the tags column required by runtime code (IF NOT EXISTS is safe).
     op.execute("""
         ALTER TABLE collection_items
-        ADD COLUMN tags JSONB NOT NULL DEFAULT '[]'
+        ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'
     """)
 
     # Rename the existing indexes to match the new table name.
     op.execute("""
-        ALTER INDEX idx_entities_data_gin
-        RENAME TO idx_collection_items_data_gin
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE indexname = 'idx_entities_data_gin'
+            ) AND NOT EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE indexname = 'idx_collection_items_data_gin'
+            ) THEN
+                ALTER INDEX idx_entities_data_gin
+                RENAME TO idx_collection_items_data_gin;
+            END IF;
+        END
+        $$;
     """)
     op.execute("""
-        ALTER INDEX idx_entities_collection_id
-        RENAME TO idx_collection_items_collection_id
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE indexname = 'idx_entities_collection_id'
+            ) AND NOT EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE indexname = 'idx_collection_items_collection_id'
+            ) THEN
+                ALTER INDEX idx_entities_collection_id
+                RENAME TO idx_collection_items_collection_id;
+            END IF;
+        END
+        $$;
     """)
 
     # Add a GIN index on tags (used by tag-containment queries in item_search).
     op.execute("""
-        CREATE INDEX idx_collection_items_tags_gin
+        CREATE INDEX IF NOT EXISTS idx_collection_items_tags_gin
         ON collection_items USING GIN (tags)
     """)
 
@@ -65,16 +107,54 @@ def downgrade() -> None:
 
     # Restore original index names.
     op.execute("""
-        ALTER INDEX idx_collection_items_data_gin
-        RENAME TO idx_entities_data_gin
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE indexname = 'idx_collection_items_data_gin'
+            ) AND NOT EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE indexname = 'idx_entities_data_gin'
+            ) THEN
+                ALTER INDEX idx_collection_items_data_gin
+                RENAME TO idx_entities_data_gin;
+            END IF;
+        END
+        $$;
     """)
     op.execute("""
-        ALTER INDEX idx_collection_items_collection_id
-        RENAME TO idx_entities_collection_id
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE indexname = 'idx_collection_items_collection_id'
+            ) AND NOT EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE indexname = 'idx_entities_collection_id'
+            ) THEN
+                ALTER INDEX idx_collection_items_collection_id
+                RENAME TO idx_entities_collection_id;
+            END IF;
+        END
+        $$;
     """)
 
     # Drop the tags column.
-    op.execute("ALTER TABLE collection_items DROP COLUMN tags")
+    op.execute("ALTER TABLE collection_items DROP COLUMN IF EXISTS tags")
 
     # Rename the table back.
-    op.execute("ALTER TABLE collection_items RENAME TO entities")
+    op.execute("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'collection_items'
+            ) AND NOT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = 'entities'
+            ) THEN
+                ALTER TABLE collection_items RENAME TO entities;
+            END IF;
+        END
+        $$;
+    """)
