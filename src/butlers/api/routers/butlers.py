@@ -686,14 +686,43 @@ async def _get_module_health_via_mcp(
             )
 
             # Extract OAuth/credential fields when present; default to None for
-            # butlers that haven't implemented these fields yet.
-            oauth_status = mod_info.get("oauth_status") if isinstance(mod_info, dict) else None
+            # butlers that haven't implemented these fields yet.  Unknown values
+            # are silently coerced to None so future butler versions with new
+            # enum variants don't break the dashboard for existing deployments.
+            _VALID_OAUTH_STATUS = {"granted", "reauth_needed", "not_configured"}
+            _VALID_CREDENTIAL_HEALTH = {"ok", "warning", "error"}
+
+            oauth_status_raw = mod_info.get("oauth_status") if isinstance(mod_info, dict) else None
+            if oauth_status_raw not in _VALID_OAUTH_STATUS:
+                if oauth_status_raw is not None:
+                    logger.warning(
+                        "Unknown oauth_status %r for butler %s module %s; ignoring",
+                        oauth_status_raw,
+                        name,
+                        mod_name,
+                    )
+                oauth_status = None
+            else:
+                oauth_status = oauth_status_raw
+
             oauth_expires_at_raw = (
                 mod_info.get("oauth_expires_at") if isinstance(mod_info, dict) else None
             )
-            credential_health = (
+
+            credential_health_raw = (
                 mod_info.get("credential_health") if isinstance(mod_info, dict) else None
             )
+            if credential_health_raw not in _VALID_CREDENTIAL_HEALTH:
+                if credential_health_raw is not None:
+                    logger.warning(
+                        "Unknown credential_health %r for butler %s module %s; ignoring",
+                        credential_health_raw,
+                        name,
+                        mod_name,
+                    )
+                credential_health = None
+            else:
+                credential_health = credential_health_raw
 
             oauth_expires_at = None
             if oauth_expires_at_raw:
