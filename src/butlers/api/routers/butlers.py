@@ -632,6 +632,14 @@ async def _get_module_health_via_mcp(
 
     Expects the current status payload shape:
     ``{"modules": {"mod": {"status": ...}}}``.
+
+    New optional OAuth/credential fields are populated when the butler's
+    status() tool emits them; older butlers that don't yet emit these fields
+    will return None for all three (forward-compatible graceful degradation):
+
+    - ``oauth_status``: ``"granted"`` | ``"reauth_needed"`` | ``"not_configured"``
+    - ``oauth_expires_at``: ISO-8601 datetime string (parsed to datetime)
+    - ``credential_health``: ``"ok"`` | ``"warning"`` | ``"error"``
     """
     try:
         client = await asyncio.wait_for(
@@ -677,6 +685,28 @@ async def _get_module_health_via_mcp(
                 mod_info.get("status", "unknown") if isinstance(mod_info, dict) else "unknown"
             )
 
+            # Extract OAuth/credential fields when present; default to None for
+            # butlers that haven't implemented these fields yet.
+            oauth_status = mod_info.get("oauth_status") if isinstance(mod_info, dict) else None
+            oauth_expires_at_raw = (
+                mod_info.get("oauth_expires_at") if isinstance(mod_info, dict) else None
+            )
+            credential_health = (
+                mod_info.get("credential_health") if isinstance(mod_info, dict) else None
+            )
+
+            oauth_expires_at = None
+            if oauth_expires_at_raw:
+                try:
+                    oauth_expires_at = datetime.fromisoformat(oauth_expires_at_raw)
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "Invalid oauth_expires_at value for butler %s module %s: %r",
+                        name,
+                        mod_name,
+                        oauth_expires_at_raw,
+                    )
+
             if daemon_status == "active":
                 if butler_health == "ok":
                     mod_status = "connected"
@@ -684,7 +714,16 @@ async def _get_module_health_via_mcp(
                     mod_status = "degraded"
                 else:
                     mod_status = "unknown"
-                modules.append(ModuleStatus(name=mod_name, enabled=True, status=mod_status))
+                modules.append(
+                    ModuleStatus(
+                        name=mod_name,
+                        enabled=True,
+                        status=mod_status,
+                        oauth_status=oauth_status,
+                        oauth_expires_at=oauth_expires_at,
+                        credential_health=credential_health,
+                    )
+                )
             else:
                 # failed or cascade_failed
                 error_msg = mod_info.get("error") if isinstance(mod_info, dict) else None
@@ -696,6 +735,9 @@ async def _get_module_health_via_mcp(
                         status="error",
                         phase=phase,
                         error=error_msg or f"Module {daemon_status}",
+                        oauth_status=oauth_status,
+                        oauth_expires_at=oauth_expires_at,
+                        credential_health=credential_health,
                     )
                 )
 
