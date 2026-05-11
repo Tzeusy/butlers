@@ -181,8 +181,8 @@ export default function ButlerApprovalsTab({ butlerName }: ButlerApprovalsTabPro
                 data-testid="approvals-has-more"
               >
                 Showing first{" "}
-                <span className="tnum">{actions.length}</span> of{" "}
-                <span className="tnum">{meta.total ?? "many"}</span>.{" "}
+                <span>{actions.length}</span> of{" "}
+                <span>{meta.total}</span>.{" "}
                 <Link to="/approvals" className="underline" data-testid="approvals-view-all-link">
                   View all approvals →
                 </Link>

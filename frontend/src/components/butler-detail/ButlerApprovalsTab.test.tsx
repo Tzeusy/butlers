@@ -443,8 +443,8 @@ describe("ButlerApprovalsTab -- has_more indicator", () => {
     } as unknown as ReturnType<typeof useApprovalActions>)
     renderTab()
     const indicator = screen.getByTestId("approvals-has-more")
-    expect(indicator.textContent).toContain("2")
-    expect(indicator.textContent).toContain("75")
+    expect(indicator.textContent).toMatch(/Showing first\s+2\s+of\s+75/)
+
   })
 })
 
