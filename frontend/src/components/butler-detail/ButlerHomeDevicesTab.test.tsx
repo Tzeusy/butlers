@@ -797,3 +797,121 @@ describe("ButlerHomeDevicesTab — error states", () => {
     expect(screen.queryByTestId("top-consumers")).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: KPI strip error states — per-cell error handling
+// ---------------------------------------------------------------------------
+
+describe("ButlerHomeDevicesTab — KPI strip error states", () => {
+  afterEach(() => cleanup());
+
+  it("shows error indicator in total-devices cell when snapshot query fails", () => {
+    vi.resetAllMocks();
+    setupWithData();
+    vi.mocked(useHomeSnapshotStatus).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+    } as ReturnType<typeof useHomeSnapshotStatus>);
+
+    const { container } = renderTab();
+    const kpiStrip = container.querySelector('[data-testid="kpi-strip"]');
+    expect(kpiStrip).not.toBeNull();
+    // ErrorLine renders with data-testid="error-state-line" inside the KPI strip
+    const errorLines = kpiStrip!.querySelectorAll('[data-testid="error-state-line"]');
+    // snapshot error affects 2 cells: total devices + last snapshot
+    expect(errorLines.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("shows error indicator in offline-count cell when offline devices query fails", () => {
+    vi.resetAllMocks();
+    setupWithData();
+    vi.mocked(useHomeDevices).mockImplementation((params) => {
+      if (params?.health === "offline") {
+        return {
+          data: undefined,
+          isLoading: false,
+          isError: true,
+        } as ReturnType<typeof useHomeDevices>;
+      }
+      return {
+        data: ALL_DEVICES_RESP,
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof useHomeDevices>;
+    });
+
+    const { container } = renderTab();
+    const kpiStrip = container.querySelector('[data-testid="kpi-strip"]');
+    expect(kpiStrip).not.toBeNull();
+    const errorLines = kpiStrip!.querySelectorAll('[data-testid="error-state-line"]');
+    expect(errorLines.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows error indicator in overdue-count cell when overdue maintenance query fails", () => {
+    vi.resetAllMocks();
+    setupWithData();
+    vi.mocked(useHomeMaintenance).mockImplementation((params) => {
+      if (params?.status === "overdue") {
+        return {
+          data: undefined,
+          isLoading: false,
+          isError: true,
+        } as ReturnType<typeof useHomeMaintenance>;
+      }
+      return {
+        data: ALL_MAINTENANCE,
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof useHomeMaintenance>;
+    });
+
+    const { container } = renderTab();
+    const kpiStrip = container.querySelector('[data-testid="kpi-strip"]');
+    expect(kpiStrip).not.toBeNull();
+    const errorLines = kpiStrip!.querySelectorAll('[data-testid="error-state-line"]');
+    expect(errorLines.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows error indicator in last-snapshot cell when snapshot query fails", () => {
+    vi.resetAllMocks();
+    setupWithData();
+    vi.mocked(useHomeSnapshotStatus).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+    } as ReturnType<typeof useHomeSnapshotStatus>);
+
+    const { container } = renderTab();
+    const kpiStrip = container.querySelector('[data-testid="kpi-strip"]');
+    expect(kpiStrip).not.toBeNull();
+    const errorLines = kpiStrip!.querySelectorAll('[data-testid="error-state-line"]');
+    // Both total-devices and last-snapshot cells show errors when snapshot fails
+    expect(errorLines.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not show error indicators in KPI strip when all queries succeed", () => {
+    vi.resetAllMocks();
+    setupWithData();
+
+    const { container } = renderTab();
+    const kpiStrip = container.querySelector('[data-testid="kpi-strip"]');
+    expect(kpiStrip).not.toBeNull();
+    const errorLines = kpiStrip!.querySelectorAll('[data-testid="error-state-line"]');
+    expect(errorLines.length).toBe(0);
+  });
+
+  it("does not show KpiCell values when snapshot query fails", () => {
+    vi.resetAllMocks();
+    setupWithData();
+    vi.mocked(useHomeSnapshotStatus).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+    } as ReturnType<typeof useHomeSnapshotStatus>);
+
+    renderTab();
+    // Total devices count (42) should not appear in the KPI strip when snapshot errors
+    expect(screen.queryByText("42")).toBeNull();
+  });
+});
