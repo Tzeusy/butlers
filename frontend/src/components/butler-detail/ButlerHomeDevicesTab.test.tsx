@@ -817,10 +817,9 @@ describe("ButlerHomeDevicesTab — KPI strip error states", () => {
     const { container } = renderTab();
     const kpiStrip = container.querySelector('[data-testid="kpi-strip"]');
     expect(kpiStrip).not.toBeNull();
-    // ErrorLine renders with data-testid="error-state-line" inside the KPI strip
-    const errorLines = kpiStrip!.querySelectorAll('[data-testid="error-state-line"]');
-    // snapshot error affects 2 cells: total devices + last snapshot
-    expect(errorLines.length).toBeGreaterThanOrEqual(2);
+    // snapshot error affects 2 cells: total devices + last snapshot — verify each message
+    expect(kpiStrip!.textContent).toContain("Failed to load device count.");
+    expect(kpiStrip!.textContent).toContain("Failed to load snapshot time.");
   });
 
   it("shows error indicator in offline-count cell when offline devices query fails", () => {
@@ -844,8 +843,8 @@ describe("ButlerHomeDevicesTab — KPI strip error states", () => {
     const { container } = renderTab();
     const kpiStrip = container.querySelector('[data-testid="kpi-strip"]');
     expect(kpiStrip).not.toBeNull();
-    const errorLines = kpiStrip!.querySelectorAll('[data-testid="error-state-line"]');
-    expect(errorLines.length).toBeGreaterThanOrEqual(1);
+    // verify the offline cell specifically shows its error message
+    expect(kpiStrip!.textContent).toContain("Failed to load offline count.");
   });
 
   it("shows error indicator in overdue-count cell when overdue maintenance query fails", () => {
@@ -885,9 +884,9 @@ describe("ButlerHomeDevicesTab — KPI strip error states", () => {
     const { container } = renderTab();
     const kpiStrip = container.querySelector('[data-testid="kpi-strip"]');
     expect(kpiStrip).not.toBeNull();
-    const errorLines = kpiStrip!.querySelectorAll('[data-testid="error-state-line"]');
-    // Both total-devices and last-snapshot cells show errors when snapshot fails
-    expect(errorLines.length).toBeGreaterThanOrEqual(2);
+    // last-snapshot cell (4th panel) shows its specific error message
+    const kpiItems = kpiStrip!.querySelectorAll('[data-testid="kpi-item"]');
+    expect(kpiItems[3].textContent).toContain("Failed to load snapshot time.");
   });
 
   it("does not show error indicators in KPI strip when all queries succeed", () => {
@@ -910,8 +909,10 @@ describe("ButlerHomeDevicesTab — KPI strip error states", () => {
       isError: true,
     } as ReturnType<typeof useHomeSnapshotStatus>);
 
-    renderTab();
+    const { container } = renderTab();
+    const kpiStrip = container.querySelector('[data-testid="kpi-strip"]');
+    expect(kpiStrip).not.toBeNull();
     // Total devices count (42) should not appear in the KPI strip when snapshot errors
-    expect(screen.queryByText("42")).toBeNull();
+    expect(kpiStrip!.textContent).not.toContain("42");
   });
 });
