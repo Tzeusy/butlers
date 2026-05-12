@@ -13,7 +13,8 @@
  *   All /api/costs/summary calls pass ?butler= since bu-iuol4.12.
  *   /api/costs/daily does not yet filter by butler (bu-lryu6 tracks that);
  *   the param is wired through for forward compatibility.
- *   No "all butlers" degraded labels appear.
+ *   The trend panel retains an "all butlers" subtitle until bu-lryu6 lands.
+ *   Model breakdown and KPI panels are fully butler-scoped via summary.
  *
  * bead: bu-wyami
  */
@@ -514,23 +515,23 @@ describe("ButlerSpendTab — error state", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: per-butler scoping — no "all butlers" labels
+// Tests: per-butler scoping labels
 // ---------------------------------------------------------------------------
 
-describe("ButlerSpendTab — per-butler scoping (no 'all butlers' labels)", () => {
+describe("ButlerSpendTab — scoping labels", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     setupWithData();
   });
   afterEach(() => cleanup());
 
-  it("does NOT show 'all butlers' note on trend panel", () => {
+  it("shows 'all butlers' note on trend panel (daily backend not yet butler-scoped)", () => {
     renderTab();
     const trendPanel = screen.getByTestId("spend-trend-section");
-    expect(trendPanel.textContent).not.toContain("all butlers");
+    expect(trendPanel.textContent).toContain("all butlers");
   });
 
-  it("does NOT show 'all butlers' note on model breakdown panel", () => {
+  it("does NOT show 'all butlers' note on model breakdown panel (butler-scoped summary)", () => {
     renderTab();
     const modelPanel = screen.getByTestId("spend-model-breakdown-section");
     expect(modelPanel.textContent).not.toContain("all butlers");

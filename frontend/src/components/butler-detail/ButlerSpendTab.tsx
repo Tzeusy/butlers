@@ -15,8 +15,8 @@
 //   - /api/costs/daily: does NOT yet support ?butler= (tracked in bu-lryu6).
 //     The butler param is wired through getDailyCosts/useDailyCosts for
 //     forward compatibility; trend data is still all-butler until bu-lryu6
-//     lands. No "(all butlers)" label is shown — the data will become scoped
-//     automatically once the backend filter ships.
+//     lands. The trend panel carries an "all butlers" subtitle to make clear
+//     the chart is not yet butler-scoped. Remove it when bu-lryu6 ships.
 //   - tokens today, cost/session: derived from butler-scoped summary.
 //
 // Currency formatter:
@@ -101,6 +101,7 @@ function TrendPanel({ range, onRangeChange, data, isLoading, isError }: TrendPan
   return (
     <Panel
       title="Daily spend trend"
+      sub="all butlers"
       span={4}
       testId="spend-trend-section"
     >
