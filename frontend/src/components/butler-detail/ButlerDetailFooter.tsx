@@ -65,7 +65,7 @@ export function ButlerDetailFooter({ butler }: ButlerDetailFooterProps) {
       : String(butlerRow.sessions_24h)
 
   // --- Spend today ---
-  const costQuery = useCostSummary("today")
+  const costQuery = useCostSummary("today", undefined, undefined, butler)
   const spendToday: string = (() => {
     if (costQuery.isError || !costQuery.data?.data) return PLACEHOLDER
     const amount = costQuery.data.data.by_butler[butler]
