@@ -369,14 +369,6 @@ def get_active_instance() -> QaModule | None:
     return _active_instance
 
 
-def _row_get(row: Any, key: str) -> Any:
-    """Read a field from asyncpg records or dict-backed test rows."""
-    try:
-        return row[key]
-    except (KeyError, TypeError):
-        return None
-
-
 def _ensure_aware_datetime(value: Any) -> datetime | None:
     """Normalize DB timestamps for cutoff comparisons."""
     if not isinstance(value, datetime):
@@ -1009,6 +1001,7 @@ class QaModule(Module):
             """
             SELECT f.id,
                    f.created_at,
+                   f.healing_attempt_id,
                    f.structured_evidence,
                    h.closed_at
             FROM public.qa_findings f
@@ -1017,7 +1010,7 @@ class QaModule(Module):
               AND f.structured_evidence ? 'investigation_notes'
               AND (
                     (h.closed_at IS NOT NULL AND h.closed_at < $1)
-                 OR f.created_at < $2
+                 OR (f.healing_attempt_id IS NULL AND f.created_at < $2)
               )
             """,
             terminal_cutoff,
@@ -1028,14 +1021,19 @@ class QaModule(Module):
         malformed_rows = 0
         for row in rows:
             finding_id = row["id"]
-            created_at = _ensure_aware_datetime(_row_get(row, "created_at"))
-            closed_at = _ensure_aware_datetime(_row_get(row, "closed_at"))
+            created_at = _ensure_aware_datetime(row["created_at"])
+            healing_attempt_id = row["healing_attempt_id"]
+            closed_at = _ensure_aware_datetime(row["closed_at"])
             is_old_terminal = closed_at is not None and closed_at < terminal_cutoff
-            is_old_finding = created_at is not None and created_at < finding_cutoff
-            if not is_old_terminal and not is_old_finding:
+            is_old_unlinked_finding = (
+                healing_attempt_id is None
+                and created_at is not None
+                and created_at < finding_cutoff
+            )
+            if not is_old_terminal and not is_old_unlinked_finding:
                 continue
 
-            structured_evidence = _coerce_jsonb(_row_get(row, "structured_evidence"))
+            structured_evidence = _coerce_jsonb(row["structured_evidence"])
             if not isinstance(structured_evidence, dict):
                 malformed_rows += 1
                 logger.warning(

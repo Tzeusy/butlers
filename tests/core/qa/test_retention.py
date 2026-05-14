@@ -46,12 +46,14 @@ def _module_with_pool(pool: _FakePool) -> QaModule:
 def _row(
     *,
     created_at: datetime,
+    healing_attempt_id: uuid.UUID | None = None,
     closed_at: datetime | None = None,
     structured_evidence: dict | list | str | None = None,
 ) -> dict:
     return {
         "id": uuid.uuid4(),
         "created_at": created_at,
+        "healing_attempt_id": healing_attempt_id,
         "closed_at": closed_at,
         "structured_evidence": structured_evidence
         if structured_evidence is not None
@@ -87,6 +89,25 @@ async def test_daily_evidence_cleanup_removes_evidence_lines_for_old_finding(mon
 async def test_daily_evidence_cleanup_exempts_non_terminal_recent_finding(monkeypatch):
     now = datetime(2026, 5, 15, 4, tzinfo=UTC)
     row = _row(created_at=now - timedelta(days=10), closed_at=None)
+    pool = _FakePool([row])
+    counter = _FakeRetentionCounter()
+    monkeypatch.setattr(qa_module, "_qa_findings_retention_purged_total", counter)
+
+    result = await _module_with_pool(pool).daily_evidence_cleanup(now=now)
+
+    assert result == {"status": "completed", "cleaned_rows": 0, "malformed_rows": 0}
+    assert pool.updated == {}
+    assert counter.value == 0
+
+
+@pytest.mark.asyncio
+async def test_daily_evidence_cleanup_exempts_non_terminal_old_finding(monkeypatch):
+    now = datetime(2026, 5, 15, 4, tzinfo=UTC)
+    row = _row(
+        created_at=now - timedelta(days=45),
+        healing_attempt_id=uuid.uuid4(),
+        closed_at=None,
+    )
     pool = _FakePool([row])
     counter = _FakeRetentionCounter()
     monkeypatch.setattr(qa_module, "_qa_findings_retention_purged_total", counter)
