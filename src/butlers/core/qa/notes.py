@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 
 class _NotesModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
 
 class BlurbSegment(_NotesModel):
@@ -59,10 +59,14 @@ _FIELD_ADAPTERS = {
     name: TypeAdapter(field.annotation) for name, field in InvestigationNotes.model_fields.items()
 }
 _MISSING_FIELD_DEFAULTS = {
+    "schema_version": 1,
+    "headline": "",
+    "hypothesis": "",
     "blurb_segments": [],
     "claims": {},
     "evidence_lines": [],
     "counter_evidence": [],
+    "why_this_fix": "",
     "diff_snapshot": [],
 }
 
@@ -86,19 +90,22 @@ def parse_investigation_notes(raw: str) -> tuple[InvestigationNotes | None, Pars
     partial_kwargs = {}
     recovered_any = False
     for field_name, adapter in _FIELD_ADAPTERS.items():
-        if field_name not in decoded:
-            if field_name in _MISSING_FIELD_DEFAULTS:
-                partial_kwargs[field_name] = _MISSING_FIELD_DEFAULTS[field_name].copy()
-            continue
+        if field_name in decoded:
+            try:
+                partial_kwargs[field_name] = adapter.validate_python(decoded[field_name])
+            except ValidationError:
+                pass
+            except Exception:
+                pass
+            else:
+                recovered_any = True
+                continue
 
-        try:
-            partial_kwargs[field_name] = adapter.validate_python(decoded[field_name])
-        except ValidationError:
-            continue
-        except Exception:
-            continue
-        else:
-            recovered_any = True
+        if field_name in _MISSING_FIELD_DEFAULTS:
+            default = _MISSING_FIELD_DEFAULTS[field_name]
+            partial_kwargs[field_name] = (
+                default.copy() if isinstance(default, (list, dict)) else default
+            )
 
     if not recovered_any:
         return None, "failed"

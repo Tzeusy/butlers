@@ -83,7 +83,7 @@ def test_partial_parse_wrong_type():
 
     assert status == "partial"
     assert notes is not None
-    assert "claims" not in notes.model_dump(mode="json")
+    assert notes.claims == {}
     assert notes.evidence_lines[0].id == "line-1"
 
 
@@ -102,5 +102,5 @@ def test_schema_version_mismatch():
 
     assert status == "partial"
     assert notes is not None
-    assert "schema_version" not in notes.model_dump(mode="json")
+    assert notes.schema_version == 1
     assert notes.headline == payload["headline"]
