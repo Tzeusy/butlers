@@ -73,6 +73,8 @@ def _format_case_age(created_at: datetime | None, now: datetime) -> str:
     if created_at is None:
         return "unknown age"
 
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=UTC)
     elapsed = max(now - created_at, now - now)
@@ -89,7 +91,7 @@ def _format_case_age(created_at: datetime | None, now: datetime) -> str:
 
 
 def _tick_detail(row: Any, now: datetime) -> str:
-    age = _format_case_age(row["created_at"], now)
+    age = _format_case_age(row["detected_at"], now)
     status = row["status"]
     if status == "dispatch_pending":
         return f"awaiting dispatch for {age}"
@@ -107,8 +109,8 @@ def _tick_detail(row: Any, now: datetime) -> str:
 
     current_phase = row["current_phase"]
     if current_phase:
-        return f"surface clean for {age}; current phase {current_phase}"
-    return f"surface clean for {age}"
+        return f"investigation ongoing for {age}; current phase {current_phase}"
+    return f"investigation ongoing for {age}"
 
 
 async def record_patrol_tick_events(
@@ -129,11 +131,13 @@ async def record_patrol_tick_events(
         SELECT h.id,
                h.status,
                h.created_at,
+               COALESCE(MIN(f.first_seen), h.created_at) AS detected_at,
                h.current_phase,
                h.pr_number,
                h.review_state,
                h.last_follow_up_status
         FROM public.healing_attempts h
+        LEFT JOIN public.qa_findings f ON f.healing_attempt_id = h.id
         WHERE h.status = ANY($1::text[])
           AND h.closed_at IS NULL
           AND NOT EXISTS (
@@ -142,6 +146,13 @@ async def record_patrol_tick_events(
               WHERE e.attempt_id = h.id
                 AND e.ts >= $2
           )
+        GROUP BY h.id,
+                 h.status,
+                 h.created_at,
+                 h.current_phase,
+                 h.pr_number,
+                 h.review_state,
+                 h.last_follow_up_status
         ORDER BY h.created_at ASC, h.id ASC
         """,
         list(OPEN_PATROL_TICK_STATUSES),
@@ -150,23 +161,33 @@ async def record_patrol_tick_events(
     if not rows:
         return []
 
-    patrol_id_short = str(patrol_id).split("-", 1)[0]
-    event_ids = [uuid.UUID(generate_uuid7_string()) for _ in rows]
-    attempt_ids = [row["id"] for row in rows]
-    event_ts_values = [tick_ts for _ in rows]
-    steps = ["tick" for _ in rows]
-    texts = [f"patrol cycle {patrol_id_short} - case still {row['status']}" for row in rows]
-    details = [_tick_detail(row, tick_ts) for row in rows]
-    data_values = [
-        json.dumps(
-            {
-                "patrol_id": str(patrol_id),
-                "status": row["status"],
-                "case_age": _format_case_age(row["created_at"], tick_ts),
-            }
+    patrol_id_str = str(patrol_id)
+    patrol_id_short = patrol_id_str.split("-", 1)[0]
+    event_ids: list[uuid.UUID] = []
+    attempt_ids: list[uuid.UUID] = []
+    event_ts_values: list[datetime] = []
+    steps: list[str] = []
+    texts: list[str] = []
+    details: list[str] = []
+    data_values: list[str] = []
+
+    for row in rows:
+        age = _format_case_age(row["detected_at"], tick_ts)
+        event_ids.append(uuid.UUID(generate_uuid7_string()))
+        attempt_ids.append(row["id"])
+        event_ts_values.append(tick_ts)
+        steps.append("tick")
+        texts.append(f"patrol cycle {patrol_id_short} - case still {row['status']}")
+        details.append(_tick_detail(row, tick_ts))
+        data_values.append(
+            json.dumps(
+                {
+                    "patrol_id": patrol_id_str,
+                    "status": row["status"],
+                    "case_age": age,
+                }
+            )
         )
-        for row in rows
-    ]
 
     await session.execute(
         """

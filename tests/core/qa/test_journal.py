@@ -116,6 +116,7 @@ async def test_tick_emitted_when_case_unchanged() -> None:
                 "id": attempt_id,
                 "status": "investigating",
                 "created_at": datetime(2026, 5, 15, 5, 0, tzinfo=UTC),
+                "detected_at": datetime(2026, 5, 15, 4, 42, tzinfo=UTC),
                 "current_phase": "reproduce",
                 "pr_number": None,
                 "review_state": None,
@@ -139,6 +140,9 @@ async def test_tick_emitted_when_case_unchanged() -> None:
     assert "NOT EXISTS" in fetch_sql
     assert "e.ts >= $2" in fetch_sql
     assert "h.closed_at IS NULL" in fetch_sql
+    assert "COALESCE(MIN(f.first_seen), h.created_at) AS detected_at" in fetch_sql
+    assert "LEFT JOIN public.qa_findings f ON f.healing_attempt_id = h.id" in fetch_sql
+    assert "GROUP BY h.id" in fetch_sql
     assert statuses == ["investigating", "pr_open", "dispatch_pending"]
     assert since == patrol_started_at
 
@@ -153,9 +157,44 @@ async def test_tick_emitted_when_case_unchanged() -> None:
     assert ts_values == [tick_ts]
     assert steps == ["tick"]
     assert texts == [f"patrol cycle {str(patrol_id).split('-', 1)[0]} - case still investigating"]
-    assert details == ["surface clean for 12m; current phase reproduce"]
+    assert details == ["investigation ongoing for 30m; current phase reproduce"]
     assert [json.loads(value) for value in data_values] == [
-        {"patrol_id": str(patrol_id), "status": "investigating", "case_age": "12m"}
+        {"patrol_id": str(patrol_id), "status": "investigating", "case_age": "30m"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tick_age_handles_naive_timestamps() -> None:
+    session = MagicMock()
+    attempt_id = uuid.uuid4()
+    patrol_id = uuid.uuid4()
+    session.fetch = AsyncMock(
+        return_value=[
+            {
+                "id": attempt_id,
+                "status": "dispatch_pending",
+                "created_at": datetime(2026, 5, 15, 5, 0),
+                "detected_at": datetime(2026, 5, 15, 5, 0),
+                "current_phase": None,
+                "pr_number": None,
+                "review_state": None,
+                "last_follow_up_status": None,
+            }
+        ]
+    )
+    session.execute = AsyncMock()
+
+    await record_patrol_tick_events(
+        session,
+        patrol_id=patrol_id,
+        patrol_started_at=datetime(2026, 5, 15, 5, 0),
+        ts=datetime(2026, 5, 15, 5, 5),
+    )
+
+    *_, details, data_values = session.execute.await_args.args
+    assert details == ["awaiting dispatch for 5m"]
+    assert [json.loads(value) for value in data_values] == [
+        {"patrol_id": str(patrol_id), "status": "dispatch_pending", "case_age": "5m"}
     ]
 
 
