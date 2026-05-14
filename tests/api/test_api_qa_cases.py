@@ -157,7 +157,9 @@ async def test_cases_return_descending_attempt_order_and_shape() -> None:
     assert body["data"][1]["sev"] == "medium"
     assert body["data"][1]["state"] == "landed"
     assert body["data"][1]["pr_state"] == "merged"
-    assert "ORDER BY a.created_at DESC" in pool.fetch.await_args.args[0]
+    fetch_sql = pool.fetch.await_args.args[0]
+    assert "ORDER BY a.created_at DESC" in fetch_sql
+    assert "MIN(first_seen) OVER () AS detected_at" in fetch_sql
 
 
 async def test_cases_severity_filter_maps_labels_to_stored_integer_ranges() -> None:
@@ -200,3 +202,4 @@ async def test_cases_pagination_passes_offset_limit_and_reports_has_more() -> No
     fetch_args = pool.fetch.await_args.args
     assert fetch_args[-2:] == (10, 5)
     assert "COALESCE(f.severity, a.severity) IN" not in pool.fetch.await_args.args[0]
+    assert "public.qa_findings" not in pool.fetchval.await_args.args[0]

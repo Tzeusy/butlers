@@ -1407,20 +1407,22 @@ async def list_cases(
             SELECT id, fingerprint, source_type, source_butler, severity,
                    exception_type, event_summary, call_site, occurrence_count,
                    first_seen, last_seen, source_session_trigger_source,
-                   structured_evidence, created_at
+                   structured_evidence, created_at,
+                   MIN(first_seen) OVER () AS detected_at
             FROM public.qa_findings
             WHERE healing_attempt_id = a.id
             ORDER BY created_at DESC
             LIMIT 1
         ) f ON TRUE
     """
+    count_join = latest_finding_join if sev != "all" else ""
 
     total = int(
         await pool.fetchval(
             f"""
             SELECT COUNT(*)
             FROM public.healing_attempts a
-            {latest_finding_join}
+            {count_join}
             {where}
             """,
             *args,
@@ -1442,8 +1444,8 @@ async def list_cases(
             a.created_at,
             a.error_detail,
             COALESCE(f.severity, a.severity) AS case_severity,
-            COALESCE(f.first_seen, a.created_at) AS detected,
-            EXTRACT(EPOCH FROM (now() - COALESCE(f.first_seen, a.created_at)))::int
+            COALESCE(f.detected_at, a.created_at) AS detected,
+            EXTRACT(EPOCH FROM (now() - COALESCE(f.detected_at, a.created_at)))::int
                 AS age_seconds,
             f.id AS finding_id,
             f.fingerprint AS finding_fingerprint,
