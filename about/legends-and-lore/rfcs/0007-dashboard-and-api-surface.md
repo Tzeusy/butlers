@@ -121,9 +121,9 @@ Admission-control decisions that did not launch a runtime session (for example c
 | `GET /api/costs/daily` | `ApiResponse<DailyCost[]>` | Per-day costs |
 | `GET /api/search` | `ApiResponse<SearchResults>` | Cross-domain search (groups: sessions, state, contacts) |
 | `GET /api/qa/summary` | `ApiResponse<QaSummary>` | QA staffer status, patrol rollup, circuit breaker |
-| `GET /api/qa/cases` | `PaginatedResponse<QaCaseSummary>` | QA case rail summaries for the dossier renderer |
+| `GET /api/qa/cases` | `PaginatedResponse<QaCaseSummary>` | QA case rail summaries for the dossier renderer (filters: sev, since, offset, limit) |
 | `GET /api/qa/cases/{id}` | `ApiResponse<QaCaseDossier>` | Full QA case dossier with notes, PR summary, and recent journal |
-| `GET /api/qa/cases/{id}/journal` | `PaginatedResponse<QaJournalEvent>` | Chronological QA case journal stream |
+| `GET /api/qa/cases/{id}/journal` | `PaginatedResponse<QaJournalEvent>` | Chronological QA case journal stream (filters: cursor, limit) |
 | `GET /api/qa/investigations` | `PaginatedResponse<QaInvestigation>` | QA-originated investigations with phase/deadline/evidence summary |
 | `GET /api/qa/meta-review` | `PaginatedResponse<QaMetaReviewFinding>` | QA-self-recursive findings routed to operator lane; never auto-investigated |
 | `GET /api/healing/dispatch-events` | `PaginatedResponse<DispatchDecision>` | Admission-control decisions that did not launch a workflow (distinct from failed executions) |

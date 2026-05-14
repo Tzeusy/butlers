@@ -519,7 +519,8 @@ async def test_journal_404() -> None:
     response = await _call(app, f"/api/qa/cases/{missing_id}/journal")
 
     assert response.status_code == 404
-    assert response.json() == {
+    body = response.json()
+    assert body == {
         "error": {
             "code": "QA_CASE_NOT_FOUND",
             "message": f"QA case not found: {missing_id}",
@@ -527,5 +528,3 @@ async def test_journal_404() -> None:
             "details": None,
         }
     }
-    assert "code" not in response.json()
-    assert "message" not in response.json()
