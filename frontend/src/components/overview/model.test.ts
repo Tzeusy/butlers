@@ -184,6 +184,26 @@ describe("deriveOverviewTriageModel", () => {
     expect(model.attentionRows[0]?.detail).toContain("open for 2d");
   });
 
+  it("uses local calendar days for issue age labels", () => {
+    const model = deriveOverviewTriageModel(
+      {
+        issues: [
+          issue({
+            first_seen_at: new Date(2026, 4, 14, 23, 30).toISOString(),
+            last_seen_at: new Date(2026, 4, 14, 23, 30).toISOString(),
+          }),
+        ],
+      },
+      {
+        now: new Date(2026, 4, 15, 0, 30),
+        includeOldIssueRows: true,
+        recentIssueHours: 48,
+      },
+    );
+
+    expect(model.attentionRows[0]?.detail).toContain("open for 1d");
+  });
+
   it("handles zero and pending approvals in kpis, attention, and now rows", () => {
     const zeroModel = deriveOverviewTriageModel({
       approvalMetrics: approvalMetrics({ total_pending: 0 }),

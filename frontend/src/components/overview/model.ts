@@ -139,7 +139,6 @@ export function deriveOverviewTriageModel(
   const notificationRows = notificationAttentionRows(input.notificationStats);
   const qaRows = qaAttentionRows(input.qaSummary);
   const recentIssueRows = issueBuckets.recent
-    .sort(compareIssues)
     .slice(0, maxRecentIssueRows)
     .map((issue) => issueAttentionRow(issue, now));
 
@@ -168,7 +167,7 @@ export function deriveOverviewTriageModel(
 
   if (options.includeOldIssueRows) {
     attentionRows.push(
-      ...issueBuckets.old.sort(compareIssues).map((issue) => issueAttentionRow(issue, now)),
+      ...issueBuckets.old.map((issue) => issueAttentionRow(issue, now)),
     );
   }
 
@@ -277,7 +276,12 @@ function isHighIssue(issue: Issue): boolean {
 function compareIssues(a: Issue, b: Issue): number {
   const severityDelta = issueSeverityRank(a.severity) - issueSeverityRank(b.severity);
   if (severityDelta !== 0) return severityDelta;
-  return issueFirstSeenMs(a) - issueFirstSeenMs(b);
+  const timeA = issueSortTimestamp(a);
+  const timeB = issueSortTimestamp(b);
+  if (!timeA && !timeB) return 0;
+  if (!timeA) return 1;
+  if (!timeB) return -1;
+  return timeA.localeCompare(timeB);
 }
 
 function issueSeverityRank(severity: string): number {
@@ -295,9 +299,8 @@ function issueSeverityRank(severity: string): number {
   }
 }
 
-function issueFirstSeenMs(issue: Issue): number {
-  const parsed = Date.parse(issue.first_seen_at ?? issue.last_seen_at ?? "");
-  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+function issueSortTimestamp(issue: Issue): string {
+  return issue.first_seen_at ?? issue.last_seen_at ?? "";
 }
 
 function issueAttentionRow(issue: Issue, now: Date): OverviewAttentionRow {
@@ -511,11 +514,17 @@ function isHealthyStatus(status: string): boolean {
 function issueAgeDetail(issue: Issue, now: Date): string | null {
   const timestamp = issue.first_seen_at ?? issue.last_seen_at;
   if (!timestamp) return null;
-  const parsed = Date.parse(timestamp);
-  if (Number.isNaN(parsed)) return null;
-  const ageSeconds = Math.max(0, Math.floor((now.getTime() - parsed) / 1000));
-  if (ageSeconds < 24 * 60 * 60) return null;
-  return `open for ${formatDuration(ageSeconds)}`;
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const nowFloored = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const thenFloored = new Date(
+    parsed.getFullYear(),
+    parsed.getMonth(),
+    parsed.getDate(),
+  ).getTime();
+  const diffDays = Math.floor((nowFloored - thenFloored) / (24 * 60 * 60 * 1000));
+  if (diffDays <= 0) return null;
+  return `open for ${diffDays}d`;
 }
 
 function formatDuration(seconds: number): string {
