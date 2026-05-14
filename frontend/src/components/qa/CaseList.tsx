@@ -1,6 +1,8 @@
 import type { QaCaseSummary } from "@/api/types";
 import { cn } from "@/lib/utils";
 
+import { formatQaDetectedTime, qaSeverityClassName } from "./utils";
+
 interface CaseListProps {
   cases: QaCaseSummary[];
   selectedId: string | null;
@@ -8,24 +10,12 @@ interface CaseListProps {
   className?: string;
 }
 
-const severityClass: Record<QaCaseSummary["sev"], string> = {
-  high: "bg-destructive",
-  medium: "bg-amber-500",
-  low: "bg-muted-foreground",
-};
-
 const prStateClass: Record<NonNullable<QaCaseSummary["pr_state"]>, string> = {
   drafted: "bg-muted-foreground",
   open: "bg-amber-500",
   merged: "bg-emerald-500",
   closed: "bg-muted-foreground",
 };
-
-function formatDetected(ts: string): string {
-  const date = new Date(ts);
-  if (Number.isNaN(date.getTime())) return ts;
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
 
 function formatAge(seconds: number): string {
   if (seconds < 60) return `${Math.max(0, Math.floor(seconds))}s old`;
@@ -58,7 +48,7 @@ export function CaseList({ cases, selectedId, onSelect, className }: CaseListPro
               aria-current={active ? "true" : undefined}
             >
               <span
-                className={cn("mt-1 h-2.5 w-2.5 shrink-0", severityClass[qaCase.sev])}
+                className={cn("mt-1 h-2.5 w-2.5 shrink-0", qaSeverityClassName[qaCase.sev])}
                 aria-label={`${qaCase.sev} severity`}
               />
               <span className="min-w-0">
@@ -74,7 +64,7 @@ export function CaseList({ cases, selectedId, onSelect, className }: CaseListPro
                   {qaCase.headline ?? "Untitled QA case"}
                 </span>
                 <span className="mt-1 block font-mono text-[9.5px] leading-none text-muted-foreground tnum">
-                  detected {formatDetected(qaCase.detected)} · {formatAge(qaCase.age_seconds)}
+                  detected {formatQaDetectedTime(qaCase.detected)} · {formatAge(qaCase.age_seconds)}
                 </span>
               </span>
               <span
