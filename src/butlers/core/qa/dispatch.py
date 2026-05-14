@@ -769,7 +769,7 @@ async def _emit_investigation_notes_journal_events(
             attempt_id=attempt_id,
             step="considered",
             text=item.hypothesis,
-            detail=f"{item.verdict} — {item.reason}",
+            detail=f"{item.verdict}: {item.reason}",
         )
 
     why_this_fix = notes.why_this_fix[:80]
@@ -778,7 +778,7 @@ async def _emit_investigation_notes_journal_events(
         attempt_id=attempt_id,
         step="concluded",
         text=notes.hypothesis,
-        detail=f"confidence n/a · {why_this_fix}",
+        detail=f"confidence n/a: {why_this_fix}",
     )
 
 
