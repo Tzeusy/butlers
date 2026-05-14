@@ -18,8 +18,8 @@ The page SHALL render these surfaces:
    `GET /api/butlers` and `GET /api/approvals/metrics`.
 4. **Operations**: right-column butler scan list derived from `GET /api/butlers`
    and `GET /api/costs/summary?period=today`.
-5. **Now**: right-column immediate operational items, initially pending
-   approvals derived from `GET /api/approvals/metrics`.
+5. **Now**: right-column immediate operational items derived from existing
+   approval, QA, notification, and activity endpoints.
 
 The session stripe chart SHALL NOT be the primary region of the Overview page.
 No chart-first or card-grid requirement SHALL outrank the briefing, attention
@@ -88,6 +88,7 @@ a card grid or table.
 
 - **WHEN** an unresolved issue has `first_seen_at` older than 24 hours
 - **THEN** the row detail exposes that it is old/stale using a human-readable age
+  calculated relative to the owner's configured timezone
 - **AND** repeated old issues with the same `type` and `description` MAY collapse
   into one summarized row when `occurrences` or `butlers` indicates multiplicity
 - **AND** the summary MUST name the affected butlers with human-readable names,
@@ -163,7 +164,18 @@ active domain butlers. The section is a scan list, not a chart.
 
 The home page SHALL render a right-column `Now` section for immediate
 operational items. In the first implementation this section is sourced from
-pending approvals and does not require a new endpoint.
+existing endpoints and does not require a new endpoint.
+
+The acceptable first-source set is:
+
+- `GET /api/approvals/metrics` for pending approval count;
+- `GET /api/qa/summary` for QA patrol, finding, and dispatched-investigation
+  pressure;
+- `GET /api/qa/investigations` when the row needs active investigation or PR
+  detail beyond the summary counts;
+- `GET /api/notifications/stats` for failed notification pressure;
+- `GET /api/timeline` for recent activity, or `GET /api/sessions` when the
+  implementation only needs recent completed sessions.
 
 #### Scenario: Pending approvals appear in Now
 
@@ -171,16 +183,39 @@ pending approvals and does not require a new endpoint.
 - **THEN** `Now` renders one immediate item naming the pending approval count
 - **AND** the item is labelled as an approval item
 
+#### Scenario: QA pressure appears in Now
+
+- **WHEN** `GET /api/qa/summary` reports novel findings, dispatched
+  investigations, an active patrol failure, or another current QA alert
+- **THEN** `Now` renders an immediate item naming the QA state in human-readable
+  terms
+- **AND** if active investigation or PR detail is needed, the page MAY read
+  `GET /api/qa/investigations` instead of introducing a new endpoint
+
+#### Scenario: Failed notification pressure appears in Now
+
+- **WHEN** `GET /api/notifications/stats` returns `failed` greater than zero
+- **THEN** `Now` renders an immediate item naming the failed notification count
+- **AND** the item is labelled as a notification item
+
+#### Scenario: Recent activity appears in Now
+
+- **WHEN** `GET /api/timeline` returns recent activity, or `GET /api/sessions`
+  returns recent completed sessions
+- **THEN** `Now` MAY render a compact recent activity item
+- **AND** the row links to the appropriate timeline or sessions surface when a
+  link is available
+
 #### Scenario: Now handles empty, loading, and error states
 
-- **WHEN** approval metrics are loading
+- **WHEN** one or more `Now` sources are loading
 - **THEN** `Now` renders stable loading rows or an equivalent skeleton
 
-- **WHEN** `total_pending` is zero
+- **WHEN** every loaded `Now` source reports no actionable state
 - **THEN** `Now` renders `Nothing scheduled.`
 
-- **WHEN** approval metrics fail
-- **THEN** `Now` renders a local error state
+- **WHEN** a `Now` source fails
+- **THEN** `Now` renders a local error state for that source
 - **AND** the rest of the Overview remains visible
 
 ## REMOVED Requirements
@@ -245,5 +280,7 @@ approvals.
   the briefing response remains the six-field API contract consumed by the
   Overview page.
 - Current endpoint sources: `GET /api/dashboard/briefing`, `GET /api/issues`,
-  `GET /api/butlers`, `GET /api/costs/summary?period=today`, and
-  `GET /api/approvals/metrics`.
+  `GET /api/butlers`, `GET /api/costs/summary?period=today`,
+  `GET /api/approvals/metrics`, `GET /api/qa/summary`,
+  `GET /api/qa/investigations`, `GET /api/notifications/stats`,
+  `GET /api/timeline`, and `GET /api/sessions`.

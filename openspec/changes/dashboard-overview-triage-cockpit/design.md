@@ -67,6 +67,9 @@ implementation uses:
 | Operations: butler sessions/status | `GET /api/butlers` via `useButlers()` |
 | Operations: cost today | `GET /api/costs/summary?period=today` via `useCostSummary("today")` |
 | Now: pending approvals | `GET /api/approvals/metrics` via `useApprovalMetrics()` |
+| Now: QA state | `GET /api/qa/summary` via `useQaSummary()` and, if active PR/investigation detail is needed, `GET /api/qa/investigations` |
+| Now: failed notification pressure | `GET /api/notifications/stats` via `useNotificationStats()` |
+| Now: recent activity | `GET /api/timeline` via `useTimeline()` or `GET /api/sessions` via `useSessions()` |
 
 If the eventual `Now` list needs scheduled-task, reminder, or calendar detail,
 that follow-up may use existing calendar/scheduler surfaces or propose a new
@@ -84,7 +87,8 @@ The page should order and summarize issues client-side:
 - severity order: high/critical/error, then medium/warning/warn, then the rest;
 - within severity, older unresolved issues before newer issues when
   `first_seen_at` exists, because unresolved age is what makes an item stale;
-- items older than 24 hours should expose age in the detail line;
+- items older than 24 hours should expose age in the detail line, calculated
+  relative to the owner's configured timezone;
 - repeated old items with the same `type` and `description` may collapse into a
   single row when `occurrences` or `butlers` shows multiplicity;
 - empty state is the serif Voice line `Nothing waiting.`.
@@ -105,7 +109,24 @@ The KPI strip is promoted because it gives the owner the fastest answer to
 The strip remains hairline-divided and tabular. Promoted here means promoted in
 information architecture, not wrapped in heavier card chrome.
 
-### D6: Loading and failure states stay local to surfaces
+### D6: `Now` starts with current operator signals, not a new endpoint
+
+`Now` is the right-column place for immediate operational work and recent
+movement. The first implementation should compose small rows from existing
+sources:
+
+- pending approval count from `GET /api/approvals/metrics`;
+- QA alert state from `GET /api/qa/summary`, with active investigation or PR
+  detail from `GET /api/qa/investigations` only when the row needs it;
+- failed notification count from `GET /api/notifications/stats`;
+- recent activity from `GET /api/timeline`, or `GET /api/sessions` when the
+  implementation only needs recent completed sessions.
+
+The page may omit a row when its source reports no actionable state. That is
+different from hiding failures: source failures render as local `Now` error
+rows so the owner can see which signal is unavailable.
+
+### D7: Loading and failure states stay local to surfaces
 
 The Overview should never blank the whole page because one supporting query
 failed. Each surface owns its own state:

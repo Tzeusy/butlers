@@ -29,14 +29,17 @@ continue.
 - The right column is explicitly named and scoped:
   - `Operations`: butler scan list sourced from `GET /api/butlers` and
     `GET /api/costs/summary?period=today`.
-  - `Now`: immediate operational items, starting with pending approvals sourced
-    from `GET /api/approvals/metrics`.
+  - `Now`: immediate operational items sourced from existing approval, QA,
+    notification, and activity endpoints: `GET /api/approvals/metrics`,
+    `GET /api/qa/summary`, `GET /api/qa/investigations`,
+    `GET /api/notifications/stats`, and either `GET /api/timeline` or
+    `GET /api/sessions`.
 - The stale chart-first requirements are removed from the page contract. Session
   charts and recent moments may still exist elsewhere, but they no longer define
   the Overview's primary region.
 - No new backend endpoint is introduced. Any future need for a richer `Now` list
-  must justify itself against existing approval, schedule, issue, and briefing
-  surfaces first.
+  must justify itself against existing approval, QA, notification, activity,
+  schedule, issue, and briefing surfaces first.
 
 ## Capabilities
 
