@@ -843,6 +843,8 @@ async def _create_qa_pr(
             )
         return None, None, "anonymization_failed"
 
+    assert "evidence_lines" not in pr_body, "Raw evidence cannot reach GitHub"
+
     # Step 5: gh pr create
     label_args: list[str] = []
     for label in labels:
