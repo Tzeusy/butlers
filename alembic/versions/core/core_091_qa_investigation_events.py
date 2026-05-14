@@ -65,7 +65,7 @@ def _grant_best_effort(table_fqn: str, privilege: str, role: str) -> None:
 def upgrade() -> None:
     op.execute("""
         CREATE TABLE IF NOT EXISTS public.qa_investigation_events (
-            id         UUID PRIMARY KEY,
+            id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             attempt_id UUID NOT NULL
                        REFERENCES public.healing_attempts(id)
                        ON DELETE CASCADE,
