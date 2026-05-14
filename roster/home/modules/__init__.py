@@ -884,14 +884,11 @@ class HomeAssistantModule(Module):
 
                 if raw.type == aiohttp.WSMsgType.TEXT:
                     try:
-                        msg: dict[str, Any] = json.loads(raw.data)
+                        msg: Any = json.loads(raw.data)
                     except json.JSONDecodeError:
                         logger.warning("HomeAssistantModule: invalid JSON from WS: %r", raw.data)
                         continue
-                    if not isinstance(msg, dict):
-                        logger.debug("HomeAssistantModule: non-dict WS message: %r", type(msg))
-                        continue
-                    await self._dispatch_ws_message(msg)
+                    await self._dispatch_ws_payload(msg)
 
                 elif raw.type == aiohttp.WSMsgType.BINARY:
                     try:
@@ -899,10 +896,7 @@ class HomeAssistantModule(Module):
                     except (json.JSONDecodeError, UnicodeDecodeError):
                         logger.warning("HomeAssistantModule: invalid binary WS message")
                         continue
-                    if not isinstance(msg, dict):
-                        logger.debug("HomeAssistantModule: non-dict binary WS msg: %r", type(msg))
-                        continue
-                    await self._dispatch_ws_message(msg)
+                    await self._dispatch_ws_payload(msg)
 
                 elif raw.type in (
                     aiohttp.WSMsgType.CLOSE,
@@ -926,6 +920,24 @@ class HomeAssistantModule(Module):
             self._ws_connected = False
             self._start_poll_fallback()
             self._schedule_reconnect(delay=_WS_RECONNECT_INITIAL)
+
+    async def _dispatch_ws_payload(self, payload: Any) -> None:
+        """Dispatch one HA WebSocket message or a coalesced message batch."""
+        if isinstance(payload, dict):
+            await self._dispatch_ws_message(payload)
+            return
+
+        if isinstance(payload, list):
+            for item in payload:
+                if not isinstance(item, dict):
+                    logger.debug(
+                        "HomeAssistantModule: non-dict coalesced WS message: %r", type(item)
+                    )
+                    continue
+                await self._dispatch_ws_message(item)
+            return
+
+        logger.debug("HomeAssistantModule: non-dict WS message: %r", type(payload))
 
     async def _dispatch_ws_message(self, msg: dict[str, Any]) -> None:
         """Dispatch a single parsed WebSocket message."""
