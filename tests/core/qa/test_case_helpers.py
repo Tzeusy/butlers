@@ -77,11 +77,16 @@ def test_state_of_case_mapping(status: str, expected: str) -> None:
     assert state_of_case(_attempt(status=status)) == expected
 
 
-def test_state_of_case_escalates_failed_attempt_with_human_action() -> None:
-    assert (
-        state_of_case(_attempt(status="failed", error_detail="Needs human action: inspect PR"))
-        == "escalated"
-    )
+@pytest.mark.parametrize(
+    "error_detail",
+    [
+        "Needs human action: inspect PR",
+        "Operator must rotate credential",
+        "Escalated after repeated failures",
+    ],
+)
+def test_state_of_case_escalates_attempt_with_operator_action(error_detail: str) -> None:
+    assert state_of_case(_attempt(status="investigating", error_detail=error_detail)) == "escalated"
 
 
 def test_state_of_case_accepts_object_rows() -> None:

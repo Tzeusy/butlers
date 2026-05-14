@@ -46,7 +46,7 @@ def state_of_case(attempt: Mapping[str, Any] | object) -> CaseState:
         return "landed"
     if status in {"pr_open", "drafted"}:
         return "pr"
-    if status == "unfixable" or _failed_with_human_action(attempt):
+    if status == "unfixable" or _is_escalated(attempt):
         return "escalated"
     if status == "investigating":
         return "diagnose"
@@ -69,10 +69,14 @@ def headline_for_case(attempt: Mapping[str, Any] | object, finding: QaFinding | 
     return f"{exception_type} in {butler_name}"
 
 
-def _failed_with_human_action(attempt: Mapping[str, Any] | object) -> bool:
-    status = _get_field(attempt, "status")
+def _is_escalated(attempt: Mapping[str, Any] | object | None) -> bool:
+    if attempt is None:
+        return False
     detail = _get_field(attempt, "error_detail")
-    return status == "failed" and isinstance(detail, str) and "human action" in detail.lower()
+    value = getattr(detail, "value", detail)
+    return isinstance(value, str) and any(
+        pattern in value.lower() for pattern in ("human action", "operator", "escalat")
+    )
 
 
 def _investigation_notes_headline(finding: QaFinding | None) -> str | None:

@@ -265,7 +265,7 @@ class QaPrSummary(BaseModel):
     """Pull request summary embedded in a QA case dossier."""
 
     number: int
-    state: str
+    state: Literal["drafted", "open", "merged", "closed"]
     title: str
     branch: str
     ci_status: Literal["passing", "failing", "pending", "unknown"]
@@ -302,7 +302,7 @@ class QaCaseDossier(BaseModel):
     """Full case payload for the QA dossier renderer."""
 
     case: QaCaseSummary
-    state_track_stage: str
+    state_track_stage: Literal["detect", "diagnose", "pr", "landed", "escalated"]
     investigation_notes: InvestigationNotes | None = None
     pr: QaPrSummary | None = None
     journal: list[QaJournalEvent] = Field(default_factory=list)
