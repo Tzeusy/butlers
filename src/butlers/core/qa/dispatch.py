@@ -900,13 +900,17 @@ async def _capture_commit_diff_snapshot(worktree_path: Path) -> list[dict[str, s
 
 
 def _diff_snapshot_stats(diff_snapshot: list[dict[str, str]]) -> tuple[int, int, int]:
-    additions = sum(1 for line in diff_snapshot if line.get("kind") == "+")
-    deletions = sum(1 for line in diff_snapshot if line.get("kind") == "-")
-    file_count = sum(
-        1
-        for line in diff_snapshot
-        if line.get("kind") == "meta" and line.get("text", "").startswith("diff --git ")
-    )
+    additions = 0
+    deletions = 0
+    file_count = 0
+    for line in diff_snapshot:
+        kind = line.get("kind")
+        if kind == "+":
+            additions += 1
+        elif kind == "-":
+            deletions += 1
+        elif kind == "meta" and line.get("text", "").startswith("diff --git "):
+            file_count += 1
     return additions, deletions, file_count
 
 
