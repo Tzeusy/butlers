@@ -63,7 +63,7 @@ describe("getQaCases", () => {
       sev: "high",
       since: "24h",
       state: "diagnose",
-      butler: ["health", "finance"],
+      butler: [" health ", "", "finance"],
       offset: 10,
       limit: 5,
     });
@@ -72,8 +72,11 @@ describe("getQaCases", () => {
     expect(url).toContain("sev=high");
     expect(url).toContain("since=24h");
     expect(url).toContain("state=diagnose");
-    expect(url).toContain("butler=health");
-    expect(url).toContain("butler=finance");
+    expect(new URLSearchParams(url.split("?")[1]).getAll("butler")).toEqual([
+      "health",
+      "finance",
+    ]);
+    expect(url).not.toContain("%20health%20");
     expect(url).toContain("offset=10");
     expect(url).toContain("limit=5");
   });
