@@ -209,6 +209,12 @@ def _make_active_breakdown_row(
     }
 
 
+def _single_fetchrow_query_containing(pool: MagicMock, needle: str) -> str:
+    queries = [call.args[0] for call in pool.fetchrow.await_args_list if needle in call.args[0]]
+    assert len(queries) == 1
+    return queries[0]
+
+
 def _build_summary_app(
     *,
     last_patrol: dict[str, Any] | None = None,
@@ -359,8 +365,8 @@ class TestGetQaSummary:
 
         assert (await _call(app, "get", "/api/qa/summary")).status_code == 200
 
-        kpi_sql = pool.fetchrow.await_args_list[2].args[0]
-        active_breakdown_sql = pool.fetchrow.await_args_list[3].args[0]
+        kpi_sql = _single_fetchrow_query_containing(pool, "active_cases_now")
+        active_breakdown_sql = _single_fetchrow_query_containing(pool, "AS escalated_open_cases")
         assert "qa_patrol_id IS NOT NULL" in kpi_sql
         assert "qa_patrol_id IS NOT NULL" in active_breakdown_sql
 
@@ -372,7 +378,7 @@ class TestGetQaSummary:
         body = (await _call(app, "get", "/api/qa/summary")).json()["data"]
 
         assert body["active_breakdown"] == {"awaiting_ci": 1, "escalated_open_cases": 3}
-        active_breakdown_sql = pool.fetchrow.await_args_list[3].args[0]
+        active_breakdown_sql = _single_fetchrow_query_containing(pool, "AS escalated_open_cases")
         assert "status IN ('unfixable', 'failed')" in active_breakdown_sql
         assert "error_detail ILIKE '%human action%'" in active_breakdown_sql
         assert "error_detail ILIKE '%operator%'" in active_breakdown_sql
@@ -397,8 +403,8 @@ class TestGetQaSummary:
 
         assert body["kpis"]["active_cases_now"] == 0
         assert body["active_breakdown"] == {"awaiting_ci": 0, "escalated_open_cases": 1}
-        kpi_sql = pool.fetchrow.await_args_list[2].args[0]
-        active_breakdown_sql = pool.fetchrow.await_args_list[3].args[0]
+        kpi_sql = _single_fetchrow_query_containing(pool, "active_cases_now")
+        active_breakdown_sql = _single_fetchrow_query_containing(pool, "AS escalated_open_cases")
         assert "status IN ('dispatch_pending', 'investigating', 'pr_open')" in kpi_sql
         assert "status IN ('unfixable', 'failed')" in active_breakdown_sql
 

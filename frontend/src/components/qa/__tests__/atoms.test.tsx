@@ -87,8 +87,8 @@ describe("QA dossier atoms", () => {
   it("renders active breakdown with awaiting CI and escalated open cases", () => {
     render(<QaKpiStrip kpis={kpisWithNullMttr} active={activeBreakdown} />);
 
-    const activeValue = screen.getAllByTestId("qa-kpi-active-cases-value").at(-1);
-    expect(activeValue?.nextElementSibling?.textContent).toBe("2 awaiting CI · 1 escalated");
+    const activeValue = screen.getByTestId("qa-kpi-active-cases-value");
+    expect(activeValue.nextElementSibling?.textContent).toBe("2 awaiting CI · 1 escalated");
   });
 
   it("marks the active CaseList row and still emits onSelect for row clicks", () => {
