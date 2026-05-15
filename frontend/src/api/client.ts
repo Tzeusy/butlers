@@ -3639,7 +3639,15 @@ export function getQaSummary(): Promise<ApiResponse<QaSummary>> {
 export function getQaCases(params?: QaCasesParams): Promise<PaginatedResponse<QaCaseSummary>> {
   const query = new URLSearchParams();
   if (params?.sev) query.set("sev", params.sev);
+  if (params?.state) query.set("state", params.state);
   if (params?.since) query.set("since", params.since);
+  if (Array.isArray(params?.butler)) {
+    params.butler.forEach((name) => {
+      if (name) query.append("butler", name);
+    });
+  } else if (params?.butler) {
+    query.set("butler", params.butler);
+  }
   if (params?.offset !== undefined) query.set("offset", String(params.offset));
   if (params?.limit !== undefined) query.set("limit", String(params.limit));
   const qs = query.toString();
