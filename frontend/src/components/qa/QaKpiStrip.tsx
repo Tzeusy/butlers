@@ -53,7 +53,7 @@ function formatCountDelta(
 }
 
 /**
- * Format a duration delta sub-label: "+12m vs 7d" or "−12m vs 7d".
+ * Format a duration delta sub-label: "+12m vs prior 24h" or "−12m vs prior 24h".
  * Returns null when either value is not available (no sample in that window).
  */
 function formatMttrDelta(
@@ -90,7 +90,7 @@ export function QaKpiStrip({ kpis, active, className }: QaKpiStripProps) {
 
   const mttrDelta =
     kpis != null
-      ? formatMttrDelta(kpis.mttr_24h_seconds, kpis.mttr_prior_24h_seconds, "7d")
+      ? formatMttrDelta(kpis.mttr_24h_seconds, kpis.mttr_prior_24h_seconds, "prior 24h")
       : null;
 
   const selfResolvedDelta =
