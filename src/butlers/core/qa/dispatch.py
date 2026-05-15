@@ -296,8 +296,6 @@ def _format_anonymization_validator_detail(violations: list[str]) -> str:
 
     if len(violations) > len(cleaned):
         cleaned.append(f"{len(violations) - len(cleaned)} additional validator reason(s)")
-    elif len(violations) > 3:
-        cleaned.append(f"{len(violations) - 3} additional validator reason(s)")
 
     return "; ".join(cleaned)
 
