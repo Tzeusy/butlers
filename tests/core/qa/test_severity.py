@@ -8,6 +8,7 @@ import pytest
 
 from butlers.core.qa.severity import (
     _HUMAN_ACTION_MARKERS,
+    _sql_string_literal,
     escalated_open_cases_sql,
     failed_with_human_action,
     map_severity,
@@ -71,6 +72,10 @@ def test_helper_markers_match_sql_helper() -> None:
     assert sql.count("ILIKE") == len(_HUMAN_ACTION_MARKERS)
     for marker in _HUMAN_ACTION_MARKERS:
         assert f"%{marker}%" in sql
+
+
+def test_sql_string_literal_escapes_single_quotes() -> None:
+    assert _sql_string_literal("%operator's action%") == "'%operator''s action%'"
 
 
 def test_state_of_case_uses_failed_with_human_action_marker_rules() -> None:

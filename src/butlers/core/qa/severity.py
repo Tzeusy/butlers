@@ -96,7 +96,7 @@ def failed_with_human_action(attempt: Mapping[str, Any] | object | None) -> bool
 def escalated_open_cases_sql(*, qa_only: bool = False) -> str:
     """Return SQL for terminal-but-unresolved human-action QA cases."""
 
-    marker_predicate = _human_action_marker_sql("error_detail")
+    marker_predicate = _human_action_marker_sql()
     qa_patrol_predicate = "\n  AND qa_patrol_id IS NOT NULL" if qa_only else ""
     return f"""
 SELECT COUNT(*)
@@ -107,8 +107,15 @@ WHERE status IN ('unfixable', 'failed')
 """.strip()
 
 
-def _human_action_marker_sql(column: str) -> str:
-    return "\n       OR ".join(f"{column} ILIKE '%{marker}%'" for marker in _HUMAN_ACTION_MARKERS)
+def _human_action_marker_sql() -> str:
+    return "\n       OR ".join(
+        f"error_detail ILIKE {_sql_string_literal(f'%{marker}%')}"
+        for marker in _HUMAN_ACTION_MARKERS
+    )
+
+
+def _sql_string_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def _investigation_notes_headline(finding: QaFinding | None) -> str | None:
