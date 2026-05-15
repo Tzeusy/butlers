@@ -23,7 +23,7 @@ exports[`QA case dossier composition > test_dossier_renders_full_case 1`] = `
          · 
         qa
          · detected 
-        08:10 am
+        12:10 AM
       </p>
       <div
         class="ml-auto flex items-center gap-2"
@@ -472,7 +472,7 @@ exports[`QA case dossier composition > test_dossier_renders_full_case 1`] = `
           class="text-muted-foreground"
           datetime="2026-05-15T00:10:00Z"
         >
-          08:10 am
+          12:10 AM
         </time>
         <span
           class="uppercase tracking-[0.12em] text-amber-500"
@@ -502,7 +502,7 @@ exports[`QA case dossier composition > test_dossier_renders_full_case 1`] = `
           class="text-muted-foreground"
           datetime="2026-05-15T00:16:00Z"
         >
-          08:16 am
+          12:16 AM
         </time>
         <span
           class="uppercase tracking-[0.12em] text-emerald-500"
