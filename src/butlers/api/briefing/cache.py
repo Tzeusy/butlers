@@ -84,6 +84,16 @@ class BriefingCache:
         """Remove the cached entry for owner_id (no-op if not present)."""
         self._store.pop(owner_id, None)
 
+    def invalidate_all(self) -> None:
+        """Remove all cached entries.
+
+        Use this when the caller cannot resolve a specific owner_id (e.g. the
+        audit middleware) but knows that some owner-relevant state changed.
+        This is semantically correct for single-tenant deployments where every
+        entry belongs to the same owner.
+        """
+        self._store.clear()
+
 
 # ---------------------------------------------------------------------------
 # Module-level singleton used by the router.

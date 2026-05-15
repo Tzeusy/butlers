@@ -7,17 +7,22 @@ Provides two routers:
 
 - ``router`` — cross-butler endpoint at ``/api/notifications``
 - ``butler_notifications_router`` — butler-scoped at ``/api/butlers/{name}/notifications``
+
+Mutation endpoints:
+- PATCH /api/notifications/{notification_id}/read  — mark a notification as read
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Mapping
 from datetime import datetime
 
 import asyncpg
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from butlers.api.briefing.cache import BriefingCache, get_cache
 from butlers.api.db import DatabaseManager
 from butlers.api.models import ApiResponse, PaginatedResponse, PaginationMeta
 from butlers.api.models.notification import NotificationStats, NotificationSummary
@@ -360,4 +365,111 @@ async def notification_stats(
             by_channel=by_channel,
             by_butler=by_butler,
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Owner resolution helper
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_owner_id(pool: asyncpg.Pool) -> object | None:
+    """Return the owner contact id, or None when not found / on error.
+
+    Used to invalidate the briefing cache after notification status mutations.
+    Errors are swallowed so that a missing or stale contacts table does not
+    block the primary operation.
+    """
+    try:
+        row = await pool.fetchrow(
+            """
+            SELECT c.id
+            FROM public.contacts c
+            JOIN public.entities e ON c.entity_id = e.id
+            WHERE 'owner' = ANY(e.roles)
+            LIMIT 1
+            """
+        )
+        return row["id"] if row is not None else None
+    except Exception as exc:
+        logger.debug("Could not resolve owner id for cache invalidation: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/notifications/{notification_id}/read
+# ---------------------------------------------------------------------------
+
+
+@router.patch(
+    "/{notification_id}/read",
+    response_model=ApiResponse[NotificationSummary],
+)
+async def mark_notification_read(
+    notification_id: uuid.UUID,
+    db: DatabaseManager = Depends(_get_db_manager),
+    cache: BriefingCache = Depends(get_cache),
+) -> ApiResponse[NotificationSummary]:
+    """Mark a notification as read.
+
+    Updates ``status = 'read'`` on the given notification row in the
+    Switchboard ``notifications`` table and invalidates the briefing cache
+    so the next GET /api/dashboard/briefing reflects the updated attention
+    list without waiting for TTL expiry.
+
+    Returns HTTP 404 when the notification is not found.
+    Returns HTTP 503 when the Switchboard pool is unavailable.
+    """
+    pool = _get_switchboard_pool(db)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Switchboard database is not available")
+
+    try:
+        row = await pool.fetchrow(
+            """
+            UPDATE notifications
+            SET status = 'read'
+            WHERE id = $1
+            RETURNING id, source_butler, channel, recipient, message, metadata,
+                      status, error, session_id, trace_id, created_at
+            """,
+            notification_id,
+        )
+    except Exception as exc:
+        if _is_missing_notifications_table_error(exc):
+            raise HTTPException(
+                status_code=503,
+                detail="Notifications table is not yet initialised",
+            )
+        raise
+
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Notification not found: {notification_id}",
+        )
+
+    # Invalidate the briefing cache so the next briefing request reflects the
+    # updated attention list (category a from bu-qzjpm).
+    owner_id = await _resolve_owner_id(pool)
+    if owner_id is not None:
+        cache.invalidate(owner_id)
+    else:
+        cache.invalidate_all()
+
+    return ApiResponse(
+        data=NotificationSummary(
+            id=row["id"],
+            source_butler=row["source_butler"],
+            channel=row["channel"],
+            recipient=row["recipient"],
+            message=row["message"],
+            metadata=_normalize_notification_metadata(row["metadata"]),
+            status=row["status"],
+            effective_status=row["status"],
+            error=row["error"],
+            session_id=row["session_id"],
+            trace_id=row["trace_id"],
+            created_at=row["created_at"],
+        )
     )
