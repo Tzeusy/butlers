@@ -1,4 +1,5 @@
 import type { QaPrSummary } from "@/api/types";
+import { Time } from "@/components/ui/time";
 import { cn } from "@/lib/utils";
 
 import { DiffPreview, type DiffPreviewLine } from "./DiffPreview";
@@ -71,15 +72,24 @@ export function PRPanel({ pr, whyThisFix, diffSnapshot, className }: PRPanelProp
         </div>
       ) : null}
 
-      <div className="space-y-2">
-        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-          Diff preview
-        </p>
-        <DiffPreview lines={diffSnapshot ?? []} />
-      </div>
+      {diffSnapshot && diffSnapshot.length > 0 ? (
+        <div className="space-y-2">
+          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+            Diff preview
+          </p>
+          <DiffPreview lines={diffSnapshot} />
+        </div>
+      ) : null}
 
       <p className="font-mono text-[10px] leading-none text-muted-foreground tnum">
-        opened {pr.opened_at} · {pr.merged_at ? `merged ${pr.merged_at}` : "not merged"}
+        opened <Time value={pr.opened_at} mode="smart" /> ·{" "}
+        {pr.merged_at ? (
+          <>
+            merged <Time value={pr.merged_at} mode="smart" />
+          </>
+        ) : (
+          "not merged"
+        )}
       </p>
     </section>
   );

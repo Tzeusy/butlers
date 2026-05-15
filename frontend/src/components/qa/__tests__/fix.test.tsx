@@ -1,10 +1,14 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { QaPrSummary } from "@/api/types";
 import { CounterEvidence, DiffPreview, PRPanel } from "@/components/qa";
+
+vi.mock("@/components/ui/time", () => ({
+  Time: ({ value }: { value: string }) => <time dateTime={value}>{value}</time>,
+}));
 
 const pr: QaPrSummary = {
   number: 42,
@@ -54,7 +58,16 @@ describe("QA dossier fix-column components", () => {
     expect(screen.getByText("The failing runtime ignored catalog timeouts.")).toBeTruthy();
     expect(screen.getByText("Diff preview")).toBeTruthy();
     expect(screen.getByText("runtime.invoke(prompt, timeout=session_timeout_s)")).toBeTruthy();
-    expect(screen.getByText("opened 2026-05-15T02:30:00Z · merged 2026-05-15T04:00:00Z")).toBeTruthy();
+    expect(screen.getByText("opened", { exact: false })).toBeTruthy();
+    expect(screen.getByText("merged", { exact: false })).toBeTruthy();
+    expect(screen.getByText("2026-05-15T02:30:00Z").tagName).toBe("TIME");
+    expect(screen.getByText("2026-05-15T04:00:00Z").tagName).toBe("TIME");
+  });
+
+  it("test_pr_panel_omits_empty_diff_preview", () => {
+    render(<PRPanel pr={pr} whyThisFix="The failing runtime ignored catalog timeouts." diffSnapshot={[]} />);
+
+    expect(screen.queryByText("Diff preview")).toBeNull();
   });
 
   it("test_diff_preview_classifies_kinds", () => {
@@ -78,6 +91,12 @@ describe("QA dossier fix-column components", () => {
 
   it("test_counter_evidence_empty_renders_nothing", () => {
     const { container } = render(<CounterEvidence items={[]} />);
+
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("test_diff_preview_empty_renders_nothing", () => {
+    const { container } = render(<DiffPreview lines={[]} />);
 
     expect(container.innerHTML).toBe("");
   });

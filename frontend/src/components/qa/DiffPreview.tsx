@@ -34,6 +34,8 @@ const diffKindMeta = {
 } satisfies Record<DiffPreviewLine["kind"], { sign: string; rowClassName: string; testId: string }>;
 
 export function DiffPreview({ lines, className }: DiffPreviewProps) {
+  if (lines.length === 0) return null;
+
   return (
     <div
       className={cn(
