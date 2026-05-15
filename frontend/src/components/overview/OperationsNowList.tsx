@@ -32,25 +32,26 @@ const KIND_LABELS: Record<OverviewNowRow["kind"], string> = {
 export function OperationsNowList({ rows }: OperationsNowListProps) {
   return (
     <Section eyebrow="Now">
-      <div role="list" aria-label="Operations now">
-        {rows.length === 0 && (
-          <p
-            style={{
-              fontFamily: "var(--font-serif)",
-              fontSize: "14px",
-              fontStyle: "italic",
-              color: "var(--muted-foreground)",
-              paddingTop: "10px",
-              paddingBottom: "10px",
-            }}
-          >
-            Nothing scheduled.
-          </p>
-        )}
-        {rows.map((row, i) => (
-          <NowRow key={row.id} row={row} isFirst={i === 0} />
-        ))}
-      </div>
+      {rows.length === 0 ? (
+        <p
+          style={{
+            fontFamily: "var(--font-serif)",
+            fontSize: "14px",
+            fontStyle: "italic",
+            color: "var(--muted-foreground)",
+            paddingTop: "10px",
+            paddingBottom: "10px",
+          }}
+        >
+          Nothing scheduled.
+        </p>
+      ) : (
+        <div role="list" aria-label="Operations now">
+          {rows.map((row, i) => (
+            <NowRow key={row.id} row={row} isFirst={i === 0} />
+          ))}
+        </div>
+      )}
     </Section>
   );
 }
