@@ -136,12 +136,14 @@ describe("QaInvestigationsPage", () => {
 
     fireEvent.change(screen.getByLabelText("Severity"), { target: { value: "medium" } });
     expect(screen.getByText("Nothing matches.")).toBeTruthy();
-    expect(vi.mocked(useQaCases).mock.calls.at(-1)?.[0]).toMatchObject({
-      limit: 50,
-      offset: 0,
-      sev: "medium",
-      since: "7d",
-    });
+    expect(vi.mocked(useQaCases)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limit: 50,
+        offset: 0,
+        sev: "medium",
+        since: "7d",
+      }),
+    );
 
     fireEvent.change(screen.getByLabelText("State"), { target: { value: "all" } });
     expect(screen.getByText("Health sync stalled")).toBeTruthy();
@@ -152,9 +154,23 @@ describe("QaInvestigationsPage", () => {
     expect(screen.getByText("Health sync stalled")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Time range"), { target: { value: "24h" } });
-    expect(vi.mocked(useQaCases).mock.calls.at(-1)?.[0]).toMatchObject({
-      since: "24h",
-    });
+    expect(vi.mocked(useQaCases)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        since: "24h",
+      }),
+    );
+  });
+
+  it("passes the all-time range explicitly instead of falling back to the backend default", () => {
+    renderPage();
+
+    fireEvent.change(screen.getByLabelText("Time range"), { target: { value: "all" } });
+
+    expect(vi.mocked(useQaCases)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        since: "all",
+      }),
+    );
   });
 
   it("renders the exact filtered empty state line", () => {
@@ -179,9 +195,11 @@ describe("QaInvestigationsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
 
-    expect(vi.mocked(useQaCases).mock.calls.at(-1)?.[0]).toMatchObject({
-      limit: 100,
-      offset: 0,
-    });
+    expect(vi.mocked(useQaCases)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        limit: 100,
+        offset: 0,
+      }),
+    );
   });
 });

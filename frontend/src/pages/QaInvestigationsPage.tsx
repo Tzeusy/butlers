@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { useNavigate } from "react-router";
 
@@ -19,8 +19,7 @@ type StateFilter =
   | "investigating"
   | "pr_open"
   | "pr_merged"
-  | "failed"
-  | "unfixable";
+  | "escalated";
 type SeverityFilter = "all" | QaCaseSummary["sev"];
 type TimeRangeFilter = "24h" | "7d" | "30d" | "all";
 
@@ -30,8 +29,7 @@ const STATE_OPTIONS: { value: StateFilter; label: string }[] = [
   { value: "investigating", label: "Investigating" },
   { value: "pr_open", label: "PR open" },
   { value: "pr_merged", label: "PR merged" },
-  { value: "failed", label: "Failed" },
-  { value: "unfixable", label: "Unfixable" },
+  { value: "escalated", label: "Failed / unfixable" },
 ];
 
 const SEVERITY_OPTIONS: { value: SeverityFilter; label: string }[] = [
@@ -86,9 +84,6 @@ function matchesState(qaCase: QaCaseSummary, stateFilter: StateFilter): boolean 
   if (stateFilter === "investigating") return qaCase.state === "diagnose";
   if (stateFilter === "pr_open") return qaCase.state === "pr";
   if (stateFilter === "pr_merged") return qaCase.state === "landed" || qaCase.pr_state === "merged";
-
-  // /api/qa/cases intentionally hides raw healing status. Terminal failed and
-  // unfixable rows are both only distinguishable as escalated case summaries.
   return qaCase.state === "escalated";
 }
 
@@ -118,12 +113,13 @@ export default function QaInvestigationsPage() {
   const [selectedButlers, setSelectedButlers] = useState<Set<string>>(() => new Set());
   const [butlerMenuOpen, setButlerMenuOpen] = useState(false);
   const [limit, setLimit] = useState(PAGE_SIZE);
+  const butlerMenuRef = useRef<HTMLDivElement | null>(null);
 
   const casesParams: Pick<QaCasesParams, "limit" | "offset" | "sev" | "since"> = {
     limit,
     offset: 0,
     sev: severityFilter,
-    ...(timeRange !== "all" ? { since: timeRange } : {}),
+    since: timeRange,
   };
 
   const casesQuery = useQaCases(casesParams);
@@ -148,6 +144,27 @@ export default function QaInvestigationsPage() {
       }),
     [cases, selectedButlers, severityFilter, stateFilter],
   );
+
+  useEffect(() => {
+    if (!butlerMenuOpen) return undefined;
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!butlerMenuRef.current?.contains(event.target as Node)) {
+        setButlerMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setButlerMenuOpen(false);
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [butlerMenuOpen]);
 
   function resetLoadedWindow() {
     setLimit(PAGE_SIZE);
@@ -178,6 +195,7 @@ export default function QaInvestigationsPage() {
       }
       return next;
     });
+    setButlerMenuOpen(false);
     resetLoadedWindow();
   }
 
@@ -211,7 +229,7 @@ export default function QaInvestigationsPage() {
       </div>
 
       <div className="sticky top-[104px] z-10 border-b border-border/70 bg-background/95 py-3 backdrop-blur">
-        {casesQuery.isLoading && butlersQuery.isLoading ? (
+        {casesQuery.isLoading || butlersQuery.isLoading ? (
           <FilterSkeleton />
         ) : (
           <div className="flex flex-wrap items-end gap-3">
@@ -231,7 +249,7 @@ export default function QaInvestigationsPage() {
               <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                 Butler
               </span>
-              <div className="relative">
+              <div className="relative" ref={butlerMenuRef}>
                 <Button
                   type="button"
                   variant="outline"
@@ -253,21 +271,21 @@ export default function QaInvestigationsPage() {
                       Butlers
                     </div>
                     <div className="my-1 h-px bg-border" />
-                  {butlerOptions.map((name) => (
-                    <button
-                      key={name}
-                      type="button"
-                      role="menuitemcheckbox"
-                      aria-checked={selectedButlers.has(name)}
-                      onClick={() => toggleButler(name)}
-                      className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left font-mono text-[11px] text-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground"
-                    >
-                      <span className="w-3 text-center" aria-hidden="true">
-                        {selectedButlers.has(name) ? "x" : ""}
-                      </span>
-                      {name}
-                    </button>
-                  ))}
+                    {butlerOptions.map((name) => (
+                      <button
+                        key={name}
+                        type="button"
+                        role="menuitemcheckbox"
+                        aria-checked={selectedButlers.has(name)}
+                        onClick={() => toggleButler(name)}
+                        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left font-mono text-[11px] text-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground"
+                      >
+                        <span className="w-3 text-center" aria-hidden="true">
+                          {selectedButlers.has(name) ? "x" : ""}
+                        </span>
+                        {name}
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -281,12 +299,6 @@ export default function QaInvestigationsPage() {
           </div>
         )}
       </div>
-
-      {timeRange === "all" && (
-        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-amber-600">
-          Cases API has no all-time range; this request falls back to the endpoint default window.
-        </p>
-      )}
 
       {casesQuery.isError ? (
         <p className="py-10 text-sm text-destructive">Failed to load QA cases.</p>
