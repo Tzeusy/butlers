@@ -22,7 +22,7 @@ from datetime import datetime
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from butlers.api.briefing.cache import BriefingCache, get_cache
+from butlers.api.briefing.cache import BriefingCache, get_cache, resolve_owner_id
 from butlers.api.db import DatabaseManager
 from butlers.api.models import ApiResponse, PaginatedResponse, PaginationMeta
 from butlers.api.models.notification import NotificationStats, NotificationSummary
@@ -369,34 +369,6 @@ async def notification_stats(
 
 
 # ---------------------------------------------------------------------------
-# Owner resolution helper
-# ---------------------------------------------------------------------------
-
-
-async def _resolve_owner_id(pool: asyncpg.Pool) -> object | None:
-    """Return the owner contact id, or None when not found / on error.
-
-    Used to invalidate the briefing cache after notification status mutations.
-    Errors are swallowed so that a missing or stale contacts table does not
-    block the primary operation.
-    """
-    try:
-        row = await pool.fetchrow(
-            """
-            SELECT c.id
-            FROM public.contacts c
-            JOIN public.entities e ON c.entity_id = e.id
-            WHERE 'owner' = ANY(e.roles)
-            LIMIT 1
-            """
-        )
-        return row["id"] if row is not None else None
-    except Exception as exc:
-        logger.debug("Could not resolve owner id for cache invalidation: %s", exc)
-        return None
-
-
-# ---------------------------------------------------------------------------
 # PATCH /api/notifications/{notification_id}/read
 # ---------------------------------------------------------------------------
 
@@ -451,7 +423,7 @@ async def mark_notification_read(
 
     # Invalidate the briefing cache so the next briefing request reflects the
     # updated attention list (category a from bu-qzjpm).
-    owner_id = await _resolve_owner_id(pool)
+    owner_id = await resolve_owner_id(pool)
     if owner_id is not None:
         cache.invalidate(owner_id)
     else:

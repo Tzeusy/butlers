@@ -21,7 +21,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from butlers.api.briefing.cache import BriefingCache, get_cache
+from butlers.api.briefing.cache import BriefingCache, get_cache, resolve_owner_id
 from butlers.api.db import DatabaseManager
 from butlers.api.deps import (
     ButlerConnectionInfo,
@@ -1102,23 +1102,10 @@ async def update_butler_eligibility(
 
     # Invalidate the briefing cache so the next briefing request reflects the
     # updated butler health immediately (category c from bu-qzjpm).
-    # Resolve the owner_id for a precise per-owner invalidation; fall back to
-    # invalidate_all() when the contacts table is unavailable.
-    try:
-        owner_row = await pool.fetchrow(
-            """
-            SELECT c.id
-            FROM public.contacts c
-            JOIN public.entities e ON c.entity_id = e.id
-            WHERE 'owner' = ANY(e.roles)
-            LIMIT 1
-            """
-        )
-        if owner_row is not None:
-            cache.invalidate(owner_row["id"])
-        else:
-            cache.invalidate_all()
-    except Exception:
+    owner_id = await resolve_owner_id(pool)
+    if owner_id is not None:
+        cache.invalidate(owner_id)
+    else:
         cache.invalidate_all()
 
     await log_audit_entry(
