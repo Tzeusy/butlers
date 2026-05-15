@@ -147,7 +147,8 @@ export function deriveOverviewTriageModel(
 
   const currentHighIssueRows = currentHighIssues.map((issue) => issueAttentionRow(issue, now));
   const recentIssueRows = recentIssues.map((issue) => issueAttentionRow(issue, now));
-  const hiddenIssueGroups = issueBuckets.old.length + hiddenCurrentIssueGroups;
+  const hiddenOldIssueGroups = options.includeOldIssueRows ? 0 : issueBuckets.old.length;
+  const hiddenIssueGroups = hiddenOldIssueGroups + hiddenCurrentIssueGroups;
 
   const attentionRows = [
     ...currentHighIssueRows,
@@ -158,7 +159,7 @@ export function deriveOverviewTriageModel(
     ...recentIssueRows,
   ];
 
-  if (hiddenIssueGroups > 0 && !options.includeOldIssueRows) {
+  if (hiddenIssueGroups > 0) {
     const onlyOldGroups = hiddenCurrentIssueGroups === 0;
     attentionRows.push({
       id: "issues-old-summary",
@@ -193,7 +194,7 @@ export function deriveOverviewTriageModel(
     attentionRows,
     operationsRows,
     nowRows,
-    hiddenOldIssueGroups: options.includeOldIssueRows ? 0 : issueBuckets.old.length,
+    hiddenOldIssueGroups,
   };
 }
 

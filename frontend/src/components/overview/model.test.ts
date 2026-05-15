@@ -243,6 +243,34 @@ describe("deriveOverviewTriageModel", () => {
     expect(model.attentionRows[0]?.detail).toContain("last seen 2d ago");
   });
 
+  it("still summarizes capped current groups when old issue rows are included", () => {
+    const model = deriveOverviewTriageModel(
+      {
+        issues: [
+          issue({ description: "Issue 1", last_seen_at: "2026-05-14T11:50:00.000Z" }),
+          issue({ description: "Issue 2", last_seen_at: "2026-05-14T11:40:00.000Z" }),
+          issue({ description: "Issue 3", last_seen_at: "2026-05-14T11:30:00.000Z" }),
+          issue({ description: "Issue 4", last_seen_at: "2026-05-14T11:20:00.000Z" }),
+          issue({ description: "Old issue", last_seen_at: "2026-05-12T11:00:00.000Z" }),
+        ],
+      },
+      { now: NOW, includeOldIssueRows: true, maxRecentIssueRows: 2 },
+    );
+
+    expect(model.hiddenOldIssueGroups).toBe(0);
+    expect(model.attentionRows.map((row) => row.title)).toEqual([
+      "Issue 1",
+      "Issue 2",
+      "2 more issue groups",
+      "Old issue",
+    ]);
+    expect(model.attentionRows.at(2)).toMatchObject({
+      kind: "old-issues-summary",
+      href: "/issues",
+      count: 2,
+    });
+  });
+
   it("uses first-seen recency when last-seen is missing", () => {
     const model = deriveOverviewTriageModel(
       {
