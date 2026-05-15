@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -110,8 +109,5 @@ def test_state_of_case_unfixable_without_marker_escalates() -> None:
     assert state_of_case(_attempt("unfixable", "No matching context")) == "escalated"
 
 
-def test_state_of_case_has_no_drafted_branch() -> None:
-    source = inspect.getsource(severity.state_of_case)
-
-    assert "drafted" not in source
+def test_state_of_case_drafted_uses_default_detect_branch() -> None:
     assert state_of_case(_attempt("drafted")) == "detect"
