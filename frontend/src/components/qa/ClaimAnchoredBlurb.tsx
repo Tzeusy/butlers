@@ -1,5 +1,9 @@
+import { useMemo } from "react";
+
 import type { QaInvestigationNotes } from "@/api/types";
 import { cn } from "@/lib/utils";
+
+import { getClaimOrderFromSegments } from "./claimOrder";
 
 type ClaimSegment = QaInvestigationNotes["blurb_segments"][number];
 type ClaimMap = QaInvestigationNotes["claims"];
@@ -7,6 +11,7 @@ type ClaimMap = QaInvestigationNotes["claims"];
 interface ClaimAnchoredBlurbProps {
   segments: ClaimSegment[];
   claims: ClaimMap;
+  claimOrder?: string[];
   hoveredClaim: string | null;
   onClaimHover: (claimId: string | null) => void;
   className?: string;
@@ -15,14 +20,22 @@ interface ClaimAnchoredBlurbProps {
 export function ClaimAnchoredBlurb({
   segments,
   claims,
+  claimOrder,
   hoveredClaim,
   onClaimHover,
   className,
 }: ClaimAnchoredBlurbProps) {
-  const claimNumbers = segments.map((segment, index) => {
-    if (typeof segment === "string") return null;
-    return segments.slice(0, index + 1).filter((candidate) => typeof candidate !== "string").length;
-  });
+  const orderedClaimIds = useMemo(() => {
+    const derivedOrder = getClaimOrderFromSegments(segments);
+    if (!claimOrder) return derivedOrder;
+    const seen = new Set(claimOrder);
+    return [...claimOrder, ...derivedOrder.filter((claimId) => !seen.has(claimId))];
+  }, [claimOrder, segments]);
+
+  const claimNumbers = useMemo(
+    () => new Map(orderedClaimIds.map((claimId, index) => [claimId, index + 1])),
+    [orderedClaimIds],
+  );
 
   return (
     <p
@@ -38,7 +51,7 @@ export function ClaimAnchoredBlurb({
 
         const active = hoveredClaim === segment.claim;
         const claim = claims[segment.claim];
-        const claimNumber = claimNumbers[index];
+        const claimNumber = claimNumbers.get(segment.claim);
 
         return (
           <span

@@ -5,7 +5,7 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { QaInvestigationNotes } from "@/api/types";
-import { ClaimAnchoredBlurb, EvidenceLog } from "@/components/qa";
+import { ClaimAnchoredBlurb, EvidenceLog, getClaimOrderFromSegments } from "@/components/qa";
 
 afterEach(() => cleanup());
 
@@ -18,13 +18,13 @@ const segments: QaInvestigationNotes["blurb_segments"] = [
 ];
 
 const claims: QaInvestigationNotes["claims"] = {
+  c2: {
+    evidence_ids: ["e2", "e3"],
+    note: "DB health stayed green during the failure.",
+  },
   c1: {
     evidence_ids: ["e1", "e3"],
     note: "Guard logs line up with the failed attempt.",
-  },
-  c2: {
-    evidence_ids: ["e2"],
-    note: "DB health stayed green during the failure.",
   },
 };
 
@@ -54,18 +54,21 @@ const evidence: QaInvestigationNotes["evidence_lines"] = [
 
 function DiagnosisHarness() {
   const [hoveredClaim, setHoveredClaim] = useState<string | null>(null);
+  const claimOrder = getClaimOrderFromSegments(segments);
 
   return (
     <div>
       <ClaimAnchoredBlurb
         segments={segments}
         claims={claims}
+        claimOrder={claimOrder}
         hoveredClaim={hoveredClaim}
         onClaimHover={setHoveredClaim}
       />
       <EvidenceLog
         evidence={evidence}
         claims={claims}
+        claimOrder={claimOrder}
         hoveredClaim={hoveredClaim}
         onRowHover={setHoveredClaim}
       />
@@ -126,5 +129,25 @@ describe("QA diagnosis components", () => {
     fireEvent.mouseEnter(screen.getByTestId("qa-evidence-row-orphan"));
 
     expect(onRowHover).not.toHaveBeenCalled();
+  });
+
+  it("test_claim_numbers_are_stable_across_blurb_and_evidence", () => {
+    render(<DiagnosisHarness />);
+
+    expect(screen.getByTestId("qa-claim-c1-marker").textContent).toBe("[1]");
+    expect(screen.getByTestId("qa-claim-c2-marker").textContent).toBe("[2]");
+    expect(screen.getByTestId("qa-evidence-row-e1-claims").textContent).toBe("[1]");
+    expect(screen.getByTestId("qa-evidence-row-e2-claims").textContent).toBe("[2]");
+    expect(screen.getByTestId("qa-evidence-row-e3-claims").textContent).toBe("[1,2]");
+  });
+
+  it("test_evidence_level_colors_stay_semantic_when_highlighted", () => {
+    render(<DiagnosisHarness />);
+
+    fireEvent.mouseEnter(screen.getByTestId("qa-claim-c1"));
+
+    expect(screen.getByText("ERROR").className).toContain("text-destructive");
+    expect(screen.getByText("WARN").className).toContain("text-amber-500");
+    expect(screen.getByText("INFO").className).toContain("text-muted-foreground");
   });
 });

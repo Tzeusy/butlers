@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+
 import type { QaInvestigationNotes } from "@/api/types";
 import { cn } from "@/lib/utils";
 
@@ -7,6 +9,7 @@ type EvidenceLine = QaInvestigationNotes["evidence_lines"][number];
 interface EvidenceLogProps {
   evidence: EvidenceLine[];
   claims: ClaimMap;
+  claimOrder?: string[];
   hoveredClaim: string | null;
   onRowHover: (claimId: string | null) => void;
   className?: string;
@@ -24,11 +27,35 @@ function levelClass(level: string): string {
 export function EvidenceLog({
   evidence,
   claims,
+  claimOrder,
   hoveredClaim,
   onRowHover,
   className,
 }: EvidenceLogProps) {
-  const claimIds = Object.keys(claims);
+  const claimIds = useMemo(() => {
+    const ordered = claimOrder ?? Object.keys(claims);
+    const seen = new Set<string>();
+    const validOrdered = ordered.filter((claimId) => {
+      if (seen.has(claimId) || !claims[claimId]) return false;
+      seen.add(claimId);
+      return true;
+    });
+    return [
+      ...validOrdered,
+      ...Object.keys(claims).filter((claimId) => !seen.has(claimId)),
+    ];
+  }, [claimOrder, claims]);
+
+  const evidenceToClaims = useMemo(() => {
+    const map = new Map<string, string[]>();
+    claimIds.forEach((claimId) => {
+      claims[claimId]?.evidence_ids.forEach((evidenceId) => {
+        const current = map.get(evidenceId) ?? [];
+        map.set(evidenceId, [...current, claimId]);
+      });
+    });
+    return map;
+  }, [claimIds, claims]);
 
   return (
     <div
@@ -40,7 +67,7 @@ export function EvidenceLog({
       aria-label="QA evidence log"
     >
       {evidence.map((row) => {
-        const myClaims = claimIds.filter((claimId) => claims[claimId]?.evidence_ids.includes(row.id));
+        const myClaims = evidenceToClaims.get(row.id) ?? [];
         const active = hoveredClaim !== null && myClaims.includes(hoveredClaim);
         const claimLabel = myClaims
           .map((claimId) => claimIds.indexOf(claimId) + 1)
