@@ -2108,17 +2108,23 @@ async def approvals_stream(
 
     await websocket.accept()
 
+    # Subscribe first so no live events are missed while the snapshot is sent.
+    # Events emitted after subscription but before/during snapshot delivery will
+    # be queued and delivered immediately after the snapshot loop finishes.
+    queue: asyncio.Queue = asyncio.Queue(maxsize=_APPROVALS_QUEUE_MAXSIZE)
+    _approvals_subscribers.append(queue)
+
     # Snapshot: send buffered recent events so new clients don't start empty
     snapshot = list(_approvals_ring)
     for event in snapshot:
         try:
             await websocket.send_json({"snapshot": True, **event})
         except Exception:
+            try:
+                _approvals_subscribers.remove(queue)
+            except ValueError:
+                pass
             return
-
-    # Subscribe to live events
-    queue: asyncio.Queue = asyncio.Queue(maxsize=_APPROVALS_QUEUE_MAXSIZE)
-    _approvals_subscribers.append(queue)
     try:
         while True:
             try:

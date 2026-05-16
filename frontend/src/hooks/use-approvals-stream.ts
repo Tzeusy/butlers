@@ -166,7 +166,9 @@ export function useApprovalsStream({
     if (enabled) connect();
     return () => {
       disconnect();
-      mountedRef.current = true; // reset for strict-mode double-invoke
+      // Note: mountedRef.current is already set to false by disconnect().
+      // The next effect re-run (StrictMode or dependency change) sets it back to
+      // true on line 165 before calling connect(), so no extra reset is needed here.
     };
   }, [connect, disconnect, enabled]);
 
