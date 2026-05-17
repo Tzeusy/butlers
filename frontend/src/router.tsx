@@ -65,15 +65,16 @@ function ConnectorDetailRedirect() {
 // Redirect /ingestion?tab=connectors|filters|history → matching sub-route.
 // Preserves filter query-string params (period, channel, status) so deep links
 // and bookmarks continue to resolve after the tab-param → sub-route migration.
-// Unrecognized or absent ?tab= values render /ingestion (Timeline root).
+// Unrecognized or absent ?tab= values redirect to /ingestion (Timeline root),
+// stripping the unknown tab param from the URL.
 //
 // React Router does not issue a real HTTP 301; this is the SPA equivalent:
 // a permanent client-side replace() navigation, which is functionally identical
 // for bookmark resolution and browser history.
 //
 // Spec: ingestion-ui-information-architecture §"301 redirects from legacy tab parameters"
-// eslint-disable-next-line react-refresh/only-export-components
-function IngestionTabRedirect() {
+// Exported so tests can import the component directly without duplicating its logic.
+export function IngestionTabRedirect() {
   const [searchParams] = useSearchParams()
   const tab = searchParams.get('tab')
 
@@ -92,7 +93,12 @@ function IngestionTabRedirect() {
     return <Navigate to={`/ingestion/history${qs ? `?${qs}` : ''}`} replace />
   }
 
-  // No ?tab= or unrecognized value: render Timeline root (strip unknown tab param).
+  // Unrecognized ?tab= value: redirect to Timeline root, stripping the unknown
+  // tab param so stale bookmarks do not keep an invalid ?tab= in the URL.
+  // No ?tab= at all: render Timeline directly (no redirect needed, avoids loop).
+  if (tab !== null) {
+    return <Navigate to={`/ingestion${qs ? `?${qs}` : ''}`} replace />
+  }
   return <IngestionTimelinePage />
 }
 

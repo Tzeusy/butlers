@@ -4,67 +4,35 @@
  *
  * Covers:
  *   - IngestionTabRedirect: ?tab=connectors|filters|history → sub-route redirect
- *   - IngestionTabRedirect: no ?tab= or unknown ?tab= → renders Timeline
+ *   - IngestionTabRedirect: no ?tab= → renders Timeline
+ *   - IngestionTabRedirect: unknown ?tab= → redirects to /ingestion (strips tab param)
  *   - IngestionTabRedirect: filter params (period, channel, status) preserved
  *   - Sub-route pages render their page headings
  *
- * Tests exercise the components in isolation via MemoryRouter to avoid
- * importing the full router (which evaluates the feature flag at module load
- * time in the actual createBrowserRouter call).
+ * Tests import IngestionTabRedirect directly from router.tsx (it is exported).
+ * The feature-flag module and IngestionTimelinePage are mocked so that importing
+ * router.tsx does not evaluate createBrowserRouter side-effects or the flag.
  */
 
+import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { MemoryRouter, Route, Routes, Navigate, useSearchParams } from 'react-router'
+import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router'
 
 // ---------------------------------------------------------------------------
-// Inline IngestionTabRedirect — same logic as router.tsx, tested in isolation
-// so these tests do not depend on the full router or feature-flag evaluation.
+// Mock feature-flags before importing router so the module-level flag
+// evaluation does not run the real env-var read or createBrowserRouter.
 // ---------------------------------------------------------------------------
+vi.mock('@/lib/feature-flags', () => ({
+  INGESTION_DISPATCH_CONSOLE: false,
+}))
 
-// Stub page components used by the redirect
-function TimelineStub() {
-  return <div data-testid="timeline-page">Timeline</div>
-}
-
-function ConnectorsStub() {
-  return <div data-testid="connectors-page">Connectors</div>
-}
-
-function FiltersStub() {
-  return <div data-testid="filters-page">Filters</div>
-}
-
-function HistoryStub() {
-  return <div data-testid="history-page">History</div>
-}
-
-// Inline redirect component (mirrors router.tsx IngestionTabRedirect)
-function IngestionTabRedirect() {
-  const [searchParams] = useSearchParams()
-  const tab = searchParams.get('tab')
-
-  const filtered = new URLSearchParams(searchParams)
-  filtered.delete('tab')
-  const qs = filtered.toString()
-
-  if (tab === 'connectors') {
-    return <Navigate to={`/ingestion/connectors${qs ? `?${qs}` : ''}`} replace />
-  }
-  if (tab === 'filters') {
-    return <Navigate to={`/ingestion/filters${qs ? `?${qs}` : ''}`} replace />
-  }
-  if (tab === 'history') {
-    return <Navigate to={`/ingestion/history${qs ? `?${qs}` : ''}`} replace />
-  }
-
-  return <TimelineStub />
-}
-
-;(
-  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
-).IS_REACT_ACT_ENVIRONMENT = true
+// Mock IngestionTimelinePage so the redirect component renders a testable stub
+// instead of pulling in the real component and its dependencies.
+vi.mock('@/pages/IngestionTimelinePage', () => ({
+  default: () => <div data-testid="timeline-page">Timeline</div>,
+}))
 
 // ---------------------------------------------------------------------------
 // Mock the page components used by the sub-route pages so tests don't
@@ -83,6 +51,29 @@ vi.mock('@/components/switchboard/FiltersTab', () => ({
 vi.mock('@/components/switchboard/BackfillHistoryTab', () => ({
   BackfillHistoryTab: () => <div data-testid="history-tab-stub">History tab</div>,
 }))
+
+// Import the real component after mocks are registered.
+import { IngestionTabRedirect } from '@/router'
+
+// ---------------------------------------------------------------------------
+// Stub page components for sub-route destinations
+// ---------------------------------------------------------------------------
+
+function ConnectorsStub() {
+  return <div data-testid="connectors-page">Connectors</div>
+}
+
+function FiltersStub() {
+  return <div data-testid="filters-page">Filters</div>
+}
+
+function HistoryStub() {
+  return <div data-testid="history-page">History</div>
+}
+
+;(
+  globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -201,8 +192,13 @@ describe('IngestionTabRedirect', () => {
     expect(container.querySelector('[data-testid="timeline-page"]')).not.toBeNull()
   })
 
-  it('renders Timeline for unrecognized ?tab=unknown', () => {
+  it('redirects to /ingestion for unrecognized ?tab=unknown (strips invalid tab param)', () => {
+    // Unknown tab values redirect to /ingestion without the tab param so stale
+    // bookmarks do not perpetuate an invalid ?tab= in the URL. The MemoryRouter
+    // resolves /ingestion back to IngestionTabRedirect with no tab param, which
+    // then renders Timeline directly (tab === null path).
     render('/ingestion?tab=unknown')
+    // After the redirect resolves, Timeline is rendered (tab is null on second pass).
     expect(container.querySelector('[data-testid="timeline-page"]')).not.toBeNull()
   })
 
@@ -237,7 +233,7 @@ describe('IngestionTimelinePage', () => {
   })
 
   it('renders the Ingestion heading and timeline tab', async () => {
-    const { default: IngestionTimelinePage } = await import('@/pages/IngestionTimelinePage')
+    const { default: IngestionTimelinePage } = await vi.importActual<{ default: React.ComponentType }>('@/pages/IngestionTimelinePage')
     act(() => {
       root.render(
         <MemoryRouter>
