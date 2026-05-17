@@ -1,10 +1,10 @@
-# Reconciliation Report — Redesign Settings: Dispatch Console
+# Reconciliation report: redesign settings: Dispatch Console
 
-**Epic:** `bu-do5q0` — Redesign Settings: Dispatch Console
+**Epic:** `bu-do5q0` (redesign settings: Dispatch Console)
 **OpenSpec change:** `openspec/changes/redesign-settings-dispatch-console/`
 **Direction report:** `docs/reports/redesign-settings-dispatch-console-direction.md`
 **Date:** 2026-05-17
-**Status:** COMPLETE — all 11 implementation phases merged to main
+**Status:** COMPLETE: all 11 implementation phases merged to main
 
 ---
 
@@ -23,7 +23,7 @@ Dispatch language already established on `/overview`, `/butlers`, and `/qa`.
 
 ## Doctrine deltas merged
 
-Phase 0 (`bu-9gzel`) landed in commit `11a14e20` — verified present on main:
+Phase 0 (`bu-9gzel`) landed in commit `11a14e20`, verified present on main:
 
 ```
 git log --oneline main | grep design-language.md
@@ -179,13 +179,13 @@ Total deleted: 3,593 lines of legacy UI code across 5 files.
 
 | Migration | Content | Phase |
 |---|---|---|
-| `core_092_audit_log.py` | `public.audit_log` — append-only table, indexes on `(ts DESC)`, `(action)`, `(actor)` | Phase 1a |
+| `core_092_audit_log.py` | `public.audit_log`: append-only table, indexes on `(ts DESC)`, `(action)`, `(actor)` | Phase 1a |
 | `core_093_complexity_tier_rename.py` | Renames 6 `complexity_tier` values to canonical set; adds `last_verified_at/latency_ms/ok` columns to `model_catalog` | Phase 1b |
 | `core_094_spend_tables.py` | `public.spend_rules`, `public.spend_ceiling` | Phase 3 |
 | `core_095_permissions_webhooks_approvals_policy.py` | `public.permissions`, `public.webhooks`, `public.approvals_policy` | Phase 4 |
 | `core_096_memory_retention_policies.py` | `public.memory_retention_policies`, `public.memory_compaction_log` | Phase 8 |
-| `core_097_butler_prompt_history.py` (core_098 on disk) | `public.system_prompt_history`, `public.butler_tools` | Phase 7 |
-| `core_097_pending_actions_why_evidence.py` (core_096 on disk) | Adds `why TEXT`, `evidence JSONB` to `pending_actions` in all butler schemas | Phase 6 |
+| `core_097_pending_actions_why_evidence.py` | Adds `why TEXT`, `evidence JSONB` to `pending_actions` in all butler schemas | Phase 6 |
+| `core_098_butler_prompt_history.py` | `public.system_prompt_history`, `public.butler_tools` | Phase 7 |
 
 ---
 
@@ -219,7 +219,7 @@ below maps each mutation endpoint to its action token.
 | `POST /api/butlers/{name}/kill` | `butler.kill` | `butler_management.py:491` | COVERED |
 | `PUT /api/memory/retention-policies` | `memory.retention_policy` (per changed entry) | `memory.py:1832` | COVERED |
 
-**Coverage: 22/22 mutation endpoints — 100%.**
+**Coverage: 22/22 mutation endpoints: 100%.**
 
 Audit primitives: `audit.append()` raises `AuditTableNotAvailableError` on missing table
 (no silent skip). For most endpoints the audit row commits in the same SQL transaction as
@@ -232,27 +232,27 @@ audit (catches the error and logs a warning) because it runs outside a transacti
 
 These items were explicitly deferred from the epic and are known follow-up beads:
 
-1. **Anomaly detection threshold** (`§D13`, deferred from Phase 3) — `SettingsSpendPage.tsx`
+1. **Anomaly detection threshold** (`§D13`, deferred from Phase 3): `SettingsSpendPage.tsx`
    contains a TODO placeholder section. Requires a separate bead to define heuristics and
    backend signal.
 
-2. **Smart spend estimator** (Phase 3) — Current forecast uses naive linear extrapolation
+2. **Smart spend estimator** (Phase 3): Current forecast uses naive linear extrapolation
    (`MTD ÷ days_elapsed × days_in_month`). A smarter estimator accounting for usage patterns
    is explicitly deferred per design.md §D19. Filed as a future follow-up.
 
-3. **`/api/costs/*` sunset** (Phase 3, §D18) — `costs.py` was renamed to `spend.py` and
+3. **`/api/costs/*` sunset** (Phase 3, §D18): `costs.py` was renamed to `spend.py` and
    `/api/costs/*` routes are dual-mounted with `Deprecation: true` and `Sunset` headers for
    a 90-day period. The deletion bead should land around 2026-08-16.
 
-4. **`complexity_tier` Phase 1b** (Phase 1b, §D18) — Phase 1a expanded the CHECK constraint
+4. **`complexity_tier` Phase 1b** (Phase 1b, §D18): Phase 1a expanded the CHECK constraint
    to accept both old and new tier values. Phase 1b (drop old values after 7-day soak) is a
    separate follow-up bead linked to `bu-5tnp0`.
 
-5. **`pending_actions.why/evidence` NOT NULL** (Phase 6) — Columns were added as nullable
+5. **`pending_actions.why/evidence` NOT NULL** (Phase 6): Columns were added as nullable
    for a 7-day agent rollout soak. The `NOT NULL` enforcement is a follow-up bead after
    emission rates are confirmed ≥ 99%.
 
-6. **Full `/audit-log` top-level page** — The `/settings/permissions` page renders a 15-entry
+6. **Full `/audit-log` top-level page**: The `/settings/permissions` page renders a 15-entry
    audit reel today. A dedicated operator view of the full audit trail (filterable, paginated)
    was explicitly deferred. The backend endpoints (`GET /api/audit-log` with `since/actor/
    action/limit`) are already shipped and ready to serve this page.
