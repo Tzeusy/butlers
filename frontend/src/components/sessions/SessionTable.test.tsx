@@ -49,7 +49,7 @@ describe("SessionTable model and complexity columns", () => {
 
   it("renders a ComplexityBadge for known complexity tiers", () => {
     // Current canonical tiers: reasoning/workhorse/cheap/specialty/local/legacy
-    const tiers = ["reasoning", "workhorse", "cheap", "specialty"] as const;
+    const tiers = ["reasoning", "workhorse", "cheap", "specialty", "local", "legacy"] as const;
     for (const tier of tiers) {
       const html = renderTable([makeSession({ complexity: tier })]);
       // Badge text for that tier should appear (label matches capitalized tier name)
