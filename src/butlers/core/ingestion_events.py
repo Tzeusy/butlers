@@ -224,7 +224,7 @@ def decode_cursor(cursor: str) -> tuple[datetime, str]:
         received_at = datetime.fromisoformat(payload["ra"])
         row_id: str = payload["id"]
         return received_at, row_id
-    except Exception as exc:
+    except (KeyError, ValueError) as exc:
         raise ValueError(f"Invalid cursor: {exc}") from exc
 
 
@@ -272,11 +272,11 @@ async def ingestion_events_list(
     if cursor is not None:
         cursor_received_at, cursor_id = decode_cursor(cursor)
         args.append(cursor_received_at)
-        args.append(cursor_id)
+        args.append(UUID(cursor_id))
         n_ra = len(args) - 1
         n_id = len(args)
         # Descending keyset: strictly older than cursor position
-        where_parts.append(f"(received_at, id::text) < (${n_ra}, ${n_id})")
+        where_parts.append(f"(received_at, id) < (${n_ra}, ${n_id})")
 
     where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
