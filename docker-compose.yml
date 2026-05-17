@@ -206,6 +206,10 @@ services:
     environment:
       - VITE_API_URL=${VITE_API_URL:-/butlers-api/api}
       - VITE_PROXY_TARGET=http://dashboard-api:41200
+      # INGESTION_DISPATCH_CONSOLE: set to "true" in production to enable
+      # the /ingestion sub-route hierarchy. Defaults to "false" (prod-safe).
+      # Dev mode (npm run dev without this var) defaults to ON via import.meta.env.DEV.
+      - VITE_INGESTION_DISPATCH_CONSOLE=${INGESTION_DISPATCH_CONSOLE:-false}
     command: >-
       sh -c "npm install &&
       npm run dev -- --host 0.0.0.0 --port 41173 --strictPort
