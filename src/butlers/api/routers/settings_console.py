@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
 import time
 from typing import Any
 
@@ -526,7 +527,7 @@ async def _auth_ws(websocket: WebSocket) -> bool:
         return True
 
     provided = websocket.query_params.get("api_key", "")
-    if provided == configured_key:
+    if secrets.compare_digest(provided, configured_key):
         return True
 
     await websocket.close(code=4003)

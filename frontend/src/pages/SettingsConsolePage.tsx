@@ -97,8 +97,8 @@ function fetchModelStats(): Promise<ModelStats> {
 }
 
 function fetchApprovalMetrics(): Promise<ApprovalMetricsSummary> {
-  return apiFetch<{ data: { pending_count?: number } }>("/approvals/metrics").then((res) => ({
-    pending: res.data?.pending_count ?? 0,
+  return apiFetch<{ data: { total_pending?: number } }>("/approvals/metrics").then((res) => ({
+    pending: res.data?.total_pending ?? 0,
   }));
 }
 
