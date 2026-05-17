@@ -371,9 +371,7 @@ async def test_sender_contact_unresolved(app):
     """GET /sender-contact returns resolved=False when no contact matches."""
     event_id = str(uuid4())
     pool = AsyncMock()
-    pool.fetchrow = AsyncMock(
-        return_value=_make_event_row(event_id=event_id)
-    )
+    pool.fetchrow = AsyncMock(return_value=_make_event_row(event_id=event_id))
     _app_with_mock_db(app, shared_pool=pool)
 
     with patch(
@@ -412,7 +410,9 @@ async def test_replay_post_writes_audit_log(app):
     event_id = str(uuid4())
     pool = AsyncMock()
     # ingestion_event_replay_request result — simulate filtered event replay
-    pool.fetchrow = AsyncMock(return_value=MagicMock(**{"__getitem__": MagicMock(return_value=event_id)}))
+    pool.fetchrow = AsyncMock(
+        return_value=MagicMock(**{"__getitem__": MagicMock(return_value=event_id)})
+    )
     _app_with_mock_db(app, shared_pool=pool)
 
     with (

@@ -677,10 +677,10 @@ async def ingestion_event_replay_history(
         note = row["note"]
         if note:
             try:
-                note_data = json.loads(note)
+                note_data = note if isinstance(note, dict) else json.loads(note)
                 result_val = note_data.get("result")
                 cost_val = note_data.get("cost")
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError, AttributeError):
                 pass
         entries.append(
             {

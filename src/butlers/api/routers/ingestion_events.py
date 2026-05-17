@@ -357,9 +357,7 @@ async def get_ingestion_event_replays(
         raise HTTPException(status_code=503, detail=f"Shared database unavailable: {exc}") from exc
 
     entries = await ingestion_event_replay_history(pool, event_id)
-    return ApiResponse[list[ReplayHistoryEntry]](
-        data=[ReplayHistoryEntry(**e) for e in entries]
-    )
+    return ApiResponse[list[ReplayHistoryEntry]](data=[ReplayHistoryEntry(**e) for e in entries])
 
 
 # ---------------------------------------------------------------------------
