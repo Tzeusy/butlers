@@ -301,6 +301,36 @@ describe("EntitiesIndexPage — filter chips", () => {
   });
 });
 
+describe("EntitiesIndexPage — error states", () => {
+  it("shows queue error message when queue fetch fails", () => {
+    vi.mocked(useRelationshipEntityQueue).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new Error("Queue unavailable"),
+    } as unknown as ReturnType<typeof useRelationshipEntityQueue>);
+
+    renderPage();
+
+    const aside = container.querySelector("aside[aria-label='Curation queue']");
+    expect(aside?.textContent).toContain("Queue unavailable");
+  });
+
+  it("shows fallback error message when queue error is not an Error instance", () => {
+    vi.mocked(useRelationshipEntityQueue).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: "network error",
+    } as unknown as ReturnType<typeof useRelationshipEntityQueue>);
+
+    renderPage();
+
+    const aside = container.querySelector("aside[aria-label='Curation queue']");
+    expect(aside?.textContent).toContain("Failed to load queue.");
+  });
+});
+
 describe("EntitiesIndexPage — right rail queue", () => {
   it("shows serif italic 'Nothing waiting.' when queue is empty", () => {
     renderPage();

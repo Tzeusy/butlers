@@ -209,12 +209,11 @@ function EntityTable({ entities, isLoading }: EntityTableProps) {
             <tr
               key={entity.id}
               className="border-b last:border-0 hover:bg-muted/50"
-              style={{ paddingBlock: "10px" }}
             >
-              <td className="py-[10px] pr-2">
+              <td className="py-2.5 pr-2">
                 <EntityMark entityType={entity.entity_type} />
               </td>
-              <td className="py-[10px] pr-4">
+              <td className="py-2.5 pr-4">
                 <span className="inline-flex items-center gap-2">
                   <Link
                     to={`/entities/${entity.id}`}
@@ -243,7 +242,7 @@ function EntityTable({ entities, isLoading }: EntityTableProps) {
                   )}
                 </span>
               </td>
-              <td className="py-[10px] pr-4">
+              <td className="py-2.5 pr-4">
                 {entity.tier != null ? (
                   <Badge variant="outline" className="text-xs tabular-nums">
                     {entity.tier} — {DUNBAR_TIER_LABELS[entity.tier] ?? `Tier ${entity.tier}`}
@@ -252,17 +251,17 @@ function EntityTable({ entities, isLoading }: EntityTableProps) {
                   <span className="text-muted-foreground text-xs">—</span>
                 )}
               </td>
-              <td className="py-[10px] pr-4 text-muted-foreground">
+              <td className="py-2.5 pr-4 text-muted-foreground">
                 {entity.last_seen ? (
                   <Time value={entity.last_seen} mode="relative" />
                 ) : (
                   <span className="text-xs text-muted-foreground">—</span>
                 )}
               </td>
-              <td className="py-[10px] pr-4 text-right tabular-nums text-muted-foreground">
+              <td className="py-2.5 pr-4 text-right tabular-nums text-muted-foreground">
                 {entity.contact_fact_count}
               </td>
-              <td className="py-[10px] text-muted-foreground text-xs">
+              <td className="py-2.5 text-muted-foreground text-xs">
                 {entity.aliases.length > 0 ? entity.aliases.join(", ") : "—"}
               </td>
             </tr>
@@ -278,7 +277,7 @@ function EntityTable({ entities, isLoading }: EntityTableProps) {
 // ---------------------------------------------------------------------------
 
 function QueueRail() {
-  const { data, isLoading } = useRelationshipEntityQueue({ limit: 20 });
+  const { data, isLoading, isError, error } = useRelationshipEntityQueue({ limit: 20 });
 
   if (isLoading) {
     return (
@@ -287,6 +286,15 @@ function QueueRail() {
         <Skeleton className="h-5 w-3/4" />
         <Skeleton className="h-5 w-5/6" />
       </div>
+    );
+  }
+
+  if (isError) {
+    const message = error instanceof Error ? error.message : "Failed to load queue.";
+    return (
+      <p className="text-xs text-destructive" role="alert">
+        {message}
+      </p>
     );
   }
 
@@ -387,7 +395,7 @@ export function EntitiesIndexPage() {
     offset,
   };
 
-  const { data, isLoading } = useRelationshipEntities(params);
+  const { data, isLoading, error } = useRelationshipEntities(params);
   const entities = data?.items ?? [];
   const total = data?.total ?? 0;
 
@@ -422,6 +430,7 @@ export function EntitiesIndexPage() {
       title="Entities"
       description="Browse the relationship graph: people, organizations, and more."
       breadcrumbs={[{ label: "Entities" }]}
+      error={error}
     >
       {/* SubpageTabs strip — Index is active */}
       <SubpageTabs />
