@@ -76,8 +76,13 @@ def _make_fact_row(
 
 
 def _make_owner_row() -> MagicMock:
-    """Simulate a row returned by the owner-entity check query."""
-    data = {"id": uuid4()}
+    """Simulate a row returned by the owner-entity check query.
+
+    Must include ``roles`` so that ``_get_owner_roles`` can inspect it.
+    The endpoint uses ``_get_owner_roles`` which reads ``row["roles"]`` to
+    determine whether the owner check passes.
+    """
+    data = {"id": uuid4(), "roles": ["owner"]}
     row = MagicMock()
     row.__getitem__ = MagicMock(side_effect=lambda key: data[key])
     return row
@@ -197,10 +202,17 @@ def _app_with_mocks(
             app.dependency_overrides[router_module._get_db_manager] = lambda: mock_db
             break
 
-    # Override the MCP manager dependency.
-    from butlers.api.deps import get_mcp_manager
-
-    app.dependency_overrides[get_mcp_manager] = lambda: mock_mcp_manager
+    # Override the MCP manager dependency.  The activity endpoint uses the
+    # router-local _get_mcp_manager_optional dependency (not the global
+    # get_mcp_manager) so that non-owner requests can return 403 without
+    # requiring init_dependencies() to have been called.  Tests that need
+    # a live mock client override this local dependency.
+    for butler_name, router_module in app.state.butler_routers:
+        if butler_name == "relationship" and hasattr(router_module, "_get_mcp_manager_optional"):
+            app.dependency_overrides[router_module._get_mcp_manager_optional] = lambda: (
+                mock_mcp_manager
+            )
+            break
 
     return app, mock_pool, mock_mcp_manager
 
@@ -409,8 +421,6 @@ class TestChroniclerDegrades:
 
     async def test_chronicler_error_result_degrades_gracefully(self):
         # Simulate MCP returning is_error=True.
-        from butlers.api.deps import get_mcp_manager
-
         mock_client = AsyncMock()
         mock_client.call_tool = AsyncMock(return_value=_make_chronicler_error_result())
         mock_mcp_manager = MagicMock()
@@ -429,8 +439,11 @@ class TestChroniclerDegrades:
         for butler_name, router_module in app.state.butler_routers:
             if butler_name == "relationship" and hasattr(router_module, "_get_db_manager"):
                 app.dependency_overrides[router_module._get_db_manager] = lambda: mock_db
+                if hasattr(router_module, "_get_mcp_manager_optional"):
+                    app.dependency_overrides[router_module._get_mcp_manager_optional] = lambda: (
+                        mock_mcp_manager
+                    )
                 break
-        app.dependency_overrides[get_mcp_manager] = lambda: mock_mcp_manager
 
         resp = await _get(app)
         assert resp.status_code == 200
