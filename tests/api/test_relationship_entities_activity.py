@@ -33,6 +33,7 @@ from fastapi import FastAPI
 
 from butlers.api.app import create_app
 from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_mcp_manager
 
 pytestmark = pytest.mark.unit
 
@@ -202,17 +203,11 @@ def _app_with_mocks(
             app.dependency_overrides[router_module._get_db_manager] = lambda: mock_db
             break
 
-    # Override the MCP manager dependency.  The activity endpoint uses the
-    # router-local _get_mcp_manager_optional dependency (not the global
-    # get_mcp_manager) so that non-owner requests can return 403 without
-    # requiring init_dependencies() to have been called.  Tests that need
-    # a live mock client override this local dependency.
-    for butler_name, router_module in app.state.butler_routers:
-        if butler_name == "relationship" and hasattr(router_module, "_get_mcp_manager_optional"):
-            app.dependency_overrides[router_module._get_mcp_manager_optional] = lambda: (
-                mock_mcp_manager
-            )
-            break
+    # Override the MCP manager dependency.  The activity endpoint uses
+    # Depends(get_mcp_manager); we override it here so that the mock MCP
+    # manager is injected without requiring init_dependencies() to have been
+    # called.
+    app.dependency_overrides[get_mcp_manager] = lambda: mock_mcp_manager
 
     return app, mock_pool, mock_mcp_manager
 
@@ -439,11 +434,8 @@ class TestChroniclerDegrades:
         for butler_name, router_module in app.state.butler_routers:
             if butler_name == "relationship" and hasattr(router_module, "_get_db_manager"):
                 app.dependency_overrides[router_module._get_db_manager] = lambda: mock_db
-                if hasattr(router_module, "_get_mcp_manager_optional"):
-                    app.dependency_overrides[router_module._get_mcp_manager_optional] = lambda: (
-                        mock_mcp_manager
-                    )
                 break
+        app.dependency_overrides[get_mcp_manager] = lambda: mock_mcp_manager
 
         resp = await _get(app)
         assert resp.status_code == 200

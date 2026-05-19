@@ -5518,24 +5518,6 @@ async def merge_entities(
 # ---------------------------------------------------------------------------
 
 
-def _get_mcp_manager_optional() -> MCPClientManager | None:
-    """Return the MCPClientManager singleton, or None if it is not yet initialised.
-
-    Used by the activity endpoint as a Depends so that:
-    - In production the real manager is injected (same as ``get_mcp_manager``).
-    - In unit tests that do not call ``init_dependencies()`` (e.g.
-      ``test_owner_authz_guardrail.py``) the dependency resolves to None rather
-      than raising RuntimeError, allowing the owner-gate check in the handler
-      body to execute and return 403 before the MCP client is ever needed.
-    - In unit tests that mock the MCP layer (``test_relationship_entities_activity.py``)
-      the test overrides this dependency via ``app.dependency_overrides``.
-    """
-    try:
-        return get_mcp_manager()
-    except RuntimeError:
-        return None
-
-
 #: Chronicler MCP timeout in seconds.  The call is fire-and-forget on failure;
 #: the aggregator degrades gracefully if the chronicler is unreachable.
 _CHRONICLER_ACTIVITY_TIMEOUT_S = 10.0
@@ -5704,7 +5686,7 @@ async def get_entity_activity(
     limit: int = Query(50, ge=1, le=200, description="Maximum entries per page."),
     offset: int = Query(0, ge=0, description="Pagination offset."),
     db: DatabaseManager = Depends(_get_db_manager),
-    mcp_manager: MCPClientManager | None = Depends(_get_mcp_manager_optional),
+    mcp_manager: MCPClientManager = Depends(get_mcp_manager),
 ) -> ActivityResponse:
     """Return a merged activity stream for the given entity.
 
