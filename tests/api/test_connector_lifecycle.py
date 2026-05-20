@@ -123,10 +123,6 @@ async def test_connector_pause_200(app):
     assert "paused" in str(body).lower() or resp.status_code == 200
 
 
-@pytest.mark.xfail(
-    reason="Depends on bu-1f91v.8 (connector lifecycle pause) being merged first",
-    strict=False,
-)
 async def test_connector_pause_404_not_found(app):
     """POST pause on a non-existent connector returns 404."""
     app, _ = _app_with_mock(app, fetchrow_result=None)
