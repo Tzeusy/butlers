@@ -253,8 +253,9 @@ upstream references in the beads graph; tasks 10.3, 10.7 above carry the corresp
   "relationship" butler IS /api/relationship — the brief's mention of
   /api/butlers/relationship/entities/* was imprecise but the conclusion stands: the routes are
   fully covered by the existing auto-discovery mechanism. No RFC 0007 amendment filed. -->
-  <!-- Evidence: roster/relationship/api/router.py:123 (prefix), router_discovery.py:322
-  (no extra prefix on include_router), tests/api/test_relationship_entities_*.py (all use
+  <!-- Evidence: roster/relationship/api/router.py:123 (prefix), src/butlers/api/app.py:322
+  (no extra prefix on include_router call — discovery collects routers, mounting happens in
+  app.py), tests/api/test_relationship_entities_*.py (all use
   /api/relationship/entities/* paths). -->
 - [ ] 12.3 Update `about/heart-and-soul/design-language.md` (if needed) to clarify the
   editorial-archetype vs workspace-archetype distinction for EntityDetailPage Editorial
