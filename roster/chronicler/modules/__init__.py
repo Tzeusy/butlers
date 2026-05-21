@@ -191,7 +191,7 @@ def _register_tools(mcp: Any, module: ChroniclerModule) -> None:
             episode_type=episode_type,
             entity_id=UUID(entity_id) if entity_id is not None else None,
             participant_entity_id=(
-                UUID(participant_entity_id) if participant_entity_id is not None else None
+                UUID(participant_entity_id) if participant_entity_id not in (None, "") else None
             ),
             limit=limit,
             offset=offset,
