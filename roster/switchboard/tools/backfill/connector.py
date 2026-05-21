@@ -45,6 +45,9 @@ _TRANSIENT_CONNECTIVITY_MESSAGE_FRAGMENTS = (
     "host is unreachable",
     "connect call failed",
     "timed out",
+    "the database system is shutting down",
+    "the database system is starting up",
+    "too many connections",
 )
 
 
@@ -367,15 +370,20 @@ async def backfill_progress(
             is_terminal,
         )
     except Exception as exc:
+        safe_endpoint = _redact_endpoint_identity(endpoint_identity)
         if _is_transient_connectivity_error(exc):
             logger.warning(
-                "backfill.progress transient connectivity failure for job %s: %s",
+                "backfill.progress transient connectivity failure for %s/%s job %s: %s",
+                connector_type,
+                safe_endpoint,
                 job_id_val,
                 exc,
             )
         else:
             logger.error(
-                "backfill.progress failed for job %s: %s",
+                "backfill.progress failed for %s/%s job %s: %s",
+                connector_type,
+                safe_endpoint,
                 job_id_val,
                 exc,
                 exc_info=True,

@@ -137,3 +137,9 @@ async def test_backfill_progress_transient_connectivity_logs_warning(caplog):
         for record in caplog.records
     )
     assert all(record.levelno < logging.ERROR for record in caplog.records)
+    assert all("alice@example.com" not in record.message for record in caplog.records)
+    assert any(
+        "gmail" in record.message and "<endpoint-redacted>" in record.message
+        for record in caplog.records
+        if "transient connectivity failure" in record.message
+    )
