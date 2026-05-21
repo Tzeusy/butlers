@@ -136,7 +136,7 @@ def _coerce_payload(value: Any) -> dict[str, Any]:
 
 def _row_to_episode(row: Any) -> ChroniclerEpisode:
     payload = _coerce_payload(row["payload"])
-    keys = row.keys() if hasattr(row, "keys") else row
+    keys = row.keys()
     raw_ids = row["participant_entity_ids"] if "participant_entity_ids" in keys else None
     participant_entity_ids = [str(uid) for uid in raw_ids] if raw_ids is not None else []
     return ChroniclerEpisode(
