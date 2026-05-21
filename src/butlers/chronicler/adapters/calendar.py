@@ -164,7 +164,14 @@ class CalendarCompletedAdapter(ProjectionAdapter):
             event_ids = [row["event_id"] for row in rows]
             # Mapping: event_id (UUID) → list of entity_ids (participant set)
             # resolved by the calendar module's _upsert_event_entities path.
+            # None means a transient DB error — skip this schema to avoid
+            # deleting existing participant links on the basis of bad data.
             event_entities = await self._fetch_event_entities(pool, schema, event_ids)
+            if event_entities is None:
+                result.warnings.append(
+                    f"Failed to fetch event entities for schema {schema!r}; skipping"
+                )
+                continue
 
             for row in rows:
                 dedup_key = row["origin_instance_ref"]
@@ -281,7 +288,7 @@ class CalendarCompletedAdapter(ProjectionAdapter):
         pool: asyncpg.Pool,
         schema: str,
         event_ids: list[UUID],
-    ) -> dict[UUID, list[UUID]]:
+    ) -> dict[UUID, list[UUID]] | None:
         """Batch-load participant entity_ids from the calendar module's join table.
 
         Executes ONE query per schema (never per row) to load all
@@ -293,6 +300,8 @@ class CalendarCompletedAdapter(ProjectionAdapter):
 
         Degrades gracefully when ``calendar_event_entities`` is absent
         (calendar module not installed): emits a DEBUG log and returns ``{}``.
+        Returns ``None`` on other database errors so the caller can skip the
+        schema without deleting existing participant links.
         """
         if not event_ids:
             return {}
@@ -300,6 +309,24 @@ class CalendarCompletedAdapter(ProjectionAdapter):
         quoted = self._quote_ident(schema)
         try:
             async with pool.acquire() as conn:
+                exists = await conn.fetchval(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = $1
+                          AND table_name = 'calendar_event_entities'
+                    )
+                    """,
+                    schema,
+                )
+                if not exists:
+                    logger.debug(
+                        "episode_entities.schema_absent: calendar_event_entities missing "
+                        "for schema %r — falling back to owner-only episode_entities",
+                        schema,
+                    )
+                    return {}
+
                 rows = await conn.fetch(
                     f"""
                     SELECT cee.event_id, cee.entity_id
@@ -309,12 +336,8 @@ class CalendarCompletedAdapter(ProjectionAdapter):
                     event_ids,
                 )
         except asyncpg.PostgresError:
-            logger.debug(
-                "episode_entities.schema_absent: calendar_event_entities missing "
-                "for schema %r — falling back to owner-only episode_entities",
-                schema,
-            )
-            return {}
+            logger.exception("Failed reading calendar_event_entities for schema %r", schema)
+            return None
 
         result: dict[UUID, list[UUID]] = {}
         for row in rows:
@@ -433,8 +456,7 @@ class CalendarCompletedAdapter(ProjectionAdapter):
 
         # Participants go in first at the lowest precedence.
         for pid in participant_ids:
-            existing = entity_role.get(pid)
-            if existing is None or _ROLE_PRECEDENCE["participant"] > _ROLE_PRECEDENCE[existing]:
+            if pid not in entity_role:
                 entity_role[pid] = "participant"
 
         # Owner goes in last (highest precedence — always overwrites participant).

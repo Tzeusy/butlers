@@ -12,6 +12,7 @@ into the user's Chronicle Calendar lane. Cross-schema dedup via
 
 Episode-entities join table (bu-3zve1):
 - Owner-only graceful degradation when ``calendar_event_entities`` is absent.
+- Schema skipped (no projection, no delete) on transient DB error.
 - Owner + participants written when join table present.
 - DELETE-then-INSERT replaces stale attendees on second adapter run.
 - Idempotent replay does not duplicate ``episode_entities`` rows.
@@ -449,9 +450,9 @@ async def test_project_collapses_same_origin_under_multiple_event_ids_in_one_sch
 async def test_episode_entities_owner_only_when_table_absent() -> None:
     """When calendar_event_entities is absent, only the owner row is written.
 
-    _fetch_event_entities raises asyncpg.PostgresError when the table is
-    missing.  The adapter must degrade gracefully and emit a DEBUG log,
-    writing only the owner entity to episode_entities.
+    _fetch_event_entities returns {} when the table is missing (detected via
+    information_schema.tables).  The adapter must degrade gracefully and write
+    only the owner entity to episode_entities.
     """
     owner_id = uuid4()
     row = _make_row(event_title="Team sync")
@@ -480,7 +481,7 @@ async def test_episode_entities_owner_only_when_table_absent() -> None:
     cp, conn = _chronicler_pool_with_tracking()
 
     # Simulate calendar_event_entities absent by patching _fetch_event_entities
-    # to return an empty mapping (same outcome as the PostgresError path).
+    # to return an empty mapping (table-absent path returns {}).
     with (
         patch.object(
             adapter,
@@ -511,6 +512,54 @@ async def test_episode_entities_owner_only_when_table_absent() -> None:
     assert ep_id_arg == episode_id
     assert entity_id_arg == owner_id
     assert role_arg == "owner"
+
+
+@pytest.mark.unit
+async def test_project_skips_schema_on_transient_fetch_event_entities_error() -> None:
+    """A transient DB error in _fetch_event_entities causes the schema to be skipped.
+
+    When _fetch_event_entities returns None (transient error), the adapter must
+    NOT proceed to project rows and must NOT delete existing episode_entities.
+    A warning is appended to the result instead.
+    """
+    row = _make_row(event_title="Weekly planning")
+
+    adapter = CalendarCompletedAdapter(butler_schemas=("butler_test",))
+    captured_upserts: list[Episode] = []
+
+    async def _fake_upsert(_conn: object, episode: Episode) -> Episode:
+        captured_upserts.append(episode)
+        return episode
+
+    with (
+        patch.object(
+            adapter,
+            "_fetch_instances",
+            new=AsyncMock(return_value=[row]),
+        ),
+        patch.object(
+            adapter,
+            "_fetch_event_entities",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "butlers.chronicler.adapters.calendar.upsert_episode",
+            side_effect=_fake_upsert,
+        ),
+    ):
+        result = await adapter.project(
+            MagicMock(),
+            chronicler_pool=_chronicler_pool(),
+            since=None,
+        )
+
+    # No episodes projected — schema was skipped.
+    assert result.rows_projected == 0, "Schema must be skipped when fetch_event_entities fails"
+    assert captured_upserts == [], "upsert_episode must not be called on transient error"
+    # A warning must be recorded.
+    assert any("butler_test" in w for w in result.warnings), (
+        "A warning about the skipped schema must be appended to result.warnings"
+    )
 
 
 @pytest.mark.unit
