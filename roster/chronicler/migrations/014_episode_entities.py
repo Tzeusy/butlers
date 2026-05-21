@@ -139,9 +139,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Restore v_episodes_corrected without participant_entity_ids (chronicler_013 shape)
+    # Restore v_episodes_corrected without participant_entity_ids (chronicler_013 shape).
+    # PostgreSQL CREATE OR REPLACE VIEW cannot remove columns, so we must drop first.
+    op.execute("DROP VIEW IF EXISTS v_episodes_corrected")
     op.execute("""
-        CREATE OR REPLACE VIEW v_episodes_corrected AS
+        CREATE VIEW v_episodes_corrected AS
         SELECT
             e.id,
             e.source_name,

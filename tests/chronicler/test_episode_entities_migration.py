@@ -319,11 +319,44 @@ class TestDowngradeSQLShape:
         self, downgrade_sqls: list[str]
     ) -> None:
         """downgrade() recreates v_episodes_corrected without participant_entity_ids."""
-        view_stmts = [s for s in downgrade_sqls if "v_episodes_corrected" in s and "VIEW" in s]
-        assert view_stmts, "No CREATE OR REPLACE VIEW v_episodes_corrected in downgrade SQL"
+        view_stmts = [
+            s for s in downgrade_sqls if "CREATE VIEW" in s and "v_episodes_corrected" in s
+        ]
+        assert view_stmts, "No CREATE VIEW v_episodes_corrected in downgrade SQL"
         stmt = view_stmts[0]
         assert "participant_entity_ids" not in stmt, (
             "Downgrade view must NOT include participant_entity_ids"
+        )
+
+    def test_downgrade_drops_view_before_recreating(self, downgrade_sqls: list[str]) -> None:
+        """downgrade() must DROP VIEW before recreating it.
+
+        PostgreSQL's CREATE OR REPLACE VIEW cannot remove columns, so a
+        preceding DROP VIEW is required to correctly restore the 013 shape.
+        """
+        drop_view_stmts = [
+            s for s in downgrade_sqls if "DROP VIEW" in s and "v_episodes_corrected" in s
+        ]
+        assert drop_view_stmts, (
+            "downgrade() must emit DROP VIEW IF EXISTS v_episodes_corrected before CREATE VIEW; "
+            "CREATE OR REPLACE VIEW cannot remove columns in PostgreSQL"
+        )
+        drop_view_idx = next(
+            i
+            for i, s in enumerate(downgrade_sqls)
+            if "DROP VIEW" in s and "v_episodes_corrected" in s
+        )
+        create_view_idx = next(
+            (
+                i
+                for i, s in enumerate(downgrade_sqls)
+                if "CREATE VIEW" in s and "v_episodes_corrected" in s
+            ),
+            None,
+        )
+        assert create_view_idx is not None, "No CREATE VIEW v_episodes_corrected in downgrade SQL"
+        assert drop_view_idx < create_view_idx, (
+            "DROP VIEW must come before CREATE VIEW in downgrade"
         )
 
     def test_drops_episode_entities_index(self, downgrade_sqls: list[str]) -> None:
@@ -341,11 +374,16 @@ class TestDowngradeSQLShape:
         assert drop_tbl_stmts, "No DROP TABLE episode_entities in downgrade SQL"
 
     def test_downgrade_view_restored_before_table_drop(self, downgrade_sqls: list[str]) -> None:
-        """View is recreated before the table drop to avoid breaking view dependencies."""
-        view_idx = next(
-            (i for i, s in enumerate(downgrade_sqls) if "v_episodes_corrected" in s), None
+        """View is dropped+recreated before the table drop to avoid breaking view dependencies."""
+        create_view_idx = next(
+            (
+                i
+                for i, s in enumerate(downgrade_sqls)
+                if "CREATE VIEW" in s and "v_episodes_corrected" in s
+            ),
+            None,
         )
-        drop_idx = next(
+        drop_tbl_idx = next(
             (
                 i
                 for i, s in enumerate(downgrade_sqls)
@@ -353,16 +391,18 @@ class TestDowngradeSQLShape:
             ),
             None,
         )
-        assert view_idx is not None, "No view statement in downgrade SQL"
-        assert drop_idx is not None, "No DROP TABLE episode_entities in downgrade SQL"
-        assert view_idx < drop_idx, (
+        assert create_view_idx is not None, "No CREATE VIEW v_episodes_corrected in downgrade SQL"
+        assert drop_tbl_idx is not None, "No DROP TABLE episode_entities in downgrade SQL"
+        assert create_view_idx < drop_tbl_idx, (
             "v_episodes_corrected must be recreated BEFORE DROP TABLE episode_entities"
         )
 
     def test_downgrade_restores_entity_id_in_view(self, downgrade_sqls: list[str]) -> None:
         """The restored view must still include the entity_id column (chronicler_013 shape)."""
-        view_stmts = [s for s in downgrade_sqls if "v_episodes_corrected" in s and "VIEW" in s]
-        assert view_stmts, "No view statement in downgrade SQL"
+        view_stmts = [
+            s for s in downgrade_sqls if "CREATE VIEW" in s and "v_episodes_corrected" in s
+        ]
+        assert view_stmts, "No CREATE VIEW v_episodes_corrected statement in downgrade SQL"
         assert "entity_id" in view_stmts[0], (
             "Downgraded v_episodes_corrected must retain entity_id (chronicler_013 shape)"
         )
