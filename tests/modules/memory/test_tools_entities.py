@@ -708,17 +708,18 @@ class TestRePointEpisodeEntities:
         )
         await _repoint_episode_entities(ch_pool, SOURCE_UUID, TARGET_UUID)
 
-        # The role-promotion UPDATE should appear before the DELETE
+        # The role-promotion UPDATE should appear before the DELETE.
+        # Now batched: one UPDATE per distinct promoted role, not per episode.
         role_updates = [
             c
             for c in ch_conn.execute.call_args_list
             if "UPDATE chronicler.episode_entities SET role" in c[0][0]
         ]
-        assert len(role_updates) == 1, "Expected a role-promotion UPDATE"
+        assert len(role_updates) == 1, "Expected a batched role-promotion UPDATE"
         args = role_updates[0][0]
-        assert args[1] == "owner"  # new role (higher precedence)
-        assert args[2] == EPISODE_UUID_1
-        assert args[3] == TARGET_UUID
+        assert args[1] == "owner"  # promoted role (higher precedence wins)
+        assert args[2] == TARGET_UUID  # WHERE entity_id = $2
+        assert EPISODE_UUID_1 in args[3]  # episode_id in ANY($3)
 
     async def test_dedup_no_role_update_when_target_already_higher(self) -> None:
         """When tgt already has 'owner' and src has 'participant', no role UPDATE is issued."""

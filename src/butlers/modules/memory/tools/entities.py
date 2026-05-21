@@ -1034,20 +1034,24 @@ async def _repoint_episode_entities(
                 # For duplicates: pick the higher-precedence role for the surviving target row.
                 # Use Python-side precedence comparison since TEXT LEAST() gives alphabetic order
                 # (opposite of what we want: 'owner' < 'organizer' < 'participant' alphabetically).
+                # Group promotions by role and issue one batched UPDATE per role to minimise
+                # DB round-trips (at most len(distinct roles) == 3 queries instead of N).
+                promotions: dict[str, list] = {}
                 for episode_id in to_delete:
                     src_role = src_role_by_episode[episode_id]
                     tgt_role = tgt_role_by_episode[episode_id]
                     src_prec = _ROLE_PRECEDENCE.get(src_role, _DEFAULT_PRECEDENCE)
                     tgt_prec = _ROLE_PRECEDENCE.get(tgt_role, _DEFAULT_PRECEDENCE)
                     if src_prec < tgt_prec:
-                        # Source had higher precedence — promote target row's role
-                        await conn.execute(
-                            "UPDATE chronicler.episode_entities SET role = $1 "
-                            "WHERE episode_id = $2 AND entity_id = $3",
-                            src_role,
-                            episode_id,
-                            tgt_uuid,
-                        )
+                        promotions.setdefault(src_role, []).append(episode_id)
+                for role, eids in promotions.items():
+                    await conn.execute(
+                        "UPDATE chronicler.episode_entities SET role = $1 "
+                        "WHERE entity_id = $2 AND episode_id = ANY($3)",
+                        role,
+                        tgt_uuid,
+                        eids,
+                    )
                 # Delete all source duplicate rows in one batch
                 await conn.execute(
                     "DELETE FROM chronicler.episode_entities "
