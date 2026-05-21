@@ -93,7 +93,9 @@ understand source evidence, uncertainty, privacy, and correction state.
   field of type `array<uuid>`
 - **AND** the array SHALL be the aggregated set of `entity_id` values
   from `chronicler.episode_entities` for the episode, sorted by
-  insertion order (`created_at ASC, entity_id ASC` tiebreak)
+  role precedence (`'owner'` first, then `'organizer'`, then
+  `'participant'`) with `entity_id ASC` as the deterministic tiebreak
+  within a role bucket
 - **AND** the array SHALL be empty (`[]`, never null) when no
   participants are linked
 - **AND** the existing `entity_id` field SHALL continue to be returned

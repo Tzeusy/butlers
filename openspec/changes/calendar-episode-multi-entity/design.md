@@ -158,7 +158,11 @@ Notes:
   from the owner, `'participant'` is any other attendee resolved to an
   entity. Unresolved attendees do NOT create rows.
 - Composite PK on `(episode_id, entity_id)` makes the upsert idempotent
-  per attendee.
+  per attendee. Consequence: each `entity_id` appears at most once per
+  episode, so the adapter MUST collapse multiple roles for the same
+  entity to a single row using the precedence `'owner' > 'organizer' >
+  'participant'` (highest role wins). See D3 step 4 for the deterministic
+  rule.
 
 ### D2: Why Option B (Multi-Row) Is Rejected
 
@@ -196,9 +200,18 @@ zero changes to existing adapter contracts.
    (the calendar module's `event_id`, NOT chronicler's `episode_id`).
 4. In a single transaction on the chronicler pool, DELETE existing
    `episode_entities` rows for this `episode_id` and INSERT the new
-   set: owner with `role='owner'`, plus participants with
-   `role='participant'` (or `role='organizer'` when the calendar event
-   metadata flags them).
+   set. The adapter builds the row set in two passes to enforce the
+   role-precedence invariant `'owner' > 'organizer' > 'participant'`:
+   - First collect candidate `(entity_id, role)` tuples from each
+     upstream signal: the resolved owner entity contributes
+     `(owner_id, 'owner')`; the resolved organizer entity (when
+     distinct and the calendar event metadata flags it) contributes
+     `(organizer_id, 'organizer')`; every other resolved attendee
+     contributes `(attendee_id, 'participant')`.
+   - Then collapse by `entity_id` keeping the highest-precedence role,
+     so an attendee who is also the owner is written once with
+     `role='owner'` and never collides on the composite primary key.
+   The collapsed set is what gets INSERTed.
 5. Write the owner UUID to `episodes.entity_id` so existing readers
    that have not migrated continue to work for one release cycle.
 

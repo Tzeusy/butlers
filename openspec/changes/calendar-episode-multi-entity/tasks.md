@@ -26,8 +26,14 @@
         design D1.
       - CREATE INDEX `episode_entities_entity_idx`.
       - Recreate `v_episodes_corrected` to add aggregated
-        `participant_entity_ids UUID[]` column via
-        `array_agg(entity_id) FILTER (WHERE entity_id IS NOT NULL)`.
+        `participant_entity_ids UUID[]` column. The aggregation MUST
+        return `'{}'::uuid[]` (never NULL) for episodes with no
+        participants, and the array order MUST match the API contract
+        (role precedence `'owner' > 'organizer' > 'participant'`,
+        `entity_id ASC` tiebreak). Use:
+        `COALESCE(array_agg(entity_id ORDER BY CASE role WHEN 'owner'
+        THEN 0 WHEN 'organizer' THEN 1 ELSE 2 END, entity_id)
+        FILTER (WHERE entity_id IS NOT NULL), '{}')`
       - Downgrade: drop view, drop index, drop table; restore prior
         `v_episodes_corrected`.
 - [ ] 2.2 Write a migration smoke test that asserts: table exists,
