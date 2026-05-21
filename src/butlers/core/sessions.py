@@ -163,6 +163,9 @@ async def session_create(
             f"'schedule:<task-name>', or 'deadline:<task-name>'"
         )
 
+    # Sanitize once up front so the retry path does not redo the work.
+    sanitized_prompt = _strip_untranslatable_chars(prompt)
+
     async def _insert(resolved_ingestion_event_id: str | None) -> uuid.UUID:
         return await pool.fetchval(
             """
@@ -172,7 +175,7 @@ async def session_create(
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING id
             """,
-            _strip_untranslatable_chars(prompt),
+            sanitized_prompt,
             trigger_source,
             trace_id,
             model,
