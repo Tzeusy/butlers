@@ -119,6 +119,9 @@ run_on_startup = true
 interval_minutes = 15
 full_sync_interval_days = 6
 
+[modules.approvals]
+groups = ["actions"]
+
 [modules.memory]
 groups = ["core", "feedback", "entity", "admin"]
 
