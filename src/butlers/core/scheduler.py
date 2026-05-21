@@ -1102,18 +1102,23 @@ async def _tick_event_chain_pass(
 
     chains_fired = 0
 
+    # event_chains is a prerequisite for every trigger in this pass.  Bail out
+    # early so we avoid unnecessary schema probes for calendar_projection and
+    # scheduled_tasks when the core table is missing.
     has_event_chains_table = await _has_table(pool, "event_chains")
+    if not has_event_chains_table:
+        return 0
 
     # --- Trigger: calendar_event_end ---
-    # Only evaluated when both optional temporal tables exist with the legacy
-    # projection columns this pass reads.
+    # Only evaluated when the optional calendar_projection table exists with
+    # the legacy projection columns this pass reads.
     calendar_projection_ready = await _has_columns(
         pool,
         "calendar_projection",
         {"event_id", "butler_name", "end_at", "chain_triggered"},
     )
 
-    if has_event_chains_table and calendar_projection_ready:
+    if calendar_projection_ready:
         # Find calendar events that ended before now and haven't triggered chains yet
         ended_events = await pool.fetch(
             """
@@ -1178,7 +1183,7 @@ async def _tick_event_chain_pass(
     #
     # Guard: skip if scheduled_tasks lacks deadline columns (pre-migration schema).
     has_deadline_status_col = await _has_column(pool, "scheduled_tasks", "deadline_status")
-    if has_deadline_status_col and has_event_chains_table:
+    if has_deadline_status_col:
         # Fetch active deadline_passed chains and join to deadline status in one query.
         deadline_passed_chains = await pool.fetch(
             """
