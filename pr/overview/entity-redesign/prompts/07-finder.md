@@ -10,13 +10,13 @@ entity-first Cmd-K surface (bead bu-xfjwk). It is mounted in
 which is a shadcn-based global search surface still in use for non-entity
 navigation (butlers, pages, settings). The two components are distinct:
 
-- **`EntityFinder`** — Cmd+K shortcut; entity-first; implements the
+- **`EntityFinder`** — Ctrl/Cmd-K or `/` shortcut; entity-first; implements the
   design in this prompt; registered via `dispatchOpenEntityFinder()`.
 - **`CommandPalette`** (legacy) — also mounted in `RootLayout`; handles
   general navigation; registered via `dispatchOpenCommandPalette()`.
   It is not replaced by this prompt — do not remove it.
 
-When wiring keyboard shortcuts, `Cmd+K` dispatches to `EntityFinder`.
+When wiring keyboard shortcuts, `Ctrl/Cmd-K` or `/` dispatches to `EntityFinder`.
 The existing `CommandPalette` key binding is separate and must remain.
 
 ---
