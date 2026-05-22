@@ -19,8 +19,9 @@ Unsafe pattern:
 Algorithm
 ---------
 For every occurrence of FOR UPDATE in a file, look at a sliding window of
-CONTEXT_LINES lines before it.  If that window contains LEFT JOIN or RIGHT JOIN,
-and the FOR UPDATE is NOT immediately followed by 'OF' (the qualifier), flag it.
+CONTEXT_LINES lines before it.  If that window contains LEFT JOIN, RIGHT JOIN,
+or FULL JOIN, and the FOR UPDATE is NOT followed by 'OF' (the qualifier) within
+a small lookahead, flag it.
 
 Window size is generous (30 lines) to handle multi-line SQL strings while
 staying well within a single query block.  Queries longer than 30 lines before
@@ -51,12 +52,12 @@ from pathlib import Path
 # Configuration
 # ------------------------------------------------------------------
 CONTEXT_LINES = 30  # lines above FOR UPDATE to inspect for outer joins
-IGNORE_LOOKAHEAD = 3  # lines after FOR UPDATE to also check for ignore marker
+IGNORE_LOOKAHEAD = 3  # lines after FOR UPDATE to check for ignore marker or OF qualifier
 IGNORE_MARKER = "check-for-update-joins: ignore"
 
 _FOR_UPDATE_RE = re.compile(r"\bFOR\s+UPDATE\b", re.IGNORECASE)
 _QUALIFIED_RE = re.compile(r"\bFOR\s+UPDATE\s+OF\b", re.IGNORECASE)
-_OUTER_JOIN_RE = re.compile(r"\b(LEFT|RIGHT)\s+(OUTER\s+)?JOIN\b", re.IGNORECASE)
+_OUTER_JOIN_RE = re.compile(r"\b(LEFT|RIGHT|FULL)\s+(OUTER\s+)?JOIN\b", re.IGNORECASE)
 
 # ------------------------------------------------------------------
 # Core logic
@@ -81,8 +82,10 @@ def find_violations(filepath: Path) -> list[tuple[int, str]]:
         if IGNORE_MARKER in line:
             continue
 
-        # A FOR UPDATE OF qualifier on this very line is always safe
-        if _QUALIFIED_RE.search(line):
+        # A FOR UPDATE OF qualifier on this line or immediately following lines is safe.
+        # This handles cases where auto-formatters split the clause across lines.
+        lookahead_text = " ".join(lines[lineno - 1 : lineno + IGNORE_LOOKAHEAD])
+        if _QUALIFIED_RE.search(lookahead_text):
             continue
 
         # Look at the preceding context window for outer join keywords
@@ -113,10 +116,11 @@ def scan_paths(roots: list[Path]) -> list[tuple[Path, int, str]]:
                 for lineno, line in find_violations(root):
                     all_violations.append((root, lineno, line))
         else:
-            for path in sorted(root.rglob("*")):
-                if path.is_file() and path.suffix in extensions:
-                    for lineno, line in find_violations(path):
-                        all_violations.append((path, lineno, line))
+            for ext in extensions:
+                for path in sorted(root.rglob(f"*{ext}")):
+                    if path.is_file():
+                        for lineno, line in find_violations(path):
+                            all_violations.append((path, lineno, line))
 
     return all_violations
 
