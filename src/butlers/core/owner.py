@@ -21,10 +21,8 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import asyncpg
+import asyncpg
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +58,9 @@ async def fetch_owner_entity_id(pool: asyncpg.Pool) -> uuid.UUID | None:
     try:
         row = await pool.fetchrow(_OWNER_ID_FROM_ENTITIES_SQL)
         return row["id"] if row else None
-    except Exception as exc:  # noqa: BLE001
-        # Catch asyncpg.PostgresError and its subclasses (UndefinedTableError,
-        # PostgresConnectionError, etc.) so pre-migration databases fail silently.
+    except asyncpg.PostgresError as exc:
+        # Catches UndefinedTableError, PostgresConnectionError, etc. so that
+        # pre-migration databases (missing public.entities) fail gracefully.
         logger.debug(
             "fetch_owner_entity_id: public.entities query failed (table may not exist yet): %s",
             exc,

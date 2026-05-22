@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -76,7 +77,7 @@ def _all_pools(db: DatabaseManager) -> list[Any]:
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_owner_entity_id(pool: Any) -> str | None:
+async def _resolve_owner_entity_id(pool: Any) -> uuid.UUID | None:
     """Resolve the owner entity_id from a single pool.
 
     Delegates to the shared ``butlers.core.owner.resolve_owner_entity_id_two_step``
@@ -85,7 +86,7 @@ async def _resolve_owner_entity_id(pool: Any) -> str | None:
     2. ``public.entities`` directly (fallback for installs where the owner
        entity exists without a contact row, e.g. early bootstrap states).
 
-    Returns the entity_id string, or ``None`` when the owner cannot be found.
+    Returns the entity UUID, or ``None`` when the owner cannot be found.
     """
     return await _resolve_owner_entity_id_two_step(pool)
 
