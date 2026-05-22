@@ -300,7 +300,7 @@ async def test_resolve_excludes_failed_verification_rows(pool: asyncpg.Pool) -> 
 
     await pool.execute(
         "UPDATE public.model_catalog SET last_verified_ok = false WHERE id = $1",
-        verified_id,
+        uuid.UUID(verified_id),
     )
     result = await resolve_model(
         pool, "switchboard", Complexity.WORKHORSE, allow_tier_fallthrough=True
