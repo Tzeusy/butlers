@@ -14,12 +14,17 @@ Nine remaining adapters have not yet been evaluated for this treatment. This doc
 
 ## Scope clarification (calendar reference pattern)
 
-`calendar.py` populates two distinct entity-id mechanisms:
+`calendar.py` populates two complementary entity-id mechanisms:
 
-1. **`episodes.entity_id` column** — the single primary entity (the Google account owner); resolved via `_resolve_schema_entity_id`.
-2. **`episode_entities` join table** — multi-participant attendee attribution; populated via `_fetch_event_entities` / `_upsert_episode_entities`.
+1. **`episodes.entity_id` column** — the single primary entity (the owner of the schema/account); resolved via `_resolve_schema_entity_id` and written on every upsert.
+2. **`episode_entities` join table** — full entity attribution including the owner. Per `calendar.py` lines 481–489, **the owner is always written to `episode_entities` with `role='owner'`** for every episode, not only when other participants exist. For calendar events with attendees, additional rows with `role='participant'` are also written.
 
-The owner-only adapters audited below port **only the first mechanism** (`episodes.entity_id` column resolution). They do **not** port the `episode_entities` join table population, which is reserved for multi-participant episodes like calendar events with attendees.
+The owner-only adapters audited below must port **both mechanisms** to match the calendar reference and to remain forward-compatible with the planned drop of `episodes.entity_id` (bu-cfsgy, after two release cycles). Concretely:
+- Populate `episodes.entity_id` = owner on every upserted row.
+- Write a single row into `episode_entities` per episode: `(episode_id, owner_entity_id, role='owner')`.
+- Do **not** call `_fetch_event_entities` or any multi-participant resolution — owner-only adapters have no participants to enumerate.
+
+The simpler subset (owner-only, no participants) is still a port of the same pattern, just without the attendee-resolution branch.
 
 ---
 
@@ -158,8 +163,23 @@ The following implementation beads should be created. All follow the same calend
 **Backfill note:** The existing `scripts/backfill_episode_entity_id.py` is calendar-specific and **cannot be extended by simple parameterization**. It is hardwired to `google_calendar.completed` via `_SUPPORTED_ADAPTERS = frozenset({"google_calendar.completed"})` — the CLI `--adapter` flag only accepts values from that frozenset. Its resolution path (`{schema}.calendar_sources.metadata->>'account_email'` → `public.google_accounts.entity_id`) is calendar-specific and does not apply to owner-only adapters.
 
 The owner-only adapters use a different and simpler resolution: `SELECT entity_id FROM public.contacts WHERE 'owner' = ANY(roles)`. This requires either:
-- **(Recommended)** A new sibling script `scripts/backfill_owner_episode_entity_id.py` that targets the eight owner-only source names and uses the `public.contacts` owner lookup, OR
+- **(Recommended)** A new sibling script `scripts/backfill_owner_episode_entity_id.py` that targets the owner-only source names and uses the `public.contacts` owner lookup, OR
 - A refactor of the existing script to accept multiple resolution strategies (substantially more complex).
+
+**Source-name enumeration.** The eight adapter groups in this bead emit **ten distinct `source_name` values** (the backfill must cover all ten to avoid silent data gaps):
+
+1. `focus.inferred` (FocusInferredAdapter)
+2. `core.sessions` (CoreSessionsAdapter)
+3. `spotify.session` (SpotifySessionAdapter)
+4. `steam.play` (SteamPlayAdapter)
+5. `meals.events` (MealsAdapter)
+6. `owntracks.locations` (OwnTracksPointAdapter)
+7. `reading.inferred` (ReadingInferredAdapter)
+8. `google_health.measurements` (GoogleHealthSleepAdapter + GoogleHealthWorkoutAdapter — shared)
+9. `health.steps` (GoogleHealthStepsAdapter)
+10. `health.heart_rate` (GoogleHealthHeartRateAdapter)
+
+(Implementer: verify each `SOURCE_NAME` constant in the corresponding adapter file before wiring the backfill — the list above is the source of truth at the time of writing but should be re-checked.)
 
 This decision is deferred to bu-4c1ks; the implementing agent must choose and document the approach before writing code. Tests: unit tests mocking the owner lookup + an integration test asserting the field is non-null on new projections.
 
