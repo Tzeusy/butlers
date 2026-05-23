@@ -587,6 +587,34 @@ class ContactBackfillWriter:
                 primary,
             )
 
+            # Dual-write shim (Group D): best-effort post-commit triple emission (Amendment 14).
+            # Called unconditionally after the INSERT — the INSERT may have been a no-op due to
+            # ON CONFLICT DO NOTHING (value already claimed by another contact), but
+            # emit_contact_info_fact() is idempotent: the triple store reflects the authoritative
+            # SQL state and a redundant shim call is safe.  Types without a predicate mapping
+            # (e.g. telegram_chat_id, telegram_username, telegram_user_id, address) are skipped
+            # inside the helper — no call-site filtering needed.
+            try:
+                from butlers.tools.relationship.dual_write import emit_contact_info_fact
+
+                await emit_contact_info_fact(
+                    self._pool,
+                    contact_id=local_id,
+                    ci_type=type_,
+                    value=value,
+                    is_primary=primary,
+                    src="dual-write",
+                )
+            except Exception:  # noqa: BLE001 — best-effort: never block the legacy commit
+                logger.warning(
+                    "upsert_contact_info: emit_contact_info_fact failed for contact %s "
+                    "(ci_type=%r, value=%r) — dual-write failure swallowed",
+                    local_id,
+                    type_,
+                    value,
+                    exc_info=True,
+                )
+
     async def upsert_addresses(
         self,
         local_id: uuid.UUID,
