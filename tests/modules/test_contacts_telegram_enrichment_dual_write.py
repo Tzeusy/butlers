@@ -65,7 +65,7 @@ def _make_pool(local_contact_id: uuid.UUID | None) -> Any:
         pool.fetchrow = AsyncMock(return_value=None)
     else:
         mock_row = MagicMock()
-        mock_row.__getitem__ = lambda self, k: {"local_contact_id": local_contact_id}[k]
+        mock_row.__getitem__.side_effect = lambda k: {"local_contact_id": local_contact_id}[k]
         pool.fetchrow = AsyncMock(return_value=mock_row)
     pool.execute = AsyncMock()
     return pool
@@ -179,7 +179,7 @@ class TestEnrichTelegramChatIdsDualWriteShim:
         pool = AsyncMock()
         rows = [MagicMock() for _ in ids]
         for row, cid in zip(rows, ids):
-            row.__getitem__ = (lambda c: lambda self, k: {"local_contact_id": c}[k])(cid)
+            row.__getitem__.side_effect = (lambda c: lambda k: {"local_contact_id": c}[k])(cid)
         pool.fetchrow = AsyncMock(side_effect=rows)
         pool.execute = AsyncMock()
 
