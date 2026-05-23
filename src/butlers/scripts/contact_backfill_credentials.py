@@ -61,6 +61,7 @@ import logging
 import os
 import re
 import sys
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -175,7 +176,7 @@ class BackfillStats:
 async def _insert_credential(
     pool: asyncpg.Pool,
     *,
-    entity_id: object,
+    entity_id: uuid.UUID,
     cred_type: str,
     cred_value: str,
     apply: bool,
@@ -274,8 +275,8 @@ async def _run_backfill_with_pool(
     logger.info("Processing %d secured contact_info rows…", len(rows))
 
     for row in rows:
-        ci_type: str = row["type"] or ""
-        ci_value: str = row["value"] or ""
+        ci_type: str = row["type"]
+        ci_value: str = row["value"]
         entity_id = row["entity_id"]
         contact_id = row["contact_id"]
 
