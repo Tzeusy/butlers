@@ -780,7 +780,7 @@ async def contact_merge(
                                         "WHERE id = $1",
                                         ef["id"],
                                     )
-            except Exception:  # noqa: BLE001 — best-effort; never block the legacy commit
+            except asyncpg.PostgresError:  # noqa: BLE001 — best-effort; never block the legacy commit
                 logger.warning(
                     "contact_merge: entity_facts re-pointing failed "
                     "(source=%s target=%s) — swallowed",

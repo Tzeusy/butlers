@@ -25,6 +25,7 @@ import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import asyncpg
 import pytest
 
 pytestmark = pytest.mark.unit
@@ -323,8 +324,10 @@ class TestEntityFactsRepointOnMerge:
         tgt_row = _make_contact_row(_TARGET_ID, _TGT_ENTITY_ID)
 
         pool, conn = _make_pool(src_row, tgt_row)
-        # Force the entity_facts SELECT to fail (simulate table absent or DB error)
-        conn.fetch = AsyncMock(side_effect=Exception("relation does not exist"))
+        # Force the entity_facts SELECT to fail (simulate table absent or DB error).
+        # Must be asyncpg.PostgresError (or subclass) — the guard only swallows
+        # Postgres-level failures, not all exceptions.
+        conn.fetch = AsyncMock(side_effect=asyncpg.UndefinedTableError("relation does not exist"))
 
         with _patch_table_columns(), _patch_entity_merge(), _patch_retract_all():
             result = await contact_merge(pool, _SOURCE_ID, _TARGET_ID)
