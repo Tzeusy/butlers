@@ -799,8 +799,8 @@ async def contact_merge(
             # an active triple with the same (subject, predicate, object=target::text),
             # higher confidence wins; the loser is superseded.
             try:
-                src_obj_str = str(src_uuid)
-                tgt_obj_str = str(tgt_uuid)
+                src_obj_str = str(src_entity_id)
+                tgt_obj_str = str(tgt_entity_id)
                 async with pool.acquire() as _obj_conn:
                     async with _obj_conn.transaction():
                         obj_ef_rows = await _obj_conn.fetch(
@@ -812,7 +812,7 @@ async def contact_merge(
                             obj_conflict = await _obj_conn.fetchrow(
                                 "SELECT id, conf FROM relationship.entity_facts "
                                 "WHERE subject = $1 AND predicate = $2 "
-                                "AND object = $3 AND object_kind = 'entity' "
+                                "AND object = $3 "
                                 "AND validity = 'active'",
                                 obj_ef["subject"],
                                 obj_ef["predicate"],
