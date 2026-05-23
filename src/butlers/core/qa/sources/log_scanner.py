@@ -106,6 +106,17 @@ _DEFAULT_LOG_ROOT = "logs"
 #: Bytes to read from the end of a log file per chunk when scanning backwards.
 _TAIL_CHUNK_SIZE = 64 * 1024  # 64 KiB
 
+# Switchboard message classification is intentionally capped at a short
+# timeout and falls back to General when the routing LLM does not return.
+# Those timeout records are degradation telemetry, not actionable runtime bugs
+# for the autonomous QA loop.
+_SWITCHBOARD_CLASSIFICATION_TIMEOUT_RE = re.compile(
+    r"Runtime invocation failed:\s+TimeoutError:\s+Session timed out after \d+s "
+    r"\(model=[^)]*mini,\s*butler=switchboard\)",
+    re.IGNORECASE,
+)
+_SWITCHBOARD_CLASSIFICATION_TIMEOUT_MAX_S = 60
+
 
 # ---------------------------------------------------------------------------
 # Internal data types
@@ -221,6 +232,9 @@ def _parse_log_line(line: str, butler_name: str) -> LogEntry | None:
 
 def _should_include_entry(entry: LogEntry) -> bool:
     """Return True if this log entry qualifies for finding extraction."""
+    if _is_switchboard_classification_timeout(entry):
+        return False
+
     # Codex adapter noise that should never reach the QA finding set:
     #   * "MCP discovery failed after ..." — better sourced from session_records.
     #     The runtime/session tables tell us whether the session actually
@@ -244,6 +258,25 @@ def _should_include_entry(entry: LogEntry) -> bool:
         text = (entry.event or "") + " " + (entry.exception or "")
         return bool(_CRASH_SENTINEL_PATTERNS.search(text))
     return False
+
+
+def _is_switchboard_classification_timeout(entry: LogEntry) -> bool:
+    if entry.butler_name != "switchboard" or entry.logger != "butlers.core.spawner":
+        return False
+    if not _SWITCHBOARD_CLASSIFICATION_TIMEOUT_RE.search(entry.event or ""):
+        return False
+
+    raw_timeout_s = entry.raw.get("timeout_s")
+    try:
+        timeout_s = int(raw_timeout_s)
+    except (TypeError, ValueError):
+        timeout_s = None
+
+    if timeout_s is not None:
+        return timeout_s <= _SWITCHBOARD_CLASSIFICATION_TIMEOUT_MAX_S
+
+    # Compatibility for log lines emitted before spawner added timeout_s.
+    return "after 30s" in (entry.event or "")
 
 
 def _level_to_severity(level: str, exception_type: str, call_site: str) -> int:

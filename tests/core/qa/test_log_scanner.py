@@ -199,6 +199,42 @@ def test_codex_mcp_discovery_exhaustion_excluded_from_log_scanner():
     assert _should_include_entry(entry) is False
 
 
+def test_switchboard_classification_timeout_excluded_from_log_scanner():
+    """Expected switchboard classification caps are fallback telemetry, not QA cases."""
+    entry = LogEntry(
+        level="error",
+        event=(
+            "Runtime invocation failed: TimeoutError: Session timed out after 30s "
+            "(model=gpt-5.4-mini, butler=switchboard)"
+        ),
+        timestamp=datetime.now(UTC),
+        butler_name="switchboard",
+        logger="butlers.core.spawner",
+        exception="TimeoutError",
+        trigger_source="tick",
+        raw={"trigger_source": "tick", "timeout_s": 30},
+    )
+    assert _should_include_entry(entry) is False
+
+
+def test_non_classification_switchboard_timeout_still_included():
+    """Long switchboard runtime timeouts remain actionable."""
+    entry = LogEntry(
+        level="error",
+        event=(
+            "Runtime invocation failed: TimeoutError: Session timed out after 1800s "
+            "(model=gpt-5.4-mini, butler=switchboard)"
+        ),
+        timestamp=datetime.now(UTC),
+        butler_name="switchboard",
+        logger="butlers.core.spawner",
+        exception="TimeoutError",
+        trigger_source="trigger",
+        raw={"trigger_source": "trigger", "timeout_s": 1800},
+    )
+    assert _should_include_entry(entry) is True
+
+
 @pytest.mark.parametrize(
     "event",
     [
