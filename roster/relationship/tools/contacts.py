@@ -627,7 +627,7 @@ async def contact_merge(
     _src_ci_rows: list[asyncpg.Record] = []
     try:
         _src_ci_rows = await pool.fetch(
-            "SELECT * FROM public.contact_info WHERE contact_id = $1",
+            "SELECT type, value FROM public.contact_info WHERE contact_id = $1",
             source_id,
         )
     except Exception:  # noqa: BLE001 — best-effort pre-fetch; merge proceeds regardless
