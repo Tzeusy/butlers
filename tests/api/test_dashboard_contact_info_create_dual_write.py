@@ -22,6 +22,7 @@ Test scope:
   (c) Flag off → shim IS called at the call site (flag delegated to helper).
   (d) Shim raises → failure swallowed; HTTP 201 still returned.
   (e) SQL INSERT executes before the shim (Amendment 14 ordering).
+  (f) Secured rows (credentials) → shim NOT called (spec: no triples for secured rows).
 
 [bu-3jfvv]
 """
@@ -307,3 +308,41 @@ class TestCreateContactInfoDualWriteShim:
 
         assert resp.status_code == 201, resp.text
         assert call_order == ["sql", "shim"], f"Expected sql before shim, got: {call_order}"
+
+    async def test_secured_row_shim_not_called(self, monkeypatch: Any) -> None:
+        """(f) Secured rows MUST NOT be emitted to the triple store per spec.
+
+        ``public.contact_info`` rows with ``secured=True`` are credentials/tokens
+        and SHALL NOT be migrated to ``relationship.entity_facts`` as triples
+        (per openspec/specs/relationship-facts/spec.md §Credentials carve-out).
+        The call site guards ``emit_contact_info_fact()`` behind ``not row["secured"]``.
+        """
+        monkeypatch.setenv(_FLAG_ENV, "1")
+
+        contact_id = uuid.uuid4()
+        ci_row = _make_ci_row(
+            contact_id=contact_id,
+            ci_type="telegram",
+            value="telegram_session_token",
+            is_primary=False,
+            secured=True,
+        )
+        pool = _make_pool(ci_row=ci_row)
+        app = _wire_app(pool)
+
+        with (
+            patch(_EMIT_FACT_PATCH, new_callable=AsyncMock) as mock_emit,
+            patch(_AUDIT_PATCH, new_callable=AsyncMock),
+        ):
+            resp = await _post_create_contact_info(
+                app,
+                contact_id,
+                ci_type="telegram",
+                value="telegram_session_token",
+                is_primary=False,
+                secured=True,
+            )
+
+        assert resp.status_code == 201, resp.text
+        # Secured rows must never be emitted to the triple store.
+        mock_emit.assert_not_awaited()

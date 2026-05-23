@@ -1989,23 +1989,25 @@ async def create_contact_info(
 
     # Dual-write shim (Amendment 14): best-effort triple assertion after SQL commit.
     # UniqueViolationError raises above, so we only reach here when INSERT succeeded.
-    try:
-        await emit_contact_info_fact(
-            pool,
-            contact_id=row["contact_id"],
-            ci_type=row["type"],
-            value=row["value"],
-            is_primary=row["is_primary"],
-            src="dual-write",
-        )
-    except Exception:  # noqa: BLE001 — best-effort: never block the response
-        logger.warning(
-            "create_contact_info: emit_contact_info_fact failed for contact %s "
-            "(ci_type=%r) — dual-write failure swallowed",
-            row["contact_id"],
-            row["type"],
-            exc_info=True,
-        )
+    # Secured rows (credentials/tokens) MUST NOT be emitted to the triple store per spec.
+    if not row["secured"]:
+        try:
+            await emit_contact_info_fact(
+                pool,
+                contact_id=row["contact_id"],
+                ci_type=row["type"],
+                value=row["value"],
+                is_primary=row["is_primary"],
+                src="dual-write",
+            )
+        except Exception:  # noqa: BLE001 — best-effort: never block the response
+            logger.warning(
+                "create_contact_info: emit_contact_info_fact failed for contact %s "
+                "(ci_type=%r) — dual-write failure swallowed",
+                row["contact_id"],
+                row["type"],
+                exc_info=True,
+            )
 
     result = CreateContactInfoResponse(
         id=row["id"],
