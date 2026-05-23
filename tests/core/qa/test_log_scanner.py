@@ -199,6 +199,42 @@ def test_codex_mcp_discovery_exhaustion_excluded_from_log_scanner():
     assert _should_include_entry(entry) is False
 
 
+def test_codex_cli_timeout_excluded_from_log_scanner():
+    """Codex adapter timeout logs are covered by session_records, not log_scanner."""
+    entry = LogEntry(
+        level="error",
+        event="Codex CLI timed out after 1800s",
+        timestamp=datetime.now(UTC),
+        butler_name="switchboard",
+        logger="butlers.core.runtimes.codex",
+    )
+    assert _should_include_entry(entry) is False
+
+
+@pytest.mark.asyncio
+async def test_codex_cli_timeout_log_does_not_emit_finding(tmp_path):
+    """Generic Codex timeout log lines should not produce low-context QA findings."""
+    now = datetime.now(UTC)
+    _write(
+        tmp_path / "butlers" / "switchboard.log",
+        [
+            _line(
+                ts=now,
+                butler_name="switchboard",
+                logger_name="butlers.core.runtimes.codex",
+                event="Codex CLI timed out after 1800s",
+                exception=None,
+            )
+        ],
+    )
+
+    findings = await LogScannerSource(log_root=tmp_path, repo_root=tmp_path).discover(
+        lookback_minutes=15
+    )
+
+    assert findings == []
+
+
 @pytest.mark.parametrize(
     "event",
     [

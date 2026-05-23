@@ -226,12 +226,16 @@ def _should_include_entry(entry: LogEntry) -> bool:
     #     The runtime/session tables tell us whether the session actually
     #     failed, while the raw adapter log can be emitted on a path that
     #     later recovers.
+    #   * "Codex CLI timed out after ..." — generic adapter process-control
+    #     diagnostics. Actionable timeout failures are sourced from
+    #     session_records, where QA gets session IDs and timeout status.
     #   * "codex_refresh_lock: lock held" / "codex_refresh_lock: waiting" —
     #     these contain the word "deadlock" while describing the adapter's
     #     non-fatal fallback path. It is operational contention, not a crash
     #     sentinel.
     if entry.logger == "butlers.core.runtimes.codex" and (
         "MCP discovery failed after" in entry.event
+        or "Codex CLI timed out after" in entry.event
         or "codex_refresh_lock: lock held" in entry.event
         or "codex_refresh_lock: waiting" in entry.event
     ):
