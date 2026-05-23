@@ -8,9 +8,12 @@ variable types (email, phone, website, telegram_username, etc.) into
 Design contract:
 - SQL is authoritative.  The legacy INSERT commits first; the shim is
   post-commit and best-effort.
-- ``emit_contact_info_fact()`` is called unconditionally even when the INSERT
-  was a no-op due to ON CONFLICT DO NOTHING (value already claimed by another
-  contact).  The helper is idempotent so duplicate calls are safe.
+- ``emit_contact_info_fact()`` is called only when the INSERT actually created
+  a row (asyncpg status == "INSERT 0 1").  When ON CONFLICT DO NOTHING silently
+  skips the insert because the (type, value) pair is already claimed by a
+  *different* contact, the shim is NOT called — calling it would assert a triple
+  linking the caller's entity to a value it does not own, contradicting the
+  authoritative SQL state.
 - Mapped types (email, phone) invoke the triple store via the predicate map.
   Unmapped types (address, telegram_chat_id, telegram_username, telegram_user_id)
   are skipped inside the helper — no call-site filtering is needed.
@@ -22,7 +25,7 @@ Test scope:
   (b) Mapped type (phone) flag on  → emit_contact_info_fact called with correct args.
   (c) Unmapped type (address/telegram_username) → shim still called; helper no-ops internally.
   (d) Flag off → shim still called (helper short-circuits internally).
-  (e) ON CONFLICT skip (row already exists for another contact) → shim still called.
+  (e) ON CONFLICT skip (row already exists for another contact) → shim NOT called.
   (f) Shim raises → failure swallowed; no exception propagated.
   (g) SQL INSERT executed before shim (Amendment 14 ordering).
   (h) Multiple entries in one call → shim called once per new INSERT.
@@ -110,10 +113,22 @@ def _make_canonical_contact(
 
 
 def _make_pool_no_existing() -> Any:
-    """Pool mock where contact_info row does NOT yet exist (fetchrow returns None)."""
+    """Pool mock where contact_info row does NOT yet exist; INSERT succeeds (status INSERT 0 1)."""
     pool = AsyncMock()
     pool.fetchrow = AsyncMock(return_value=None)
-    pool.execute = AsyncMock()
+    pool.execute = AsyncMock(return_value="INSERT 0 1")
+    return pool
+
+
+def _make_pool_on_conflict() -> Any:
+    """Pool mock simulating ON CONFLICT DO NOTHING skip (value owned by another contact).
+
+    fetchrow returns None (no row for THIS contact), but execute returns "INSERT 0 0"
+    indicating the INSERT was silently skipped by the UNIQUE(type, value) constraint.
+    """
+    pool = AsyncMock()
+    pool.fetchrow = AsyncMock(return_value=None)
+    pool.execute = AsyncMock(return_value="INSERT 0 0")
     return pool
 
 
@@ -123,7 +138,7 @@ def _make_pool_existing_row(row_id: uuid.UUID, is_primary: bool = False) -> Any:
     mock_row = MagicMock()
     mock_row.__getitem__.side_effect = lambda k: {"id": row_id, "is_primary": is_primary}[k]
     pool.fetchrow = AsyncMock(return_value=mock_row)
-    pool.execute = AsyncMock()
+    pool.execute = AsyncMock(return_value="UPDATE 1")
     return pool
 
 
@@ -239,31 +254,29 @@ class TestUpsertContactInfoDualWriteShim:
         # Call-site always invokes helper; helper checks flag and returns early.
         mock_emit.assert_awaited_once()
 
-    async def test_on_conflict_skip_shim_still_called(self, monkeypatch) -> None:
-        """(e) ON CONFLICT DO NOTHING (row exists for another contact) → shim still called.
+    async def test_on_conflict_skip_shim_not_called(self, monkeypatch) -> None:
+        """(e) ON CONFLICT DO NOTHING (value owned by another contact) → shim NOT called.
 
-        When the INSERT is a no-op because the (type, value) pair is claimed by a
-        different contact, the SELECT-for-this-contact returns None (existing=None),
-        so the INSERT path runs — and the shim is called.  The helper's idempotency
-        makes this safe: it will either find no entity or emit a triple that agrees
-        with the authoritative SQL state.
+        When the INSERT is silently skipped because the (type, value) pair is claimed
+        by a different contact (asyncpg returns "INSERT 0 0"), we must NOT call the
+        shim.  Calling it would assert a triple linking the caller's entity to a value
+        it does not own, contradicting the authoritative SQL state.
         """
         monkeypatch.setenv(_FLAG_ENV, "1")
 
         contact_id = uuid.uuid4()
 
-        # Pool returns None for fetchrow (no existing row for THIS contact) but
-        # execute() on the INSERT silently no-ops due to ON CONFLICT DO NOTHING.
-        # From the call-site's perspective this is indistinguishable from a fresh insert.
-        pool = _make_pool_no_existing()
+        # Pool returns None for fetchrow (no existing row for THIS contact) and
+        # execute() returns "INSERT 0 0" — the value was claimed by another contact.
+        pool = _make_pool_on_conflict()
         writer = _make_writer(pool)
         contact = _make_canonical_contact(emails=["shared@example.com"])
 
         with patch(_EMIT_FACT_PATCH, new_callable=AsyncMock) as mock_emit:
             await writer.upsert_contact_info(contact_id, contact)
 
-        # Shim is called unconditionally after the INSERT attempt.
-        mock_emit.assert_awaited_once()
+        # Shim must NOT be called — emitting a triple here would be incorrect.
+        mock_emit.assert_not_awaited()
 
     async def test_shim_failure_swallowed(self, monkeypatch) -> None:
         """(f) Shim raises → failure swallowed; no exception propagated."""
@@ -295,7 +308,12 @@ class TestUpsertContactInfoDualWriteShim:
         contact = _make_canonical_contact(emails=["order@example.com"])
 
         call_order: list[str] = []
-        pool.execute = AsyncMock(side_effect=lambda *a, **kw: call_order.append("sql") or None)
+
+        async def _record_sql(*_a: Any, **_kw: Any) -> str:
+            call_order.append("sql")
+            return "INSERT 0 1"
+
+        pool.execute = AsyncMock(side_effect=_record_sql)
 
         async def _record_emit(*_args: Any, **_kw: Any) -> None:
             call_order.append("shim")
