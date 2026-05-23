@@ -982,7 +982,7 @@ async def _register_google_health_contact_info(
     produces no duplicate row (``ON CONFLICT (type, value) DO NOTHING``).
     """
     insert_status: str | None = None
-    owner_contact_id_for_shim: Any = None
+    owner_contact_id_for_shim: uuid.UUID | None = None
 
     async with pool.acquire() as conn:
         async with conn.transaction():

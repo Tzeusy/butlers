@@ -21,7 +21,7 @@ Design contract:
 Test scope:
   (a) Successful INSERT (status "INSERT 0 1") + flag on → shim called with correct args.
   (b) ON CONFLICT skip (status "INSERT 0 0") → shim NOT called.
-  (c) Flag off → shim NOT called (gate checked before deferred import).
+  (c) INSERT 0 1 + flag off → shim IS called (flag gated inside helper, not at call site).
   (d) Shim raises → failure swallowed; function returns normally.
   (e) No owner entity → function returns early; shim NOT called.
   (f) SQL INSERT executes before the shim (Amendment 14 ordering).
@@ -42,10 +42,6 @@ pytestmark = pytest.mark.unit
 _FLAG_ENV = "BUTLERS_CONTACT_INFO_DUAL_WRITE"
 # Patch at the source so the deferred-import path resolves correctly.
 _EMIT_FACT_PATCH = "butlers.tools.relationship.dual_write.emit_contact_info_fact"
-
-# Import the function under test (deferred to avoid module-level side effects).
-_TARGET = "butlers.api.routers.oauth._register_google_health_contact_info"
-
 
 def _import_fn():
     from butlers.api.routers.oauth import _register_google_health_contact_info
@@ -153,14 +149,18 @@ class TestGoogleHealthOAuthDualWriteShim:
 
         mock_emit.assert_not_awaited()
 
-    async def test_flag_off_shim_not_called(self, monkeypatch: Any) -> None:
-        """(c) Flag off → shim NOT called.
+    async def test_insert_success_flag_off_shim_still_called(self, monkeypatch: Any) -> None:
+        """(c) INSERT 0 1 + flag off → shim IS called at the call site.
 
-        The call-site gate ``if insert_status == "INSERT 0 1"`` runs BEFORE the deferred
-        import.  When the flag is off, the shim block is skipped entirely.
-        Note: the flag is actually checked inside emit_contact_info_fact() itself
-        (dual_write_enabled()), but the insert_status gate prevents the call entirely.
-        For completeness we verify the shim import/call is never reached.
+        The call-site gate is ``if insert_status == "INSERT 0 1"`` only — there is
+        no flag check at the call site.  The flag (``BUTLERS_CONTACT_INFO_DUAL_WRITE``)
+        is only checked inside ``emit_contact_info_fact()`` itself via
+        ``dual_write_enabled()``.  With the function mocked here, the internal flag
+        check is bypassed, so the mock is always called when insert_status is
+        "INSERT 0 1", regardless of the environment variable.
+
+        This test verifies that the call site correctly delegates flag responsibility
+        to the helper — it does NOT short-circuit before calling the helper.
         """
         monkeypatch.delenv(_FLAG_ENV, raising=False)
 
@@ -174,21 +174,12 @@ class TestGoogleHealthOAuthDualWriteShim:
         with patch(_EMIT_FACT_PATCH, new_callable=AsyncMock) as mock_emit:
             await fn(pool, google_user_id="test-user-flag-off")
 
-        # insert_status is "INSERT 0 1" so the gate passes, but the shim itself
-        # will no-op because dual_write_enabled() returns False.
-        # The call site does NOT short-circuit on the flag — it relies on the
-        # insert_status gate for the ON CONFLICT path, and on the helper's
-        # internal flag check for the flag-off path.  Either way, we verify
-        # end-to-end that the external triple store sees no emission.
-        if mock_emit.await_count > 0:
-            # If shim was called, verify it was called with expected args (flag
-            # check happens inside the helper, not at the call site).
-            kwargs = mock_emit.call_args.kwargs
-            assert kwargs["ci_type"] == "google_health"
-        # No assertion on call count here — the important contract is that no
-        # triple is emitted to the store (enforced by dual_write_enabled() inside
-        # the helper).  The call-site test above for ON CONFLICT is the primary
-        # gate test.
+        # insert_status is "INSERT 0 1" → gate passes → shim IS called.
+        # The flag check happens inside the helper, not here.
+        mock_emit.assert_awaited_once()
+        kwargs = mock_emit.call_args.kwargs
+        assert kwargs["ci_type"] == "google_health"
+        assert kwargs["is_primary"] is False
 
     async def test_shim_failure_swallowed(self, monkeypatch: Any) -> None:
         """(d) Shim raises → failure swallowed; function returns normally."""
