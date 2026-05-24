@@ -1476,6 +1476,7 @@ async def tick(
         # A single check here avoids redundant information_schema round-trips per tick.
         _has_task_type_col = await _has_column(pool, "scheduled_tasks", "task_type")
         _has_budget_col = await _has_column(pool, "scheduled_tasks", "max_token_budget")
+        _has_until_at_col = await _has_column(pool, "scheduled_tasks", "until_at")
 
         # ------------------------------------------------------------------
         # Seasonal context — queried once per tick, injected into ALL dispatches
@@ -1515,10 +1516,11 @@ async def tick(
         else:
             cron_filter = ""
         _budget_col_select = ", max_token_budget" if _has_budget_col else ""
+        _until_at_select = ", until_at" if _has_until_at_col else ", NULL::timestamptz AS until_at"
         rows = await pool.fetch(
             f"""
             SELECT id, name, cron, dispatch_mode, prompt, job_name, job_args,
-                   complexity, until_at{_budget_col_select}
+                   complexity{_until_at_select}{_budget_col_select}
             FROM scheduled_tasks
             WHERE enabled = true
               {cron_filter}
