@@ -328,7 +328,7 @@ class _StateEntry:
     page_of_origin: str | None = None
     """Optional page that initiated the OAuth flow.
 
-    Allowed values: ``"secrets"`` and ``"ingestion"``.  Missing/empty is treated
+    Known values: ``"secrets"`` and ``"ingestion"``.  Missing/empty is treated
     as ``"secrets"`` at callback time — the routing default.  This field is
     intentionally permissive on inbound: unknown values are stored as-is and the
     callback routing step (BE-12 / bu-i21fc) is responsible for the fallback logic.
@@ -540,7 +540,7 @@ async def oauth_google_start(
     page_of_origin: str | None = Query(
         default=None,
         description="Optional page that initiated the OAuth flow. "
-        "Allowed values: 'secrets' and 'ingestion'. "
+        "Known values: 'secrets' and 'ingestion'. "
         "When present, the value is carried in the CSRF state token so the callback "
         "can route the user back to the originating page. "
         "Missing or empty is treated as the 'secrets' default at callback time.",
@@ -642,6 +642,7 @@ async def oauth_google_start(
     redirect_uri = _get_redirect_uri()
 
     state = _generate_state()
+    page_of_origin = (page_of_origin or "").strip() or None
     _store_state(
         state,
         account_hint=account_hint,

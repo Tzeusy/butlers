@@ -273,6 +273,34 @@ async def test_start_page_of_origin_omitted_persists_none(app):
     assert entry.page_of_origin is None
 
 
+async def test_start_page_of_origin_empty_string_normalised_to_none(app):
+    """?page_of_origin= (empty string) is normalised to None before storage."""
+    _make_app(app)
+    captured_state: list[str] = []
+
+    original_store = oauth_module._store_state
+
+    def _capturing_store(state, **kwargs):
+        captured_state.append(state)
+        original_store(state, **kwargs)
+
+    with patch.object(oauth_module, "_store_state", side_effect=_capturing_store):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(
+                "/api/oauth/google/start",
+                params={"redirect": "false", "page_of_origin": ""},
+            )
+
+    assert resp.status_code == 200
+    assert len(captured_state) == 1
+    stored_state = captured_state[0]
+    entry = oauth_module._validate_and_consume_state(stored_state)
+    assert entry is not None
+    assert entry.page_of_origin is None
+
+
 # ---------------------------------------------------------------------------
 # Scope-set selector
 # ---------------------------------------------------------------------------
