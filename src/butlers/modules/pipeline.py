@@ -1739,14 +1739,15 @@ class MessagePipeline:
                         attachments=attachments,
                     )
 
-                    # Spawn CC — it calls route_to_butler tool(s) directly
+                    # Spawn the routing classifier. Runtime session timeouts are
+                    # owned by the model catalog; classification_timeout_s is
+                    # retained only as a legacy config field.
                     with tracer.start_as_current_span("butlers.switchboard.routing.llm_decision"):
                         spawn_result = await self._dispatch_fn(
                             prompt=routing_prompt,
                             trigger_source="tick",
                             request_id=request_id,
                             complexity=Complexity.CHEAP,
-                            timeout_override=self._classification_timeout_s,
                         )
 
                     spawn_latency_ms = (time.perf_counter() - spawn_start) * 1000
@@ -2155,7 +2156,7 @@ class PipelineConfig(BaseModel):
     """Whether to deduplicate incoming messages by idempotency key."""
 
     classification_timeout_s: int = Field(default=30, ge=1)
-    """Maximum seconds to spend on Switchboard LLM classification."""
+    """Deprecated compatibility field; model catalog owns session timeouts."""
 
 
 class PipelineModule(Module):

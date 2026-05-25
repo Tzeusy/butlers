@@ -159,7 +159,7 @@ class TestMessagePipelineProcess:
         assert result.routed_targets == ["health"]
         assert result.acked_targets == ["health"]
         assert result.failed_targets == []
-        assert captured_kwargs["timeout_override"] == 30
+        assert "timeout_override" not in captured_kwargs
 
     @patch(
         "butlers.tools.switchboard.routing.classify._load_available_butlers",
