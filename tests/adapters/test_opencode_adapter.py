@@ -238,7 +238,7 @@ async def test_invoke_success_and_config():
     assert "--model" not in mock_sub.call_args[0]
 
 
-async def test_invoke_error_paths():
+async def test_invoke_error_paths(caplog):
     """invoke() raises RuntimeError on non-zero exit; TimeoutError and kill on timeout."""
     adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
     mock_proc = AsyncMock()
@@ -252,7 +252,9 @@ async def test_invoke_error_paths():
     mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
     mock_proc.kill = AsyncMock()
     mock_proc.wait = AsyncMock()
-    with patch(_EXEC, return_value=mock_proc):
+    with patch(_EXEC, return_value=mock_proc), caplog.at_level(logging.WARNING):
         with pytest.raises(TimeoutError, match="OpenCode CLI timed out"):
             await adapter.invoke(prompt="slow", system_prompt="", mcp_servers={}, env={}, timeout=1)
     mock_proc.kill.assert_called_once()
+    timeout_records = [r for r in caplog.records if "OpenCode CLI timed out after 1s" in r.message]
+    assert timeout_records and all(r.levelno == logging.WARNING for r in timeout_records)

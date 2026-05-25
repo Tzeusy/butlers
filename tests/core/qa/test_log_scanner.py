@@ -199,6 +199,18 @@ def test_codex_mcp_discovery_exhaustion_excluded_from_log_scanner():
     assert _should_include_entry(entry) is False
 
 
+def test_opencode_subprocess_timeout_excluded_from_log_scanner():
+    """OpenCode adapter timeout attempts are sourced from session_records, not raw logs."""
+    entry = LogEntry(
+        level="error",
+        event="OpenCode CLI timed out after 30s",
+        timestamp=datetime.now(UTC),
+        butler_name="switchboard",
+        logger="butlers.core.runtimes.opencode",
+    )
+    assert _should_include_entry(entry) is False
+
+
 @pytest.mark.parametrize(
     "event",
     [
