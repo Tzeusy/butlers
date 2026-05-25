@@ -146,7 +146,7 @@ def wire_pipelines(daemon: Any, pool: Any) -> None:
         pipeline_mod._config.enable_ingress_dedupe if pipeline_mod is not None else True
     )
     classification_timeout_s = (
-        pipeline_mod._config.classification_timeout_s if pipeline_mod is not None else 30
+        pipeline_mod._config.classification_timeout_s if pipeline_mod is not None else None
     )
 
     pipeline = MessagePipeline(
