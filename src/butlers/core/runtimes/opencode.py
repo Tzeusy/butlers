@@ -33,6 +33,15 @@ logger = logging.getLogger(__name__)
 
 # Default timeout for OpenCode CLI invocation (5 minutes)
 _DEFAULT_TIMEOUT_SECONDS = 300
+_OPENCODE_SQLITE_MIGRATION_RETRY_REASON = "opencode_sqlite_migration"
+
+_OPENCODE_SQLITE_MIGRATION_LINES = frozenset(
+    {
+        "Performing one time database migration, may take a few minutes...",
+        "sqlite-migration:done",
+        "Database migration complete.",
+    }
+)
 
 
 def _find_opencode_binary() -> str:
@@ -56,6 +65,12 @@ def _find_opencode_binary() -> str:
             "or see https://opencode.ai/docs"
         )
     return path
+
+
+def _is_opencode_sqlite_migration_only(stderr: str) -> bool:
+    """Return true when stderr only contains OpenCode's benign SQLite migration banner."""
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    return bool(lines) and all(line in _OPENCODE_SQLITE_MIGRATION_LINES for line in lines)
 
 
 def _parse_opencode_output(
@@ -901,79 +916,136 @@ class OpenCodeAdapter(RuntimeAdapter):
             cmd_for_log = " ".join(cmd[:4]) + " ..."
             logger.debug("Invoking OpenCode CLI: %s", cmd_for_log)
 
-            proc: asyncio.subprocess.Process | None = None
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=subprocess_env,
-                    cwd=str(cwd) if cwd else None,
-                )
-
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=effective_timeout,
-                )
-
-                stdout = stdout_bytes.decode("utf-8", errors="replace")
-                stderr = stderr_bytes.decode("utf-8", errors="replace")
-
-                if stderr:
-                    logger.debug("OpenCode stderr: %s", stderr[:500])
-
-                returncode = proc.returncode if proc.returncode is not None else 0
-
-                self._last_process_info = {
-                    "pid": proc.pid,
-                    "exit_code": returncode,
-                    "command": cmd_for_log,
-                    "stderr": stderr,
-                    "runtime_type": "opencode",
-                }
-
-                if returncode != 0:
-                    error_detail = stderr.strip() or stdout.strip() or f"exit code {returncode}"
-                    logger.error("OpenCode CLI exited with code %d: %s", returncode, error_detail)
-                    raise RuntimeError(
-                        f"OpenCode CLI exited with code {returncode}: {error_detail}"
+            migration_retry_attempted = False
+            for attempt in range(1, 3):
+                proc: asyncio.subprocess.Process | None = None
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        env=subprocess_env,
+                        cwd=str(cwd) if cwd else None,
                     )
 
-                # OpenCode CLI exits 0 even on fatal errors like
-                # ProviderModelNotFoundError. Detect these via stderr.
-                if stderr and not stdout.strip():
-                    for pattern in (
-                        "ProviderModelNotFoundError",
-                        "Model not found:",
-                        "AuthenticationError",
-                    ):
-                        if pattern in stderr:
-                            logger.error(
-                                "OpenCode CLI exited 0 but stderr indicates failure: %s",
-                                stderr[:500],
-                            )
-                            raise RuntimeError(
-                                f"OpenCode CLI error (exit 0): {stderr.strip()[:300]}"
-                            )
+                    stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                        proc.communicate(),
+                        timeout=effective_timeout,
+                    )
 
-                result_text, tool_calls, usage = _parse_opencode_output(stdout, stderr, returncode)
-                return result_text, tool_calls, usage
+                    stdout = stdout_bytes.decode("utf-8", errors="replace")
+                    stderr = stderr_bytes.decode("utf-8", errors="replace")
 
-            except TimeoutError:
-                logger.error("OpenCode CLI timed out after %ds", effective_timeout)
-                self._last_process_info = {
-                    "pid": proc.pid if proc is not None else None,
-                    "exit_code": -1,
-                    "command": cmd_for_log,
-                    "stderr": "(timeout — process killed)",
-                    "runtime_type": "opencode",
-                }
-                if proc is not None:
-                    proc.kill()
-                    await proc.wait()
-                raise TimeoutError(
-                    f"OpenCode CLI timed out after {effective_timeout} seconds"
-                ) from None
+                    if stderr:
+                        logger.debug("OpenCode stderr: %s", stderr[:500])
+
+                    returncode = proc.returncode if proc.returncode is not None else 0
+
+                    self._last_process_info = {
+                        "pid": proc.pid,
+                        "exit_code": returncode,
+                        "command": cmd_for_log,
+                        "stderr": stderr,
+                        "runtime_type": "opencode",
+                        "attempt_count": attempt,
+                    }
+
+                    if returncode != 0:
+                        if (
+                            attempt == 1
+                            and not stdout.strip()
+                            and _is_opencode_sqlite_migration_only(stderr)
+                        ):
+                            migration_retry_attempted = True
+                            self._last_process_info.update(
+                                {
+                                    "retry_attempted": True,
+                                    "retry_reason": _OPENCODE_SQLITE_MIGRATION_RETRY_REASON,
+                                    "retry_succeeded": None,
+                                }
+                            )
+                            logger.warning(
+                                "OpenCode CLI exited with code %d after SQLite migration; "
+                                "retrying once",
+                                returncode,
+                            )
+                            continue
+
+                        error_detail = stderr.strip() or stdout.strip() or f"exit code {returncode}"
+                        if migration_retry_attempted:
+                            self._last_process_info.update(
+                                {
+                                    "retry_attempted": True,
+                                    "retry_reason": _OPENCODE_SQLITE_MIGRATION_RETRY_REASON,
+                                    "retry_succeeded": False,
+                                    "result_source": "retry",
+                                }
+                            )
+                        logger.error(
+                            "OpenCode CLI exited with code %d: %s", returncode, error_detail
+                        )
+                        raise RuntimeError(
+                            f"OpenCode CLI exited with code {returncode}: {error_detail}"
+                        )
+
+                    # OpenCode CLI exits 0 even on fatal errors like
+                    # ProviderModelNotFoundError. Detect these via stderr.
+                    if stderr and not stdout.strip():
+                        for pattern in (
+                            "ProviderModelNotFoundError",
+                            "Model not found:",
+                            "AuthenticationError",
+                        ):
+                            if pattern in stderr:
+                                logger.error(
+                                    "OpenCode CLI exited 0 but stderr indicates failure: %s",
+                                    stderr[:500],
+                                )
+                                raise RuntimeError(
+                                    f"OpenCode CLI error (exit 0): {stderr.strip()[:300]}"
+                                )
+
+                    result_text, tool_calls, usage = _parse_opencode_output(
+                        stdout, stderr, returncode
+                    )
+                    if migration_retry_attempted:
+                        self._last_process_info.update(
+                            {
+                                "retry_attempted": True,
+                                "retry_reason": _OPENCODE_SQLITE_MIGRATION_RETRY_REASON,
+                                "retry_succeeded": True,
+                                "result_source": "retry",
+                            }
+                        )
+                    return result_text, tool_calls, usage
+
+                except TimeoutError:
+                    logger.error("OpenCode CLI timed out after %ds", effective_timeout)
+                    self._last_process_info = {
+                        "pid": proc.pid if proc is not None else None,
+                        "exit_code": -1,
+                        "command": cmd_for_log,
+                        "stderr": "(timeout - process killed)",
+                        "runtime_type": "opencode",
+                        "attempt_count": attempt,
+                    }
+                    if migration_retry_attempted:
+                        self._last_process_info.update(
+                            {
+                                "retry_attempted": True,
+                                "retry_reason": _OPENCODE_SQLITE_MIGRATION_RETRY_REASON,
+                                "retry_succeeded": False,
+                                "result_source": "retry",
+                            }
+                        )
+                    if proc is not None:
+                        proc.kill()
+                        await proc.wait()
+                    raise TimeoutError(
+                        f"OpenCode CLI timed out after {effective_timeout} seconds"
+                    ) from None
+
+            raise RuntimeError("OpenCode CLI retry loop exhausted unexpectedly")
 
 
 # Register the OpenCode adapter
