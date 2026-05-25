@@ -226,6 +226,10 @@ def _should_include_entry(entry: LogEntry) -> bool:
     #     The runtime/session tables tell us whether the session actually
     #     failed, while the raw adapter log can be emitted on a path that
     #     later recovers.
+    #   * "Runtime invocation failed: TimeoutError: ... timed out ..." from
+    #     the spawner — a duplicate daemon log for the failed session row.
+    #     The session_records source classifies these as SessionTimeoutError
+    #     and carries session IDs for investigation.
     #   * "codex_refresh_lock: lock held" / "codex_refresh_lock: waiting" —
     #     these contain the word "deadlock" while describing the adapter's
     #     non-fatal fallback path. It is operational contention, not a crash
@@ -234,6 +238,12 @@ def _should_include_entry(entry: LogEntry) -> bool:
         "MCP discovery failed after" in entry.event
         or "codex_refresh_lock: lock held" in entry.event
         or "codex_refresh_lock: waiting" in entry.event
+    ):
+        return False
+    if (
+        entry.logger == "butlers.core.spawner"
+        and entry.event.startswith("Runtime invocation failed: TimeoutError:")
+        and "timed out" in entry.event.lower()
     ):
         return False
 

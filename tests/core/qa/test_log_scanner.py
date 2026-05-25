@@ -199,6 +199,30 @@ def test_codex_mcp_discovery_exhaustion_excluded_from_log_scanner():
     assert _should_include_entry(entry) is False
 
 
+def test_spawner_runtime_timeout_excluded_from_log_scanner():
+    """Spawner timeout logs are duplicate evidence for session_records."""
+    entry = LogEntry(
+        level="error",
+        event="Runtime invocation failed: TimeoutError: Codex CLI timed out after 30 seconds",
+        timestamp=datetime.now(UTC),
+        butler_name="switchboard",
+        logger="butlers.core.spawner",
+    )
+    assert _should_include_entry(entry) is False
+
+
+def test_spawner_non_timeout_errors_remain_in_log_scanner():
+    """Only runtime timeout duplicates are suppressed from spawner logs."""
+    entry = LogEntry(
+        level="error",
+        event="Runtime invocation failed: RuntimeError: adapter crashed before session create",
+        timestamp=datetime.now(UTC),
+        butler_name="switchboard",
+        logger="butlers.core.spawner",
+    )
+    assert _should_include_entry(entry) is True
+
+
 @pytest.mark.parametrize(
     "event",
     [
@@ -641,6 +665,38 @@ async def test_discover_skips_codex_mcp_discovery_exhaustion_logs(tmp_path):
                 ts=now,
                 butler_name="switchboard",
                 logger_name="butlers.core.runtimes.codex",
+                exception=None,
+            ),
+            _line(
+                level="error",
+                event="Database connection refused",
+                ts=now,
+                butler_name="switchboard",
+                logger_name="butlers.core.db",
+                exception="ConnectionError",
+            ),
+        ],
+    )
+
+    findings = await LogScannerSource(log_root=tmp_path).discover(lookback_minutes=15)
+
+    assert len(findings) == 1
+    assert "database connection refused" in findings[0].event_summary.lower()
+
+
+@pytest.mark.asyncio
+async def test_discover_skips_spawner_runtime_timeout_logs(tmp_path):
+    """Raw spawner timeout logs are suppressed in favor of session_records."""
+    now = datetime.now(UTC)
+    _write(
+        tmp_path / "butlers" / "switchboard.log",
+        [
+            _line(
+                level="error",
+                event="Runtime invocation failed: TimeoutError: Codex CLI timed out after 30 seconds",
+                ts=now,
+                butler_name="switchboard",
+                logger_name="butlers.core.spawner",
                 exception=None,
             ),
             _line(
