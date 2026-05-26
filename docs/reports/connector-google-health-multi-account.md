@@ -38,9 +38,9 @@
 | Foreign-identity rejection with logged diagnostics | butler-health spec §Foreign-identity rejection | bu-91zdb.6 (PR #1986) | `wellness_ingest.py` Step 1 (logging + `rejected_non_owner_sender` status) | `test_foreign_sender_rejected` | Full |
 | Frontend per-account status card rendering | tasks.md §5.3 / design.md §Dashboard | bu-91zdb.8 (PR #1989) | `frontend/src/components/butler-detail/GoogleHealthStatusCard.tsx` | `GoogleHealthStatusCard.test.tsx` | Full |
 | Prometheus metric labels distinct per account | design.md §Test surface / tasks.md §2.4 | bu-91zdb.2 (PR #1983) | `google_health.py` — all Prometheus labels use per-account `ctx.endpoint_identity` | `test_prometheus_labels_distinct_per_account` | Full |
-| **GAP: `wellness_ingest.py` resource-segment parse broken for 4-segment external_event_id** | connector spec §Ingest Envelope Construction | **None** (bu-91zdb.6 fixed sender check only) | `roster/health/tools/wellness_ingest.py:377-378` — `split(":", 2)` reads `parts[1]` as resource; new format places email at position 1 | Tests use old 3-segment format — gap not detected | **GAP (critical)** |
+| **RESOLVED: `wellness_ingest.py` resource-segment parse corrected for 4-segment external_event_id** | connector spec §Ingest Envelope Construction | **bu-rmwyi** (PR #1991, merged) | `roster/health/tools/wellness_ingest.py` — changed to `split(":", 3)` reading `parts[2]`; fixtures updated to 4-segment format | Updated tests pass with new 4-segment format | **RESOLVED (PR #1991)** |
 
-**Coverage summary:** 26 requirements fully covered, 2 partial, 1 critical gap.
+**Coverage summary:** 27 requirements fully covered, 2 partial, 0 critical gaps.
 
 ---
 
@@ -118,34 +118,21 @@
 | `tzeuse@gmail.com` accepted when both accounts are active + health-scoped | `test_owner_identity_validation_accepts_secondary_health_scoped_account` | No |
 | `tzeuse@gmail.com` rejected when scope insufficient | `TestOwnerIdentityValidation::test_secondary_account_rejected_when_scope_insufficient` | No |
 | `tzeuse@gmail.com` rejected when `status='revoked'` | `TestOwnerIdentityValidation::test_secondary_account_rejected_when_revoked` | No |
-| **GAP: wellness_ingest routes 4-segment external_event_id to correct predicate** | **Not tested** | **Will fail at runtime** |
+| **RESOLVED: wellness_ingest routes 4-segment external_event_id to correct predicate** | Fixed in PR #1991 (bu-rmwyi); tests updated to 4-segment format | No |
 
 ---
 
 ## Section 4: Deferred Work / Gaps
 
-### Critical Gap: wellness_ingest.py external_event_id Parsing (production-blocking)
+### ~~Critical Gap: wellness_ingest.py external_event_id Parsing~~ RESOLVED
 
-**Bead:** bu-rmwyi (filed by this reconciliation)
-**Priority:** 0 (Critical)
-**Parent epic:** bu-91zdb
+**Bead:** bu-rmwyi
+**Priority:** 0 (Critical) — **CLOSED**
+**Resolution:** PR #1991 (merged 2026-05-26)
 
-**File:** `roster/health/tools/wellness_ingest.py` lines 375–390
+**What was fixed:** `roster/health/tools/wellness_ingest.py` — resource-segment extraction changed from `split(":", 2)` reading `parts[1]` to `split(":", 3)` reading `parts[2]`. Test fixtures updated to use the new 4-segment `google_health:<email>:<resource>:<id>` format. Without this fix all envelopes from the updated connector would have been silently discarded as `skipped_unknown_predicate`.
 
-**Problem:** The resource-segment extraction uses `split(":", 2)` and reads `parts[1]`:
-
-```python
-parts = external_event_id.split(":", 2)
-resource_segment = parts[1] if len(parts) >= 2 else ""
-```
-
-With the **old** 3-segment format (`google_health:sleep_session:<id>`), `parts[1]` correctly gives `"sleep_session"`.
-
-With the **new** 4-segment format emitted by the updated connector (`google_health:uniquosity@gmail.com:sleep_session:<id>`), `parts[1]` gives `"uniquosity@gmail.com"`, which does not match any key in `_RESOURCE_TO_PREDICATES`. Every envelope is silently returned as `{"status": "skipped_unknown_predicate"}`.
-
-**Impact:** After deploy, the connector successfully emits envelopes for both accounts, but the health butler discards all of them. No new sleep, HR, activity, or other facts land in memory. Dashboard counters remain at 0. The connector appears healthy while all wellness data is silently dropped.
-
-**Fix:** Change to `split(":", 3)` and read `parts[2]`. Update test fixtures to use the 4-segment format.
+**Status:** No longer a deploy blocker. This fix is on `main` and will be included in any deploy of this epic.
 
 ---
 
@@ -216,7 +203,7 @@ ORDER BY updated_at DESC;
 SELECT connector_type, endpoint_identity
 FROM switchboard.connector_registry
 WHERE connector_type = 'google_health'
-  AND endpoint_identity LIKE 'google_health:user:%:%:%:%';
+  AND endpoint_identity LIKE 'google_health:user:%:%:%';
 -- Expected: rows with 5 colon-separated segments for each polled resource
 ```
 
@@ -251,5 +238,5 @@ Navigate to `<butlers-url>/health` in the dashboard. Verify:
 **Reconciliation status:** [pending production verification]
 
 Notes:
-- Critical gap bu-rmwyi (wellness_ingest.py 4-segment parse fix) MUST be merged before or alongside the deploy of this epic, or new ingest data will be silently dropped.
+- Critical gap bu-rmwyi (wellness_ingest.py 4-segment parse fix) has been resolved in PR #1991 (merged). No deploy blocker remains.
 - OpenSpec sync (`/opsx:sync`) should be run post-merge to close the change in the OpenSpec index.
