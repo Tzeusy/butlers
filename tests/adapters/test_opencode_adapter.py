@@ -238,6 +238,51 @@ async def test_invoke_success_and_config():
     assert "--model" not in mock_sub.call_args[0]
 
 
+async def test_invoke_retries_completed_startup_migration():
+    """invoke() retries once when OpenCode exits after completing its startup DB migration."""
+    adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
+
+    migration_proc = AsyncMock()
+    migration_proc.pid = 100
+    migration_proc.communicate = AsyncMock(
+        return_value=(
+            b"",
+            b"\n".join(
+                [
+                    b"Performing one time database migration, may take a few minutes...",
+                    b"sqlite-migration:done",
+                    b"Database migration complete.",
+                ]
+            ),
+        )
+    )
+    migration_proc.returncode = 1
+
+    success_proc = AsyncMock()
+    success_proc.pid = 101
+    success_proc.communicate = AsyncMock(
+        return_value=(json.dumps({"type": "text", "text": "Task done."}).encode(), b"")
+    )
+    success_proc.returncode = 0
+
+    with patch(_EXEC, side_effect=[migration_proc, success_proc]) as mock_sub:
+        result_text, tool_calls, usage = await adapter.invoke(
+            prompt="do something",
+            system_prompt="",
+            mcp_servers={},
+            env={},
+        )
+
+    assert mock_sub.call_count == 2
+    assert result_text == "Task done."
+    assert tool_calls == []
+    assert usage is None
+    assert adapter.last_process_info is not None
+    assert adapter.last_process_info["retry_attempted"] is True
+    assert adapter.last_process_info["retry_succeeded"] is True
+    assert adapter.last_process_info["result_source"] == "retry"
+
+
 async def test_invoke_error_paths():
     """invoke() raises RuntimeError on non-zero exit; TimeoutError and kill on timeout."""
     adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
