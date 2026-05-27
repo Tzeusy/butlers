@@ -569,10 +569,11 @@ def test_rotate_google_calls_revoke_url(monkeypatch):
     assert resp.status_code == 200
     assert revoke_calls, "Expected at least one call to the Google revoke URL"
     assert "oauth2.googleapis.com/revoke" in revoke_calls[0]["url"]
-    # The old token value must be in the params.
-    params = revoke_calls[0].get("params", {})
-    assert params.get("token") == "old-token-xyz", (
-        f"Expected old token in revoke params, got: {params}"
+    # The old token value must be in the POST body (data=), NOT in query params.
+    # Sending in query params risks token leakage via proxy/server logs.
+    data = revoke_calls[0].get("data", {})
+    assert data.get("token") == "old-token-xyz", (
+        f"Expected old token in revoke body data, got: {data}"
     )
 
 

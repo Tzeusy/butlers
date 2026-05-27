@@ -1619,7 +1619,10 @@ async def _revoke_oauth_token(provider: str, credential_type: str, old_value: st
 
     try:
         async with httpx.AsyncClient(timeout=_REVOKE_TIMEOUT_S) as client:
-            resp = await client.post(revoke_url, params={"token": old_value})
+            # Send the token in the POST body (application/x-www-form-urlencoded)
+            # rather than as a query parameter.  Query params are routinely logged by
+            # reverse proxies and web servers — sending in the body avoids token leakage.
+            resp = await client.post(revoke_url, data={"token": old_value})
         if resp.status_code == 200:
             logger.debug("_revoke_oauth_token: revoked provider=%s (HTTP 200)", provider)
             return "succeeded"
