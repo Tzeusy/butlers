@@ -325,3 +325,65 @@ async def test_invoke_does_not_retry_migration_banner_with_actionable_error():
             await adapter.invoke(prompt="run", system_prompt="", mcp_servers={}, env={})
 
     assert mock_sub.call_count == 1
+
+
+async def test_invoke_does_not_retry_partial_migration_banner():
+    """Partial migration chatter is not enough to classify a failed exit as benign."""
+    adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
+    stderr = "\n".join(
+        [
+            "Performing one time database migration, may take a few minutes...",
+            "sqlite-migration:done",
+        ]
+    )
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", stderr.encode()))
+    mock_proc.returncode = 1
+    mock_proc.pid = 104
+
+    with patch(_EXEC, return_value=mock_proc) as mock_sub:
+        with pytest.raises(RuntimeError, match="sqlite-migration:done"):
+            await adapter.invoke(prompt="run", system_prompt="", mcp_servers={}, env={})
+
+    assert mock_sub.call_count == 1
+
+
+async def test_invoke_records_retry_failure_when_second_attempt_has_fatal_stderr():
+    """A retry that exits 0 with fatal stderr still records failed retry provenance."""
+    adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
+    migration_stderr = "\n".join(
+        [
+            "Performing one time database migration, may take a few minutes...",
+            "sqlite-migration:done",
+            "Database migration complete.",
+        ]
+    )
+
+    first_proc = AsyncMock()
+    first_proc.communicate = AsyncMock(return_value=(b"", migration_stderr.encode()))
+    first_proc.returncode = 1
+    first_proc.pid = 105
+
+    second_proc = AsyncMock()
+    second_proc.communicate = AsyncMock(return_value=(b"", b"AuthenticationError: missing key"))
+    second_proc.returncode = 0
+    second_proc.pid = 106
+
+    procs = [first_proc, second_proc]
+
+    async def _mock_exec(*_args, **_kwargs):
+        return procs.pop(0)
+
+    with patch(_EXEC, side_effect=_mock_exec) as mock_sub:
+        with pytest.raises(RuntimeError, match="AuthenticationError"):
+            await adapter.invoke(prompt="run", system_prompt="", mcp_servers={}, env={})
+
+    assert mock_sub.call_count == 2
+    info = adapter.last_process_info
+    assert info is not None
+    assert info["exit_code"] == 0
+    assert info["attempt_count"] == 2
+    assert info["retry_attempted"] is True
+    assert info["retry_succeeded"] is False
+    assert info["retry_reason"] == "opencode_sqlite_migration"
+    assert info["result_source"] == "retry"

@@ -35,12 +35,10 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TIMEOUT_SECONDS = 300
 _OPENCODE_SQLITE_MIGRATION_RETRY_REASON = "opencode_sqlite_migration"
 
-_OPENCODE_SQLITE_MIGRATION_LINES = frozenset(
-    {
-        "Performing one time database migration, may take a few minutes...",
-        "sqlite-migration:done",
-        "Database migration complete.",
-    }
+_OPENCODE_SQLITE_MIGRATION_LINES = (
+    "Performing one time database migration, may take a few minutes...",
+    "sqlite-migration:done",
+    "Database migration complete.",
 )
 
 
@@ -70,7 +68,7 @@ def _find_opencode_binary() -> str:
 def _is_opencode_sqlite_migration_only(stderr: str) -> bool:
     """Return true when stderr only contains OpenCode's benign SQLite migration banner."""
     lines = [line.strip() for line in stderr.splitlines() if line.strip()]
-    return bool(lines) and all(line in _OPENCODE_SQLITE_MIGRATION_LINES for line in lines)
+    return tuple(lines) == _OPENCODE_SQLITE_MIGRATION_LINES
 
 
 def _parse_opencode_output(
@@ -997,6 +995,15 @@ class OpenCodeAdapter(RuntimeAdapter):
                             "AuthenticationError",
                         ):
                             if pattern in stderr:
+                                if migration_retry_attempted:
+                                    self._last_process_info.update(
+                                        {
+                                            "retry_attempted": True,
+                                            "retry_reason": _OPENCODE_SQLITE_MIGRATION_RETRY_REASON,
+                                            "retry_succeeded": False,
+                                            "result_source": "retry",
+                                        }
+                                    )
                                 logger.error(
                                     "OpenCode CLI exited 0 but stderr indicates failure: %s",
                                     stderr[:500],
@@ -1044,8 +1051,6 @@ class OpenCodeAdapter(RuntimeAdapter):
                     raise TimeoutError(
                         f"OpenCode CLI timed out after {effective_timeout} seconds"
                     ) from None
-
-            raise RuntimeError("OpenCode CLI retry loop exhausted unexpectedly")
 
 
 # Register the OpenCode adapter
