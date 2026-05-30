@@ -60,7 +60,7 @@ The scanner SHALL filter log entries by severity level, extracting only entries 
 
 #### Scenario: ERROR entries always included
 - **WHEN** a log entry has `level = "error"` or `level = "critical"`
-- **THEN** it is included in the finding set
+- **THEN** it is included in the finding set unless it matches a documented runtime-adapter noise exclusion
 
 #### Scenario: WARNING entries with crash patterns included
 - **WHEN** a log entry has `level = "warning"` and its `event` or `exception` field matches a crash sentinel pattern (e.g., `OOM`, `SIGKILL`, `ConnectionRefused`, `TimeoutError`, `deadlock`)
@@ -69,6 +69,13 @@ The scanner SHALL filter log entries by severity level, extracting only entries 
 #### Scenario: INFO and below excluded
 - **WHEN** a log entry has `level = "info"`, `"debug"`, or `"trace"`
 - **THEN** it is excluded from the finding set
+
+#### Scenario: Runtime-adapter noise exclusions
+- **WHEN** an adapter log line is a known redundant operational signal rather than a defect
+- **THEN** the scanner MAY exclude it before severity filtering only when a same-change spec/test documents the exact logger and event signature
+- **AND** Codex MCP discovery exhaustion and Codex refresh-lock contention are excluded because recovered session state is authoritative
+- **AND** OpenCode timeout logs are not globally excluded at ERROR level because some OpenCode callers are not backed by session records
+- **AND** OpenCode timeout logs emitted at WARNING level are excluded by the normal warning crash-sentinel filter unless their event or exception matches a crash sentinel pattern
 
 ### Requirement: Finding Extraction
 Each qualifying log entry SHALL be normalized into a `QaFinding` with a computed fingerprint for deduplication.
