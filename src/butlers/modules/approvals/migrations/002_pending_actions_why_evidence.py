@@ -30,8 +30,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("""
-        ALTER TABLE pending_actions
-            DROP COLUMN IF EXISTS why,
-            DROP COLUMN IF EXISTS evidence
-    """)
+    """No-op: approvals_001 now owns these columns for fresh installs."""

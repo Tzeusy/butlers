@@ -7,12 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 _MIGRATIONS_DIR = (
-    Path(__file__).resolve().parents[2]
-    / "src"
-    / "butlers"
-    / "modules"
-    / "approvals"
-    / "migrations"
+    Path(__file__).resolve().parents[2] / "src" / "butlers" / "modules" / "approvals" / "migrations"
 )
 
 
@@ -39,9 +34,7 @@ def test_initial_approvals_migration_creates_pending_actions_dossier_columns() -
     sqls = _collect_sqls(mod)
 
     pending_actions_sql = next(
-        sql
-        for sql in sqls
-        if "CREATE TABLE IF NOT EXISTS pending_actions" in sql
+        sql for sql in sqls if "CREATE TABLE IF NOT EXISTS pending_actions" in sql
     )
     normalized = " ".join(pending_actions_sql.lower().split())
 
@@ -59,3 +52,9 @@ def test_approvals_repair_migration_adds_missing_dossier_columns() -> None:
     assert "alter table pending_actions" in normalized
     assert "add column if not exists why text" in normalized
     assert "add column if not exists evidence jsonb not null default '[]'::jsonb" in normalized
+
+
+def test_approvals_repair_migration_downgrade_is_noop() -> None:
+    mod = _load_migration("002_pending_actions_why_evidence.py")
+
+    assert _collect_sqls(mod, "downgrade") == []
