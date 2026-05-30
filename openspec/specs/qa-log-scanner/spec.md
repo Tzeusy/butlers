@@ -56,11 +56,33 @@ The scanner SHALL only process log entries within the configured lookback window
 - **AND** does NOT scan rotated files (e.g., `.log.1`) — if rotation happens mid-patrol, the `session_records` source provides redundant coverage from the DB
 
 ### Requirement: Severity Filtering
-The scanner SHALL filter log entries by severity level, extracting only entries at ERROR level or above, plus WARNING entries that match crash sentinel patterns.
+The scanner SHALL filter log entries by severity level, extracting entries at ERROR level or above, plus WARNING entries that match crash sentinel patterns, except for known duplicate operational logs that are better sourced from structured discovery sources.
 
-#### Scenario: ERROR entries always included
+#### Scenario: ERROR entries included
 - **WHEN** a log entry has `level = "error"` or `level = "critical"`
-- **THEN** it is included in the finding set unless it matches a documented runtime-adapter noise exclusion
+- **AND** the entry is not a known duplicate operational log covered by another discovery source
+- **THEN** it is included in the finding set
+- **EXCEPT** duplicate spawner runtime timeout logs MAY be excluded when the scanner is registered alongside the `session_records` source
+
+#### Scenario: Spawner timeout duplicate suppression
+- **WHEN** the scanner is registered with `session_records` available in the same patrol configuration
+- **AND** a log entry has logger `butlers.core.spawner`
+- **AND** its event starts with `Runtime invocation failed: TimeoutError:`
+- **AND** the event contains timeout wording
+- **THEN** the scanner excludes that entry from the log-scanner finding set
+- **AND** timeout coverage is provided by the `session_records` source with session identifiers and normalized timeout status
+
+#### Scenario: Log-scanner-only timeout coverage
+- **WHEN** the scanner is registered without an available `session_records` source
+- **AND** a spawner runtime timeout log qualifies by severity
+- **THEN** the scanner includes the entry in the finding set
+
+#### Scenario: Adapter-managed session timeout duplicates excluded
+- **WHEN** an OpenCode adapter timeout is logged by `butlers.core.runtimes.opencode`
+- **OR** the matching spawner wrapper log is `Runtime invocation failed: TimeoutError: OpenCode CLI timed out after ...`
+- **THEN** the scanner excludes the log entry from the finding set
+- **AND** the timeout remains discoverable through `session_records`, which carries structured session evidence
+- **AND** deployments that disable `session_records` intentionally opt out of structured session-timeout coverage
 
 #### Scenario: WARNING entries with crash patterns included
 - **WHEN** a log entry has `level = "warning"` and its `event` or `exception` field matches a crash sentinel pattern (e.g., `OOM`, `SIGKILL`, `ConnectionRefused`, `TimeoutError`, `deadlock`)
@@ -69,13 +91,6 @@ The scanner SHALL filter log entries by severity level, extracting only entries 
 #### Scenario: INFO and below excluded
 - **WHEN** a log entry has `level = "info"`, `"debug"`, or `"trace"`
 - **THEN** it is excluded from the finding set
-
-#### Scenario: Runtime-adapter noise exclusions
-- **WHEN** an adapter log line is a known redundant operational signal rather than a defect
-- **THEN** the scanner MAY exclude it before severity filtering only when a same-change spec/test documents the exact logger and event signature
-- **AND** Codex MCP discovery exhaustion and Codex refresh-lock contention are excluded because recovered session state is authoritative
-- **AND** OpenCode timeout logs are not globally excluded at ERROR level because some OpenCode callers are not backed by session records
-- **AND** OpenCode timeout logs emitted at WARNING level are excluded by the normal warning crash-sentinel filter unless their event or exception matches a crash sentinel pattern
 
 ### Requirement: Finding Extraction
 Each qualifying log entry SHALL be normalized into a `QaFinding` with a computed fingerprint for deduplication.
