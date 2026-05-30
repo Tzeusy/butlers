@@ -247,7 +247,7 @@ function ChannelValue({ entry }: { entry: ContactInfoEntry }) {
 // unification) + bu-rxptt (entity-keyed migration) complete.
 // ---------------------------------------------------------------------------
 
-function ExpandedContactInfoRow({
+export function ExpandedContactInfoRow({
   entry,
   contactId,
 }: {
