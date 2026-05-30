@@ -140,7 +140,7 @@ class TestOnStartup:
         source_names = [s.name for s in mod._sources]
         assert "session_records" not in source_names
         assert mod._log_scanner_source is not None
-        assert mod._log_scanner_source._suppress_codex_timeout_logs is False
+        assert mod._log_scanner_source._suppress_session_duplicate_timeouts is False
 
         mod2 = _make_module()
         pool = _make_pool()
@@ -149,7 +149,7 @@ class TestOnStartup:
         for s in ["butler_reports", "log_scanner", "session_records"]:
             assert s in source_names2
         assert mod2._log_scanner_source is not None
-        assert mod2._log_scanner_source._suppress_codex_timeout_logs is True
+        assert mod2._log_scanner_source._suppress_session_duplicate_timeouts is True
 
         mod3 = _make_module()
         await mod3.on_startup(
@@ -158,7 +158,7 @@ class TestOnStartup:
         names3 = [s.name for s in mod3._sources]
         assert "butler_reports" not in names3 and "log_scanner" in names3
         assert mod3._log_scanner_source is not None
-        assert mod3._log_scanner_source._suppress_codex_timeout_logs is False
+        assert mod3._log_scanner_source._suppress_session_duplicate_timeouts is False
 
     async def test_recovers_stale_patrol_rows(self):
         pool = _make_pool()
