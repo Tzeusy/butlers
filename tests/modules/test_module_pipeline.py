@@ -41,7 +41,8 @@ class FakeSpawnerResult:
     tool_calls: list[dict] = field(default_factory=list)
     error: str | None = None
     model: str | None = None
-    usage: dict | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 _MOCK_BUTLERS = [
@@ -216,11 +217,15 @@ class TestMessagePipelineProcess:
                 success=False,
                 error="TimeoutError: OpenCode CLI timed out after 30 seconds",
                 tool_calls=[],
+                model="opencode/test",
+                input_tokens=12,
+                output_tokens=0,
             )
 
         pipeline = MessagePipeline(
             switchboard_pool=MagicMock(), dispatch_fn=mock_dispatch, source_butler="switchboard"
         )
+        pipeline._update_message_inbox_lifecycle = AsyncMock()  # type: ignore[method-assign]
 
         result = await pipeline.process(
             "conversation batch",
@@ -228,12 +233,19 @@ class TestMessagePipelineProcess:
                 "source_channel": "telegram_user_client",
                 "request_context": {"payload_type": "conversation_history"},
             },
-            message_inbox_id=None,
+            message_inbox_id="00000000-0000-0000-0000-000000000001",
         )
 
         assert result.target_butler == "decomposed_empty"
         assert result.classification_error is None
         assert result.route_result["reason"] == "no_signals_extracted"
+        pipeline._update_message_inbox_lifecycle.assert_awaited_once()
+        update_kwargs = pipeline._update_message_inbox_lifecycle.await_args.kwargs
+        assert update_kwargs["decomposition_output"]["model"] == "opencode/test"
+        assert update_kwargs["decomposition_output"]["token_usage"] == {
+            "input_tokens": 12,
+            "output_tokens": 0,
+        }
 
 
 # ---------------------------------------------------------------------------

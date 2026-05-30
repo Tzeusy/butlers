@@ -1775,9 +1775,15 @@ class MessagePipeline:
                     _spawn_model = (
                         getattr(spawn_result, "model", None) if spawn_result is not None else None
                     )
-                    _spawn_usage = (
-                        getattr(spawn_result, "usage", None) if spawn_result is not None else None
-                    )
+                    _spawn_usage = None
+                    if spawn_result is not None:
+                        _input_tokens = getattr(spawn_result, "input_tokens", None)
+                        _output_tokens = getattr(spawn_result, "output_tokens", None)
+                        if _input_tokens is not None or _output_tokens is not None:
+                            _spawn_usage = {
+                                "input_tokens": _input_tokens,
+                                "output_tokens": _output_tokens,
+                            }
                     if _payload_type == "conversation_history" and cc_output.strip():
                         try:
                             _parsed = json.loads(cc_output)
