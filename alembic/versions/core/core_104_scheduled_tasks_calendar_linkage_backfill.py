@@ -33,28 +33,13 @@ def upgrade() -> None:
             END IF;
 
             EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks '
-                'ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT ''UTC''',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks ADD COLUMN IF NOT EXISTS start_at TIMESTAMPTZ',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks ADD COLUMN IF NOT EXISTS end_at TIMESTAMPTZ',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks ADD COLUMN IF NOT EXISTS until_at TIMESTAMPTZ',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks ADD COLUMN IF NOT EXISTS display_title TEXT',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks ADD COLUMN IF NOT EXISTS calendar_event_id TEXT',
+                'ALTER TABLE IF EXISTS %I.scheduled_tasks '
+                'ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT ''UTC'', '
+                'ADD COLUMN IF NOT EXISTS start_at TIMESTAMPTZ, '
+                'ADD COLUMN IF NOT EXISTS end_at TIMESTAMPTZ, '
+                'ADD COLUMN IF NOT EXISTS until_at TIMESTAMPTZ, '
+                'ADD COLUMN IF NOT EXISTS display_title TEXT, '
+                'ADD COLUMN IF NOT EXISTS calendar_event_id TEXT',
                 target_schema
             );
 
@@ -99,55 +84,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        """
-        DO $$
-        DECLARE
-            target_schema text := current_schema();
-        BEGIN
-            IF to_regclass(format('%I.scheduled_tasks', target_schema)) IS NULL THEN
-                RETURN;
-            END IF;
+    """Intentionally preserve baseline scheduled_tasks projection columns.
 
-            EXECUTE format(
-                'DROP INDEX IF EXISTS %I.ix_scheduled_tasks_calendar_event_id',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks '
-                'DROP CONSTRAINT IF EXISTS scheduled_tasks_until_bounds_check',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks '
-                'DROP CONSTRAINT IF EXISTS scheduled_tasks_window_bounds_check',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks DROP COLUMN IF EXISTS calendar_event_id',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks DROP COLUMN IF EXISTS display_title',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks DROP COLUMN IF EXISTS until_at',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks DROP COLUMN IF EXISTS end_at',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks DROP COLUMN IF EXISTS start_at',
-                target_schema
-            );
-            EXECUTE format(
-                'ALTER TABLE %I.scheduled_tasks DROP COLUMN IF EXISTS timezone',
-                target_schema
-            );
-        END
-        $$;
-        """
-    )
+    This revision repairs schemas that missed the current core_001 table
+    shape. Dropping these columns on downgrade would move the database away
+    from the baseline scheduler contract and can break runtime code.
+    """
+    pass

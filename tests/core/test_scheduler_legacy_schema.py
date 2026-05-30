@@ -11,6 +11,7 @@ class _LegacySchedulerPool:
     def __init__(self) -> None:
         self.fetch_queries: list[str] = []
         self.execute_queries: list[str] = []
+        self.column_probe_args: list[tuple[Any, ...]] = []
 
     async def fetchval(self, query: str, *args: Any) -> bool:
         if "information_schema.columns" in query:
@@ -23,6 +24,7 @@ class _LegacySchedulerPool:
     async def fetch(self, query: str, *args: Any) -> list[dict[str, Any]]:
         self.fetch_queries.append(query)
         if "information_schema.columns" in query:
+            self.column_probe_args.append(args)
             requested = set(args[1])
             return [{"column_name": column} for column in requested if column == "task_type"]
         if "FROM scheduled_tasks" in query and "next_run_at <= $1" in query:
@@ -47,7 +49,7 @@ class _LegacySchedulerPool:
 
 
 @pytest.mark.asyncio
-async def test_tick_uses_null_until_at_projection_for_legacy_schema() -> None:
+async def test_tick_uses_null_until_at_projection_for_legacy_schema(caplog) -> None:
     from butlers.core.model_routing import Complexity
     from butlers.core.scheduler import tick
 
@@ -58,8 +60,18 @@ async def test_tick_uses_null_until_at_projection_for_legacy_schema() -> None:
         dispatch_calls.append(kwargs)
         return {"status": "ok"}
 
-    count = await tick(pool, dispatch)
+    with caplog.at_level("WARNING", logger="butlers.core.scheduler"):
+        count = await tick(pool, dispatch)
 
+    column_probe_queries = [
+        query for query in pool.fetch_queries if "information_schema.columns" in query
+    ]
+    assert column_probe_queries
+    assert set(pool.column_probe_args[0][1]) == {
+        "max_token_budget",
+        "task_type",
+        "until_at",
+    }
     due_task_queries = [
         query
         for query in pool.fetch_queries
@@ -73,3 +85,4 @@ async def test_tick_uses_null_until_at_projection_for_legacy_schema() -> None:
     assert dispatch_calls[0]["trigger_source"] == "schedule:legacy-task"
     assert dispatch_calls[0]["complexity"] is Complexity.WORKHORSE
     assert pool.execute_queries
+    assert "scheduled_tasks.until_at column missing" in caplog.text
