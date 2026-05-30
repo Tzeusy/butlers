@@ -2236,6 +2236,22 @@ export interface IngestionEventReplayResponse {
   status: IngestionEventStatus;
 }
 
+/** Per-event result from POST /api/ingestion/events/retry/bulk. */
+export interface BulkRetryEventResult {
+  event_id: string;
+  /** "replay_pending" on success; "not_found" | "conflict" | "error" on failure. */
+  status: "replay_pending" | "not_found" | "conflict" | "error";
+  /** Present on failure statuses. */
+  error?: string;
+}
+
+/** Response from POST /api/ingestion/events/retry/bulk. */
+export interface BulkRetryEventsResponse {
+  results: BulkRetryEventResult[];
+  succeeded: number;
+  failed: number;
+}
+
 /** One butler session spawned in response to an ingestion event. */
 export interface IngestionEventSession {
   id: string; // session UUID
@@ -2286,7 +2302,10 @@ export interface IngestionEventsParams {
   limit?: number;
   /** Opaque cursor from the previous page's next_cursor. Omit for first page. */
   cursor?: string;
+  /** @deprecated Use `channels` instead. Kept for backward compat; ignored when `channels` is set server-side. */
   source_channel?: string;
+  /** Comma-separated channel values (e.g. "email,telegram"). Preferred over source_channel. */
+  channels?: string;
   /** Filter by event status. Omit to return all events. */
   status?: IngestionEventStatus;
   /**
@@ -3828,6 +3847,26 @@ export type GoogleHealthConnectorState =
   | "error"
   | "not_configured";
 
+/** Per-account connector state — one entry per health-scoped Google account. */
+export interface GoogleHealthAccountStatus {
+  /** Authenticated Google email address — stable identifier for the account. */
+  email: string;
+  /** Per-account operational state derived from connector_registry heartbeat. */
+  state: GoogleHealthConnectorState;
+  /** Full Google Health scope URLs granted for this account. */
+  scopes_granted: string[];
+  /** Most recent ingest timestamp for events from this account, or null. */
+  last_ingest_at: string | null;
+  /** Value of public.google_accounts.last_token_refresh_at for this account. */
+  last_token_refresh_at: string | null;
+  /** Most recently observed X-RateLimit-Remaining, or null (distinct from 0). */
+  rate_limit_remaining: number | null;
+  /** Count of sleep-session ingestion events in the last 7 days for this account. */
+  sleep_sessions_7d: number;
+  /** Count of daily-summary ingestion events in the last 7 days for this account. */
+  daily_summaries_7d: number;
+}
+
 /** Response from GET /api/connectors/google-health/status. */
 export interface GoogleHealthStatusResponse {
   connected: boolean;
@@ -3846,6 +3885,17 @@ export interface GoogleHealthStatusResponse {
   sleep_sessions_7d: number;
   /** Count of daily-summary ingestion events in the last 7 days. */
   daily_summaries_7d: number;
+  /**
+   * Per-account status entries — one per health-scoped Google account.
+   * Empty when no primary account exists (state = not_configured).
+   * Single-account installs contain exactly one entry.
+   */
+  accounts: GoogleHealthAccountStatus[];
+  /**
+   * Email of the is_primary=true Google account, or null when none is configured.
+   * Single-account consumers can use this without inspecting the accounts list.
+   */
+  primary_account_email: string | null;
 }
 
 /** Response from DELETE /api/connectors/google-health/disconnect. */
@@ -5332,4 +5382,162 @@ export interface EntityFactsResponse {
 export interface EntityFactsParams {
   offset?: number;
   limit?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Secrets v2 — breaks catalogue (GET /api/secrets/breaks-catalogue)
+// bu-qo3sf
+// ---------------------------------------------------------------------------
+
+/**
+ * One entry from the provider_feature_catalogue table.
+ *
+ * Returned by GET /api/secrets/breaks-catalogue?provider=<p>
+ */
+export interface BreakEntry {
+  /** Butler slug that depends on this credential. */
+  butler: string;
+  /** Human-readable feature name (e.g. "calendar sync"). */
+  feature: string;
+  /** Severity of breakage if the credential is sick. */
+  severity: "high" | "medium" | "low";
+  /** OAuth scopes required by this feature (empty for non-OAuth credentials). */
+  required_scopes: string[];
+}
+
+/** Query parameters for the breaks-catalogue endpoint. */
+export interface BreaksCatalogueParams {
+  /** Provider slug to filter by. When omitted, full catalogue is returned. */
+  provider?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Secrets v2 — inventory endpoint (GET /api/secrets/inventory)
+// bu-nrgk9
+// ---------------------------------------------------------------------------
+
+/**
+ * Most recent probe result for a credential, as returned by the inventory
+ * endpoint. Note: latencyMs is NOT included in the inventory response (only
+ * in per-credential detail). The FE TestResult type includes latencyMs as
+ * optional to allow both shapes to coexist.
+ */
+export interface SecretsProbeResult {
+  ok: boolean;
+  code: number | null;
+  message: string | null;
+  at: string | null;
+}
+
+/**
+ * A CLI runtime token row as returned by GET /api/secrets/inventory.
+ *
+ * Maps to CliRuntime in the backend secrets_v2 router.
+ */
+export interface SecretsCliRaw {
+  key: string;
+  category: string;
+  description: string | null;
+  state: string;
+  fingerprint: string | null;
+  last_verified: string | null;
+  test: SecretsProbeResult | null;
+}
+
+/**
+ * A system credential row as returned by GET /api/secrets/inventory.
+ *
+ * Maps to SystemSecret in the backend secrets_v2 router.
+ */
+export interface SecretsSystemRaw {
+  key: string;
+  category: string;
+  description: string | null;
+  state: string;
+  fingerprint: string | null;
+  last_verified: string | null;
+  butler: string;
+  test: SecretsProbeResult | null;
+}
+
+/**
+ * A user credential row as returned by GET /api/secrets/inventory.
+ *
+ * Maps to UserSecret in the backend secrets_v2 router.
+ * The `type` field follows the convention `<provider>_oauth_refresh` (or
+ * similar); the provider slug is derived by stripping the suffix.
+ */
+export interface SecretsUserRaw {
+  id: string;
+  entity_id: string;
+  type: string;
+  label: string | null;
+  state: string;
+  fingerprint: string | null;
+  last_verified: string | null;
+  test: SecretsProbeResult | null;
+}
+
+/**
+ * Identity metadata for one entity referenced by the inventory.
+ *
+ * Returned in the top-level ``identities`` array alongside credential
+ * families so the identity switcher can show real names and roles without
+ * N round-trips per entity_id.
+ *
+ * Maps to IdentityInfo in the backend secrets_v2 router.
+ */
+export interface SecretsIdentityInfo {
+  entity_id: string;
+  /** Human-readable name from public.entities.canonical_name. */
+  name: string;
+  /** 'owner' when the entity has 'owner' in its roles; 'member' otherwise. */
+  role: "owner" | "member";
+}
+
+/**
+ * Provider display metadata as returned by the backend catalog.
+ *
+ * Maps to ProviderMetadata in src/butlers/secrets_provider_catalog.py and
+ * ProviderInfo in frontend/src/components/secrets/passport/types.ts.
+ */
+export interface SecretsProviderInfo {
+  id: string;
+  label: string;
+  glyph: string;
+  kind: "oauth" | "token" | "apikey" | "webhook";
+  authority: string;
+  brief: string;
+  cadence: string;
+}
+
+/**
+ * Payload shape of ApiResponse<InventoryData> from GET /api/secrets/inventory.
+ */
+export interface SecretsInventoryData {
+  cli: SecretsCliRaw[];
+  system: SecretsSystemRaw[];
+  user: SecretsUserRaw[];
+  /** Identity metadata for each unique entity referenced in the user array. */
+  identities: SecretsIdentityInfo[];
+  /**
+   * Provider display metadata catalog keyed by provider slug.
+   * Present since bu-ej5dr; may be absent in older backend responses (use FE fallback).
+   */
+  providers?: Record<string, SecretsProviderInfo>;
+}
+
+/** Meta fields returned alongside the inventory payload. */
+export interface SecretsInventoryMeta {
+  needs_hand_count: number;
+  severity?: Record<string, number>;
+}
+
+/** Query parameters for GET /api/secrets/inventory. */
+export interface SecretsInventoryParams {
+  /**
+   * Entity UUID to filter user credentials by.
+   * When omitted, the owner identity is used (projection-lens semantics).
+   */
+  identity?: string;
 }
