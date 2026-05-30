@@ -219,7 +219,7 @@ def _parse_log_line(line: str, butler_name: str) -> LogEntry | None:
     )
 
 
-def _should_include_entry(entry: LogEntry) -> bool:
+def _should_include_entry(entry: LogEntry, *, suppress_codex_timeout_logs: bool = True) -> bool:
     """Return True if this log entry qualifies for finding extraction."""
     # Codex adapter noise that should never reach the QA finding set:
     #   * "MCP discovery failed after ..." — better sourced from session_records.
@@ -235,7 +235,7 @@ def _should_include_entry(entry: LogEntry) -> bool:
     #     sentinel.
     if entry.logger == "butlers.core.runtimes.codex" and (
         "MCP discovery failed after" in entry.event
-        or "Codex CLI timed out after" in entry.event
+        or (suppress_codex_timeout_logs and "Codex CLI timed out after" in entry.event)
         or "codex_refresh_lock: lock held" in entry.event
         or "codex_refresh_lock: waiting" in entry.event
     ):
@@ -406,6 +406,7 @@ class LogScannerSource:
         max_findings_per_scan: int = DEFAULT_MAX_FINDINGS_PER_SCAN,
         max_total_lines: int = DEFAULT_MAX_TOTAL_LINES,
         max_scan_seconds: float = DEFAULT_MAX_SCAN_SECONDS,
+        suppress_codex_timeout_logs: bool = True,
     ) -> None:
         self._log_root = log_root
         self._repo_root = (repo_root or Path.cwd()).resolve()
@@ -413,6 +414,7 @@ class LogScannerSource:
         self._max_findings = max_findings_per_scan
         self._max_total_lines = max_total_lines
         self._max_scan_seconds = max_scan_seconds
+        self._suppress_codex_timeout_logs = suppress_codex_timeout_logs
 
         # Truncation telemetry — updated each time a cap is hit during discover()
         self.last_truncated: datetime | None = None
@@ -504,7 +506,10 @@ class LogScannerSource:
 
                     # Budget only covers candidate error/warning entries;
                     # benign entries are skipped without consuming quota.
-                    if not _should_include_entry(entry):
+                    if not _should_include_entry(
+                        entry,
+                        suppress_codex_timeout_logs=self._suppress_codex_timeout_logs,
+                    ):
                         continue
 
                     entries_processed += 1

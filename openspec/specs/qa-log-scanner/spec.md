@@ -58,9 +58,20 @@ The scanner SHALL only process log entries within the configured lookback window
 ### Requirement: Severity Filtering
 The scanner SHALL filter log entries by severity level, extracting only entries at ERROR level or above, plus WARNING entries that match crash sentinel patterns.
 
-#### Scenario: ERROR entries always included
+#### Scenario: ERROR entries included unless delegated to a structured source
 - **WHEN** a log entry has `level = "error"` or `level = "critical"`
 - **THEN** it is included in the finding set
+- **EXCEPT** known adapter process-control diagnostics MAY be excluded when a
+  structured discovery source is registered for the same failure class
+
+#### Scenario: Codex timeout diagnostics delegated to session records
+- **WHEN** the log scanner sees `butlers.core.runtimes.codex` emit `Codex CLI timed out after ...`
+- **AND** the QA staffer has registered the `session_records` source
+- **THEN** the log scanner excludes the raw adapter diagnostic
+- **AND** timeout investigations are sourced from `session_records`, where the
+  finding includes session identifiers and timeout status
+- **WHEN** `session_records` is unavailable or disabled
+- **THEN** the log scanner includes the timeout entry to preserve degraded-mode coverage
 
 #### Scenario: WARNING entries with crash patterns included
 - **WHEN** a log entry has `level = "warning"` and its `event` or `exception` field matches a crash sentinel pattern (e.g., `OOM`, `SIGKILL`, `ConnectionRefused`, `TimeoutError`, `deadlock`)
