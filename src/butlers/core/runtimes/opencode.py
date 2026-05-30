@@ -914,7 +914,9 @@ class OpenCodeAdapter(RuntimeAdapter):
 
             proc: asyncio.subprocess.Process | None = None
             retry_attempted = False
-            for attempt in range(2):
+            attempt_infos: list[dict[str, Any]] = []
+            for _ in range(2):
+                attempt_index = len(attempt_infos)
                 try:
                     proc = await asyncio.create_subprocess_exec(
                         *cmd,
@@ -943,13 +945,14 @@ class OpenCodeAdapter(RuntimeAdapter):
                         "command": cmd_for_log,
                         "stderr": stderr,
                         "runtime_type": "opencode",
+                        "attempt_index": attempt_index,
                     }
+                    attempt_infos.append(self._last_process_info)
 
                     if returncode != 0:
                         error_detail = stderr.strip() or stdout.strip() or f"exit code {returncode}"
-                        if (
-                            attempt == 0
-                            and _looks_like_completed_startup_migration(stdout, stderr)
+                        if attempt_index == 0 and _looks_like_completed_startup_migration(
+                            stdout, stderr
                         ):
                             logger.info(
                                 "OpenCode CLI completed first-run database migration; "
@@ -1001,10 +1004,9 @@ class OpenCodeAdapter(RuntimeAdapter):
                                 # any output — this is a pre-tool-call systemic failure.
                                 self._last_process_info["is_pre_tool_call"] = True
                                 if retry_attempted:
+                                    self._last_process_info["retry_attempted"] = True
                                     self._last_process_info["retry_succeeded"] = False
-                                raise RuntimeError(
-                                    f"OpenCode CLI error (exit 0): {error_detail}"
-                                )
+                                raise RuntimeError(f"OpenCode CLI error (exit 0): {error_detail}")
 
                     result_text, tool_calls, usage = _parse_opencode_output(
                         stdout, stderr, returncode
@@ -1019,6 +1021,7 @@ class OpenCodeAdapter(RuntimeAdapter):
                         "command": cmd_for_log,
                         "stderr": "(timeout — process killed)",
                         "runtime_type": "opencode",
+                        "attempt_index": attempt_index,
                         # Timeout fired before the adapter could confirm any tool calls —
                         # the failover classifier treats this as pre-tool-call eligible.
                         # The spawner will layer in daemon-side tool-call capture.
