@@ -432,12 +432,12 @@ def test_core_migration_backfills_scheduled_tasks_calendar_linkage_columns(postg
         engine.dispose()
 
 
-def test_core_104_downgrade_preserves_baseline_scheduler_projection_columns(monkeypatch):
-    """The core_104 repair migration must not remove fields that core_001 now owns."""
+def test_core_111_downgrade_preserves_baseline_scheduler_projection_columns(monkeypatch):
+    """The core_111 repair migration must not remove fields that core_001 now owns."""
     migration_path = Path(
-        "alembic/versions/core/core_104_scheduled_tasks_calendar_linkage_backfill.py"
+        "alembic/versions/core/core_111_scheduled_tasks_calendar_linkage_backfill.py"
     )
-    spec = importlib.util.spec_from_file_location("core_104_calendar_linkage", migration_path)
+    spec = importlib.util.spec_from_file_location("core_111_calendar_linkage", migration_path)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
