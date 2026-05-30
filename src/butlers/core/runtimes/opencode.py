@@ -980,11 +980,6 @@ class OpenCodeAdapter(RuntimeAdapter):
                             f"OpenCode CLI exited with code {returncode}: {error_detail}"
                         )
 
-                    if retry_attempted:
-                        self._last_process_info["retry_attempted"] = True
-                        self._last_process_info["retry_succeeded"] = True
-                        self._last_process_info["result_source"] = "retry"
-
                     # OpenCode CLI exits 0 even on fatal errors like
                     # ProviderModelNotFoundError. Detect these via stderr.
                     if stderr and not stdout.strip():
@@ -1024,7 +1019,14 @@ class OpenCodeAdapter(RuntimeAdapter):
                         logger.error(error_detail)
                         self._last_process_info["error_detail"] = error_detail
                         self._last_process_info["is_pre_tool_call"] = True
+                        if retry_attempted:
+                            self._last_process_info["retry_attempted"] = True
+                            self._last_process_info["retry_succeeded"] = False
                         raise RuntimeError(error_detail)
+                    if retry_attempted:
+                        self._last_process_info["retry_attempted"] = True
+                        self._last_process_info["retry_succeeded"] = True
+                        self._last_process_info["result_source"] = "retry"
                     return result_text, tool_calls, usage
 
                 except TimeoutError:

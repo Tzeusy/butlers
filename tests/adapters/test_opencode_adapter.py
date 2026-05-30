@@ -326,6 +326,47 @@ async def test_invoke_marks_retry_failed_when_second_attempt_exits_zero_with_err
     assert adapter.last_process_info["attempt_index"] == 1
 
 
+async def test_invoke_marks_retry_failed_when_second_attempt_exits_zero_empty():
+    """invoke() does not report retry success until retry output validates."""
+    adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
+
+    migration_proc = AsyncMock()
+    migration_proc.pid = 100
+    migration_proc.communicate = AsyncMock(
+        return_value=(
+            b"",
+            b"\n".join(
+                [
+                    b"Performing one time database migration, may take a few minutes...",
+                    b"sqlite-migration:done",
+                    b"Database migration complete.",
+                ]
+            ),
+        )
+    )
+    migration_proc.returncode = 1
+
+    empty_proc = AsyncMock()
+    empty_proc.pid = 101
+    empty_proc.communicate = AsyncMock(return_value=(b"", b""))
+    empty_proc.returncode = 0
+
+    with patch(_EXEC, side_effect=[migration_proc, empty_proc]):
+        with pytest.raises(RuntimeError, match="OpenCode CLI returned no response"):
+            await adapter.invoke(
+                prompt="do something",
+                system_prompt="",
+                mcp_servers={},
+                env={},
+            )
+
+    assert adapter.last_process_info is not None
+    assert adapter.last_process_info["retry_attempted"] is True
+    assert adapter.last_process_info["retry_succeeded"] is False
+    assert adapter.last_process_info["attempt_index"] == 1
+    assert adapter.last_process_info.get("result_source") != "retry"
+
+
 async def test_invoke_error_paths():
     """invoke() raises RuntimeError on non-zero exit; TimeoutError and kill on timeout."""
     adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
