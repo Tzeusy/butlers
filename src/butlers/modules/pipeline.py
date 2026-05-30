@@ -22,7 +22,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from opentelemetry import trace
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from butlers.core.model_routing import Complexity
 from butlers.core.utils import generate_uuid7_string
@@ -2156,6 +2156,8 @@ class PipelineConfig(BaseModel):
     All configuration is optional; the pipeline is wired at daemon startup
     via :meth:`_wire_pipelines`.
     """
+
+    model_config = ConfigDict(extra="ignore")
 
     enable_ingress_dedupe: bool = True
     """Whether to deduplicate incoming messages by idempotency key."""
