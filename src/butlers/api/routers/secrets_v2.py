@@ -141,14 +141,19 @@ from typing import Any
 from urllib.parse import urlencode
 from uuid import UUID
 
-from asyncpg.exceptions import UndefinedTableError
+import httpx
+from asyncpg.exceptions import PostgresError, UndefinedTableError
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from butlers._sql_utils import escape_like_pattern
 from butlers.api.db import DatabaseManager
 from butlers.api.models import ApiMeta, ApiResponse
 from butlers.api.routers import audit as audit_router
 from butlers.core.credential_keys import normalize_credential_key
+from butlers.credential_store import CredentialStore
+from butlers.google_credentials import KEY_CLIENT_ID, KEY_CLIENT_SECRET
+from butlers.secrets_provider_catalog import PROVIDER_CATALOG, ProviderMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -221,12 +226,37 @@ class CliRuntime(BaseModel):
     test: TestResult | None = None
 
 
+class IdentityInfo(BaseModel):
+    """Identity metadata for one entity referenced by the inventory.
+
+    Returned as a top-level ``identities`` array alongside the credential
+    families so the frontend switcher can show real names and roles without
+    N round-trips per entity_id.
+
+    ``name`` comes from ``public.entities.canonical_name``.
+    ``role`` is 'owner' when the entity has 'owner' in its roles array,
+    otherwise 'member'.
+    """
+
+    entity_id: str
+    name: str
+    role: str  # 'owner' | 'member'
+
+
 class InventoryData(BaseModel):
     """Payload returned by GET /api/secrets/inventory."""
 
     cli: list[CliRuntime] = Field(default_factory=list)
     system: list[SystemSecret] = Field(default_factory=list)
     user: list[UserSecret] = Field(default_factory=list)
+    identities: list[IdentityInfo] = Field(default_factory=list)
+    providers: dict[str, ProviderMetadata] = Field(default_factory=dict)
+    """Provider display metadata catalog keyed by provider slug.
+
+    Included so the frontend never needs a separate round-trip and the
+    static FE copy stays in sync with this authoritative backend source.
+    Shape mirrors ProviderInfo in frontend/src/components/secrets/passport/types.ts.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +454,19 @@ def _format_probe_time(recorded_at: datetime | None) -> str | None:
     return recorded_at.strftime("%Y-%m-%d ") + time_str
 
 
+def _row_to_test_result(row: Any) -> TestResult:
+    """Convert an asyncpg probe-log row to a TestResult.
+
+    Expects row to have columns: ok, code, message, recorded_at.
+    """
+    return TestResult(
+        ok=row["ok"],
+        code=row["code"],
+        message=row["message"],
+        at=_format_probe_time(row["recorded_at"]),
+    )
+
+
 async def _fetch_probe_log(
     pool: Any,
     credential_scope: str,
@@ -433,6 +476,9 @@ async def _fetch_probe_log(
 
     Returns a TestResult or None if no probe has been recorded.
     Silently returns None when the table does not exist (migration not yet run).
+
+    Use _fetch_probe_logs_bulk for multi-credential inventory paths to avoid
+    N+1 query patterns.
     """
     try:
         row = await pool.fetchrow(
@@ -446,10 +492,9 @@ async def _fetch_probe_log(
             credential_scope,
             credential_key,
         )
-    except Exception as exc:  # noqa: BLE001
-        msg = str(exc).lower()
-        if "does not exist" in msg or "undefined" in msg.lower():
-            return None
+    except UndefinedTableError:
+        return None
+    except PostgresError as exc:
         logger.debug(
             "probe_log lookup failed for scope=%s key=%s: %s",
             credential_scope,
@@ -461,12 +506,53 @@ async def _fetch_probe_log(
     if row is None:
         return None
 
-    return TestResult(
-        ok=row["ok"],
-        code=row["code"],
-        message=row["message"],
-        at=_format_probe_time(row["recorded_at"]),
-    )
+    return _row_to_test_result(row)
+
+
+async def _fetch_probe_logs_bulk(
+    pool: Any,
+    scope: str,
+    keys: list[str],
+) -> dict[str, TestResult]:
+    """Fetch the most recent probe row for each key in a single query.
+
+    Issues ONE query using DISTINCT ON (credential_key) + ANY($2) instead of
+    one fetchrow per credential key.  Eliminates the N+1 pattern in the three
+    inventory helpers (_fetch_system_secrets, _fetch_user_secrets,
+    _fetch_cli_secrets).
+
+    Returns a dict mapping credential_key → TestResult for keys that have a
+    probe row.  Keys with no probe row are absent from the dict (callers treat
+    a missing key as None / no probe recorded).
+
+    Silently returns an empty dict when the table does not exist (migration not
+    yet run) or when keys is empty.
+    """
+    if not keys:
+        return {}
+    try:
+        rows = await pool.fetch(
+            """
+            SELECT DISTINCT ON (credential_key)
+                   credential_key, ok, code, message, recorded_at
+            FROM public.secret_probe_log
+            WHERE credential_scope = $1 AND credential_key = ANY($2)
+            ORDER BY credential_key, recorded_at DESC
+            """,
+            scope,
+            keys,
+        )
+    except UndefinedTableError:
+        return {}
+    except PostgresError as exc:
+        logger.debug(
+            "probe_log bulk lookup failed for scope=%s keys=%s: %s",
+            scope,
+            keys,
+            exc,
+        )
+        return {}
+    return {row["credential_key"]: _row_to_test_result(row) for row in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +596,10 @@ async def _fetch_system_secrets(
         logger.warning("Failed to fetch system secrets for butler %s: %s", butler_name, exc)
         return []
 
+    # Bulk-fetch probe logs for all keys in a single query (eliminates N+1).
+    credential_keys = [row["secret_key"] for row in rows]
+    probe_map = await _fetch_probe_logs_bulk(pool, "system", credential_keys)
+
     results: list[SystemSecret] = []
     for row in rows:
         secret_value: str | None = row["secret_value"]
@@ -523,9 +613,6 @@ async def _fetch_system_secrets(
         )
         fp = _fingerprint(secret_value)
 
-        # Fetch probe log for this credential
-        test = await _fetch_probe_log(pool, "system", row["secret_key"])
-
         results.append(
             SystemSecret(
                 key=row["secret_key"],
@@ -538,7 +625,7 @@ async def _fetch_system_secrets(
                 last_test_code=row["last_test_code"],
                 last_test_message=row["last_test_message"],
                 butler=butler_name,
-                test=test,
+                test=probe_map.get(row["secret_key"]),
             )
         )
 
@@ -607,6 +694,11 @@ async def _fetch_user_secrets(
         logger.warning("Failed to fetch user secrets: %s", exc)
         return []
 
+    # Bulk-fetch probe logs for all credential types in a single query (eliminates N+1).
+    # For user credentials the probe key is the entity_info.type value.
+    credential_keys = [row["type"] for row in rows]
+    probe_map = await _fetch_probe_logs_bulk(pool, "user", credential_keys)
+
     results: list[UserSecret] = []
     for row in rows:
         value: str | None = row["value"]
@@ -617,9 +709,6 @@ async def _fetch_user_secrets(
             last_test_ok=last_test_ok,
         )
         fp = _fingerprint(value)
-
-        # Fetch probe log for this credential
-        test = await _fetch_probe_log(pool, "user", row["type"])
 
         results.append(
             UserSecret(
@@ -633,7 +722,7 @@ async def _fetch_user_secrets(
                 last_test_ok=last_test_ok,
                 last_test_code=row["last_test_code"],
                 last_test_message=row["last_test_message"],
-                test=test,
+                test=probe_map.get(row["type"]),
             )
         )
 
@@ -676,6 +765,10 @@ async def _fetch_cli_secrets(
         logger.warning("Failed to fetch CLI secrets: %s", exc)
         return []
 
+    # Bulk-fetch probe logs for all CLI keys in a single query (eliminates N+1).
+    credential_keys = [row["secret_key"] for row in rows]
+    probe_map = await _fetch_probe_logs_bulk(pool, "cli", credential_keys)
+
     results: list[CliRuntime] = []
     for row in rows:
         value: str | None = row["secret_value"]
@@ -689,8 +782,6 @@ async def _fetch_cli_secrets(
         )
         fp = _fingerprint(value)
 
-        test = await _fetch_probe_log(pool, "cli", row["secret_key"])
-
         results.append(
             CliRuntime(
                 key=row["secret_key"],
@@ -702,11 +793,74 @@ async def _fetch_cli_secrets(
                 last_test_ok=last_test_ok,
                 last_test_code=row["last_test_code"],
                 last_test_message=row["last_test_message"],
-                test=test,
+                test=probe_map.get(row["secret_key"]),
             )
         )
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Identity enrichment helper
+# ---------------------------------------------------------------------------
+
+
+async def _fetch_identity_info(
+    pool: Any,
+    entity_ids: list[str],
+) -> list[IdentityInfo]:
+    """Fetch identity metadata for a list of entity UUIDs.
+
+    Joins ``public.entities`` to retrieve ``canonical_name`` and ``roles``
+    for each entity referenced in the user credentials array.
+
+    Returns an ``IdentityInfo`` per unique entity_id.  Entities with
+    ``'owner' = ANY(roles)`` get role='owner'; all others get role='member'.
+    Silently returns an empty list when ``public.entities`` does not exist
+    (migration not yet run).
+
+    Order: owner first, then members in the order they appear in entity_ids.
+    """
+    if not entity_ids:
+        return []
+
+    try:
+        rows = await pool.fetch(
+            """
+            SELECT id, canonical_name, roles
+            FROM public.entities
+            WHERE id = ANY($1::uuid[])
+            """,
+            entity_ids,
+        )
+    except UndefinedTableError as exc:
+        logger.debug("public.entities not available for identity enrichment: %s", exc)
+        return []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Transient error fetching identity info: %s", exc)
+        return []
+
+    # Build a lookup keyed on entity_id string for ordered output.
+    lookup: dict[str, IdentityInfo] = {}
+    for row in rows:
+        eid = str(row["id"])
+        roles: list[str] = row["roles"] or []
+        role = "owner" if "owner" in roles else "member"
+        lookup[eid] = IdentityInfo(
+            entity_id=eid,
+            name=row["canonical_name"] or eid,
+            role=role,
+        )
+
+    # Return in entity_ids order (preserves API ordering: owner first when
+    # the endpoint uses the default projection-lens path).
+    result: list[IdentityInfo] = []
+    seen: set[str] = set()
+    for eid in entity_ids:
+        if eid in lookup and eid not in seen:
+            result.append(lookup[eid])
+            seen.add(eid)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -792,6 +946,18 @@ async def get_inventory(
     if shared_pool is not None:
         cli_secrets = await _fetch_cli_secrets(shared_pool)
 
+    # --- Enrich identities: join public.entities for name + role ---
+    # Collect unique entity_ids in encounter order (owner first in default path).
+    identities: list[IdentityInfo] = []
+    if shared_pool is not None and user_secrets:
+        seen_eids: list[str] = []
+        seen_set: set[str] = set()
+        for us in user_secrets:
+            if us.entity_id not in seen_set:
+                seen_eids.append(us.entity_id)
+                seen_set.add(us.entity_id)
+        identities = await _fetch_identity_info(shared_pool, seen_eids)
+
     # --- Build response ---
     all_items: list[Any] = [*cli_secrets, *system_secrets, *user_secrets]
 
@@ -805,6 +971,8 @@ async def get_inventory(
         cli=cli_secrets,
         system=system_secrets,
         user=user_secrets,
+        identities=identities,
+        providers=PROVIDER_CATALOG,
     )
 
     # ApiMeta has extra="allow" so extra kwargs are serialised.
@@ -857,7 +1025,7 @@ async def _fetch_single_user_secret(
                 LIMIT 1
                 """,
                 identity,
-                f"{provider}_%",
+                f"{escape_like_pattern(provider)}_%",
             )
         else:
             row = await pool.fetchrow(
@@ -881,7 +1049,7 @@ async def _fetch_single_user_secret(
                 ORDER BY ei.created_at DESC
                 LIMIT 1
                 """,
-                f"{provider}_%",
+                f"{escape_like_pattern(provider)}_%",
             )
     except Exception as exc:  # noqa: BLE001
         msg = str(exc).lower()
@@ -1469,6 +1637,304 @@ class ReauthorizeResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# OAuth provider token revocation
+# ---------------------------------------------------------------------------
+
+# Credential types that carry an OAuth token eligible for provider-side revocation.
+# Keys are provider slugs; values are the URL to POST to (or None = not implemented).
+# Only providers with a working implementation are listed.  Unlisted providers are
+# treated as "skipped" (log a warning, rotation still succeeds).
+_OAUTH_REVOKE_PROVIDERS: dict[str, str | None] = {
+    "google": "https://oauth2.googleapis.com/revoke",
+    # GitHub revoke requires app credentials (client_id, client_secret) which are
+    # not stored server-side.  Tracked as a follow-up (file a beads issue).
+    # Spotify and others: add as follow-up issues.
+}
+
+# Credential type suffixes that indicate an OAuth token (access or refresh).
+# Non-OAuth types (plain API keys, etc.) skip revocation entirely.
+_OAUTH_TYPE_SUFFIXES = ("_oauth_refresh", "_oauth_access")
+
+_REVOKE_TIMEOUT_S = 5.0
+
+
+async def _revoke_oauth_token(provider: str, credential_type: str, old_value: str) -> str:
+    """Attempt to revoke an OAuth token at the provider after a successful local rotation.
+
+    Returns a revoke_status string: ``"succeeded"``, ``"failed:<reason>"``, or ``"skipped"``.
+
+    Rules:
+    - If the credential type is not an OAuth type, return ``"skipped"`` immediately.
+    - If the provider has no revoke handler, log a warning and return ``"skipped"``.
+    - On HTTP 200, return ``"succeeded"``.
+    - On any error (HTTP non-200, timeout, network failure), log at WARN level and return
+      ``"failed:<reason>"``.  Caller must NOT propagate this as a rotation failure.
+    """
+    # Only OAuth credential types trigger revoke.
+    if not any(credential_type.endswith(suffix) for suffix in _OAUTH_TYPE_SUFFIXES):
+        return "skipped"
+
+    revoke_url = _OAUTH_REVOKE_PROVIDERS.get(provider)
+    if revoke_url is None:
+        if provider in _OAUTH_REVOKE_PROVIDERS:
+            # Explicitly listed but not implemented (value is None).
+            logger.warning(
+                "_revoke_oauth_token: no revoke handler for provider=%s (follow-up required)",
+                provider,
+            )
+        else:
+            logger.warning(
+                "_revoke_oauth_token: unknown provider=%s; skipping revoke",
+                provider,
+            )
+        return "skipped"
+
+    try:
+        async with httpx.AsyncClient(timeout=_REVOKE_TIMEOUT_S) as client:
+            # Send the token in the POST body (application/x-www-form-urlencoded)
+            # rather than as a query parameter.  Query params are routinely logged by
+            # reverse proxies and web servers — sending in the body avoids token leakage.
+            resp = await client.post(revoke_url, data={"token": old_value})
+        if resp.status_code == 200:
+            logger.debug("_revoke_oauth_token: revoked provider=%s (HTTP 200)", provider)
+            return "succeeded"
+        reason = f"HTTP {resp.status_code}"
+        logger.warning("_revoke_oauth_token: provider=%s revoke failed: %s", provider, reason)
+        return f"failed:{reason}"
+    except Exception as exc:  # noqa: BLE001
+        reason = type(exc).__name__
+        logger.warning(
+            "_revoke_oauth_token: provider=%s revoke error: %s", provider, exc, exc_info=True
+        )
+        return f"failed:{reason}"
+
+
+# ---------------------------------------------------------------------------
+# OAuth / PAT credential verification (live provider call)
+# ---------------------------------------------------------------------------
+
+_VERIFY_TIMEOUT_S = 10.0
+
+# The Google token endpoint for exchanging a refresh token for an access token.
+_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+# GitHub user endpoint — works for both classic PATs and fine-grained PATs.
+_GITHUB_USER_URL = "https://api.github.com/user"
+
+
+class _ProviderVerifyConfig:
+    """Per-provider live-verify configuration.
+
+    Attributes
+    ----------
+    verify_url:
+        The URL to call to confirm the credential is valid.
+    needs_token_exchange:
+        True if the stored credential is a refresh token that must be exchanged
+        for a short-lived access token before calling *verify_url* (Google
+        flow).  False when the stored value itself is the bearer credential
+        (GitHub PATs).
+    auth_scheme:
+        HTTP Authorization scheme to use in the verify call.  ``"Bearer"`` for
+        standard OAuth; ``"token"`` for GitHub classic PATs.
+    accepted_type_suffixes:
+        Tuple of ``entity_info.type`` suffixes that this provider config
+        matches.  A credential type is accepted when it ends with one of
+        these suffixes.  E.g. Google accepts ``_oauth_refresh``; GitHub
+        accepts ``_oauth_refresh`` (future OAuth flow) and ``_pat`` (PATs).
+    """
+
+    def __init__(
+        self,
+        *,
+        verify_url: str,
+        needs_token_exchange: bool,
+        auth_scheme: str,
+        accepted_type_suffixes: tuple[str, ...],
+    ) -> None:
+        self.verify_url = verify_url
+        self.needs_token_exchange = needs_token_exchange
+        self.auth_scheme = auth_scheme
+        self.accepted_type_suffixes = accepted_type_suffixes
+
+    def accepts_type(self, credential_type: str) -> bool:
+        """Return True when *credential_type* is handled by this config."""
+        return any(credential_type.endswith(suffix) for suffix in self.accepted_type_suffixes)
+
+
+# Mapping of provider slug → verify config.
+# Only providers with a working live-verify implementation are listed.
+# Unlisted providers fall back to local-state check (skipped).
+_OAUTH_VERIFY_PROVIDERS: dict[str, _ProviderVerifyConfig] = {
+    "google": _ProviderVerifyConfig(
+        verify_url="https://www.googleapis.com/oauth2/v1/userinfo",
+        needs_token_exchange=True,
+        auth_scheme="Bearer",
+        accepted_type_suffixes=("_oauth_refresh",),
+    ),
+    "github": _ProviderVerifyConfig(
+        verify_url=_GITHUB_USER_URL,
+        needs_token_exchange=False,
+        auth_scheme="token",
+        # Classic PATs use _pat; fine-grained PATs share the same endpoint.
+        # _oauth_refresh is included for future GitHub OAuth app support.
+        accepted_type_suffixes=("_pat", "_oauth_refresh"),
+    ),
+}
+
+
+async def _verify_oauth_credential(
+    provider: str,
+    credential_type: str,
+    refresh_token: str,
+    shared_pool: Any,
+) -> tuple[str, int | None, str | None]:
+    """Make a live call to the provider's verify endpoint.
+
+    Returns ``(probe_status, http_code, message)`` where ``probe_status`` is one of:
+    - ``"live_ok"`` — provider confirmed the credential is valid.
+    - ``"live_failed:<code>"`` — provider rejected the credential (HTTP 401/403 etc.).
+    - ``"skipped_local_check"`` — live verify was not attempted (unsupported
+      provider, unsupported credential type, missing app credentials, or network error).
+
+    Rules:
+    - If the provider has no verify handler, return ``"skipped_local_check"``.
+    - If the credential type is not accepted by the provider config, return
+      ``"skipped_local_check"``.
+    - For providers that need token exchange (Google):
+      - Loads app credentials (client_id, client_secret) from butler_secrets via
+        CredentialStore.  If those are missing, returns ``"skipped_local_check"``.
+      - Exchanges the refresh token for an access token.
+        If the exchange fails (non-200), returns ``"live_failed:<code>"``.
+      - Calls the verify URL with the minted access token.
+    - For PAT providers (GitHub):
+      - Calls the verify URL directly with the stored value as the auth header.
+      - No token exchange, no app credentials required.
+    - Network errors → ``"skipped_local_check"`` (cannot distinguish bad cred from bad network).
+    - Token-exchange non-200 → ``"live_failed:<code>"`` (this IS a credential failure).
+    """
+    provider_config = _OAUTH_VERIFY_PROVIDERS.get(provider)
+    if provider_config is None:
+        logger.debug(
+            "_verify_oauth_credential: no verify handler for provider=%s; skipping",
+            provider,
+        )
+        return "skipped_local_check", None, None
+
+    if not provider_config.accepts_type(credential_type):
+        logger.debug(
+            "_verify_oauth_credential: credential type %s not accepted for provider=%s; skipping",
+            credential_type,
+            provider,
+        )
+        return "skipped_local_check", None, None
+
+    # ------------------------------------------------------------------
+    # Branch A: providers that require a refresh → access token exchange
+    # ------------------------------------------------------------------
+    if provider_config.needs_token_exchange:
+        # Load app credentials (client_id, client_secret) from butler_secrets.
+        cred_store = CredentialStore(shared_pool)
+        try:
+            client_id = await cred_store.load(KEY_CLIENT_ID)
+            client_secret = await cred_store.load(KEY_CLIENT_SECRET)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "_verify_oauth_credential: failed to load app credentials for provider=%s: %s",
+                provider,
+                exc,
+            )
+            return "skipped_local_check", None, None
+
+        if not client_id or not client_secret:
+            logger.debug(
+                "_verify_oauth_credential: app credentials not configured for provider=%s;"
+                " skipping",
+                provider,
+            )
+            return "skipped_local_check", None, None
+
+        try:
+            async with httpx.AsyncClient(timeout=_VERIFY_TIMEOUT_S) as client:
+                # Step 1: Exchange refresh token for an access token.
+                token_resp = await client.post(
+                    _GOOGLE_TOKEN_URL,
+                    data={
+                        "grant_type": "refresh_token",
+                        "refresh_token": refresh_token,
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001
+            # Network error — cannot distinguish bad credential from bad network.
+            logger.warning(
+                "_verify_oauth_credential: network error during token exchange for provider=%s: %s",
+                provider,
+                exc,
+            )
+            return "skipped_local_check", None, None
+
+        if token_resp.status_code != 200:
+            # Token exchange failure IS a credential failure (expired / revoked refresh token).
+            reason = f"token_exchange HTTP {token_resp.status_code}"
+            logger.debug(
+                "_verify_oauth_credential: token exchange failed for provider=%s: %s",
+                provider,
+                reason,
+            )
+            return f"live_failed:{token_resp.status_code}", token_resp.status_code, reason
+
+        try:
+            token_data = token_resp.json()
+        except Exception as exc:  # noqa: BLE001
+            reason = f"token_exchange: invalid JSON response: {exc}"
+            logger.warning("_verify_oauth_credential: provider=%s %s", provider, reason)
+            return "live_failed:invalid_json", None, reason
+
+        access_token = token_data.get("access_token")
+        if not access_token:
+            reason = "token_exchange: no access_token in response"
+            logger.warning("_verify_oauth_credential: provider=%s %s", provider, reason)
+            return "live_failed:no_access_token", None, reason
+
+        bearer_value = access_token
+
+    # ------------------------------------------------------------------
+    # Branch B: PAT / direct-bearer providers (no token exchange)
+    # ------------------------------------------------------------------
+    else:
+        # The stored credential is used directly as the auth header value.
+        bearer_value = refresh_token
+
+    # ------------------------------------------------------------------
+    # Final step: call the provider's verify URL
+    # ------------------------------------------------------------------
+    try:
+        async with httpx.AsyncClient(timeout=_VERIFY_TIMEOUT_S) as client:
+            info_resp = await client.get(
+                provider_config.verify_url,
+                headers={"Authorization": f"{provider_config.auth_scheme} {bearer_value}"},
+            )
+    except Exception as exc:  # noqa: BLE001
+        # Network error on verify call — fall back to local check.
+        logger.warning(
+            "_verify_oauth_credential: network error during verify call for provider=%s: %s",
+            provider,
+            exc,
+        )
+        return "skipped_local_check", None, None
+
+    if info_resp.status_code == 200:
+        logger.debug("_verify_oauth_credential: live_ok for provider=%s", provider)
+        return "live_ok", None, None
+
+    reason = f"userinfo HTTP {info_resp.status_code}"
+    logger.debug("_verify_oauth_credential: live_failed for provider=%s: %s", provider, reason)
+    return f"live_failed:{info_resp.status_code}", info_resp.status_code, reason
+
+
+# ---------------------------------------------------------------------------
 # Mutation audit helper
 # ---------------------------------------------------------------------------
 
@@ -1527,17 +1993,18 @@ async def rotate_user_credential(
 ) -> ApiResponse[UserSecretDetail]:
     """Rotate (replace) the stored value for a user-scoped credential.
 
-    Writes the new value to the matching ``public.entity_info`` row and
-    appends a ``rotated`` audit row to ``public.audit_log``.
+    Writes the new value to the matching ``public.entity_info`` row,
+    attempts to revoke the old OAuth token at the provider (fire-and-forget),
+    and appends a ``rotated`` audit row to ``public.audit_log``.
 
     The spec requires this endpoint to return ``ApiResponse<UserSecret>``
     (updated).  The rotation is a direct in-place update of the
-    ``entity_info.value`` column; no external provider call is made.
+    ``entity_info.value`` column.
 
-    Note: for OAuth providers (e.g. Google), rotating the stored refresh
-    token does NOT revoke the old token at the provider — it only replaces
-    the locally-stored value.  Full OAuth re-issuance is handled by the
-    ``/reauthorize`` endpoint.
+    For OAuth providers (e.g. Google), the OLD token is revoked at the
+    provider AFTER the local DB update succeeds.  If the provider revoke call
+    fails, the rotation still succeeds — revoke failure is logged at WARN level
+    and recorded in the audit note under ``revoke_status``.
 
     Spec anchor
     -----------
@@ -1553,10 +2020,28 @@ async def rotate_user_credential(
     if shared_pool is None:
         raise HTTPException(status_code=503, detail="Shared credential database unavailable")
 
-    # Locate the existing row so we can confirm it exists and get its entity_id.
+    # Locate the existing row so we can confirm it exists and capture the old token value.
     detail = await _fetch_single_user_secret(shared_pool, provider=provider, identity=identity)
     if detail is None:
         raise HTTPException(status_code=404, detail="Credential not found")
+
+    # Capture the old raw value before we overwrite it.  We need it for provider revocation.
+    # _fetch_single_user_secret returns a UserSecretDetail which does NOT expose the raw value
+    # (fingerprint only), so we re-read it directly here.
+    old_raw_value: str | None = None
+    try:
+        _old_row = await shared_pool.fetchrow(
+            "SELECT value FROM public.entity_info WHERE id = $1",
+            UUID(detail.id),
+        )
+        if _old_row is not None:
+            old_raw_value = _old_row["value"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "rotate_user_credential: could not read old value for revoke (provider=%s): %s",
+            provider,
+            exc,
+        )
 
     # Update the value in-place using the primary key from the fetched row.
     # Using id (PK) is safer than entity_id+LIKE which could match multiple rows
@@ -1575,12 +2060,19 @@ async def rotate_user_credential(
         logger.warning("rotate_user_credential: update failed for provider=%s: %s", provider, exc)
         raise HTTPException(status_code=503, detail="Credential rotation failed") from exc
 
+    # Revoke the old OAuth token at the provider — fire-and-forget.
+    # Only triggered when: (a) we have the old value, (b) it differs from the new value,
+    # and (c) the credential type is an OAuth type.
+    revoke_status = "skipped"
+    if old_raw_value is not None and old_raw_value != body.value:
+        revoke_status = await _revoke_oauth_token(provider, detail.type, old_raw_value)
+
     # Audit — fire-and-forget.
     await _write_credential_audit(
         shared_pool,
         action="rotated",
         provider=provider,
-        note="Value replaced via rotate endpoint",
+        note=f"Value replaced via rotate endpoint; revoke_status={revoke_status}",
     )
 
     # Re-fetch to return the updated state with freshly computed fingerprint.
@@ -1692,16 +2184,20 @@ async def probe_user_credential(
 ) -> ApiResponse[TestResult]:
     """Probe a user-scoped credential and record the test result.
 
-    This endpoint does NOT call the external provider.  It derives the
-    probe outcome from the current credential state (is the value set, is
-    the credential expired, is the last_test_ok field true?).
+    For supported providers (currently Google OAuth and GitHub PAT), this makes a
+    LIVE call to the provider's verify endpoint to confirm the credential actually
+    works.  For other providers or credential types, it falls back to deriving the
+    probe outcome from the current local state (is the value set, is the credential
+    expired, is the last_test_ok field true?).
 
     In the same SQL transaction it:
     1. Inserts one row into ``public.secret_probe_log``.
     2. Updates ``last_verified``, ``last_test_ok``, ``last_test_code``,
        ``last_test_message`` on the matching ``public.entity_info`` row.
 
-    Appends a ``verified`` (ok) or ``failed`` (not-ok) audit row.
+    Appends a ``verified`` (ok) or ``failed`` (not-ok) audit row.  The audit note
+    includes ``probe_status=live_ok|live_failed:<code>|skipped_local_check`` so the
+    audit log distinguishes between live-verified, live-failed, and fallback paths.
 
     Spec anchor
     -----------
@@ -1724,11 +2220,61 @@ async def probe_user_credential(
     if detail is None:
         raise HTTPException(status_code=404, detail="Credential not found")
 
-    # Derive probe outcome from current state: ok if state == 'ok', else not ok.
-    probe_ok = detail.state == "ok"
+    # Attempt a live provider verification for supported OAuth providers.
+    # Falls back to local-state check on any exception (network errors, missing app creds, etc.)
+    # so the probe endpoint never fails with 503 due to a verify call.
+    probe_ok: bool
     probe_code: int | None = None
-    probe_message: str | None = detail.failure_tail if not probe_ok else None
+    probe_message: str | None = None
+    probe_status: str = "skipped_local_check"
     credential_key = detail.type  # e.g. 'google_oauth_refresh'
+
+    # Fetch the raw refresh token for live verification (not exposed on UserSecretDetail).
+    raw_refresh_token: str | None = None
+    try:
+        _token_row = await shared_pool.fetchrow(
+            "SELECT value FROM public.entity_info WHERE id = $1",
+            UUID(detail.id),
+        )
+        if _token_row is not None:
+            raw_refresh_token = _token_row["value"]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "probe_user_credential: could not read raw token for provider=%s: %s",
+            provider,
+            exc,
+        )
+
+    if raw_refresh_token:
+        try:
+            probe_status, probe_code, probe_message = await _verify_oauth_credential(
+                provider,
+                credential_key,
+                raw_refresh_token,
+                shared_pool,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Should not happen — _verify_oauth_credential catches internally — but be safe.
+            logger.warning(
+                "probe_user_credential: unexpected verify error for provider=%s: %s",
+                provider,
+                exc,
+            )
+            probe_status = "skipped_local_check"
+
+    # Resolve final probe_ok from live result or fall back to local state.
+    if probe_status == "live_ok":
+        probe_ok = True
+        probe_code = None
+        probe_message = None
+    elif probe_status.startswith("live_failed"):
+        probe_ok = False
+        # probe_code and probe_message are already set by _verify_oauth_credential
+    else:
+        # skipped_local_check — derive from local state.
+        probe_ok = detail.state == "ok"
+        probe_code = None
+        probe_message = detail.failure_tail if not probe_ok else None
 
     # Execute probe_log insert + entity_info cache update in one transaction.
     try:
@@ -1783,7 +2329,10 @@ async def probe_user_credential(
     # never rolls back a committed probe result.
     audit_action = "verified" if probe_ok else "failed"
     probe_fail_msg = probe_message or "unknown error"
-    note = "Probe ok" if probe_ok else f"Probe failed: {probe_fail_msg}"
+    if probe_ok:
+        note = f"Probe ok; probe_status={probe_status}"
+    else:
+        note = f"Probe failed: {probe_fail_msg}; probe_status={probe_status}"
     await _write_credential_audit(shared_pool, action=audit_action, provider=provider, note=note)
 
     result = TestResult(

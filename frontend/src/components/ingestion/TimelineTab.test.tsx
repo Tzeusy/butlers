@@ -35,6 +35,7 @@ vi.mock("@/api/index.ts", async (importOriginal) => {
   return {
     ...actual,
     replayIngestionEvent: vi.fn(),
+    bulkRetryEvents: vi.fn(),
   };
 });
 
@@ -62,7 +63,7 @@ vi.mock("@/hooks/use-ingestion", () => ({
   useConnectorSummaries: vi.fn(),
 }));
 
-import { replayIngestionEvent } from "@/api/index.ts";
+import { bulkRetryEvents, replayIngestionEvent } from "@/api/index.ts";
 import { toast } from "sonner";
 import {
   useIngestionEvents,
@@ -180,6 +181,86 @@ function setupDefaultMocks() {
 
 // We test ActionCell indirectly through TimelineTab since it's not exported.
 import { TimelineTab } from "./TimelineTab";
+
+// ---------------------------------------------------------------------------
+// TimelineTab — channel chip filter (bu-p5kdx)
+//
+// Verifies that the eventsFilters passed to useIngestionEvents reflect the
+// active channel chips correctly:
+//   - single channel  → channels="email"
+//   - multi channel   → channels="email,telegram"
+//   - no channels     → no channels param
+//   - source_channel is NOT sent (old code path removed)
+// ---------------------------------------------------------------------------
+
+describe("TimelineTab — channel chip filter passes channels= CSV to useIngestionEvents", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    queryClient = makeQueryClient();
+    setupDefaultMocks();
+    vi.mocked(useIngestionEvents).mockReturnValue(
+      makeInfiniteEventsResult([]) as unknown as ReturnType<typeof useIngestionEvents>,
+    );
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    queryClient.clear();
+    vi.clearAllMocks();
+  });
+
+  function renderWithChannels(channelsParam: string) {
+    const initialUrl = channelsParam ? `/?channels=${encodeURIComponent(channelsParam)}` : "/";
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={[initialUrl]}>
+            <TimelineTab isActive={true} defaultStatuses={["ingested", "filtered", "error"]} />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+  }
+
+  it("passes channels=email when one channel chip is active", () => {
+    renderWithChannels("email");
+    const calls = vi.mocked(useIngestionEvents).mock.calls;
+    const lastFilters = calls[calls.length - 1][0];
+    expect(lastFilters).toMatchObject({ channels: "email" });
+    expect(lastFilters).not.toHaveProperty("source_channel");
+  });
+
+  it("passes channels=email,telegram when two channel chips are active", () => {
+    renderWithChannels("email,telegram");
+    const calls = vi.mocked(useIngestionEvents).mock.calls;
+    const lastFilters = calls[calls.length - 1][0];
+    expect(lastFilters).toMatchObject({ channels: "email,telegram" });
+    expect(lastFilters).not.toHaveProperty("source_channel");
+  });
+
+  it("omits channels param when no channel chips are active", () => {
+    renderWithChannels("");
+    const calls = vi.mocked(useIngestionEvents).mock.calls;
+    const lastFilters = calls[calls.length - 1][0];
+    expect(lastFilters).not.toHaveProperty("channels");
+    expect(lastFilters).not.toHaveProperty("source_channel");
+  });
+
+  it("never sends source_channel even for a single channel (old code path removed)", () => {
+    renderWithChannels("email");
+    const calls = vi.mocked(useIngestionEvents).mock.calls;
+    for (const [filters] of calls) {
+      expect(filters).not.toHaveProperty("source_channel");
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // TimelineTab — StatusBadge rendering
@@ -1127,5 +1208,184 @@ describe("TimelineTab — §2.9 Connector Attention Strip", () => {
 
     const items = container.querySelectorAll("[data-testid='connector-attention-item']");
     expect(items.length).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TimelineTab — BulkActionBar
+// ---------------------------------------------------------------------------
+
+describe("TimelineTab — BulkActionBar", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let queryClient: QueryClient;
+
+  const EVENT_ID_1 = "aabbccdd-0000-0000-0000-000000000001";
+  const EVENT_ID_2 = "aabbccdd-0000-0000-0000-000000000002";
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    queryClient = makeQueryClient();
+    setupDefaultMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    queryClient.clear();
+    vi.clearAllMocks();
+  });
+
+  /** Render with a set of events; select the first N rows by clicking their checkboxes. */
+  function renderAndSelectEvents(events: IngestionEventSummary[], selectCount: number) {
+    vi.mocked(useIngestionEvents).mockReturnValue(
+      makeInfiniteEventsResult(events) as unknown as ReturnType<typeof useIngestionEvents>,
+    );
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter>
+            <TimelineTab
+              isActive={true}
+              defaultStatuses={["ingested", "filtered", "error", "replay_pending", "replay_complete", "replay_failed"]}
+            />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+
+    // Click checkboxes (the first child div of each ledger-row)
+    const rows = container.querySelectorAll("[data-testid='ledger-row']");
+    for (let i = 0; i < Math.min(selectCount, rows.length); i++) {
+      const checkbox = rows[i].firstElementChild as HTMLElement;
+      act(() => { checkbox.click(); });
+    }
+  }
+
+  it("bar is hidden when no events are selected", () => {
+    vi.mocked(useIngestionEvents).mockReturnValue(
+      makeInfiniteEventsResult([makeEvent({ id: EVENT_ID_1 })]) as unknown as ReturnType<typeof useIngestionEvents>,
+    );
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter>
+            <TimelineTab isActive={true} />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+
+    expect(container.querySelector("[data-testid='bulk-action-bar']")).toBeNull();
+  });
+
+  it("bar appears and button is enabled when 1 event is selected", () => {
+    renderAndSelectEvents([makeEvent({ id: EVENT_ID_1 })], 1);
+
+    const bar = container.querySelector("[data-testid='bulk-action-bar']");
+    expect(bar).not.toBeNull();
+    const btn = container.querySelector("[data-testid='bulk-retry-button']") as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("button is disabled when selected count exceeds 100", () => {
+    // Build 101 events
+    const events = Array.from({ length: 101 }, (_, i) =>
+      makeEvent({ id: `aabbccdd-0000-0000-0000-${String(i).padStart(12, "0")}` }),
+    );
+    renderAndSelectEvents(events, 101);
+
+    const btn = container.querySelector("[data-testid='bulk-retry-button']") as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    expect(btn.disabled).toBe(true);
+    // Over-limit message shown
+    const msg = container.querySelector("[data-testid='bulk-overlimit-msg']");
+    expect(msg).not.toBeNull();
+  });
+
+  it("click calls bulkRetryEvents with selected IDs", async () => {
+    vi.mocked(bulkRetryEvents).mockResolvedValueOnce({
+      results: [{ event_id: EVENT_ID_1, status: "replay_pending" }],
+      succeeded: 1,
+      failed: 0,
+    });
+
+    renderAndSelectEvents(
+      [makeEvent({ id: EVENT_ID_1 }), makeEvent({ id: EVENT_ID_2 })],
+      1,
+    );
+
+    const btn = container.querySelector("[data-testid='bulk-retry-button']") as HTMLButtonElement;
+    await act(async () => { btn.click(); });
+
+    expect(bulkRetryEvents).toHaveBeenCalledWith([EVENT_ID_1]);
+  });
+
+  it("success path clears selection (bar disappears) and shows success toast", async () => {
+    vi.mocked(bulkRetryEvents).mockResolvedValueOnce({
+      results: [{ event_id: EVENT_ID_1, status: "replay_pending" }],
+      succeeded: 1,
+      failed: 0,
+    });
+
+    renderAndSelectEvents([makeEvent({ id: EVENT_ID_1 })], 1);
+
+    const btn = container.querySelector("[data-testid='bulk-retry-button']") as HTMLButtonElement;
+    await act(async () => { btn.click(); });
+
+    // Bar should be gone (selection cleared)
+    expect(container.querySelector("[data-testid='bulk-action-bar']")).toBeNull();
+    // Success toast fired
+    expect(toast.success).toHaveBeenCalledWith("1 event queued for replay");
+  });
+
+  it("error path surfaces error message inline without clearing selection", async () => {
+    vi.mocked(bulkRetryEvents).mockRejectedValueOnce(new Error("Server error: 503"));
+
+    renderAndSelectEvents([makeEvent({ id: EVENT_ID_1 })], 1);
+
+    const btn = container.querySelector("[data-testid='bulk-retry-button']") as HTMLButtonElement;
+    await act(async () => { btn.click(); });
+
+    // Bar still visible (selection not cleared on error)
+    expect(container.querySelector("[data-testid='bulk-action-bar']")).not.toBeNull();
+    // Error message shown inline
+    const errMsg = container.querySelector("[data-testid='bulk-error-msg']");
+    expect(errMsg).not.toBeNull();
+    expect(errMsg!.textContent).toContain("Server error: 503");
+  });
+
+  it("partial failure deselects only succeeded events and shows both success toast and error", async () => {
+    vi.mocked(bulkRetryEvents).mockResolvedValueOnce({
+      results: [
+        { event_id: EVENT_ID_1, status: "replay_pending" },
+        { event_id: EVENT_ID_2, status: "conflict", error: "Event is not retryable" },
+      ],
+      succeeded: 1,
+      failed: 1,
+    });
+
+    renderAndSelectEvents(
+      [makeEvent({ id: EVENT_ID_1 }), makeEvent({ id: EVENT_ID_2 })],
+      2,
+    );
+
+    const btn = container.querySelector("[data-testid='bulk-retry-button']") as HTMLButtonElement;
+    await act(async () => { btn.click(); });
+
+    // Bar still visible — the failed event (EVENT_ID_2) remains selected
+    expect(container.querySelector("[data-testid='bulk-action-bar']")).not.toBeNull();
+    // Success toast for the succeeded event
+    expect(toast.success).toHaveBeenCalledWith("1 event queued for replay");
+    // Error shown inline and via toast for the failed event
+    const errMsg = container.querySelector("[data-testid='bulk-error-msg']");
+    expect(errMsg).not.toBeNull();
+    expect(errMsg!.textContent).toContain("1 event failed to queue");
+    expect(toast.error).toHaveBeenCalledWith("1 event failed to queue");
   });
 });

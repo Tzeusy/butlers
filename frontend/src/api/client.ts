@@ -144,6 +144,7 @@ import type {
   IngestionEventRollup,
   IngestionEventReplayResponse,
   IngestionEventReplayHistoryEntry,
+  BulkRetryEventsResponse,
   IngestionEventSenderContact,
   IngestionEventPayload,
   IngestionEventsParams,
@@ -3359,6 +3360,21 @@ export async function bulkReplayEvents(
   );
 }
 
+/**
+ * POST /api/ingestion/events/retry/bulk
+ * Bulk-retry/replay up to 100 events from both ingestion and filtered tables.
+ * Each event is attempted independently — partial failures do not abort the batch.
+ */
+export async function bulkRetryEvents(
+  eventIds: string[],
+): Promise<BulkRetryEventsResponse> {
+  return apiFetch<BulkRetryEventsResponse>(`/ingestion/events/retry/bulk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ event_ids: eventIds }),
+  });
+}
+
 /** Get period-scoped ingestion overview statistics (message_inbox-based). */
 export async function getIngestionOverview(
   period: IngestionPeriod = "24h",
@@ -3564,6 +3580,7 @@ export async function listIngestionEvents(
   const sp = new URLSearchParams();
   if (params?.limit !== undefined) sp.set("limit", String(params.limit));
   if (params?.cursor) sp.set("cursor", params.cursor);
+  if (params?.channels) sp.set("channels", params.channels);
   if (params?.source_channel) sp.set("source_channel", params.source_channel);
   if (params?.status) sp.set("status", params.status);
   if (params?.q) sp.set("q", params.q);
@@ -5048,4 +5065,71 @@ export function getBreaksCatalogue(
     ? `?provider=${encodeURIComponent(params.provider)}`
     : "";
   return apiFetch<ApiResponse<BreakEntry[]>>(`/secrets/breaks-catalogue${qs}`);
+}
+
+// ---------------------------------------------------------------------------
+// Secrets v2 — user credential mutations [bu-f1loa]
+// ---------------------------------------------------------------------------
+
+/** Response payload for POST /api/secrets/user/<provider>/reauthorize. */
+export interface UserReauthorizeResponse {
+  redirect_url: string;
+}
+
+/**
+ * POST /api/secrets/user/<provider>/reauthorize?identity=<uuid>
+ *
+ * Initiates an OAuth reauthorization dance for a user-scoped credential.
+ * Returns a redirect_url that the caller should navigate to; the OAuth
+ * callback will redirect back to /secrets?focus=u:<provider>&toast=connected
+ * on success.
+ *
+ * Spec: redesign-secrets-passport §User credential mutations
+ */
+export function reauthorizeUserCredential(
+  provider: string,
+  identity: string,
+): Promise<ApiResponse<UserReauthorizeResponse>> {
+  const qs = `?identity=${encodeURIComponent(identity)}`;
+  return apiFetch<ApiResponse<UserReauthorizeResponse>>(
+    `/secrets/user/${encodeURIComponent(provider)}/reauthorize${qs}`,
+    { method: "POST" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Secrets v2 — inventory (bu-nrgk9)
+// ---------------------------------------------------------------------------
+
+import type {
+  SecretsInventoryData,
+  SecretsInventoryMeta,
+  SecretsInventoryParams,
+} from "./types.ts";
+
+/** Full inventory response envelope from GET /api/secrets/inventory. */
+export interface SecretsInventoryResponse {
+  data: SecretsInventoryData;
+  meta: SecretsInventoryMeta;
+}
+
+/**
+ * GET /api/secrets/inventory?identity=<uuid>
+ *
+ * Returns the aggregated credential inventory for the /secrets passport page:
+ * CLI runtime tokens, system secrets, and user (OAuth/token/key) credentials.
+ *
+ * When `identity` is provided, the `user` array is filtered to that entity.
+ * When omitted, the owner entity is used (projection-lens semantics).
+ *
+ * Response shape: ApiResponse<InventoryData>
+ */
+export function getSecretsInventory(
+  params?: SecretsInventoryParams,
+): Promise<SecretsInventoryResponse> {
+  const qs =
+    params?.identity
+      ? `?identity=${encodeURIComponent(params.identity)}`
+      : "";
+  return apiFetch<SecretsInventoryResponse>(`/secrets/inventory${qs}`);
 }

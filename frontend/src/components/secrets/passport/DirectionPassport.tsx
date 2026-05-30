@@ -24,7 +24,6 @@ import { Spine } from "./Spine.tsx";
 import { PageUser, PageSystem, PageCli, PassportEmptyState } from "./pages.tsx";
 import { TweaksPanel, useTweaks } from "./TweaksPanel.tsx";
 import { Eyebrow, Mono, Voice, IdentityChip } from "./atoms.tsx";
-import { MOCK_INVENTORY } from "./mock-data.ts";
 
 // ── KPI cell ─────────────────────────────────────────────────────────────────
 
@@ -85,13 +84,13 @@ function KpiSep() {
  * DirectionPassport — renders the full /secrets passport book:
  * page header + spine + page body + tweaks trigger.
  *
- * Inventory is mocked in B3. Replace `inventory` prop with a TanStack Query
- * fetch once BE endpoints are live.
+ * Receives inventory as a prop. Data fetching is handled by the parent
+ * (SecretsPage) via useSecretsInventory, which calls GET /api/secrets/inventory.
  */
 export function DirectionPassport({
-  inventory = MOCK_INVENTORY,
+  inventory,
 }: {
-  inventory?: InventoryResponse;
+  inventory: InventoryResponse;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -215,7 +214,7 @@ export function DirectionPassport({
           style={{ borderBottom: "1px solid var(--border)" }}
         >
           <div className="min-w-0">
-            <Eyebrow sub={new Date().toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" })}>
+            <Eyebrow sub={new Date().toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}>
               secrets
             </Eyebrow>
             <div className="mt-2.5">
@@ -351,8 +350,7 @@ export function DirectionPassport({
   );
 }
 
-// Re-export everything needed by the page route and tests.
-export { MOCK_INVENTORY } from "./mock-data.ts";
+// Re-export types needed by the page route and tests.
 export type { InventoryResponse, SecretsTweaks } from "./types.ts";
 
 // Default export for the page route integration.

@@ -114,6 +114,7 @@ export {
   searchAll,
   getContact,
   getContacts,
+  resolveContactEntity,
   triggerContactsSync,
   getPendingContacts,
   revealContactSecret,
@@ -327,6 +328,7 @@ export type {
   TimelineResponse,
   TopSession,
   ContactDetail,
+  ContactEntityResolverResponse,
   ContactInfoEntry,
   ContactListResponse,
   ContactMergeRequest,
@@ -379,6 +381,7 @@ export type {
   GoogleAccount,
   GoogleAccountStatus,
   GoogleCredentialStatusResponse,
+  GoogleHealthAccountStatus,
   GoogleHealthConnectorState,
   GoogleHealthDisconnectResponse,
   GoogleHealthStatusResponse,
@@ -468,6 +471,7 @@ export type {
 
 export {
   bulkReplayEvents,
+  bulkRetryEvents,
   deleteConnector,
   getCrossConnectorSummary,
   getCrossConnectorSummaryWithAggregates,
@@ -534,6 +538,8 @@ export type {
   ButlerRollupEntry,
   IngestionWindowRollup,
   IngestionWindowRollupParams,
+  BulkRetryEventResult,
+  BulkRetryEventsResponse,
 } from "./types.ts";
 
 export {
