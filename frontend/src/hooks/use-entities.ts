@@ -11,7 +11,9 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  addEntityContact,
   archiveRelationshipEntity,
+  deleteEntityContact,
   dismissRelationshipEntityQueueItem,
   forgetRelationshipEntity,
   getEntityConcentration,
@@ -33,6 +35,7 @@ import {
   updateEntityDunbarTier,
 } from "@/api/index.ts";
 import type {
+  AddEntityContactRequest,
   EntityFactsParams,
   MergeRelationshipEntitiesRequest,
   PromoteRelationshipEntityRequest,
@@ -324,6 +327,58 @@ export function useUpdateEntityDunbarTier() {
     onSuccess: (_, { entityId }) => {
       void queryClient.invalidateQueries({ queryKey: ["memory-entity", entityId] });
       void queryClient.invalidateQueries({ queryKey: ["dunbar-ranking"] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Entity-contact triple mutations (§9.4, bu-u1w78 / bu-k9ylx write-path cut-over)
+// ---------------------------------------------------------------------------
+
+/**
+ * Assert a contact-fact triple for an entity.
+ *
+ * Used by ContactChannelCard.AddChannelInfoForm after the write-path cut-over.
+ * `predicate` must start with "has-" (see contact_info_type_to_predicate mapping).
+ * Invalidates entity-linked-contacts so the new entry appears immediately.
+ */
+export function useAddEntityContact() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      entityId,
+      request,
+    }: {
+      entityId: string;
+      request: AddEntityContactRequest;
+    }) => addEntityContact(entityId, request),
+    onSuccess: (_, { entityId }) => {
+      void queryClient.invalidateQueries({ queryKey: ["entity-linked-contacts", entityId] });
+    },
+  });
+}
+
+/**
+ * Retract an active contact-fact triple from an entity.
+ *
+ * Used by ContactChannelCard.ExpandedContactInfoRow after the write-path cut-over.
+ * `predicate` must start with "has-". `valueHash` is SHA-256[:16] of the value
+ * (matches ContactFact.value_hash). Invalidates entity-linked-contacts on success.
+ */
+export function useDeleteEntityContact() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      entityId,
+      predicate,
+      valueHash,
+    }: {
+      entityId: string;
+      predicate: string;
+      valueHash: string;
+    }) => deleteEntityContact(entityId, predicate, valueHash),
+    onSuccess: (_, { entityId }) => {
+      void queryClient.invalidateQueries({ queryKey: ["entity-linked-contacts", entityId] });
     },
   });
 }
