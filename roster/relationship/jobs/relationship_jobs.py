@@ -863,6 +863,10 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
             if sender_identity:
                 lookup_pairs.append((ci_type, sender_identity))
 
+    # Post bead-7 cut-over: resolved maps (ci_type, value) → contact_id for backward
+    # compat with interaction_log() which still uses contact_id in subject keys.
+    # The query now goes through relationship.entity_facts (triple store) joined back
+    # to public.contacts to retrieve the contact_id.
     resolved: dict[tuple[str, str], uuid.UUID] = {}  # (ci_type, value) -> contact_id
     owner_contact_ids: set[uuid.UUID] = set()
 
@@ -874,17 +878,27 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
             contact_rows = await db_pool.fetch(
                 """
                 SELECT
-                    ci.type        AS ci_type,
-                    ci.value       AS ci_value,
-                    ci.contact_id  AS contact_id,
-                    COALESCE(e.roles, '{}') AS roles
-                FROM public.contact_info ci
-                JOIN public.contacts c ON c.id = ci.contact_id
-                LEFT JOIN public.entities e ON e.id = c.entity_id
-                JOIN (
-                    SELECT DISTINCT pairs.ci_type, pairs.ci_value
-                    FROM UNNEST($1::text[], $2::text[]) AS pairs(ci_type, ci_value)
-                ) pairs ON ci.type = pairs.ci_type AND ci.value = pairs.ci_value
+                    pairs.ci_type,
+                    pairs.ci_value,
+                    c.id                        AS contact_id,
+                    COALESCE(e.roles, '{}')     AS roles
+                FROM (
+                    SELECT DISTINCT p.ci_type, p.ci_value
+                    FROM UNNEST($1::text[], $2::text[]) AS p(ci_type, ci_value)
+                ) pairs
+                JOIN relationship.entity_facts ef
+                  ON ef.predicate = CASE pairs.ci_type
+                        WHEN 'email'            THEN 'has-email'
+                        WHEN 'phone'            THEN 'has-phone'
+                        WHEN 'telegram_chat_id' THEN 'has-handle'
+                        WHEN 'whatsapp_jid'     THEN 'has-handle'
+                        ELSE 'has-handle'
+                     END
+                 AND ef.object      = pairs.ci_value
+                 AND ef.object_kind = 'literal'
+                 AND ef.validity    = 'active'
+                JOIN public.entities e ON e.id = ef.subject
+                LEFT JOIN public.contacts c ON c.entity_id = ef.subject
                 """,
                 ci_types,
                 ci_values,
@@ -896,6 +910,8 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
 
         for cr in contact_rows:
             contact_id = cr["contact_id"]
+            if contact_id is None:
+                continue
             if not isinstance(contact_id, uuid.UUID):
                 try:
                     contact_id = uuid.UUID(str(contact_id))
@@ -1201,17 +1217,21 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
 
     if all_attendee_emails:
         try:
+            # Post bead-7 cut-over: resolve emails via relationship.entity_facts (has-email
+            # triple) joined back to public.contacts for backward compat with interaction_log().
             resolved_rows = await db_pool.fetch(
                 """
                 SELECT
-                    ci.contact_id,
-                    LOWER(ci.value) AS email,
-                    COALESCE(e.roles, '{}') AS roles
-                FROM public.contact_info ci
-                JOIN public.contacts c ON c.id = ci.contact_id
-                LEFT JOIN public.entities e ON e.id = c.entity_id
-                WHERE ci.type = 'email'
-                  AND LOWER(ci.value) = ANY($1::text[])
+                    c.id                        AS contact_id,
+                    LOWER(ef.object)            AS email,
+                    COALESCE(e.roles, '{}')     AS roles
+                FROM relationship.entity_facts ef
+                JOIN public.entities e ON e.id = ef.subject
+                LEFT JOIN public.contacts c ON c.entity_id = ef.subject
+                WHERE ef.predicate   = 'has-email'
+                  AND ef.object_kind = 'literal'
+                  AND ef.validity    = 'active'
+                  AND LOWER(ef.object) = ANY($1::text[])
                 """,
                 list(all_attendee_emails),
             )
@@ -1222,6 +1242,8 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
 
         for rr in resolved_rows:
             cid = rr["contact_id"]
+            if cid is None:
+                continue
             if not isinstance(cid, uuid.UUID):
                 try:
                     cid = uuid.UUID(str(cid))
@@ -1355,6 +1377,34 @@ _CI_TYPE_TO_PREDICATE: dict[str, str] = {
 }
 
 
+async def _registered_contact_info_predicates(db_pool: asyncpg.Pool) -> set[str] | None:
+    """Return mapped contact-info predicates present in the registry.
+
+    The reconciler has a static contact_info.type -> predicate map, but the
+    central writer validates against ``relationship.entity_predicate_registry``.
+    Checking the registry once lets the reconciler count registry drift as a
+    skipped predicate instead of repeatedly surfacing writer errors per row.
+    """
+    mapped_predicates = sorted(set(_CI_TYPE_TO_PREDICATE.values()))
+    try:
+        rows = await db_pool.fetch(
+            """
+            SELECT predicate
+            FROM relationship.entity_predicate_registry
+            WHERE predicate = ANY($1::text[])
+            """,
+            mapped_predicates,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "contact_info_reconciler: failed to load predicate registry; aborting run",
+            exc_info=True,
+        )
+        return None
+
+    return {row["predicate"] for row in rows}
+
+
 def _reconciler_interval_minutes() -> int:
     """Return the reconciler interval in minutes (default 30, env-overridable)."""
     raw = os.environ.get(_RECONCILER_INTERVAL_ENV)
@@ -1430,6 +1480,13 @@ async def run_contact_info_reconciler(db_pool: asyncpg.Pool) -> dict[str, Any]:
         "rows_skipped_orphan": 0,
         "rows_skipped_no_predicate": 0,
     }
+
+    registered_predicates = await _registered_contact_info_predicates(db_pool)
+    if registered_predicates is None:
+        stats["rows_error"] += 1
+        return stats
+
+    unregistered_warned: set[str] = set()
 
     # -----------------------------------------------------------------------
     # Step 1: Sweep public.contact_info rows that DON'T have an active triple.
@@ -1525,9 +1582,45 @@ async def run_contact_info_reconciler(db_pool: asyncpg.Pool) -> dict[str, Any]:
             stats["rows_skipped_no_predicate"] += 1
             continue
 
+        if predicate not in registered_predicates:
+            stats["rows_skipped_no_predicate"] += 1
+            if predicate not in unregistered_warned:
+                logger.warning(
+                    "contact_info_reconciler: predicate=%s for ci_type=%r is not registered; "
+                    "skipping ci_id=%s (and subsequent rows with this predicate)",
+                    predicate,
+                    ci_type,
+                    ci_id,
+                )
+                unregistered_warned.add(predicate)
+            continue
+
         # Provenance fields.
         last_seen: datetime | None = row.get("ci_created_at")
         is_primary: bool = row["is_primary"]
+
+        # Owner-facing rationale + evidence.  These surface in the approvals
+        # UI when the writer hits the owner carve-out.  Without them the
+        # dossier shows blank cells for every reconciler-generated approval.
+        ci_value_preview = ci_value if len(ci_value) <= 80 else ci_value[:77] + "..."
+        why = (
+            f"The contact-info reconciler found a `public.contact_info` row "
+            f"({ci_type}) on your own contact with no matching active triple "
+            f"in `relationship.entity_facts`. Approve to backfill the "
+            f"`{predicate}` triple ({ci_value_preview}) so the entity graph "
+            f"matches the legacy contact store. Rejecting leaves the triple "
+            f"missing and the next sweep will surface it again."
+        )
+        evidence_list: list[str] = [
+            "source=contact_info_reconciler",
+            f"contact_info.id={ci_id}",
+            f"contact_id={row['contact_id']}",
+            f"contact_info.type={ci_type}",
+            f"contact_info.value={ci_value_preview}",
+            f"is_primary={is_primary}",
+        ]
+        if last_seen is not None:
+            evidence_list.append(f"first_seen={last_seen.isoformat()}")
 
         try:
             result = await relationship_assert_fact(
@@ -1541,6 +1634,8 @@ async def run_contact_info_reconciler(db_pool: asyncpg.Pool) -> dict[str, Any]:
                 last_seen=last_seen,
                 verified=False,
                 primary=is_primary,
+                why=why,
+                evidence=evidence_list,
             )
 
             if result.outcome == AssertOutcome.pending_approval:
