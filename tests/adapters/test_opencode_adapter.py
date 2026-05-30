@@ -218,6 +218,24 @@ def test_select_error_detail_prefers_stdout_error_over_migration_noise():
     assert detail == "AuthenticationError: provider rejected the request"
 
 
+def test_select_error_detail_accepts_code_only_stdout_error():
+    """Structured stdout errors may carry only a numeric provider error code."""
+    stdout = json.dumps({"type": "result", "code": 429})
+
+    detail = _select_error_detail("plain stderr fallback", stdout, 1)
+
+    assert detail == "429"
+
+
+def test_select_error_detail_accepts_nested_numeric_code():
+    """Nested scalar error fields are still useful diagnostics."""
+    stdout = json.dumps({"type": "error", "error": {"code": 401}})
+
+    detail = _select_error_detail("plain stderr fallback", stdout, 1)
+
+    assert detail == "401"
+
+
 def test_select_error_detail_uses_exit_code_when_only_migration_noise_exists():
     """A benign migration banner alone is not a useful non-zero-exit diagnostic."""
     stderr = (
@@ -289,7 +307,9 @@ async def test_invoke_error_paths():
 
     mock_proc.communicate = AsyncMock(
         return_value=(
-            json.dumps({"type": "error", "message": "AuthenticationError: login required"}).encode(),
+            json.dumps(
+                {"type": "error", "message": "AuthenticationError: login required"}
+            ).encode(),
             b"Performing one time database migration, may take a few minutes...\n"
             b"sqlite-migration:done\n"
             b"Database migration complete.\n",

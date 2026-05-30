@@ -63,7 +63,7 @@ def _extract_stdout_error_detail(stdout: str) -> str | None:
 
         obj_type = str(obj.get("type", "")).lower()
         if "error" not in obj_type and not any(
-            key in obj for key in ("error", "message", "detail", "details", "stderr")
+            key in obj for key in ("error", "message", "detail", "details", "stderr", "code")
         ):
             continue
 
@@ -75,8 +75,8 @@ def _extract_stdout_error_detail(stdout: str) -> str | None:
 
 def _stringify_error_payload(payload: Any) -> str | None:
     """Render common OpenCode error payload shapes as a compact message."""
-    if isinstance(payload, str):
-        stripped = payload.strip()
+    if isinstance(payload, (str, int, float, bool)):
+        stripped = str(payload).strip()
         return stripped or None
     if isinstance(payload, dict):
         for key in ("message", "detail", "details", "stderr", "error", "code"):
@@ -86,9 +86,7 @@ def _stringify_error_payload(payload: Any) -> str | None:
                 return detail
     if isinstance(payload, list):
         parts = [
-            detail
-            for item in payload
-            if (detail := _stringify_error_payload(item)) is not None
+            detail for item in payload if (detail := _stringify_error_payload(item)) is not None
         ]
         if parts:
             return "; ".join(parts)
