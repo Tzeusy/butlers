@@ -111,8 +111,8 @@ _TAIL_CHUNK_SIZE = 64 * 1024  # 64 KiB
 # Those timeout records are degradation telemetry, not actionable runtime bugs
 # for the autonomous QA loop.
 _SWITCHBOARD_CLASSIFICATION_TIMEOUT_RE = re.compile(
-    r"Runtime invocation failed:\s+TimeoutError:\s+Session timed out after \d+s "
-    r"\(model=[^)]*mini,\s*butler=switchboard\)",
+    r"Runtime invocation failed:\s+TimeoutError:\s+Session timed out after (\d+)s "
+    r"\(model=[A-Za-z0-9._-]+mini,\s*butler=switchboard\)",
     re.IGNORECASE,
 )
 _SWITCHBOARD_CLASSIFICATION_TIMEOUT_MAX_S = 60
@@ -261,22 +261,26 @@ def _should_include_entry(entry: LogEntry) -> bool:
 
 
 def _is_switchboard_classification_timeout(entry: LogEntry) -> bool:
-    if entry.butler_name != "switchboard" or entry.logger != "butlers.core.spawner":
+    if (
+        entry.butler_name != "switchboard"
+        or entry.logger != "butlers.core.spawner"
+        or entry.trigger_source != "tick"
+    ):
         return False
-    if not _SWITCHBOARD_CLASSIFICATION_TIMEOUT_RE.search(entry.event or ""):
+    match = _SWITCHBOARD_CLASSIFICATION_TIMEOUT_RE.search(entry.event or "")
+    if not match:
         return False
 
     raw_timeout_s = entry.raw.get("timeout_s")
     try:
         timeout_s = int(raw_timeout_s)
     except (TypeError, ValueError):
-        timeout_s = None
+        try:
+            timeout_s = int(match.group(1))
+        except (IndexError, ValueError):
+            return False
 
-    if timeout_s is not None:
-        return timeout_s <= _SWITCHBOARD_CLASSIFICATION_TIMEOUT_MAX_S
-
-    # Compatibility for log lines emitted before spawner added timeout_s.
-    return "after 30s" in (entry.event or "")
+    return timeout_s <= _SWITCHBOARD_CLASSIFICATION_TIMEOUT_MAX_S
 
 
 def _level_to_severity(level: str, exception_type: str, call_site: str) -> int:

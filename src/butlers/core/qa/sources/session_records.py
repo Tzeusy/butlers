@@ -70,10 +70,11 @@ _NON_ACTIONABLE_SESSION_ERRORS = frozenset({"orphaned: daemon restart"})
 # degradation rows out of autonomous QA dispatch; persistent routing quality
 # should be monitored through switchboard routing telemetry instead.
 _SWITCHBOARD_CLASSIFICATION_TIMEOUT_RE = re.compile(
-    r"TimeoutError:\s+Session timed out after \d+s "
-    r"\(model=[^)]*mini,\s*butler=switchboard\)",
+    r"TimeoutError:\s+Session timed out after (\d+)s "
+    r"\(model=[A-Za-z0-9._-]+mini,\s*butler=switchboard\)",
     re.IGNORECASE,
 )
+_SWITCHBOARD_CLASSIFICATION_TIMEOUT_MAX_S = 60
 
 #: Health-check query — validates view accessibility before processing rows.
 _HEALTH_CHECK_SQL = f"SELECT 1 FROM {_VIEW_NAME} LIMIT 0"
@@ -326,7 +327,14 @@ def _is_switchboard_classification_timeout(
 ) -> bool:
     if source_butler != "switchboard" or status != "timeout" or trigger_source != "tick":
         return False
-    return bool(error_text and _SWITCHBOARD_CLASSIFICATION_TIMEOUT_RE.search(error_text))
+    match = _SWITCHBOARD_CLASSIFICATION_TIMEOUT_RE.search(error_text or "")
+    if not match:
+        return False
+    try:
+        timeout_s = int(match.group(1))
+    except (IndexError, ValueError):
+        return False
+    return timeout_s <= _SWITCHBOARD_CLASSIFICATION_TIMEOUT_MAX_S
 
 
 # ---------------------------------------------------------------------------
