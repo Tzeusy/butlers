@@ -169,6 +169,38 @@ class TestMessagePipelineProcess:
         new_callable=AsyncMock,
         return_value=_MOCK_BUTLERS,
     )
+    async def test_explicit_classification_timeout_is_forwarded(self, mock_load):
+        captured_kwargs = {}
+
+        async def mock_dispatch(**kwargs):
+            captured_kwargs.update(kwargs)
+            return FakeSpawnerResult(
+                output="Routed to health butler.",
+                tool_calls=[
+                    {
+                        "name": "route_to_butler",
+                        "args": {"butler": "health", "prompt": "Track headache"},
+                        "result": {"status": "ok", "butler": "health"},
+                    }
+                ],
+            )
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(),
+            dispatch_fn=mock_dispatch,
+            source_butler="switchboard",
+            classification_timeout_s=7,
+        )
+        result = await pipeline.process("I have a headache")
+
+        assert result.target_butler == "health"
+        assert captured_kwargs["timeout_override"] == 7
+
+    @patch(
+        "butlers.tools.switchboard.routing.classify._load_available_butlers",
+        new_callable=AsyncMock,
+        return_value=_MOCK_BUTLERS,
+    )
     async def test_falls_back_to_general_when_no_tools(self, mock_load):
         async def mock_dispatch(**kwargs):
             return FakeSpawnerResult(output="No routing needed.", tool_calls=[])
