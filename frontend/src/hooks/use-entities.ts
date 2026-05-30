@@ -340,7 +340,8 @@ export function useUpdateEntityDunbarTier() {
  *
  * Used by ContactChannelCard.AddChannelInfoForm after the write-path cut-over.
  * `predicate` must start with "has-" (see contact_info_type_to_predicate mapping).
- * Invalidates entity-linked-contacts so the new entry appears immediately.
+ * Invalidates entity-linked-contacts, entity-facts, and relationship-entities on
+ * success so the ProvenanceGrid and entity list summaries stay in sync.
  */
 export function useAddEntityContact() {
   const queryClient = useQueryClient();
@@ -354,6 +355,8 @@ export function useAddEntityContact() {
     }) => addEntityContact(entityId, request),
     onSuccess: (_, { entityId }) => {
       void queryClient.invalidateQueries({ queryKey: ["entity-linked-contacts", entityId] });
+      void queryClient.invalidateQueries({ queryKey: ["entity-facts", entityId] });
+      void queryClient.invalidateQueries({ queryKey: ["relationship-entities"] });
     },
   });
 }
@@ -363,7 +366,9 @@ export function useAddEntityContact() {
  *
  * Used by ContactChannelCard.ExpandedContactInfoRow after the write-path cut-over.
  * `predicate` must start with "has-". `valueHash` is SHA-256[:16] of the value
- * (matches ContactFact.value_hash). Invalidates entity-linked-contacts on success.
+ * (matches ContactFact.value_hash). Invalidates entity-linked-contacts, entity-facts,
+ * and relationship-entities on success so the ProvenanceGrid and entity list
+ * summaries stay in sync.
  */
 export function useDeleteEntityContact() {
   const queryClient = useQueryClient();
@@ -379,6 +384,8 @@ export function useDeleteEntityContact() {
     }) => deleteEntityContact(entityId, predicate, valueHash),
     onSuccess: (_, { entityId }) => {
       void queryClient.invalidateQueries({ queryKey: ["entity-linked-contacts", entityId] });
+      void queryClient.invalidateQueries({ queryKey: ["entity-facts", entityId] });
+      void queryClient.invalidateQueries({ queryKey: ["relationship-entities"] });
     },
   });
 }

@@ -2,8 +2,8 @@
  * ContactChannelCard — entity detail contact-channel card.
  *
  * Renders one collapsed row per linked contact when an entity has linked
- * contacts. Expand-on-click shows full channel list with channel-specific
- * actions (edit, delete).
+ * contacts. Expand-on-click shows full channel list (read-only; edit/delete
+ * affordances hidden pending bu-rf2dh + bu-rxptt — see ExpandedContactInfoRow).
  *
  * Data source:
  *   Primary:  GET /relationship/entities/{entityId}/linked-contacts
@@ -44,7 +44,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 
 import type { ContactInfoEntry, Label, LinkedContactSummary } from "@/api/types";
@@ -64,9 +64,7 @@ import { ENTITY_BADGE_TEXT } from "@/lib/entity-model";
 import { useEntityLinkedContacts } from "@/hooks/use-entities";
 import {
   useCreateContactInfo,
-  useDeleteContactInfo,
   usePatchContact,
-  usePatchContactInfo,
   useRevealContactSecret,
 } from "@/hooks/use-contacts";
 
@@ -256,147 +254,40 @@ function ChannelValue({ entry }: { entry: ContactInfoEntry }) {
 }
 
 // ---------------------------------------------------------------------------
-// ExpandedContactInfoRow — editable channel row with edit/delete actions
+// ExpandedContactInfoRow — read-only channel row.
 //
-// COMPAT-ONLY mutations: patchContactInfo and deleteContactInfo use contact-keyed
-// endpoints. After bu-k9ylx (PR #2021), these return HTTP 409 from the backend
-// (public.contact_info is read-only). Full migration to entity-keyed requires
-// bu-e2ja9 to unify the display layer with entity_facts. Until then, the
-// edit/delete UI surface is functionally broken for entries from public.contact_info.
+// [bu-zfsvj] HOTFIX: Edit and Delete affordances are hidden because
+// patchContactInfo (PATCH /contacts/{id}/contact-info/{id}) and
+// deleteContactInfo (DELETE /contacts/{id}/contact-info/{id}) now return
+// HTTP 409 — public.contact_info is write-blocked after the write-path
+// cut-over (PR #2021, bu-k9ylx). The underlying hooks in use-contacts.ts
+// are preserved intact; they will be rewired to entity-keyed endpoints in
+// bu-rxptt. Restore these affordances after bu-rf2dh (display-layer
+// unification) + bu-rxptt (entity-keyed migration) complete.
 // ---------------------------------------------------------------------------
 
-function ExpandedContactInfoRow({
+export function ExpandedContactInfoRow({
   entry,
   contactId,
 }: {
   entry: ContactInfoEntry;
   contactId: string;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [editValue, setEditValue] = useState(entry.value ?? "");
-
-  // COMPAT-ONLY: patchContactInfo and deleteContactInfo via contact-keyed endpoints.
-  // Since PR #2021 (bu-k9ylx write-path cut-over), these return HTTP 409 because
-  // public.contact_info is read-only. Entity-keyed mutations (retract + re-assert
-  // for update; deleteEntityContact for delete) require the display layer to read
-  // from entity_facts — blocked on bu-e2ja9.
-  const patchInfo = usePatchContactInfo();
-  const deleteInfo = useDeleteContactInfo();
-
-  function handleDelete() {
-    if (!window.confirm(`Delete this ${contactInfoTypeLabel(entry.type)} entry?`)) return;
-    deleteInfo.mutate(
-      { contactId, infoId: entry.id },
-      {
-        onSuccess: () => toast.success(`Removed ${contactInfoTypeLabel(entry.type)} entry.`),
-        onError: (err) =>
-          toast.error(`Failed to delete: ${err instanceof Error ? err.message : "Unknown error"}`),
-      },
-    );
-  }
-
-  function handleSaveEdit() {
-    const trimmed = editValue.trim();
-    if (!trimmed) {
-      toast.error("Value cannot be empty.");
-      return;
-    }
-    if (trimmed === entry.value) {
-      setEditing(false);
-      return;
-    }
-    patchInfo.mutate(
-      { contactId, infoId: entry.id, request: { value: trimmed } },
-      {
-        onSuccess: () => {
-          toast.success(`Updated ${contactInfoTypeLabel(entry.type)} entry.`);
-          setEditing(false);
-        },
-        onError: (err) =>
-          toast.error(`Failed to update: ${err instanceof Error ? err.message : "Unknown error"}`),
-      },
-    );
-  }
-
   return (
-    <div className="flex items-center gap-2 group py-1">
+    <div className="flex items-center gap-2 py-1">
       <span className="text-muted-foreground text-xs w-32 shrink-0">
         {contactInfoTypeLabel(entry.type)}
         {entry.is_primary && (
           <span className="ml-1 text-blue-500">(primary)</span>
         )}
       </span>
-      {editing ? (
-        <div className="flex items-center gap-1 flex-1">
-          <Input
-            className="h-7 text-sm flex-1"
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            disabled={patchInfo.isPending}
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSaveEdit();
-              if (e.key === "Escape") setEditing(false);
-            }}
-          />
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0"
-            onClick={handleSaveEdit}
-            disabled={patchInfo.isPending}
-          >
-            <Check className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0"
-            onClick={() => {
-              setEditValue(entry.value ?? "");
-              setEditing(false);
-            }}
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      ) : (
-        <>
-          <span className="flex-1">
-            {entry.secured ? (
-              <SecuredChannelEntry entry={entry} contactId={contactId} />
-            ) : (
-              <ChannelValue entry={entry} />
-            )}
-          </span>
-          <span className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-            {!entry.secured && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0"
-                onClick={() => {
-                  setEditValue(entry.value ?? "");
-                  setEditing(true);
-                }}
-                title="Edit"
-              >
-                <Pencil className="h-3 w-3" />
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-              onClick={handleDelete}
-              disabled={deleteInfo.isPending}
-              title="Delete"
-            >
-              <Trash2 className="h-3 w-3" />
-            </Button>
-          </span>
-        </>
-      )}
+      <span className="flex-1">
+        {entry.secured ? (
+          <SecuredChannelEntry entry={entry} contactId={contactId} />
+        ) : (
+          <ChannelValue entry={entry} />
+        )}
+      </span>
     </div>
   );
 }
