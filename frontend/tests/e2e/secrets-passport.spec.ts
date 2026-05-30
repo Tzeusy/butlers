@@ -177,10 +177,10 @@ test("secrets: ?focus=u:google renders Google user page", async ({ page, baseURL
   await expect(page.locator('[data-page="user"]')).toBeAttached({ timeout: 5_000 });
   await expect(page.locator('[data-provider="google"]')).toBeAttached({ timeout: 5_000 });
 
-  // URL should contain focus param (the colon may or may not be percent-encoded
-  // depending on the browser; check for either form).
-  const url = page.url();
-  expect(url.includes("focus=u%3Agoogle") || url.includes("focus=u:google")).toBe(true);
+  // URL should contain focus param; use the URL API to parse query params
+  // robustly regardless of browser-specific percent-encoding of the colon.
+  const url = new URL(page.url());
+  expect(url.searchParams.get("focus")).toBe("u:google");
 });
 
 // ---------------------------------------------------------------------------
