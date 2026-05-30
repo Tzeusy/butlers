@@ -440,3 +440,61 @@ describe("ContactChannelCard — loading state", () => {
     expect(html).toContain("animate-pulse");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: [bu-zfsvj] edit/delete affordances are hidden (regression hotfix)
+//
+// patchContactInfo (PATCH) and deleteContactInfo (DELETE) return HTTP 409
+// after the write-path cut-over (PR #2021, bu-k9ylx). The Edit and Delete
+// buttons in ExpandedContactInfoRow must NOT be rendered until bu-rf2dh +
+// bu-rxptt rewire them to entity-keyed endpoints.
+// ---------------------------------------------------------------------------
+
+describe("ContactChannelCard — [bu-zfsvj] edit/delete buttons are hidden", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("does NOT render an Edit (Pencil) button for non-secured channel entries", () => {
+    setLinkedContacts([CONTACT_ONE]);
+    const html = renderCard();
+    // Pencil icon from lucide-react renders with a specific svg path — but more
+    // reliably we assert that no element with title="Edit" is present, since that
+    // was the accessible label on the removed button.
+    expect(html).not.toContain('title="Edit"');
+  });
+
+  it("does NOT render a Delete (Trash) button for channel entries", () => {
+    setLinkedContacts([CONTACT_ONE]);
+    const html = renderCard();
+    // The removed delete button had title="Delete".
+    expect(html).not.toContain('title="Delete"');
+  });
+
+  it("does NOT render Edit button for sparse contact (single channel)", () => {
+    setLinkedContacts([SPARSE_CONTACT]);
+    const html = renderCard();
+    expect(html).not.toContain('title="Edit"');
+  });
+
+  it("does NOT render Delete button for sparse contact (single channel)", () => {
+    setLinkedContacts([SPARSE_CONTACT]);
+    const html = renderCard();
+    expect(html).not.toContain('title="Delete"');
+  });
+
+  it("does NOT render Edit or Delete buttons for multi-contact stacking", () => {
+    setLinkedContacts([CONTACT_ONE, CONTACT_TWO]);
+    const html = renderCard();
+    expect(html).not.toContain('title="Edit"');
+    expect(html).not.toContain('title="Delete"');
+  });
+
+  it("still renders channel values when affordances are hidden", () => {
+    setLinkedContacts([CONTACT_ONE]);
+    const html = renderCard();
+    // Channel values are still visible even without edit/delete buttons
+    expect(html).toContain("alice@example.com");
+    expect(html).toContain("@alice_tg");
+  });
+});
