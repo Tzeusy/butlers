@@ -1236,11 +1236,11 @@ async def _tick_event_chain_pass(
                 continue
             deadline_passed_refs[chain_id] = (deadline_id, chain_name, row["actions"])
 
-        deadline_passed_statuses: dict[str, str] = {}
+        deadline_passed_statuses: dict[uuid.UUID, str] = {}
         if deadline_passed_refs:
             status_rows = await pool.fetch(
                 """
-                SELECT id::text AS deadline_id, deadline_status
+                SELECT id, deadline_status
                 FROM scheduled_tasks
                 WHERE id = ANY($1::uuid[])
                   AND task_type = 'deadline'
@@ -1248,12 +1248,10 @@ async def _tick_event_chain_pass(
                 """,
                 list({deadline_id for deadline_id, _, _ in deadline_passed_refs.values()}),
             )
-            deadline_passed_statuses = {
-                row["deadline_id"]: row["deadline_status"] for row in status_rows
-            }
+            deadline_passed_statuses = {row["id"]: row["deadline_status"] for row in status_rows}
 
         for chain_id, (deadline_id, chain_name, actions) in deadline_passed_refs.items():
-            dl_status = deadline_passed_statuses.get(str(deadline_id))
+            dl_status = deadline_passed_statuses.get(deadline_id)
             if dl_status is None:
                 continue
             if isinstance(actions, str):
@@ -1308,11 +1306,11 @@ async def _tick_event_chain_pass(
                 chain_name,
             )
 
-        deadline_fired_thresholds: dict[str, Any] = {}
+        deadline_fired_thresholds: dict[uuid.UUID, Any] = {}
         if deadline_threshold_refs:
             threshold_rows = await pool.fetch(
                 """
-                SELECT id::text AS deadline_id, fired_thresholds
+                SELECT id, fired_thresholds
                 FROM scheduled_tasks
                 WHERE id = ANY($1::uuid[])
                   AND task_type = 'deadline'
@@ -1322,7 +1320,7 @@ async def _tick_event_chain_pass(
                 list({deadline_id for deadline_id, _, _, _ in deadline_threshold_refs.values()}),
             )
             deadline_fired_thresholds = {
-                row["deadline_id"]: row["fired_thresholds"] for row in threshold_rows
+                row["id"]: row["fired_thresholds"] for row in threshold_rows
             }
 
         for chain_id, (
@@ -1331,7 +1329,7 @@ async def _tick_event_chain_pass(
             actions,
             chain_name,
         ) in deadline_threshold_refs.items():
-            raw_fired = deadline_fired_thresholds.get(str(deadline_id))
+            raw_fired = deadline_fired_thresholds.get(deadline_id)
             if raw_fired is None:
                 continue
             if isinstance(actions, str):

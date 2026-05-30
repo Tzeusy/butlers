@@ -585,6 +585,7 @@ async def test_event_chain_pass_skips_malformed_deadline_trigger_references(capl
     assert "bad-passed" in caplog.text
     assert "bad-threshold" in caplog.text
     assert not any("trigger_reference::uuid" in call for call in pool.fetch_calls)
+    assert not any("id::text" in call for call in pool.fetch_calls)
     assert not any("split_part(ec.trigger_reference" in call for call in pool.fetch_calls)
 
 
