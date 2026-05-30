@@ -78,7 +78,7 @@ DEFAULT_MAX_SCAN_SECONDS = 30.0
 #: Maximum length of event_summary stored in QaFinding.
 _MAX_SUMMARY_LEN = 200
 
-#: Log level strings that are always included.
+#: Log level strings included unless a source-level duplicate suppression applies.
 _ERROR_LEVELS = frozenset({"error", "critical"})
 
 #: Log level strings that are included only with crash sentinel patterns.

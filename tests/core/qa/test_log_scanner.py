@@ -180,7 +180,7 @@ async def test_temporal_filtering(tmp_path):
     ],
 )
 def test_severity_filtering(level, event, exception, expected):
-    """ERROR/CRITICAL always in; WARNING with crash pattern; INFO/debug out."""
+    """ERROR/CRITICAL included; WARNING with crash pattern; INFO/debug out."""
     entry = LogEntry(
         level=level, event=event, timestamp=datetime.now(UTC), butler_name="b", exception=exception
     )
