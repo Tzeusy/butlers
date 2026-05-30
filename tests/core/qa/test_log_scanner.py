@@ -244,6 +244,19 @@ def test_runtime_session_timeout_logs_excluded_from_log_scanner(logger_name, eve
     assert _should_include_entry(entry) is False
 
 
+def test_generic_spawner_timeout_log_still_included():
+    """Only adapter-managed OpenCode timeout duplicates are excluded."""
+    entry = LogEntry(
+        level="error",
+        event="Runtime invocation failed: TimeoutError: adapter timed out before startup",
+        timestamp=datetime.now(UTC),
+        butler_name="switchboard",
+        logger="butlers.core.spawner",
+        exception="TimeoutError",
+    )
+    assert _should_include_entry(entry) is True
+
+
 @pytest.mark.asyncio
 async def test_discover_excludes_runtime_session_timeout_logs(tmp_path):
     """OpenCode timeout ERROR lines do not create duplicate log_scanner findings."""

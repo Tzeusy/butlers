@@ -247,7 +247,7 @@ def _should_include_entry(entry: LogEntry) -> bool:
         return False
 
     if entry.logger == "butlers.core.spawner" and entry.event.startswith(
-        "Runtime invocation failed: TimeoutError: "
+        "Runtime invocation failed: TimeoutError: OpenCode CLI timed out after "
     ):
         return False
 
