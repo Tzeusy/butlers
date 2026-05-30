@@ -219,7 +219,9 @@ def _parse_log_line(line: str, butler_name: str) -> LogEntry | None:
     )
 
 
-def _should_include_entry(entry: LogEntry) -> bool:
+def _should_include_entry(
+    entry: LogEntry, *, suppress_session_duplicate_timeouts: bool = False
+) -> bool:
     """Return True if this log entry qualifies for finding extraction."""
     # Codex adapter noise that should never reach the QA finding set:
     #   * "MCP discovery failed after ..." — better sourced from session_records.
@@ -241,7 +243,8 @@ def _should_include_entry(entry: LogEntry) -> bool:
     ):
         return False
     if (
-        entry.logger == "butlers.core.spawner"
+        suppress_session_duplicate_timeouts
+        and entry.logger == "butlers.core.spawner"
         and entry.event.startswith("Runtime invocation failed: TimeoutError:")
         and "timed out" in entry.event.lower()
     ):
@@ -391,6 +394,9 @@ class LogScannerSource:
     max_scan_seconds:
         Wall-clock cap in seconds for a single ``discover()`` call.  Scan
         stops gracefully and returns findings collected so far.  Default 30.
+    suppress_session_duplicate_timeouts:
+        When ``True``, spawner timeout logs already covered by the
+        session_records source are skipped to avoid duplicate QA findings.
 
     Attributes
     ----------
@@ -412,6 +418,7 @@ class LogScannerSource:
         max_findings_per_scan: int = DEFAULT_MAX_FINDINGS_PER_SCAN,
         max_total_lines: int = DEFAULT_MAX_TOTAL_LINES,
         max_scan_seconds: float = DEFAULT_MAX_SCAN_SECONDS,
+        suppress_session_duplicate_timeouts: bool = False,
     ) -> None:
         self._log_root = log_root
         self._repo_root = (repo_root or Path.cwd()).resolve()
@@ -419,6 +426,7 @@ class LogScannerSource:
         self._max_findings = max_findings_per_scan
         self._max_total_lines = max_total_lines
         self._max_scan_seconds = max_scan_seconds
+        self._suppress_session_duplicate_timeouts = suppress_session_duplicate_timeouts
 
         # Truncation telemetry — updated each time a cap is hit during discover()
         self.last_truncated: datetime | None = None
@@ -510,7 +518,12 @@ class LogScannerSource:
 
                     # Budget only covers candidate error/warning entries;
                     # benign entries are skipped without consuming quota.
-                    if not _should_include_entry(entry):
+                    if not _should_include_entry(
+                        entry,
+                        suppress_session_duplicate_timeouts=(
+                            self._suppress_session_duplicate_timeouts
+                        ),
+                    ):
                         continue
 
                     entries_processed += 1

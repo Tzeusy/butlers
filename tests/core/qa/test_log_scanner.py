@@ -199,8 +199,8 @@ def test_codex_mcp_discovery_exhaustion_excluded_from_log_scanner():
     assert _should_include_entry(entry) is False
 
 
-def test_spawner_runtime_timeout_excluded_from_log_scanner():
-    """Spawner timeout logs are duplicate evidence for session_records."""
+def test_spawner_runtime_timeout_included_without_session_records():
+    """Log-scanner-only deployments must keep timeout coverage."""
     entry = LogEntry(
         level="error",
         event="Runtime invocation failed: TimeoutError: Codex CLI timed out after 30 seconds",
@@ -208,7 +208,19 @@ def test_spawner_runtime_timeout_excluded_from_log_scanner():
         butler_name="switchboard",
         logger="butlers.core.spawner",
     )
-    assert _should_include_entry(entry) is False
+    assert _should_include_entry(entry) is True
+
+
+def test_spawner_runtime_timeout_excluded_when_session_records_covers_it():
+    """Spawner timeout logs are duplicate evidence when session_records is enabled."""
+    entry = LogEntry(
+        level="error",
+        event="Runtime invocation failed: TimeoutError: Codex CLI timed out after 30 seconds",
+        timestamp=datetime.now(UTC),
+        butler_name="switchboard",
+        logger="butlers.core.spawner",
+    )
+    assert _should_include_entry(entry, suppress_session_duplicate_timeouts=True) is False
 
 
 def test_spawner_non_timeout_errors_remain_in_log_scanner():
@@ -685,6 +697,30 @@ async def test_discover_skips_codex_mcp_discovery_exhaustion_logs(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_discover_includes_spawner_runtime_timeout_logs_without_session_records(tmp_path):
+    """Log-scanner-only source config keeps timeout findings discoverable."""
+    now = datetime.now(UTC)
+    _write(
+        tmp_path / "butlers" / "switchboard.log",
+        [
+            _line(
+                level="error",
+                event="Runtime invocation failed: TimeoutError: Codex CLI timed out after 30 seconds",
+                ts=now,
+                butler_name="switchboard",
+                logger_name="butlers.core.spawner",
+                exception=None,
+            ),
+        ],
+    )
+
+    findings = await LogScannerSource(log_root=tmp_path).discover(lookback_minutes=15)
+
+    assert len(findings) == 1
+    assert "timed out" in findings[0].event_summary.lower()
+
+
+@pytest.mark.asyncio
 async def test_discover_skips_spawner_runtime_timeout_logs(tmp_path):
     """Raw spawner timeout logs are suppressed in favor of session_records."""
     now = datetime.now(UTC)
@@ -710,7 +746,10 @@ async def test_discover_skips_spawner_runtime_timeout_logs(tmp_path):
         ],
     )
 
-    findings = await LogScannerSource(log_root=tmp_path).discover(lookback_minutes=15)
+    findings = await LogScannerSource(
+        log_root=tmp_path,
+        suppress_session_duplicate_timeouts=True,
+    ).discover(lookback_minutes=15)
 
     assert len(findings) == 1
     assert "database connection refused" in findings[0].event_summary.lower()
