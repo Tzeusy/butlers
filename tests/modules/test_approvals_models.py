@@ -254,7 +254,7 @@ class TestApprovalsMigration:
         engine = create_engine(db_url)
         with engine.connect() as conn:
             versions = [r[0] for r in conn.execute(text("SELECT version_num FROM alembic_version"))]
-        assert "approvals_001" in versions
+        assert "approvals_002" in versions
 
         action_id = uuid.uuid4()
         with engine.connect() as conn:
