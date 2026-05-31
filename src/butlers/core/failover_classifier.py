@@ -152,7 +152,7 @@ _RUNTIME_CONFIG_MARKERS: tuple[str, ...] = (
 )
 
 # Substrings matched (lowercased) against the exception message to detect a
-# wrapper-level success that produced no usable model output or diagnostics.
+# wrapper-level success that produced no usable model output.
 _EMPTY_RUNTIME_RESPONSE_MARKERS: tuple[str, ...] = (
     "returned no response",
     "empty response",
@@ -315,7 +315,7 @@ def classify_failover_eligibility(ctx: FailoverContext) -> FailoverDecision:
             return FailoverDecision(
                 eligible=True,
                 reason="empty_runtime_response: runtime exited without result, tool calls, "
-                "usage, or diagnostics before any tool call was executed",
+                "or usage before any tool call was executed",
             )
 
         # Provider / auth failures
