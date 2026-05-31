@@ -38,8 +38,8 @@ def test_initial_approvals_migration_creates_pending_actions_dossier_columns() -
     )
     normalized = " ".join(pending_actions_sql.lower().split())
 
-    assert "why text" in normalized
-    assert "evidence jsonb not null default '[]'::jsonb" in normalized
+    assert normalized.count("why text") == 1
+    assert normalized.count("evidence jsonb not null default '[]'::jsonb") == 1
 
 
 def test_approvals_repair_migration_adds_missing_dossier_columns() -> None:
