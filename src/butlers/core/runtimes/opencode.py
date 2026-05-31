@@ -49,6 +49,13 @@ def _filtered_stderr_lines(stderr: str) -> list[str]:
     return [line for line in stderr_lines if line not in _BENIGN_STDERR_LINES]
 
 
+def _looks_like_completed_startup_migration(stdout: str, stderr: str) -> bool:
+    """Return True when OpenCode only reports a completed first-run DB migration."""
+    if stdout.strip():
+        return False
+    return _is_opencode_sqlite_migration_only(stderr)
+
+
 def _extract_stdout_error_detail(stdout: str) -> str | None:
     """Extract an actionable error detail from OpenCode JSONL stdout when present."""
     for line in reversed(stdout.strip().splitlines()):
@@ -983,9 +990,12 @@ class OpenCodeAdapter(RuntimeAdapter):
             cmd_for_log = " ".join(cmd[:4]) + " ..."
             logger.debug("Invoking OpenCode CLI: %s", cmd_for_log)
 
-            migration_retry_attempted = False
-            for attempt in range(1, 3):
-                proc: asyncio.subprocess.Process | None = None
+            proc: asyncio.subprocess.Process | None = None
+            retry_attempted = False
+            attempt_infos: list[dict[str, Any]] = []
+            for _ in range(2):
+                attempt_index = len(attempt_infos)
+                attempt_count = attempt_index + 1
                 try:
                     proc = await asyncio.create_subprocess_exec(
                         *cmd,
@@ -1014,32 +1024,39 @@ class OpenCodeAdapter(RuntimeAdapter):
                         "command": cmd_for_log,
                         "stderr": stderr,
                         "runtime_type": "opencode",
-                        "attempt_count": attempt,
+                        "attempt_index": attempt_index,
+                        "attempt_count": attempt_count,
                     }
+                    attempt_infos.append(self._last_process_info)
 
                     if returncode != 0:
-                        if (
-                            attempt == 1
-                            and not stdout.strip()
-                            and _is_opencode_sqlite_migration_only(stderr)
+                        error_detail = _select_error_detail(stderr, stdout, returncode)
+                        if attempt_index == 0 and _looks_like_completed_startup_migration(
+                            stdout, stderr
                         ):
-                            migration_retry_attempted = True
-                            self._last_process_info.update(
-                                {
-                                    "retry_attempted": True,
-                                    "retry_reason": _OPENCODE_SQLITE_MIGRATION_RETRY_REASON,
-                                    "retry_succeeded": None,
-                                }
+                            logger.info(
+                                "OpenCode CLI completed first-run database migration; "
+                                "retrying invocation once"
                             )
-                            logger.warning(
-                                "OpenCode CLI exited with code %d after SQLite migration; "
-                                "retrying once",
-                                returncode,
+                            self._last_process_info["error_detail"] = error_detail
+                            self._last_process_info["is_pre_tool_call"] = True
+                            self._last_process_info["retry_attempted"] = True
+                            self._last_process_info["retry_reason"] = (
+                                _OPENCODE_SQLITE_MIGRATION_RETRY_REASON
                             )
+                            self._last_process_info["retry_succeeded"] = None
+                            retry_attempted = True
                             continue
 
-                        error_detail = _select_error_detail(stderr, stdout, returncode)
-                        if migration_retry_attempted:
+                        logger.error(
+                            "OpenCode CLI exited with code %d: %s", returncode, error_detail
+                        )
+                        self._last_process_info["error_detail"] = error_detail
+                        # On non-zero exit the adapter raises immediately — no tool calls
+                        # were captured by the adapter itself, so this is pre-tool-call.
+                        # The spawner will layer in daemon-side tool-call capture.
+                        self._last_process_info["is_pre_tool_call"] = True
+                        if retry_attempted:
                             self._last_process_info.update(
                                 {
                                     "retry_attempted": True,
@@ -1048,14 +1065,6 @@ class OpenCodeAdapter(RuntimeAdapter):
                                     "result_source": "retry",
                                 }
                             )
-                        self._last_process_info["error_detail"] = error_detail
-                        # On non-zero exit the adapter raises immediately — no tool calls
-                        # were captured by the adapter itself, so this is pre-tool-call.
-                        # The spawner will layer in daemon-side tool-call capture.
-                        self._last_process_info["is_pre_tool_call"] = True
-                        logger.error(
-                            "OpenCode CLI exited with code %d: %s", returncode, error_detail
-                        )
                         raise RuntimeError(
                             f"OpenCode CLI exited with code {returncode}: {error_detail}"
                         )
@@ -1069,15 +1078,6 @@ class OpenCodeAdapter(RuntimeAdapter):
                             "AuthenticationError",
                         ):
                             if pattern in stderr:
-                                if migration_retry_attempted:
-                                    self._last_process_info.update(
-                                        {
-                                            "retry_attempted": True,
-                                            "retry_reason": _OPENCODE_SQLITE_MIGRATION_RETRY_REASON,
-                                            "retry_succeeded": False,
-                                            "result_source": "retry",
-                                        }
-                                    )
                                 logger.error(
                                     "OpenCode CLI exited 0 but stderr indicates failure: %s",
                                     stderr[:500],
@@ -1087,6 +1087,15 @@ class OpenCodeAdapter(RuntimeAdapter):
                                 # Auth/model-not-found failures detected via stderr before
                                 # any output — this is a pre-tool-call systemic failure.
                                 self._last_process_info["is_pre_tool_call"] = True
+                                if retry_attempted:
+                                    self._last_process_info.update(
+                                        {
+                                            "retry_attempted": True,
+                                            "retry_reason": _OPENCODE_SQLITE_MIGRATION_RETRY_REASON,
+                                            "retry_succeeded": False,
+                                            "result_source": "retry",
+                                        }
+                                    )
                                 raise RuntimeError(f"OpenCode CLI error (exit 0): {error_detail}")
 
                     result_text, tool_calls, usage = _parse_opencode_output(
@@ -1105,17 +1114,16 @@ class OpenCodeAdapter(RuntimeAdapter):
                         logger.error(error_detail)
                         self._last_process_info["error_detail"] = error_detail
                         self._last_process_info["is_pre_tool_call"] = True
-                        if migration_retry_attempted:
+                        if retry_attempted:
                             self._last_process_info.update(
                                 {
                                     "retry_attempted": True,
                                     "retry_reason": _OPENCODE_SQLITE_MIGRATION_RETRY_REASON,
                                     "retry_succeeded": False,
-                                    "result_source": "retry",
                                 }
                             )
                         raise RuntimeError(error_detail)
-                    if migration_retry_attempted:
+                    if retry_attempted:
                         self._last_process_info.update(
                             {
                                 "retry_attempted": True,
@@ -1134,13 +1142,14 @@ class OpenCodeAdapter(RuntimeAdapter):
                         "command": cmd_for_log,
                         "stderr": "(timeout - process killed)",
                         "runtime_type": "opencode",
-                        "attempt_count": attempt,
+                        "attempt_index": attempt_index,
+                        "attempt_count": attempt_count,
                         # Timeout fired before the adapter could confirm any tool calls —
                         # the failover classifier treats this as pre-tool-call eligible.
                         # The spawner will layer in daemon-side tool-call capture.
                         "is_pre_tool_call": True,
                     }
-                    if migration_retry_attempted:
+                    if retry_attempted:
                         self._last_process_info.update(
                             {
                                 "retry_attempted": True,
@@ -1155,6 +1164,8 @@ class OpenCodeAdapter(RuntimeAdapter):
                     raise TimeoutError(
                         f"OpenCode CLI timed out after {effective_timeout} seconds"
                     ) from None
+
+            raise RuntimeError("OpenCode CLI retry loop exhausted")
 
 
 # Register the OpenCode adapter
