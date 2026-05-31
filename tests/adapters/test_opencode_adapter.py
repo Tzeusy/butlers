@@ -529,6 +529,29 @@ async def test_invoke_does_not_retry_migration_banner_with_actionable_error():
     assert mock_sub.call_count == 1
 
 
+async def test_invoke_does_not_retry_migration_banner_with_stdout():
+    """Migration-only stderr is not retried when stdout contains process output."""
+    adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
+    stderr = "\n".join(
+        [
+            "Performing one time database migration, may take a few minutes...",
+            "sqlite-migration:done",
+            "Database migration complete.",
+        ]
+    )
+    stdout = json.dumps({"type": "error", "message": "Provider rejected the request"})
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(stdout.encode(), stderr.encode()))
+    mock_proc.returncode = 1
+    mock_proc.pid = 104
+
+    with patch(_EXEC, return_value=mock_proc) as mock_sub:
+        with pytest.raises(RuntimeError, match="Provider rejected the request"):
+            await adapter.invoke(prompt="run", system_prompt="", mcp_servers={}, env={})
+
+    assert mock_sub.call_count == 1
+
+
 async def test_invoke_does_not_retry_partial_migration_banner():
     """Partial migration chatter is not enough to classify a failed exit as benign."""
     adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
@@ -541,7 +564,7 @@ async def test_invoke_does_not_retry_partial_migration_banner():
     mock_proc = AsyncMock()
     mock_proc.communicate = AsyncMock(return_value=(b"", stderr.encode()))
     mock_proc.returncode = 1
-    mock_proc.pid = 104
+    mock_proc.pid = 105
 
     with patch(_EXEC, return_value=mock_proc) as mock_sub:
         with pytest.raises(RuntimeError, match="exit code 1") as exc_info:
