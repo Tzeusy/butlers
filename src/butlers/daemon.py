@@ -901,7 +901,7 @@ class ButlerDaemon:
                 # Step 2: query entity_facts for the active triple.
                 # For telegram, filter to entries with the "telegram:" prefix
                 # to avoid ambiguity with other has-handle entries (linkedin, etc.).
-                if channel in ("telegram",) and predicate == "has-handle":
+                if channel == "telegram" and predicate == "has-handle":
                     row = await conn.fetchrow(
                         """
                         SELECT ef.object
