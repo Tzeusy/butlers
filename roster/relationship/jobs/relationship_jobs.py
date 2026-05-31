@@ -1533,13 +1533,15 @@ async def run_contact_info_reconciler(db_pool: asyncpg.Pool) -> dict[str, Any]:
                   FROM relationship.entity_facts ef
                   WHERE ef.subject   = c.entity_id
                     AND ef.predicate = CASE ci.type
-                        WHEN 'email'    THEN 'has-email'
-                        WHEN 'phone'    THEN 'has-phone'
-                        WHEN 'website'  THEN 'has-website'
-                        WHEN 'telegram' THEN 'has-handle'
-                        WHEN 'linkedin' THEN 'has-handle'
-                        WHEN 'twitter'  THEN 'has-handle'
-                        WHEN 'other'    THEN 'has-handle'
+                        WHEN 'email'             THEN 'has-email'
+                        WHEN 'phone'             THEN 'has-phone'
+                        WHEN 'website'           THEN 'has-website'
+                        WHEN 'telegram'          THEN 'has-handle'
+                        WHEN 'telegram_user_id'  THEN 'has-handle'
+                        WHEN 'telegram_username' THEN 'has-handle'
+                        WHEN 'linkedin'          THEN 'has-handle'
+                        WHEN 'twitter'           THEN 'has-handle'
+                        WHEN 'other'             THEN 'has-handle'
                         ELSE 'has-' || ci.type
                     END
                     AND ef.object    = ci.value
