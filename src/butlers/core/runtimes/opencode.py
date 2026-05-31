@@ -1081,11 +1081,7 @@ class OpenCodeAdapter(RuntimeAdapter):
                     result_text, tool_calls, usage = _parse_opencode_output(
                         stdout, stderr, returncode
                     )
-                    if (
-                        result_text is None
-                        and not tool_calls
-                        and usage is None
-                    ):
+                    if result_text is None and not tool_calls and usage is None:
                         error_detail = (
                             "OpenCode CLI returned no response: no result, "
                             "tool calls, or token usage"
