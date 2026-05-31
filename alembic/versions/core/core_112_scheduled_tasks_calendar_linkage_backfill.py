@@ -1,7 +1,7 @@
 """scheduled_tasks_calendar_linkage_backfill.
 
-Revision ID: core_111
-Revises: core_110
+Revision ID: core_112
+Revises: core_111
 Create Date: 2026-05-24 00:00:00.000000
 
 Fresh installs create scheduled_tasks with calendar-linkage columns in
@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "core_111"
-down_revision = "core_110"
+revision = "core_112"
+down_revision = "core_111"
 branch_labels = None
 depends_on = None
 
