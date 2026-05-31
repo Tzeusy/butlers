@@ -335,10 +335,7 @@ def test_opencode_empty_response_included_without_session_records_coverage():
     """Log-scanner-only deployments keep OpenCode empty-response coverage."""
     entry = LogEntry(
         level="error",
-        event=(
-            "OpenCode CLI returned no response: no result, tool calls, "
-            "or token usage"
-        ),
+        event=("OpenCode CLI returned no response: no result, tool calls, or token usage"),
         timestamp=datetime.now(UTC),
         butler_name="switchboard",
         logger="butlers.core.runtimes.opencode",
@@ -350,10 +347,7 @@ def test_opencode_empty_response_excluded_when_session_records_covers_it():
     """OpenCode empty-response adapter logs are duplicate evidence with session records."""
     entry = LogEntry(
         level="error",
-        event=(
-            "OpenCode CLI returned no response: no result, tool calls, "
-            "token usage, or stderr"
-        ),
+        event=("OpenCode CLI returned no response: no result, tool calls, token usage, or stderr"),
         timestamp=datetime.now(UTC),
         butler_name="switchboard",
         logger="butlers.core.runtimes.opencode",
