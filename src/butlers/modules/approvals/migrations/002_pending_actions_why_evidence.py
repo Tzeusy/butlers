@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from alembic import op
 
+# revision identifiers, used by Alembic.
 revision = "approvals_002"
 down_revision = "approvals_001"
 branch_labels = None
