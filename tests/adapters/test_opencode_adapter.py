@@ -275,3 +275,22 @@ async def test_invoke_empty_exit_zero_raises_pre_tool_call_error():
     assert info.get("stderr") == ""
     assert info.get("is_pre_tool_call") is True
     assert "returned no response" in info.get("error_detail", "")
+
+
+async def test_invoke_empty_exit_zero_with_stderr_noise_raises_pre_tool_call_error():
+    """invoke() rejects empty parse results even when stderr contains non-fatal noise."""
+    adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b"warning: newer version available"))
+    mock_proc.returncode = 0
+
+    with patch(_EXEC, return_value=mock_proc):
+        with pytest.raises(RuntimeError, match="OpenCode CLI returned no response"):
+            await adapter.invoke(prompt="test", system_prompt="", mcp_servers={}, env={})
+
+    info = adapter.last_process_info
+    assert info is not None
+    assert info.get("exit_code") == 0
+    assert info.get("stderr") == "warning: newer version available"
+    assert info.get("is_pre_tool_call") is True
+    assert "warning: newer version available" in info.get("error_detail", "")
