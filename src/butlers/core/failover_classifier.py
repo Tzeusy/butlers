@@ -161,13 +161,6 @@ _RUNTIME_CONFIG_MARKERS: tuple[str, ...] = (
     "cli binary",
 )
 
-# Substrings matched (lowercased) against the exception message to detect a
-# wrapper-level success that produced no usable model output.
-_EMPTY_RUNTIME_RESPONSE_MARKERS: tuple[str, ...] = (
-    "returned no response",
-    "empty response",
-)
-
 # Substrings matched (lowercased) against the exception message to identify
 # guardrail terminations.  These SUPPRESS failover — they are intentional.
 _GUARDRAIL_MARKERS: tuple[str, ...] = (
@@ -317,15 +310,6 @@ def classify_failover_eligibility(ctx: FailoverContext) -> FailoverDecision:
                 eligible=True,
                 reason="runtime_config_error: runtime configuration or registration "
                 "failure before invocation",
-            )
-
-        # Empty runtime response before work
-        if _matches_any(exc_msg, _EMPTY_RUNTIME_RESPONSE_MARKERS):
-            logger.debug("Failover eligible: RuntimeError — empty runtime response")
-            return FailoverDecision(
-                eligible=True,
-                reason="empty_runtime_response: runtime exited without result, tool calls, "
-                "or usage before any tool call was executed",
             )
 
         # Provider / auth failures
