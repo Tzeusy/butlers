@@ -27,6 +27,7 @@ from butlers.core.runtimes.opencode import (
     _find_opencode_binary,
     _looks_like_tool_call_event,
     _parse_opencode_output,
+    _select_error_detail,
 )
 
 pytestmark = pytest.mark.unit
@@ -193,6 +194,61 @@ def test_extract_usage_and_find_binary():
             _find_opencode_binary()
 
 
+def test_select_error_detail_prefers_stdout_error_over_migration_noise():
+    """OpenCode first-run migration notices must not mask structured stdout failures."""
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "session.started", "id": "session-123"}),
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "AuthenticationError: provider rejected the request",
+                }
+            ),
+        ]
+    )
+    stderr = (
+        "Performing one time database migration, may take a few minutes...\n"
+        "sqlite-migration:done\n"
+        "Database migration complete.\n"
+    )
+
+    detail = _select_error_detail(stderr, stdout, 1)
+
+    assert detail == "AuthenticationError: provider rejected the request"
+
+
+def test_select_error_detail_accepts_code_only_stdout_error():
+    """Structured stdout errors may carry only a numeric provider error code."""
+    stdout = json.dumps({"type": "result", "code": 429})
+
+    detail = _select_error_detail("plain stderr fallback", stdout, 1)
+
+    assert detail == "429"
+
+
+def test_select_error_detail_accepts_nested_numeric_code():
+    """Nested scalar error fields are still useful diagnostics."""
+    stdout = json.dumps({"type": "error", "error": {"code": 401}})
+
+    detail = _select_error_detail("plain stderr fallback", stdout, 1)
+
+    assert detail == "401"
+
+
+def test_select_error_detail_uses_exit_code_when_only_migration_noise_exists():
+    """A benign migration banner alone is not a useful non-zero-exit diagnostic."""
+    stderr = (
+        "Performing one time database migration, may take a few minutes...\n"
+        "sqlite-migration:done\n"
+        "Database migration complete.\n"
+    )
+
+    detail = _select_error_detail(stderr, "", 1)
+
+    assert detail == "exit code 1"
+
+
 async def test_invoke_success_and_config():
     """invoke() calls subprocess with run subcommand; injects OPENCODE_CONFIG; forwards --model."""
     adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
@@ -238,6 +294,135 @@ async def test_invoke_success_and_config():
     assert "--model" not in mock_sub.call_args[0]
 
 
+async def test_invoke_retries_completed_startup_migration():
+    """invoke() retries once when OpenCode exits after completing its startup DB migration."""
+    adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
+
+    migration_proc = AsyncMock()
+    migration_proc.pid = 100
+    migration_proc.communicate = AsyncMock(
+        return_value=(
+            b"",
+            b"\n".join(
+                [
+                    b"Performing one time database migration, may take a few minutes...",
+                    b"sqlite-migration:done",
+                    b"Database migration complete.",
+                ]
+            ),
+        )
+    )
+    migration_proc.returncode = 1
+
+    success_proc = AsyncMock()
+    success_proc.pid = 101
+    success_proc.communicate = AsyncMock(
+        return_value=(json.dumps({"type": "text", "text": "Task done."}).encode(), b"")
+    )
+    success_proc.returncode = 0
+
+    with patch(_EXEC, side_effect=[migration_proc, success_proc]) as mock_sub:
+        result_text, tool_calls, usage = await adapter.invoke(
+            prompt="do something",
+            system_prompt="",
+            mcp_servers={},
+            env={},
+        )
+
+    assert mock_sub.call_count == 2
+    assert result_text == "Task done."
+    assert tool_calls == []
+    assert usage is None
+    assert adapter.last_process_info is not None
+    assert adapter.last_process_info["retry_attempted"] is True
+    assert adapter.last_process_info["retry_succeeded"] is True
+    assert adapter.last_process_info["result_source"] == "retry"
+    assert adapter.last_process_info["attempt_index"] == 1
+
+
+async def test_invoke_marks_retry_failed_when_second_attempt_exits_zero_with_error_stderr():
+    """invoke() preserves retry provenance when the retry hits an exit-0 stderr failure."""
+    adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
+
+    migration_proc = AsyncMock()
+    migration_proc.pid = 100
+    migration_proc.communicate = AsyncMock(
+        return_value=(
+            b"",
+            b"\n".join(
+                [
+                    b"Performing one time database migration, may take a few minutes...",
+                    b"sqlite-migration:done",
+                    b"Database migration complete.",
+                ]
+            ),
+        )
+    )
+    migration_proc.returncode = 1
+
+    error_proc = AsyncMock()
+    error_proc.pid = 101
+    error_proc.communicate = AsyncMock(
+        return_value=(b"", b"ProviderModelNotFoundError: model unavailable")
+    )
+    error_proc.returncode = 0
+
+    with patch(_EXEC, side_effect=[migration_proc, error_proc]):
+        with pytest.raises(RuntimeError, match="ProviderModelNotFoundError"):
+            await adapter.invoke(
+                prompt="do something",
+                system_prompt="",
+                mcp_servers={},
+                env={},
+            )
+
+    assert adapter.last_process_info is not None
+    assert adapter.last_process_info["retry_attempted"] is True
+    assert adapter.last_process_info["retry_succeeded"] is False
+    assert adapter.last_process_info["attempt_index"] == 1
+
+
+async def test_invoke_marks_retry_failed_when_second_attempt_exits_zero_empty():
+    """invoke() does not report retry success until retry output validates."""
+    adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
+
+    migration_proc = AsyncMock()
+    migration_proc.pid = 100
+    migration_proc.communicate = AsyncMock(
+        return_value=(
+            b"",
+            b"\n".join(
+                [
+                    b"Performing one time database migration, may take a few minutes...",
+                    b"sqlite-migration:done",
+                    b"Database migration complete.",
+                ]
+            ),
+        )
+    )
+    migration_proc.returncode = 1
+
+    empty_proc = AsyncMock()
+    empty_proc.pid = 101
+    empty_proc.communicate = AsyncMock(return_value=(b"", b""))
+    empty_proc.returncode = 0
+
+    with patch(_EXEC, side_effect=[migration_proc, empty_proc]):
+        with pytest.raises(RuntimeError, match="OpenCode CLI returned no response"):
+            await adapter.invoke(
+                prompt="do something",
+                system_prompt="",
+                mcp_servers={},
+                env={},
+            )
+
+    assert adapter.last_process_info is not None
+    assert adapter.last_process_info["retry_attempted"] is True
+    assert adapter.last_process_info["retry_succeeded"] is False
+    assert adapter.last_process_info["attempt_index"] == 1
+    assert adapter.last_process_info.get("result_source") != "retry"
+
+
 async def test_invoke_error_paths():
     """invoke() raises RuntimeError on non-zero exit; TimeoutError and kill on timeout."""
     adapter = OpenCodeAdapter(opencode_binary="/usr/bin/opencode")
@@ -248,6 +433,23 @@ async def test_invoke_error_paths():
     with patch(_EXEC, return_value=mock_proc):
         with pytest.raises(RuntimeError, match="rate limit exceeded"):
             await adapter.invoke(prompt="test", system_prompt="", mcp_servers={}, env={})
+
+    mock_proc.communicate = AsyncMock(
+        return_value=(
+            json.dumps(
+                {"type": "error", "message": "AuthenticationError: login required"}
+            ).encode(),
+            b"Performing one time database migration, may take a few minutes...\n"
+            b"sqlite-migration:done\n"
+            b"Database migration complete.\n",
+        )
+    )
+    mock_proc.returncode = 1
+    with patch(_EXEC, return_value=mock_proc):
+        with pytest.raises(RuntimeError) as exc_info:
+            await adapter.invoke(prompt="test", system_prompt="", mcp_servers={}, env={})
+    assert "AuthenticationError: login required" in str(exc_info.value)
+    assert "sqlite-migration:done" not in str(exc_info.value)
 
     mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
     mock_proc.kill = AsyncMock()

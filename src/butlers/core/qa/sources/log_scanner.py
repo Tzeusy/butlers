@@ -78,7 +78,7 @@ DEFAULT_MAX_SCAN_SECONDS = 30.0
 #: Maximum length of event_summary stored in QaFinding.
 _MAX_SUMMARY_LEN = 200
 
-#: Log level strings that are always included.
+#: Log level strings included unless a source-level duplicate suppression applies.
 _ERROR_LEVELS = frozenset({"error", "critical"})
 
 #: Log level strings that are included only with crash sentinel patterns.
@@ -105,6 +105,17 @@ _DEFAULT_LOG_ROOT = "logs"
 
 #: Bytes to read from the end of a log file per chunk when scanning backwards.
 _TAIL_CHUNK_SIZE = 64 * 1024  # 64 KiB
+
+# Switchboard message classification is intentionally capped at a short
+# timeout and falls back to General when the routing LLM does not return.
+# Those timeout records are degradation telemetry, not actionable runtime bugs
+# for the autonomous QA loop.
+_SWITCHBOARD_CLASSIFICATION_TIMEOUT_RE = re.compile(
+    r"Runtime invocation failed:\s+TimeoutError:\s+Session timed out after (\d+)s "
+    r"\(model=[A-Za-z0-9._-]+mini,\s*butler=switchboard\)",
+    re.IGNORECASE,
+)
+_SWITCHBOARD_CLASSIFICATION_TIMEOUT_MAX_S = 60
 
 
 # ---------------------------------------------------------------------------
@@ -219,21 +230,56 @@ def _parse_log_line(line: str, butler_name: str) -> LogEntry | None:
     )
 
 
-def _should_include_entry(entry: LogEntry) -> bool:
+def _should_include_entry(
+    entry: LogEntry, *, suppress_session_duplicate_timeouts: bool = False
+) -> bool:
     """Return True if this log entry qualifies for finding extraction."""
+    if _is_switchboard_classification_timeout(entry):
+        return False
+
     # Codex adapter noise that should never reach the QA finding set:
     #   * "MCP discovery failed after ..." — better sourced from session_records.
     #     The runtime/session tables tell us whether the session actually
     #     failed, while the raw adapter log can be emitted on a path that
     #     later recovers.
+    #   * "Codex CLI timed out after ..." — generic adapter process-control
+    #     diagnostics. When session_records is available, it provides session
+    #     IDs and timeout status; without it, log-scanner-only deployments keep
+    #     degraded timeout coverage.
+    #   * "Runtime invocation failed: TimeoutError: ... timed out ..." from
+    #     the spawner — a duplicate daemon log for the failed session row.
+    #     The session_records source classifies these as SessionTimeoutError
+    #     and carries session IDs for investigation.
     #   * "codex_refresh_lock: lock held" / "codex_refresh_lock: waiting" —
     #     these contain the word "deadlock" while describing the adapter's
     #     non-fatal fallback path. It is operational contention, not a crash
     #     sentinel.
     if entry.logger == "butlers.core.runtimes.codex" and (
         "MCP discovery failed after" in entry.event
+        or (suppress_session_duplicate_timeouts and "Codex CLI timed out after" in entry.event)
         or "codex_refresh_lock: lock held" in entry.event
         or "codex_refresh_lock: waiting" in entry.event
+    ):
+        return False
+    if (
+        suppress_session_duplicate_timeouts
+        and entry.logger == "butlers.core.spawner"
+        and entry.event.startswith("Runtime invocation failed: TimeoutError:")
+        and "timed out" in entry.event.lower()
+    ):
+        return False
+
+    # Adapter-managed session timeouts are persisted on the session row and
+    # are therefore better sourced from session_records, which carries session
+    # identifiers and avoids duplicate investigations from both adapter and
+    # spawner ERROR log lines.
+    if entry.logger == "butlers.core.runtimes.opencode" and entry.event.startswith(
+        "OpenCode CLI timed out after "
+    ):
+        return False
+
+    if entry.logger == "butlers.core.spawner" and entry.event.startswith(
+        "Runtime invocation failed: TimeoutError: OpenCode CLI timed out after "
     ):
         return False
 
@@ -244,6 +290,29 @@ def _should_include_entry(entry: LogEntry) -> bool:
         text = (entry.event or "") + " " + (entry.exception or "")
         return bool(_CRASH_SENTINEL_PATTERNS.search(text))
     return False
+
+
+def _is_switchboard_classification_timeout(entry: LogEntry) -> bool:
+    if (
+        entry.butler_name != "switchboard"
+        or entry.logger != "butlers.core.spawner"
+        or entry.trigger_source != "tick"
+    ):
+        return False
+    match = _SWITCHBOARD_CLASSIFICATION_TIMEOUT_RE.search(entry.event or "")
+    if not match:
+        return False
+
+    raw_timeout_s = entry.raw.get("timeout_s")
+    try:
+        timeout_s = int(raw_timeout_s)
+    except (TypeError, ValueError):
+        try:
+            timeout_s = int(match.group(1))
+        except (IndexError, ValueError):
+            return False
+
+    return timeout_s <= _SWITCHBOARD_CLASSIFICATION_TIMEOUT_MAX_S
 
 
 def _level_to_severity(level: str, exception_type: str, call_site: str) -> int:
@@ -381,6 +450,9 @@ class LogScannerSource:
     max_scan_seconds:
         Wall-clock cap in seconds for a single ``discover()`` call.  Scan
         stops gracefully and returns findings collected so far.  Default 30.
+    suppress_session_duplicate_timeouts:
+        When ``True``, spawner timeout logs already covered by the
+        session_records source are skipped to avoid duplicate QA findings.
 
     Attributes
     ----------
@@ -402,6 +474,7 @@ class LogScannerSource:
         max_findings_per_scan: int = DEFAULT_MAX_FINDINGS_PER_SCAN,
         max_total_lines: int = DEFAULT_MAX_TOTAL_LINES,
         max_scan_seconds: float = DEFAULT_MAX_SCAN_SECONDS,
+        suppress_session_duplicate_timeouts: bool = False,
     ) -> None:
         self._log_root = log_root
         self._repo_root = (repo_root or Path.cwd()).resolve()
@@ -409,6 +482,7 @@ class LogScannerSource:
         self._max_findings = max_findings_per_scan
         self._max_total_lines = max_total_lines
         self._max_scan_seconds = max_scan_seconds
+        self._suppress_session_duplicate_timeouts = suppress_session_duplicate_timeouts
 
         # Truncation telemetry — updated each time a cap is hit during discover()
         self.last_truncated: datetime | None = None
@@ -500,7 +574,12 @@ class LogScannerSource:
 
                     # Budget only covers candidate error/warning entries;
                     # benign entries are skipped without consuming quota.
-                    if not _should_include_entry(entry):
+                    if not _should_include_entry(
+                        entry,
+                        suppress_session_duplicate_timeouts=(
+                            self._suppress_session_duplicate_timeouts
+                        ),
+                    ):
                         continue
 
                     entries_processed += 1
