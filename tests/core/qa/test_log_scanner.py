@@ -343,6 +343,21 @@ def test_opencode_empty_response_adapter_warning_excluded_without_session_record
     assert _should_include_entry(entry) is False
 
 
+def test_opencode_empty_response_warning_with_stderr_sentinel_excluded():
+    """Recovered OpenCode empty-response warnings stay excluded even with stderr details."""
+    entry = LogEntry(
+        level="warning",
+        event=(
+            "OpenCode CLI returned no response: no result, tool calls, or token usage; "
+            "stderr=TimeoutError: upstream request timed out"
+        ),
+        timestamp=datetime.now(UTC),
+        butler_name="switchboard",
+        logger="butlers.core.runtimes.opencode",
+    )
+    assert _should_include_entry(entry) is False
+
+
 def test_spawner_opencode_empty_response_included_without_session_records_coverage():
     """Terminal OpenCode empty-response failures stay visible without session records."""
     entry = LogEntry(
