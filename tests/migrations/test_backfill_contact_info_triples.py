@@ -1356,14 +1356,17 @@ class TestEmptyValueGuard:
             _ci_row(ci_type="telegram_user_id", value=""),
             _ci_row(ci_type="email", value="  "),
         ]
+        report_path = tmp_path / "r.md"
         pool = _make_pool(ci_rows=ci_rows, active_triples=[])
 
         with patch.object(mod, "_load_assert_fact", return_value=writer_mod):
-            rc = await mod._run_backfill_with_pool(pool, apply=True, report_path=tmp_path / "r.md")
+            rc = await mod._run_backfill_with_pool(pool, apply=True, report_path=report_path)
 
         assert rc == 0
-        # Two empty-value rows should be skipped
         writer_mod.relationship_assert_fact.assert_not_called()
+        # The report must record skipped_empty_value = 2
+        content = report_path.read_text()
+        assert "| Skipped — empty/whitespace value | 2 |" in content
 
     @pytest.mark.asyncio
     async def test_empty_value_in_report(self, tmp_path: Path) -> None:

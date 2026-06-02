@@ -120,16 +120,34 @@ def _make_pool(*, ci_rows: list[MagicMock]) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
+class _OutcomeValue:
+    """Stub that behaves like a string (equality, membership) and has .value."""
+
+    def __init__(self, name: str) -> None:
+        self.value = name
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, _OutcomeValue):
+            return self.value == other.value
+        return self.value == other
+
+    def __hash__(self) -> int:
+        return hash(self.value)
+
+    def __repr__(self) -> str:
+        return f"_OutcomeValue({self.value!r})"
+
+
 class _AssertOutcome:
-    inserted = "inserted"
-    superseded = "superseded"
-    unchanged = "unchanged"
-    pending_approval = "pending_approval"
+    inserted = _OutcomeValue("inserted")
+    superseded = _OutcomeValue("superseded")
+    unchanged = _OutcomeValue("unchanged")
+    pending_approval = _OutcomeValue("pending_approval")
 
 
 class _AssertResult:
     def __init__(self, outcome: str):
-        self.outcome = outcome
+        self.outcome = _OutcomeValue(outcome)
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +174,7 @@ async def _run_reconciler(
     # Stub encode_handle_object: use the real implementation so encoding
     # behaviour stays correct, but load it via butlers.tools.relationship
     # (the registered module path) rather than the roster path.
+    real_encode = None
     helpers_mod = sys.modules.get("butlers.tools.relationship")
     if helpers_mod is not None:
         real_encode = getattr(helpers_mod, "encode_handle_object", None)
@@ -164,7 +183,7 @@ async def _run_reconciler(
             helpers_sub = sys.modules.get("butlers.tools.relationship._ef_channel_helpers")
             if helpers_sub is not None:
                 real_encode = helpers_sub.encode_handle_object
-    if real_encode is None:  # type: ignore[possibly-undefined]
+    if real_encode is None:
         # Fallback: inline the real logic so tests don't depend on import order
         def real_encode(ci_type: str, value: str) -> str:  # type: ignore[misc]
             telegram_types = {"telegram", "telegram_user_id", "telegram_username"}
