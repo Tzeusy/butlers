@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 
 # Default timeout for OpenCode CLI invocation (5 minutes)
 _DEFAULT_TIMEOUT_SECONDS = 300
+_MAX_PROMPT_ARG_BYTES = 32 * 1024
+_PROMPT_ATTACHMENT_MESSAGE = (
+    "Read the attached prompt file and follow its instructions exactly."
+)
 _OPENCODE_SQLITE_MIGRATION_RETRY_REASON = "opencode_sqlite_migration"
 
 _OPENCODE_SQLITE_MIGRATION_LINES = (
@@ -139,6 +143,11 @@ def _find_opencode_binary() -> str:
             "or see https://opencode.ai/docs"
         )
     return path
+
+
+def _prompt_fits_argv(prompt: str) -> bool:
+    """Return true when the prompt is small enough to pass as one argv entry."""
+    return len(prompt.encode("utf-8")) <= _MAX_PROMPT_ARG_BYTES
 
 
 def _is_opencode_sqlite_migration_only(stderr: str) -> bool:
@@ -977,7 +986,12 @@ class OpenCodeAdapter(RuntimeAdapter):
             if runtime_args:
                 cmd.extend(runtime_args)
 
-            cmd.append(prompt)
+            if _prompt_fits_argv(prompt):
+                cmd.append(prompt)
+            else:
+                prompt_path = tmp_dir / "_user_prompt.md"
+                prompt_path.write_text(prompt, encoding="utf-8")
+                cmd.extend(["--file", str(prompt_path), _PROMPT_ATTACHMENT_MESSAGE])
 
             # Inject OPENCODE_CONFIG into subprocess env when we have MCP
             # servers, instructions, or provider config to override —
