@@ -358,6 +358,18 @@ def test_opencode_empty_response_warning_with_stderr_sentinel_excluded():
     assert _should_include_entry(entry) is False
 
 
+def test_opencode_empty_response_error_included_without_session_records_coverage():
+    """Degraded deployments keep ERROR-level OpenCode empty-response coverage."""
+    entry = LogEntry(
+        level="error",
+        event=("OpenCode CLI returned no response: no result, tool calls, or token usage"),
+        timestamp=datetime.now(UTC),
+        butler_name="switchboard",
+        logger="butlers.core.runtimes.opencode",
+    )
+    assert _should_include_entry(entry) is True
+
+
 def test_spawner_opencode_empty_response_included_without_session_records_coverage():
     """Terminal OpenCode empty-response failures stay visible without session records."""
     entry = LogEntry(
