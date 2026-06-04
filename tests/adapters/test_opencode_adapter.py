@@ -21,9 +21,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from butlers.core.runtimes.opencode import (
-    OpenCodeAdapter,
     _MAX_PROMPT_ARG_BYTES,
     _PROMPT_ATTACHMENT_MESSAGE,
+    OpenCodeAdapter,
     _extract_opencode_tool_call,
     _extract_usage,
     _find_opencode_binary,
