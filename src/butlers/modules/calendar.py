@@ -7053,6 +7053,14 @@ class CalendarModule(Module):
         normalized = override_calendar_id.strip()
         if not normalized:
             raise ValueError("calendar_id must be a non-empty string when provided")
+        if self._all_provider_calendar_ids:
+            known_calendar_ids = set(self._all_provider_calendar_ids)
+            if self._primary_calendar_id is not None:
+                known_calendar_ids.add(self._primary_calendar_id)
+            if self._resolved_calendar_id is not None:
+                known_calendar_ids.add(self._resolved_calendar_id)
+            if normalized not in known_calendar_ids:
+                raise ValueError("calendar_id is not one of the discovered provider calendars")
         return normalized
 
     async def create_user_event(
