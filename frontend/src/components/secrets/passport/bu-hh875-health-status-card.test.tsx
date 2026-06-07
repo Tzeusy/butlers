@@ -254,7 +254,8 @@ describe("GoogleHealthPassportStatusCard: hidden without health scopes [bu-hh875
       isLoading: false,
       error: null,
     } as unknown as ReturnType<typeof useSecretsModule.useGoogleAccounts>);
-    // Health status hook should not be called, but even if it returns data
+    // The health status hook is called unconditionally (React hooks rules), but
+    // with `enabled: false` when hasHealth is false. Even if it returns data
     // the card must stay hidden when hasHealth is false.
     vi.mocked(useGoogleHealthModule.useGoogleHealthStatus).mockReturnValueOnce({
       data: makeHealthStatus(),

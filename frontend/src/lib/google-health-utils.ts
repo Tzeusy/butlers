@@ -5,10 +5,10 @@
  * the react-refresh/only-export-components rule (which fires when non-component
  * symbols are exported from a file that also exports React components).
  *
- * All helpers are pure functions — they do NOT call Date.now() internally during
- * React render. Callers that need "current time" should pass it explicitly, or
- * use the module-level ``healthUtilsNowMs`` capture for mount-time computation
- * without impure Date.now() calls in render.
+ * All helpers are pure functions. Callers inside React components must NOT call
+ * them with the default `nowMs` parameter during render (that would call Date.now()
+ * inside the render phase, violating react-hooks/purity). Instead, capture nowMs
+ * once in a module-level helper outside the render body and pass it explicitly.
  *
  * [bu-hh875]
  */
