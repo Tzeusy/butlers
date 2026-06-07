@@ -1255,7 +1255,7 @@ def _make_google_inventory_pool(
     - SQL containing 'google_accounts' → UNION ALL result: owner_rows + primary_rows
     - SQL containing 'entity_id = $1' (identity-specific) → identity_rows[str(arg)] or []
     - SQL containing 'public.entities' (identity enrichment) → entity_rows or []
-    - SQL containing 'category = 'cli'' → []
+    - SQL containing "category = 'cli'" → []
     - SQL containing 'secret_probe_log' → []
     """
     identity_rows = identity_rows or {}
@@ -1563,3 +1563,74 @@ def test_no_primary_google_account_no_google_entry_in_owner_default():
         "google_oauth_refresh must NOT appear when no primary Google account is connected"
     )
     assert "telegram_token" in types
+
+
+# --- Owner identity always appears first in identities[] regardless of type sort order ---
+
+
+def test_owner_entity_first_in_identities_when_google_type_sorts_before_owner_type():
+    """Owner entity_id appears first in identities[] even when google_oauth_refresh sorts before.
+
+    Regression guard for the ordering bug: prior to the priority-column fix, ORDER BY type
+    caused google_oauth_refresh (g) to sort before telegram_token (t), making the Google
+    account entity_id appear first in seen_eids and thus first in identities[].
+
+    With the priority-column fix (ORDER BY priority, type), owner credentials (priority=0)
+    always appear before google account credentials (priority=1), preserving the owner-first
+    contract documented in _fetch_identity_info.
+
+    The mock simulates the DB returning rows already sorted by priority, type (as the real
+    DB would), with owner rows (telegram_token) coming before google rows (google_oauth_refresh).
+    """
+    owner_entity_id = str(uuid4())
+    google_entity_id = str(uuid4())
+
+    telegram_row = _make_entity_info_row(
+        entity_id=owner_entity_id,
+        info_type="telegram_token",
+        value="tg-token",
+    )
+    google_row = _make_entity_info_row(
+        entity_id=google_entity_id,
+        info_type="google_oauth_refresh",
+        value="google-token",
+    )
+
+    owner_entity_row = _make_entity_row(
+        entity_id=owner_entity_id,
+        canonical_name="Owner",
+        roles=["owner"],
+    )
+    google_entity_row = _make_entity_row(
+        entity_id=google_entity_id,
+        canonical_name="google-account:uniquosity@gmail.com",
+        roles=["google_account"],
+    )
+
+    # Mock returns owner rows first (priority=0), google rows second (priority=1),
+    # simulating the DB's ORDER BY priority, type guarantee.
+    shared_pool = _make_google_inventory_pool(
+        primary_rows=[google_row],
+        owner_rows=[telegram_row],
+        entity_rows=[owner_entity_row, google_entity_row],
+    )
+    client = _build_app_with_shared_pool(shared_pool)
+
+    resp = client.get("/api/secrets/inventory")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    identities = body["data"]["identities"]
+    assert len(identities) >= 2, "Both owner and google identities must appear"
+
+    # Owner MUST be first.
+    assert identities[0]["entity_id"] == owner_entity_id, (
+        "Owner entity must appear first in identities[] — "
+        "google_oauth_refresh must not displace it via alphabetical type sort"
+    )
+    assert identities[0]["role"] == "owner"
+
+    # Google account appears second.
+    google_identity = next((i for i in identities if i["entity_id"] == google_entity_id), None)
+    assert google_identity is not None, "Google account entity must appear in identities[]"
+    assert google_identity["role"] == "member"
