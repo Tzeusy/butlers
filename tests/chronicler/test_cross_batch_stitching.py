@@ -105,8 +105,25 @@ def _make_mock_row(r: dict) -> MagicMock:
 
 
 def _pool_returning(*rows: dict) -> AsyncMock:
+    """Build a mock pool returning the given rows for HA history fetch.
+
+    fetchval is called twice for HA adapter runs:
+      1. home_assistant_history table-exists check → True
+      2. home_assistant_persons table-exists check → False (no mapping in tests)
+
+    Returning False for the second fetchval causes resolve_ha_person_entity_ids
+    to return {} so all episodes degrade to entity_id=NULL (correct for stitching tests).
+    """
+    fetchval_calls: list[int] = [0]
+
+    async def _fetchval(*args: object, **kwargs: object) -> bool:
+        fetchval_calls[0] += 1
+        if fetchval_calls[0] == 1:
+            return True  # home_assistant_history exists
+        return False  # home_assistant_persons does NOT exist
+
     conn = AsyncMock()
-    conn.fetchval = AsyncMock(return_value=True)
+    conn.fetchval = _fetchval
     conn.fetch = AsyncMock(return_value=[_make_mock_row(r) for r in rows])
     pool = AsyncMock()
     pool.acquire = MagicMock(return_value=_AsyncCtx(conn))
