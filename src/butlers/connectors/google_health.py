@@ -201,7 +201,12 @@ def _metric[T](factory: type[T], name: str, documentation: str, **kwargs: Any) -
         # prometheus_client registers a Counter "<name>_total" under the base
         # key "<name>" (suffix stripped); gauges register under their full name.
         base = name[: -len("_total")] if name.endswith("_total") else name
-        return REGISTRY._names_to_collectors[base]  # type: ignore[return-value]
+        if base in REGISTRY._names_to_collectors:
+            return REGISTRY._names_to_collectors[base]  # type: ignore[return-value]
+        # The ValueError was not a duplicate-registration collision (e.g. an
+        # invalid metric name or label); surface the real error instead of
+        # masking it with a KeyError.
+        raise
 
 
 google_health_polls_total = _metric(

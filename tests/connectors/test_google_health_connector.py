@@ -2002,6 +2002,28 @@ def test_module_reimport_is_idempotent() -> None:
     ).inc()
 
 
+def test_metric_reraises_non_collision_value_error() -> None:
+    """A non-collision ``ValueError`` must surface, not be masked by a KeyError.
+
+    ``_metric`` only swallows ``ValueError`` when the metric is actually already
+    registered (a duplicate-registration collision). For any other cause — e.g.
+    a reserved label name — the original ``ValueError`` must propagate so the
+    real failure is debuggable rather than masked by a ``KeyError`` from the
+    registry lookup.
+    """
+    from prometheus_client import Counter
+
+    from butlers.connectors.google_health import _metric
+
+    with pytest.raises(ValueError, match="Reserved label"):
+        _metric(
+            Counter,
+            "connector_google_health_unit_test_reserved_label",
+            "Should surface the reserved-label ValueError",
+            labelnames=["__reserved"],
+        )
+
+
 async def test_resolve_owner_passes_explicit_scopes(monkeypatch: pytest.MonkeyPatch) -> None:
     """The connector pins ``health_scopes`` so the registry never self-imports.
 
