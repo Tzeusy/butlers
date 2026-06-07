@@ -307,7 +307,7 @@ class HomeAssistantHistoryAdapter(ProjectionAdapter):
         rows: list[Any],
         prior_carryover: dict,
         *,
-        entity_id_map: dict[str, UUID] | None = None,
+        entity_id_map: dict[str, UUID],
     ) -> tuple[int, dict]:
         """Collapse per-entity presence state changes into presence episodes.
 
@@ -323,9 +323,9 @@ class HomeAssistantHistoryAdapter(ProjectionAdapter):
 
         ``entity_id_map`` maps HA entity IDs (e.g. ``person.alice``) to the
         corresponding entity graph UUID from ``connectors.home_assistant_persons``.
-        Episodes for unmapped persons receive ``entity_id=NULL``.  When
-        ``entity_id_map`` is ``None`` (e.g. table absent), all episodes
-        degrade to ``entity_id=NULL``.
+        Episodes for unmapped persons receive ``entity_id=NULL``.  An empty
+        dict (the result when the mapping table is absent or all persons are
+        unmapped) degrades all episodes to ``entity_id=NULL``.
 
         Returns ``(episodes_upserted, new_carryover)`` where ``new_carryover``
         captures any entities that are still home at the end of this batch.
@@ -341,7 +341,7 @@ class HomeAssistantHistoryAdapter(ProjectionAdapter):
 
         for ha_entity_id, entity_rows in by_entity.items():
             # Resolve the entity graph UUID for this HA person (or None).
-            resolved_entity_id = (entity_id_map or {}).get(ha_entity_id)
+            resolved_entity_id = entity_id_map.get(ha_entity_id)
             # entity_rows are already in (recorded_at ASC, id ASC) order.
             entity_carryover = prior_carryover.get(ha_entity_id)
             count, open_ep = await self._rollup_entity_episodes(

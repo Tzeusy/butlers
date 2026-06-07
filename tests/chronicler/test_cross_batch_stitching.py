@@ -107,20 +107,19 @@ def _make_mock_row(r: dict) -> MagicMock:
 def _pool_returning(*rows: dict) -> AsyncMock:
     """Build a mock pool returning the given rows for HA history fetch.
 
-    fetchval is called twice for HA adapter runs:
-      1. home_assistant_history table-exists check → True
-      2. home_assistant_persons table-exists check → False (no mapping in tests)
+    fetchval is routed by the SQL string:
+      - "home_assistant_history" in SQL → True  (evidence table exists)
+      - "home_assistant_persons" in SQL → False (no mapping table in stitching tests)
 
-    Returning False for the second fetchval causes resolve_ha_person_entity_ids
-    to return {} so all episodes degrade to entity_id=NULL (correct for stitching tests).
+    Routing by SQL content rather than call order means the mock stays correct
+    even if the adapter adds extra fetchval calls in future.
     """
-    fetchval_calls: list[int] = [0]
 
     async def _fetchval(*args: object, **kwargs: object) -> bool:
-        fetchval_calls[0] += 1
-        if fetchval_calls[0] == 1:
-            return True  # home_assistant_history exists
-        return False  # home_assistant_persons does NOT exist
+        sql = args[0] if args else ""
+        if "home_assistant_persons" in sql:
+            return False  # mapping table absent → all episodes degrade to entity_id=NULL
+        return True  # evidence table exists
 
     conn = AsyncMock()
     conn.fetchval = _fetchval

@@ -162,35 +162,30 @@ async def test_load_ha_person_mapping_skips_null_entity_id() -> None:
 
 @pytest.mark.asyncio
 async def test_backfill_dry_run_returns_count_without_writes() -> None:
-    pool = AsyncMock()
-
     chronicler_pool = AsyncMock()
     count_row = _make_row(count=3)
     chronicler_pool.fetchrow = AsyncMock(return_value=count_row)
     chronicler_pool.fetch = AsyncMock(return_value=[])
 
     result = await backfill(
-        pool,
         chronicler_pool,
         ha_person_mapping={"person.alice": _ENTITY_ALICE},
         dry_run=True,
     )
     assert result["found"] == 3
     assert result["updated"] == 0
-    assert result["ee_inserted"] == 0
+    assert result["ee_upserted"] == 0
     chronicler_pool.execute.assert_not_called()
     chronicler_pool.executemany.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_backfill_dry_run_zero_count_returns_zero() -> None:
-    pool = AsyncMock()
     chronicler_pool = AsyncMock()
     count_row = _make_row(count=0)
     chronicler_pool.fetchrow = AsyncMock(return_value=count_row)
 
     result = await backfill(
-        pool,
         chronicler_pool,
         ha_person_mapping={},
         dry_run=True,
@@ -207,8 +202,6 @@ async def test_backfill_dry_run_zero_count_returns_zero() -> None:
 async def test_backfill_apply_updates_episodes_and_writes_episode_entities() -> None:
     """Happy path: episodes with known HA entities get entity_id set and
     episode_entities rows inserted."""
-    pool = AsyncMock()
-
     ep_rows = [
         _make_row(id=_EP_ID_1, ha_entity_id="person.alice"),
     ]
@@ -219,7 +212,6 @@ async def test_backfill_apply_updates_episodes_and_writes_episode_entities() -> 
     chronicler_pool.executemany = AsyncMock(return_value=None)
 
     result = await backfill(
-        pool,
         chronicler_pool,
         ha_person_mapping={"person.alice": _ENTITY_ALICE},
         dry_run=False,
@@ -227,7 +219,7 @@ async def test_backfill_apply_updates_episodes_and_writes_episode_entities() -> 
 
     assert result["updated"] == 1
     assert result["skipped"] == 0
-    assert result["ee_inserted"] == 1
+    assert result["ee_upserted"] == 1
 
     # Verify UPDATE was called with the correct entity_id.
     chronicler_pool.execute.assert_called_once()
@@ -244,19 +236,20 @@ async def test_backfill_apply_updates_episodes_and_writes_episode_entities() -> 
 
 @pytest.mark.asyncio
 async def test_backfill_apply_skips_unmapped_entities() -> None:
-    """Episodes for HA entities not in the mapping are skipped."""
-    pool = AsyncMock()
+    """Episodes for HA entities not in the mapping are skipped.
 
+    When the entire batch is unmapped the loop stops early (no infinite loop).
+    """
     ep_rows = [
         _make_row(id=_EP_ID_1, ha_entity_id="person.unknown"),
     ]
     chronicler_pool = AsyncMock()
-    chronicler_pool.fetch = AsyncMock(side_effect=[ep_rows, []])
+    # Only one fetch call: the loop breaks after the first all-unmapped batch.
+    chronicler_pool.fetch = AsyncMock(return_value=ep_rows)
     chronicler_pool.execute = AsyncMock(return_value="UPDATE 0")
     chronicler_pool.executemany = AsyncMock(return_value=None)
 
     result = await backfill(
-        pool,
         chronicler_pool,
         ha_person_mapping={},  # empty — no mappings
         dry_run=False,
@@ -266,13 +259,13 @@ async def test_backfill_apply_skips_unmapped_entities() -> None:
     assert result["skipped"] == 1
     chronicler_pool.execute.assert_not_called()
     chronicler_pool.executemany.assert_not_called()
+    # fetch was called exactly once — the loop stopped rather than re-fetching.
+    assert chronicler_pool.fetch.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_backfill_apply_mixed_mapped_and_unmapped() -> None:
     """Episodes for mapped HA entities are updated; unmapped ones are skipped."""
-    pool = AsyncMock()
-
     ep_rows = [
         _make_row(id=_EP_ID_1, ha_entity_id="person.alice"),
         _make_row(id=_EP_ID_2, ha_entity_id="person.guest"),  # not in mapping
@@ -283,7 +276,6 @@ async def test_backfill_apply_mixed_mapped_and_unmapped() -> None:
     chronicler_pool.executemany = AsyncMock(return_value=None)
 
     result = await backfill(
-        pool,
         chronicler_pool,
         ha_person_mapping={"person.alice": _ENTITY_ALICE},
         dry_run=False,
@@ -291,24 +283,26 @@ async def test_backfill_apply_mixed_mapped_and_unmapped() -> None:
 
     assert result["updated"] == 1
     assert result["skipped"] == 1
-    assert result["ee_inserted"] == 1
+    assert result["ee_upserted"] == 1
 
 
 @pytest.mark.asyncio
 async def test_backfill_apply_null_ha_entity_id_is_skipped() -> None:
-    """Episodes whose payload->>'entity_id' is NULL are skipped."""
-    pool = AsyncMock()
+    """Episodes whose payload->>'entity_id' is NULL are skipped.
 
+    A NULL ha_entity_id is treated as unmapped, so the loop stops after the
+    first batch (no infinite loop).
+    """
     ep_rows = [
         _make_row(id=_EP_ID_1, ha_entity_id=None),  # no entity_id in payload
     ]
     chronicler_pool = AsyncMock()
-    chronicler_pool.fetch = AsyncMock(side_effect=[ep_rows, []])
+    # Loop breaks after first all-unmapped batch.
+    chronicler_pool.fetch = AsyncMock(return_value=ep_rows)
     chronicler_pool.execute = AsyncMock(return_value="UPDATE 0")
     chronicler_pool.executemany = AsyncMock(return_value=None)
 
     result = await backfill(
-        pool,
         chronicler_pool,
         ha_person_mapping={"person.alice": _ENTITY_ALICE},
         dry_run=False,
@@ -317,13 +311,12 @@ async def test_backfill_apply_null_ha_entity_id_is_skipped() -> None:
     assert result["updated"] == 0
     assert result["skipped"] == 1
     chronicler_pool.execute.assert_not_called()
+    assert chronicler_pool.fetch.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_backfill_apply_multi_person_uses_correct_entity_ids() -> None:
     """Multi-person household: each person's episodes are updated with their own entity_id."""
-    pool = AsyncMock()
-
     ep_rows = [
         _make_row(id=_EP_ID_1, ha_entity_id="person.alice"),
         _make_row(id=_EP_ID_2, ha_entity_id="person.bob"),
@@ -341,7 +334,6 @@ async def test_backfill_apply_multi_person_uses_correct_entity_ids() -> None:
 
     mapping = {"person.alice": _ENTITY_ALICE, "person.bob": _ENTITY_BOB}
     result = await backfill(
-        pool,
         chronicler_pool,
         ha_person_mapping=mapping,
         dry_run=False,
@@ -349,7 +341,7 @@ async def test_backfill_apply_multi_person_uses_correct_entity_ids() -> None:
 
     assert result["updated"] == 2
     assert result["skipped"] == 0
-    assert result["ee_inserted"] == 2
+    assert result["ee_upserted"] == 2
 
     # Each unique entity_id should be used in a separate UPDATE call.
     # execute_calls entries are (query, *positional_args); positional_args[0] is the entity_id.

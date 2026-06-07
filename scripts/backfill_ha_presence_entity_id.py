@@ -171,7 +171,6 @@ async def load_ha_person_mapping(pool: asyncpg.Pool) -> dict[str, UUID]:
 
 
 async def backfill(
-    pool: asyncpg.Pool,
     chronicler_pool: asyncpg.Pool,
     *,
     ha_person_mapping: dict[str, UUID],
@@ -183,11 +182,15 @@ async def backfill(
     is extracted from ``payload->>'entity_id'`` and looked up in ``ha_person_mapping``.
     Episodes whose HA entity ID is not in the mapping are skipped (entity_id stays NULL).
 
+    Stops early when an entire batch has no resolvable rows — since the mapping is
+    loaded once before the loop, any rows that cannot be resolved in one batch will
+    never be resolvable and continuing would loop forever.
+
     Returns a summary dict:
-      - ``found``       — total episodes with entity_id IS NULL
+      - ``found``       — total episodes with entity_id IS NULL processed
       - ``updated``     — episodes updated with a non-NULL entity_id
       - ``skipped``     — episodes skipped (no mapping for their HA entity)
-      - ``ee_inserted`` — episode_entities rows inserted
+      - ``ee_upserted`` — episode_entities rows attempted (ON CONFLICT DO NOTHING)
     """
     if dry_run:
         count_row = await chronicler_pool.fetchrow(
@@ -208,11 +211,11 @@ async def backfill(
             logger.info("Nothing to do.")
         else:
             logger.info("Dry run — skipping %d UPDATE(s).", found)
-        return {"found": found, "updated": 0, "skipped": 0, "ee_inserted": 0}
+        return {"found": found, "updated": 0, "skipped": 0, "ee_upserted": 0}
 
     updated_count = 0
     skipped_count = 0
-    ee_inserted_count = 0
+    ee_upserted_count = 0
     batch_num = 0
 
     while True:
@@ -254,8 +257,12 @@ async def backfill(
             resolvable.append((ep_id, entity_id))
 
         if not resolvable:
-            logger.info("  batch %d — no resolvable episodes; skipping UPDATE.", batch_num)
-            continue
+            logger.info(
+                "  batch %d — no resolvable episodes in this batch; "
+                "all remaining rows are unmapped — stopping.",
+                batch_num,
+            )
+            break
 
         # Group updates by entity_id to keep UPDATE statements small and use ANY().
         by_entity: dict[UUID, list[UUID]] = {}
@@ -293,9 +300,9 @@ async def backfill(
             """,
             ee_rows,
         )
-        ee_inserted_count += len(ee_rows)
+        ee_upserted_count += len(ee_rows)
         logger.info(
-            "  batch %d — upserted %d episode_entities row(s).",
+            "  batch %d — attempted %d episode_entities upsert(s) (ON CONFLICT DO NOTHING).",
             batch_num,
             len(ee_rows),
         )
@@ -309,7 +316,7 @@ async def backfill(
         "found": updated_count + skipped_count,
         "updated": updated_count,
         "skipped": skipped_count,
-        "ee_inserted": ee_inserted_count,
+        "ee_upserted": ee_upserted_count,
     }
 
 
@@ -336,7 +343,6 @@ async def run_backfill(
     logger.info("Mode: %s", "DRY RUN" if dry_run else "APPLY")
 
     summary = await backfill(
-        pool,
         chronicler_pool,
         ha_person_mapping=ha_person_mapping,
         dry_run=dry_run,
@@ -349,7 +355,7 @@ async def run_backfill(
     if not dry_run:
         print(f"  Episodes updated (entity_id set): {summary['updated']}")
         print(f"  Episodes skipped (no mapping):    {summary['skipped']}")
-        print(f"  episode_entities rows upserted:   {summary['ee_inserted']}")
+        print(f"  episode_entities rows attempted:  {summary['ee_upserted']} (ON CONFLICT DO NOTHING)")
     else:
         print("  (dry-run: no rows updated)")
 
