@@ -990,8 +990,14 @@ async def get_inventory(
     # Surface those rows so the System family reflects shared config; tag them
     # butler="shared" so the frontend renders them as shared-default entries.
     # (cli-auth/* rows are rerouted to the CLI family by the frontend adapter.)
+    #
+    # Exclude category='cli' rows: CLI runtime tokens have their own family and
+    # are read separately from this same pool by _fetch_cli_secrets(). Including
+    # them here would double-list them across the system and cli arrays and
+    # double-count them in meta.severity / needs_hand_count.
     if shared_pool is not None:
-        system_secrets.extend(await _fetch_system_secrets(shared_pool, "shared", read_only=True))
+        shared_system = await _fetch_system_secrets(shared_pool, "shared", read_only=True)
+        system_secrets.extend(s for s in shared_system if s.category != "cli")
 
     # --- Fetch user secrets from shared pool ---
     user_secrets: list[UserSecret] = []

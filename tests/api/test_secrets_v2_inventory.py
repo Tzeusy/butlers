@@ -445,6 +445,36 @@ def test_inventory_surfaces_shared_pool_system_secrets_as_read_only():
     assert system["GOOGLE_OAUTH_CLIENT_ID"]["butler"] == "shared"
 
 
+def test_inventory_shared_pool_cli_rows_excluded_from_system_family():
+    """category='cli' rows in the shared pool are NOT surfaced in the System
+    family — CLI runtime tokens have their own family (_fetch_cli_secrets reads
+    them separately from the same pool). Including them in both would double-list
+    and double-count them in meta.needs_hand_count.
+    """
+    google_row = _make_system_row(
+        key="GOOGLE_OAUTH_CLIENT_ID", value="cid", category="google", last_test_ok=True
+    )
+    # A category='cli' row lives in the shared pool and is owned by the CLI family.
+    cli_row = _make_system_row(key="cli-token", value="tok", category="cli", last_test_ok=True)
+    mock_db = _make_db_manager(
+        butler_names=["switchboard"],
+        system_rows=[],
+        shared_system_rows=[google_row, cli_row],
+        cli_rows=[cli_row],
+    )
+    client = _build_app(mock_db)
+    resp = client.get("/api/secrets/inventory")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    system_keys = {row["key"] for row in body["data"]["system"]}
+
+    # Google app key is surfaced; the cli-category row is not in the System family.
+    assert "GOOGLE_OAUTH_CLIENT_ID" in system_keys
+    assert "cli-token" not in system_keys
+    # The CLI token is present exactly once, in the cli family.
+    assert any(row["key"] == "cli-token" for row in body["data"]["cli"])
+
+
 # ---------------------------------------------------------------------------
 # Scenario 2: Mixed states
 # ---------------------------------------------------------------------------
