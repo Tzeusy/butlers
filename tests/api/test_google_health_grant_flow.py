@@ -217,10 +217,6 @@ def _make_conn_for_state(state: _SharedPoolState) -> AsyncMock:
                 state.entity_info_updated = True
         return "OK"
 
-    async def _transaction():
-        """Async context manager stub for conn.transaction()."""
-        yield
-
     conn.fetchrow = AsyncMock(side_effect=_fetchrow)
     conn.fetch = AsyncMock(side_effect=_fetch)
     conn.fetchval = AsyncMock(side_effect=_fetchval)
