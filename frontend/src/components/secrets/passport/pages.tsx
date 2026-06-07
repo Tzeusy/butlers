@@ -559,6 +559,23 @@ function ScopeSetPicker({
 // ── GoogleHealthPassportStatusCard — health connector status in passport ──────
 
 /**
+ * Module-level helper: compute banner visibility flags from status snapshot.
+ * Called once per render; Date.now() is not called inside the render body
+ * (required by the react-hooks/purity ESLint rule).
+ */
+function computeHealthBannerFlags(status: GoogleHealthStatusResponse): {
+  showBanner: boolean;
+  isExpired: boolean;
+} {
+  const nowMs = Date.now();
+  const showBanner =
+    status.test_mode && isTestModeTokenNearExpiry(status.last_token_refresh_at, nowMs);
+  const isExpired =
+    status.test_mode && isTestModeTokenExpired(status.last_token_refresh_at, nowMs);
+  return { showBanner, isExpired };
+}
+
+/**
  * TestModeExpiryBanner — shown when the primary account is in test mode AND
  * the token is within 24 h of (or past) the 7-day test-mode expiry.
  *
@@ -618,10 +635,9 @@ function GoogleHealthPassportStatusCard({ status }: { status: GoogleHealthStatus
         ? "var(--red)"
         : "var(--amber)";
 
-  const showBanner =
-    status.test_mode && isTestModeTokenNearExpiry(status.last_token_refresh_at);
-  const isExpired =
-    status.test_mode && isTestModeTokenExpired(status.last_token_refresh_at);
+  // Compute banner flags via a module-level helper so Date.now() is not called
+  // directly during render (required by the react-hooks/purity ESLint rule).
+  const { showBanner, isExpired } = computeHealthBannerFlags(status);
 
   return (
     <div
@@ -655,7 +671,7 @@ function GoogleHealthPassportStatusCard({ status }: { status: GoogleHealthStatus
           <div className="flex justify-between gap-3">
             <Mono size={9} color="var(--dim)">last ingest</Mono>
             <Mono size={9}>
-              {status.last_ingest_at
+              {status.last_ingest_at && !Number.isNaN(new Date(status.last_ingest_at).getTime())
                 ? new Date(status.last_ingest_at).toLocaleDateString()
                 : "—"}
             </Mono>
