@@ -463,7 +463,7 @@ def _check_degenerate_tool_loop(
             if streak >= consecutive_threshold:
                 return (
                     f"degenerate_tool_loop: {streak} consecutive identical calls to "
-                    f"{str(tool_calls[0].get('name', '') or '')!r} detected; "
+                    f"{str(call.get('name', '') or '')!r} detected; "
                     "session terminated to prevent runaway loop"
                 )
         else:

@@ -152,6 +152,24 @@ class TestCheckDegenerateToolLoop:
         assert result is not None
         assert "degenerate_tool_loop" in result
 
+    def test_loop_mid_session_reports_looping_tool_name(self) -> None:
+        """When the loop starts mid-session, the reported tool name is the looping tool,
+        not the first tool in the session (regression test for tool_calls[0] bug)."""
+        threshold = _DEGENERATE_TOOL_LOOP_CONSECUTIVE_THRESHOLD
+        # First call is a different tool — should not appear in the error message.
+        first_call = {"id": "first", "name": "initial_tool", "input": {}}
+        looping_calls = _repeated_calls("looping_tool", threshold)
+        calls = [first_call] + looping_calls
+        result = _check_degenerate_tool_loop(calls)
+        assert result is not None
+        assert "degenerate_tool_loop" in result
+        assert "looping_tool" in result, (
+            f"Expected 'looping_tool' (the looping call) in message, got: {result!r}"
+        )
+        assert "initial_tool" not in result, (
+            f"Expected 'initial_tool' (the first call) NOT in message, got: {result!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # _check_tool_call_budget — unit tests
@@ -340,7 +358,7 @@ class TestSpawnerGuardrailEmission:
         threshold = _DEGENERATE_TOOL_LOOP_CONSECUTIVE_THRESHOLD
         looping_calls = _repeated_calls("fetch_entity", threshold)
         adapter = _SuccessAdapter(tool_calls=looping_calls)
-        spawner, mock_pool = _make_spawner(adapter, tmp_path)
+        spawner, _mock_pool = _make_spawner(adapter, tmp_path)
 
         with (
             patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_sc,
@@ -388,7 +406,7 @@ class TestSpawnerGuardrailEmission:
         for i, call in enumerate(over_budget_calls):
             call["input"] = {"seq": i}
         adapter = _SuccessAdapter(tool_calls=over_budget_calls)
-        spawner, mock_pool = _make_spawner(adapter, tmp_path)
+        spawner, _mock_pool = _make_spawner(adapter, tmp_path)
 
         with (
             patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_sc,
@@ -434,7 +452,7 @@ class TestSpawnerGuardrailEmission:
             tool_calls=[],
             usage={"input_tokens": budget + 10_000, "output_tokens": 1000},
         )
-        spawner, mock_pool = _make_spawner(adapter, tmp_path)
+        spawner, _mock_pool = _make_spawner(adapter, tmp_path)
 
         with (
             patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_sc,
@@ -481,7 +499,7 @@ class TestSpawnerGuardrailEmission:
             tool_calls=calls,
             usage={"input_tokens": 1000, "output_tokens": 100},
         )
-        spawner, mock_pool = _make_spawner(adapter, tmp_path)
+        spawner, _mock_pool = _make_spawner(adapter, tmp_path)
 
         with (
             patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_sc,
