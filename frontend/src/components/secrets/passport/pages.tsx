@@ -454,8 +454,9 @@ function ScopeSetPicker({
   grantedScopes: string[];
   /** Primary account email for account_hint — pre-selects the account in Google's
    *  consent flow so the scope grant lands on the right account.
-   *  Required by the Health grant wiring audit: scope_set + account_hint must both
-   *  be present on the OAuth start URL [bu-3gekd]. */
+   *  Best-effort: omitted when no primary account is available (empty state);
+   *  Google's account chooser handles selection in that case.
+   *  [bu-3gekd] */
   primaryAccountEmail?: string;
 }) {
   const disconnectHealthMutation = useDisconnectGoogleHealth();

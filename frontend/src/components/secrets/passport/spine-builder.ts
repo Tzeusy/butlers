@@ -8,18 +8,18 @@ import { severityRank } from "./constants.ts";
 /**
  * Build the flat list of spine entries from inventory data.
  *
- * When ``identityIds`` has more than one entry (owner-default projection),
- * ALL matching user credentials are included.  The backend already gates the
- * owner-default response to owner-relevant companion entities (primary Google
- * account only), so every identity returned is intentional.
+ * When ``identityId`` is an array with more than one entry (owner-default
+ * projection), ALL matching user credentials are included.  The backend
+ * already gates the owner-default response to owner-relevant companion
+ * entities (primary Google account only), so every identity returned is
+ * intentional.
  *
- * When called with a single identity (explicit ?identity= param or a chip
+ * When ``identityId`` is a single string (explicit ?identity= param or a chip
  * click), only that identity's credentials are included — this preserves the
  * per-member projection-lens contract.
  *
- * The legacy single-string overload (``identityId: string``) is accepted for
- * backward compatibility with existing tests and callers that have not yet
- * migrated to the owner-default path.
+ * Both ``string`` and ``string[]`` are accepted via the union type so callers
+ * can pass a single ID or the full identity list without casting.
  */
 export function buildSpineEntries(
   inventory: InventoryResponse,
