@@ -11,7 +11,6 @@
 
 import { describe, expect, it, vi, afterEach } from "vitest"
 import { render, screen, cleanup } from "@testing-library/react"
-import * as React from "react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 vi.mock("sonner", () => ({
