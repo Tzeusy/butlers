@@ -447,7 +447,17 @@ function GoogleAccountRow({
  *
  * Rendered once per account list (scope grants apply to the primary account).
  */
-function ScopeSetPicker({ grantedScopes }: { grantedScopes: string[] }) {
+function ScopeSetPicker({
+  grantedScopes,
+  primaryAccountEmail,
+}: {
+  grantedScopes: string[];
+  /** Primary account email for account_hint — pre-selects the account in Google's
+   *  consent flow so the scope grant lands on the right account.
+   *  Required by the Health grant wiring audit: scope_set + account_hint must both
+   *  be present on the OAuth start URL [bu-3gekd]. */
+  primaryAccountEmail?: string;
+}) {
   const disconnectHealthMutation = useDisconnectGoogleHealth();
   const [grantPending, setGrantPending] = React.useState<string | null>(null);
   const [grantError, setGrantError] = React.useState<string | null>(null);
@@ -459,10 +469,13 @@ function ScopeSetPicker({ grantedScopes }: { grantedScopes: string[] }) {
     setGrantPending(scopeSetId);
     setGrantError(null);
     // Navigate to OAuth start with scope_set → requests incremental consent.
+    // account_hint pre-selects the primary Google account so the scope grant
+    // lands on the correct account (required for Health grant CTA [bu-3gekd]).
     const url = getGoogleOAuthStartUrl({
       scopeSet: scopeSetId,
       forceConsent: true,
       pageOfOrigin: "secrets",
+      accountHint: primaryAccountEmail,
     });
     window.location.assign(url);
   }
@@ -610,7 +623,18 @@ export function PageGoogleAccounts() {
         </div>
 
         {accounts.length === 0 ? (
-          <Mono size={11} color="var(--dim)" className="pt-1">no accounts connected</Mono>
+          /* Empty-state: no account connected — surface a prominent Connect CTA
+           * so the owner can initiate the OAuth dance without a manual ?identity=
+           * param or navigating away [bu-3gekd]. */
+          <div
+            className="flex flex-col gap-2.5 pt-2"
+            data-google-connect-empty-state="true"
+          >
+            <Mono size={11} color="var(--dim)">no Google account connected</Mono>
+            <PillBtn variant="commit" onClick={handleAddAccount}>
+              connect Google
+            </PillBtn>
+          </div>
         ) : (
           accounts.map((account) => (
             <GoogleAccountRow
@@ -622,22 +646,27 @@ export function PageGoogleAccounts() {
         )}
       </div>
 
-      {/* Add another account */}
-      <div
-        className="pt-3"
-        style={{ borderTop: "1px solid var(--border)" }}
-      >
-        <PillBtn variant="commit" onClick={handleAddAccount}>
-          add another account
-        </PillBtn>
-      </div>
+      {/* Add another account — only shown when at least one account is connected */}
+      {accounts.length > 0 && (
+        <div
+          className="pt-3"
+          style={{ borderTop: "1px solid var(--border)" }}
+        >
+          <PillBtn variant="commit" onClick={handleAddAccount}>
+            add another account
+          </PillBtn>
+        </div>
+      )}
 
       {/* Scope-set picker */}
       <div
         className="pt-3"
         style={{ borderTop: "1px solid var(--border)" }}
       >
-        <ScopeSetPicker grantedScopes={grantedScopes} />
+        <ScopeSetPicker
+          grantedScopes={grantedScopes}
+          primaryAccountEmail={primaryAccount?.email ?? undefined}
+        />
       </div>
     </div>
   );
