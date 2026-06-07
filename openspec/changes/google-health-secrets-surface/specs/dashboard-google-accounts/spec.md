@@ -6,6 +6,8 @@
 
 The per-account scope-set picker (§Per-Account Scope Set Picker) and the Google Health Connector Status Card (§Google Health Connector Status Card) SHALL be rendered INSIDE the `/secrets` passport at the route `/secrets?focus=u:google`, rendered as the `PageGoogleAccounts` page component. They are NOT a standalone settings page and SHALL NOT render as a full-page route outside the `/secrets` passport.
 
+NOTE: The base `dashboard-google-accounts` spec (§Per-Account Scope Set Picker) uses the phrase "Google Accounts settings page" as a colloquial label for this surface. When this change is archived, that phrase SHALL be amended to "the `/secrets` passport at `/secrets?focus=u:google` (`PageGoogleAccounts`)" to eliminate the contradiction. The archive task in this change's tasks.md covers this reconciliation.
+
 The `/secrets?focus=u:google` deep-link SHALL be the canonical, linkable surface for the owner to view connected Google accounts, grant scope sets (including `Google Health`), and inspect connector health. Any in-app cross-link to the Google account management surface (e.g. from `/ingestion/connectors`, from notification toasts, from the `/overview` page) SHALL target `/secrets?focus=u:google`.
 
 For the systemic `auth_status` taxonomy (`ok | degraded | expired | rotation-needed`) and the durable reauth CTA endpoint, refer to the `add-connector-oauth-scope-surface` OpenSpec change. `PageGoogleAccounts` SHALL harmonize its `auth_status` field rendering with that change's contract when it archives.

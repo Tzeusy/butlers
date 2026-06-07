@@ -23,6 +23,7 @@ This is a **spec-only change**. No implementation code lands here. The tasks cov
 - [ ] 3.1 Run `openspec archive google-health-secrets-surface` to merge spec deltas into `openspec/specs/dashboard-google-accounts/spec.md` and produce the delta for `redesign-secrets-passport`'s `butler-secrets` spec.
 - [ ] 3.2 Note: `butler-secrets` currently lives in `openspec/changes/redesign-secrets-passport/specs/butler-secrets/spec.md` (not yet promoted to `openspec/specs/`). The archive process must reconcile accordingly. If `redesign-secrets-passport` has already archived by this point, apply the delta directly to `openspec/specs/butler-secrets/spec.md`.
 - [ ] 3.3 Verify `openspec/specs/dashboard-google-accounts/spec.md` now contains the route-binding requirement and multi-account leak-prevention scenario.
+- [ ] 3.3a During archive, amend the base spec's "Google Accounts settings page" wording in `§Per-Account Scope Set Picker` to "the `/secrets` passport at `/secrets?focus=u:google` (`PageGoogleAccounts`)" — eliminating the settings-page contradiction introduced by this route-binding requirement.
 - [ ] 3.4 Run `openspec validate --specs --strict` across all specs to confirm no regressions from the archive merge.
 
 ## 4. Downstream Implementation Unblocking

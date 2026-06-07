@@ -32,7 +32,7 @@ _(none)_
 - **Affected specs:**
   - `openspec/specs/dashboard-google-accounts/spec.md` — amended with route-binding and leak-prevention scenario.
   - `openspec/changes/redesign-secrets-passport/specs/butler-secrets/spec.md` — amended with owner-default Google account surfacing requirement.
-- **Affected code (implementation, NOT in this change):** `src/butlers/api/routers/secrets_v2.py` — `_fetch_user_secrets` owner-default branch must join `public.google_accounts WHERE is_primary = true AND status = 'active'` to include the primary account's `google_oauth_refresh` entity_info row. This is owned by downstream bead `bu-2kejb`.
+- **Affected code (implementation, NOT in this change):** `src/butlers/api/routers/secrets_v2.py` — `_fetch_user_secrets` owner-default branch must include the primary Google account's `google_oauth_refresh` entity_info row (filtering `is_primary = true AND status != 'revoked'` to expose both active and expired accounts). This is owned by downstream bead `bu-2kejb`.
 - **No new tables, endpoints, or migrations.** Pure spec clarification.
 - **Doctrine alignment:** Single-owner model preserved (`about/heart-and-soul/security.md:7-8, 18-20`). Non-primary accounts remain owner-accessible under explicit `?identity=` lens (owner privilege unchanged). Leak-prevention scenario is additive — it does not contradict the `butler-secrets` identity-switcher semantics.
 - **Cross-change dependency:** `add-connector-oauth-scope-surface` owns the reauth endpoint and `auth_status` enum. This change only specifies the discoverability path and leak-prevention gate. Both changes must harmonize on `auth_status` field names surfaced by `PageGoogleAccounts`.

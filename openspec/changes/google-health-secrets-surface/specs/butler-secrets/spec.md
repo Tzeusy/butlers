@@ -4,11 +4,11 @@
 
 ### Requirement: Owner-Default Inventory Surfaces Primary Google Account
 
-The owner-default `/secrets` inventory (`GET /api/secrets/inventory` without `?identity=`) SHALL include the primary Google account's `google_oauth_refresh` credential entry in the `user` array. This entry SHALL be present whenever at least one Google account with `is_primary = true` and `status = 'active'` exists in `public.google_accounts`.
+The owner-default `/secrets` inventory (`GET /api/secrets/inventory` without `?identity=`) SHALL include the primary Google account's `google_oauth_refresh` credential entry in the `user` array. This entry SHALL be present whenever at least one Google account with `is_primary = true` and `status != 'revoked'` exists in `public.google_accounts`. This includes `status = 'expired'` accounts so the owner can reach the scope-set picker and reauth CTA without needing a manual `?identity=` parameter.
 
 Including the primary Google account credential in the owner-default inventory makes the scope-set picker (including `Google Health`) reachable at `/secrets?focus=u:google` WITHOUT requiring the owner to first discover or manually specify an `?identity=<entity_id>` parameter.
 
-The backend SHALL resolve the primary Google account's credential by joining `public.google_accounts WHERE is_primary = true AND status = 'active'` to the companion entity's `public.entity_info` row of type `google_oauth_refresh`. The behavioral outcome MUST be that `u:google` appears in the spine and `PageGoogleAccounts` is reachable from the owner-default `/secrets` view.
+The behavioral outcome MUST be that `u:google` appears in the spine and `PageGoogleAccounts` is reachable from the owner-default `/secrets` view, regardless of whether the primary account's status is `active` or `expired`. The backend join strategy (how to resolve the credential from `public.google_accounts` and `public.entity_info`) is an implementation detail owned by bead `bu-2kejb`.
 
 This requirement is **co-owned** with the `dashboard-google-accounts` spec (§Multi-Account Leak Prevention), which binds the leak-prevention invariant: the owner-default projection SHALL surface ONLY the primary account's credential. Implementation is owned by bead `bu-2kejb`.
 
@@ -23,7 +23,7 @@ This requirement is **co-owned** with the `dashboard-google-accounts` spec (§Mu
 #### Scenario: No Google account connected — no google_oauth_refresh in owner-default
 
 - **WHEN** `GET /api/secrets/inventory` is called without `?identity=`
-- **AND** no Google account exists in `public.google_accounts` (or none with `is_primary = true AND status = 'active'`)
+- **AND** no Google account exists in `public.google_accounts` (or none with `is_primary = true AND status != 'revoked'`)
 - **THEN** the response `user` array SHALL NOT contain a `google_oauth_refresh` entry
 - **AND** the spine at `/secrets` SHALL NOT render a `u:google` row in the owner-default view
 
@@ -69,8 +69,10 @@ The identity switcher chip SHALL include connected Google accounts as selectable
 
 #### Scenario: Single-identity scope hides chip
 
-- **WHEN** only one identity (the owner) is in scope (no household-member entities have user credentials registered AND only one Google account is connected)
-- **THEN** the identity chip is hidden from the page header
+- **WHEN** no household-member entities have user credentials registered
+- **AND** at most one Google account is connected (zero or one)
+- **THEN** there is no alternative identity lens available beyond the owner-default view
+- **AND** the identity chip SHALL be hidden from the page header
 - **AND** the `?identity=` URL parameter is ignored if present
 - **AND** the spine renders the User group as if no switcher exists
 

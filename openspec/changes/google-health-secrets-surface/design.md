@@ -50,7 +50,7 @@ This change is a **spec-only amendment** — no implementation code changes land
 
 ### D3: Which entity anchors the Google account in the owner-default inventory?
 
-**Decision:** The primary Google account's credential is included via a JOIN from `public.google_accounts WHERE is_primary = true AND status = 'active'` to the companion entity's `entity_info` row. The spec mandates the behavioral outcome (primary account's `google_oauth_refresh` appears in owner-default inventory); the backend join strategy is an implementation detail left to bead `bu-2kejb`.
+**Decision:** The primary Google account's credential is included in the owner-default inventory when `is_primary = true AND status != 'revoked'` — this includes both `active` and `expired` accounts so that the owner can reach the reauth CTA from the owner-default view. The spec mandates the behavioral outcome (primary account's `google_oauth_refresh` appears in owner-default inventory); the backend join strategy is an implementation detail left to bead `bu-2kejb`.
 
 **Rationale:** The spec should be implementation-neutral. Whether the backend adds a LEFT JOIN to `google_accounts` or materializes the credential into an `{owner}` entity_info row is a backend concern. Mandating the join strategy in the spec would over-specify and constrain the implementer.
 
