@@ -1366,7 +1366,7 @@ async def get_contact(
     code.  Migration gate: bu-k9ylx (write-path cut-over) + bu-uhjxr children.
 
     Secured contact_info values are masked (value=None) in the response.
-    Use GET /contacts/{id}/secrets/{info_id} to reveal a secured value.
+    Use GET /relationship/entities/{entity_id}/secrets/{info_id} to reveal a secured value.
     """
     pool = _pool(db)
 

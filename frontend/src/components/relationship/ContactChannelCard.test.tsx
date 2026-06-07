@@ -9,7 +9,8 @@
  *   entity-keyed endpoint, public.contact_info was dropped in bu-e2ja9)
  * - Entity with zero linked contacts (empty-state with Link contact CTA)
  * - ExpandedContactInfoRow: edit/delete affordances present for entity_facts
- *   entries; read-only (legacy marker) for source=null entries
+ *   entries; read-only (legacy marker) for source=null entries (compat display
+ *   only — the live API no longer returns source=null entries)
  * - ExpandedContactInfoRow: edit button is ENABLED for entity_facts rows and
  *   calls useUpdateEntityContact (bu-690xu)
  * - ExpandedContactInfoRow: delete mutation wired to useDeleteEntityContact

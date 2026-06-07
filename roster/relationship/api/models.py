@@ -27,7 +27,7 @@ class ContactInfoEntry(BaseModel):
 
     The ``value`` field is set to ``None`` when ``secured=True`` and the
     caller has not been granted reveal access (masked in list views).
-    Use GET /entities/{id}/secrets/{info_id} to retrieve the real value.
+    Use GET /relationship/entities/{entity_id}/secrets/{info_id} to retrieve the real value.
 
     ``source`` discriminates the backing store for this entry:
     - ``None`` / absent — legacy row (default; omitted from serialised output
@@ -332,7 +332,7 @@ class EntityInfoEntry(BaseModel):
 
     The ``value`` field is set to ``None`` when ``secured=True`` and the
     caller has not been granted reveal access (masked in list views).
-    Use GET /entities/{id}/secrets/{info_id} to retrieve the real value.
+    Use GET /relationship/entities/{entity_id}/secrets/{info_id} to retrieve the real value.
     """
 
     id: UUID

@@ -12,8 +12,10 @@
  *             is needed for the collapsed view.
  *
  * Migration status: contacts-to-triples migration (bu-uhjxr) COMPLETE.
- * public.contact_info dropped (bu-e2ja9). All channel entries come from
- * relationship.entity_facts or public.entity_info (both source="entity_facts").
+ * public.contact_info dropped (bu-e2ja9). The live API (list_entity_linked_contacts)
+ * serves only source="entity_facts" entries. The component retains read-only rendering
+ * for source=null entries for compat display of any legacy fixtures; no such entries
+ * are returned by the current API.
  *
  *   patchContact (preferred_channel) — COMPAT-ONLY. preferred_channel lives on
  *     contacts.preferred_channel (CRM field); no entity_facts triple equivalent
@@ -122,7 +124,7 @@ function labelStyle(label: Label): string {
 // All secured entries surfaced by list_entity_linked_contacts carry
 // source="entity_facts" (public.contact_info was dropped in bu-e2ja9).
 // Reveal routes exclusively to the entity-keyed endpoint via
-// useRevealEntityContactSecret (GET /entities/{entityId}/secrets/{infoId}).
+// useRevealEntityContactSecret (GET /relationship/entities/{entityId}/secrets/{infoId}).
 // ---------------------------------------------------------------------------
 
 function SecuredChannelEntry({
@@ -782,7 +784,7 @@ function ContactRow({
  *   - Delete of entity_facts rows: useDeleteEntityContact
  *     (DELETE /entities/{id}/contacts/{predicate}/{value_hash})
  *   - Reveal secured entries: useRevealEntityContactSecret
- *     (GET /entities/{id}/secrets/{info_id})
+ *     (GET /relationship/entities/{entityId}/secrets/{infoId})
  *   - Legacy contact_info rows: read-only (write-blocked since PR #2021)
  *   - preferred_channel: COMPAT-ONLY patchContact (no entity-keyed path yet —
  *     preferred_channel lives on contacts.preferred_channel, not entity_facts)
