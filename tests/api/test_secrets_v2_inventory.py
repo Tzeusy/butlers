@@ -1866,6 +1866,9 @@ def test_inventory_never_returns_raw_token_value_for_any_account():
     )
 
     user = resp.json()["data"]["user"]
+    assert len(user) == 1, (
+        f"Expected exactly one user credential in owner-default response; got {len(user)}"
+    )
     for item in user:
         assert "value" not in item, (
             f"SECURITY: 'value' field must not appear in any user[] item; got keys: {list(item.keys())}"
@@ -1880,6 +1883,9 @@ def test_inventory_never_returns_raw_token_value_for_any_account():
         "SECURITY: non-primary refresh token must NEVER appear even under explicit identity= lens"
     )
     user2 = resp2.json()["data"]["user"]
+    assert len(user2) == 1, (
+        f"Expected exactly one user credential in identity-specific response; got {len(user2)}"
+    )
     for item in user2:
         assert "value" not in item, (
             f"SECURITY: 'value' field must not appear in any user[] item under identity= lens; "
