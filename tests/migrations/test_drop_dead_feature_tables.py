@@ -181,6 +181,7 @@ class TestSw014UpgradeSQL:
     def test_does_not_drop_routing_table(self) -> None:
         """routing_rules must NOT appear in upgrade SQL (not in scope)."""
         sqls = _collect_upgrade_sql(_SW_014, "sw_014")
+        assert len(sqls) >= 1, "upgrade() must emit at least one SQL statement"
         combined = " ".join(sqls).lower()
         assert "routing_rules" not in combined, (
             "routing_rules is not a dead table and must not be dropped"
@@ -282,6 +283,7 @@ class TestFinance007UpgradeSQL:
 
     def test_does_not_drop_transactions(self) -> None:
         sqls = _collect_upgrade_sql(_FINANCE_007, "finance_007")
+        assert len(sqls) >= 1, "upgrade() must emit at least one SQL statement"
         for sql in sqls:
             lower = sql.lower()
             assert not ("drop table" in lower and "transactions" in lower), (
@@ -342,6 +344,7 @@ class TestContacts002UpgradeSQL:
     def test_does_not_drop_contacts_sync_state(self) -> None:
         """contacts_sync_state is still live — must NOT be touched."""
         sqls = _collect_upgrade_sql(_CONTACTS_002, "contacts_002")
+        assert len(sqls) >= 1, "upgrade() must emit at least one SQL statement"
         for sql in sqls:
             lower = sql.lower()
             assert not ("drop" in lower and "contacts_sync_state" in lower), (
@@ -351,6 +354,7 @@ class TestContacts002UpgradeSQL:
     def test_does_not_drop_contacts_source_links(self) -> None:
         """contacts_source_links is still live — must NOT be touched."""
         sqls = _collect_upgrade_sql(_CONTACTS_002, "contacts_002")
+        assert len(sqls) >= 1, "upgrade() must emit at least one SQL statement"
         for sql in sqls:
             lower = sql.lower()
             assert not ("drop" in lower and "contacts_source_links" in lower), (
@@ -404,6 +408,7 @@ class TestMem005UpgradeSQL:
     def test_does_not_drop_memories(self) -> None:
         """The main memories table must not be touched."""
         sqls = _collect_upgrade_sql(_MEM_005, "mem_005")
+        assert len(sqls) >= 1, "upgrade() must emit at least one SQL statement"
         for sql in sqls:
             lower = sql.lower()
             assert not ("drop table" in lower and " memories" in lower), (

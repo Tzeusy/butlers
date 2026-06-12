@@ -15,7 +15,8 @@ Guards:
   - DROP TABLE IF EXISTS is idempotent and schema-safe.
   - Applied per butler schema; IF EXISTS ensures safety across schemas.
 
-Downgrade recreates empty shell (seed row not restored; it was analytics scaffolding).
+Downgrade recreates the original embedding_versions schema (mem_001); the seed row
+is not restored (it was analytics scaffolding with 0 active embeddings).
 """
 
 from __future__ import annotations
@@ -34,18 +35,18 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Recreate empty shell. Seed row not restored.
+    # Recreate the original schema from mem_001 (001_memory_schema.py).
+    # Seed row not restored (it was analytics scaffolding with 0 active embeddings).
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS embedding_versions (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            model_name TEXT NOT NULL UNIQUE,
-            dimensions INTEGER NOT NULL,
+            id SERIAL PRIMARY KEY,
+            model_name TEXT NOT NULL,
+            dimension INTEGER NOT NULL,
             description TEXT,
-            is_current BOOLEAN NOT NULL DEFAULT false,
-            deployed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            deprecated_at TIMESTAMPTZ,
-            embedding_count INTEGER NOT NULL DEFAULT 0
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT uq_embedding_versions_model UNIQUE (model_name)
         )
         """
     )

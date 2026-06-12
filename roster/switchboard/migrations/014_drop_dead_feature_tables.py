@@ -19,7 +19,8 @@ Guards:
   - to_regclass checks are not needed for within-schema drops; IF EXISTS is sufficient.
   - All drops are idempotent and safe to run multiple times.
 
-Downgrade recreates empty table shells (no data to restore).
+Downgrade recreates the original table schemas (columns + indexes) from
+sw_001/sw_003/sw_004 for rollback fidelity. No data to restore.
 """
 
 from __future__ import annotations
@@ -42,7 +43,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Recreate empty shells for rollback safety. No data to restore.
+    # Recreate the original schemas (columns + indexes) from sw_001/sw_003/sw_004
+    # for rollback fidelity. No data to restore.
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS fanout_execution_log (
@@ -61,6 +63,12 @@ def downgrade() -> None:
     )
     op.execute(
         """
+        CREATE INDEX IF NOT EXISTS ix_fanout_execution_log_created_at
+        ON fanout_execution_log (created_at DESC)
+        """
+    )
+    op.execute(
+        """
         CREATE TABLE IF NOT EXISTS email_metadata_refs (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             endpoint_identity TEXT NOT NULL,
@@ -75,6 +83,30 @@ def downgrade() -> None:
             message_inbox_id UUID,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
+        """
+    )
+    op.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_email_metadata_refs_endpoint_message
+        ON email_metadata_refs (endpoint_identity, gmail_message_id)
+        """
+    )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_email_metadata_refs_received_at_desc
+        ON email_metadata_refs (received_at DESC)
+        """
+    )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_email_metadata_refs_sender_received_at
+        ON email_metadata_refs (sender, received_at DESC)
+        """
+    )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_email_metadata_refs_inbox_id
+        ON email_metadata_refs (message_inbox_id)
         """
     )
     op.execute(
@@ -102,5 +134,18 @@ def downgrade() -> None:
             attached_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             PRIMARY KEY (connector_type, endpoint_identity, filter_id)
         )
+        """
+    )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_connector_source_filters_connector
+        ON connector_source_filters (connector_type, endpoint_identity)
+        WHERE enabled = true
+        """
+    )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_connector_source_filters_filter_id
+        ON connector_source_filters (filter_id)
         """
     )

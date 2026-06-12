@@ -16,7 +16,8 @@ Guards:
   - This migration is applied per butler schema; IF EXISTS ensures it is safe
     for schemas where the table may have already been cleaned up.
 
-Downgrade recreates an empty shell for rollback safety (no data to restore).
+Downgrade recreates the original contacts_source_accounts schema (contacts_001)
+including its index. No data to restore.
 """
 
 from __future__ import annotations
@@ -35,20 +36,24 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Recreate empty shell. No data to restore.
+    # Recreate the original schema from contacts_001 (001_contacts_sync.py).
+    # No data to restore. Index name keeps the original idx_ prefix used by
+    # 001_contacts_sync.py to stay byte-faithful to the schema being rolled back.
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS contacts_source_accounts (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             provider TEXT NOT NULL,
             account_id TEXT NOT NULL,
-            display_name TEXT,
-            email TEXT,
-            scopes TEXT[] NOT NULL DEFAULT '{}',
-            token_secured BOOLEAN NOT NULL DEFAULT false,
-            last_synced_at TIMESTAMPTZ,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            UNIQUE (provider, account_id)
+            subject_email TEXT,
+            connected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            last_success_at TIMESTAMPTZ,
+            PRIMARY KEY (provider, account_id)
         )
+        """
+    )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_contacts_source_accounts_last_success
+            ON contacts_source_accounts (last_success_at)
         """
     )

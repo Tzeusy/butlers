@@ -16,7 +16,8 @@ Guards:
   - DROP TABLE IF EXISTS handles already-absent table safely.
   - All statements are idempotent.
 
-Downgrade recreates empty shells for rollback safety (no data to restore).
+Downgrade recreates the original import_batches schema (finance_006) including
+the status CHECK constraint and the transactions FK. No data to restore.
 """
 
 from __future__ import annotations
@@ -37,17 +38,44 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Recreate empty shell and restore the FK. No data to restore.
+    # Recreate the original schema from finance_006 (006_intelligence_tables.py)
+    # and restore the FK. No data to restore.
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS import_batches (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            source TEXT NOT NULL,
-            filename TEXT,
-            imported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            row_count INTEGER,
-            metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+            id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            source              TEXT NOT NULL,
+            filename            TEXT,
+            account_id          UUID REFERENCES accounts(id) ON DELETE SET NULL,
+            status              TEXT NOT NULL DEFAULT 'pending',
+            row_count           INTEGER NOT NULL DEFAULT 0,
+            imported_count      INTEGER NOT NULL DEFAULT 0,
+            skipped_count       INTEGER NOT NULL DEFAULT 0,
+            error_count         INTEGER NOT NULL DEFAULT 0,
+            completed_at        TIMESTAMPTZ,
+            error_details       JSONB NOT NULL DEFAULT '{}'::jsonb,
+            baselines_computed  BOOLEAN NOT NULL DEFAULT false,
+            categories_learned  INTEGER NOT NULL DEFAULT 0,
+            metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
         )
+        """
+    )
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'import_batches_status_check'
+                  AND conrelid = 'import_batches'::regclass
+            ) THEN
+                ALTER TABLE import_batches
+                    ADD CONSTRAINT import_batches_status_check
+                        CHECK (status IN ('pending', 'running', 'completed', 'failed'));
+            END IF;
+        END $$
         """
     )
     op.execute(
