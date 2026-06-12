@@ -421,10 +421,18 @@ async def test_consolidation_runs_table_after_migration(provisioned_postgres_poo
             "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)", role
         )
         if role_exists:
-            for r in mod._ALL_RUNTIME_ROLES:
-                await pool.execute(
-                    f'GRANT {mod._TABLE_PRIVILEGES} ON TABLE public.consolidation_runs TO "{r}"'
+            existing_roles = {
+                r["rolname"]
+                for r in await pool.fetch(
+                    "SELECT rolname FROM pg_roles WHERE rolname = ANY($1)",
+                    list(mod._ALL_RUNTIME_ROLES),
                 )
+            }
+            for r in mod._ALL_RUNTIME_ROLES:
+                if r in existing_roles:
+                    await pool.execute(
+                        f'GRANT {mod._TABLE_PRIVILEGES} ON TABLE public.consolidation_runs TO "{r}"'
+                    )
             can_select = await pool.fetchval(
                 "SELECT has_table_privilege($1, 'public.consolidation_runs', 'SELECT')",
                 role,
