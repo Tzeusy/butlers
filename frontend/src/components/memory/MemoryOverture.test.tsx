@@ -54,8 +54,10 @@ function makeStats(overrides: Partial<MemoryStats> = {}): MemoryStats {
 }
 
 function setStats(stats: MemoryStats | undefined) {
+  // useMemoryStats() resolves to ApiResponse<MemoryStats> = { data, meta },
+  // so the component reads response.data. Mirror that envelope here.
   vi.mocked(useMemoryStats).mockReturnValue({
-    data: stats,
+    data: stats == null ? undefined : { data: stats, meta: {} },
     isLoading: stats == null,
   } as unknown as UseMemoryStatsResult);
 }

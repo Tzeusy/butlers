@@ -164,7 +164,8 @@ function PipelineBand({ stats }: { stats: MemoryStats }) {
  */
 export default function MemoryOverture() {
   const tz = useTimezone();
-  const { data: stats } = useMemoryStats();
+  const { data: statsResponse } = useMemoryStats();
+  const stats = statsResponse?.data;
 
   return (
     <section className="flex flex-col gap-8">
