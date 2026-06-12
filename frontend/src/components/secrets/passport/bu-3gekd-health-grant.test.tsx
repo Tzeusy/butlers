@@ -478,9 +478,10 @@ describe("Owner-default discoverability: expired primary still surfaces; non-pri
   });
 
   it("non-primary account: buildSpineEntries excludes non-primary when only primary identity passed [bu-1sz6w spec §Multi-Account Leak Prevention]", () => {
-    // Inventory where owner-default only returns the primary (backend excludes non-primary)
+    // Inventory that includes BOTH credentials; allIdentityIds only contains the
+    // primary identity — so buildSpineEntries must filter out the non-primary one.
     const inventory: InventoryResponse = {
-      user: [expiredPrimaryCredential],
+      user: [expiredPrimaryCredential, nonPrimaryCredential],
       system: [],
       cli: [],
       // Owner-default: backend only returns primary companion entity, NOT non-primary
@@ -492,11 +493,11 @@ describe("Owner-default discoverability: expired primary still surfaces; non-pri
     const allIdentityIds = [OWNER_ENTITY_ID, PRIMARY_GOOGLE_ENTITY_ID];
     const entries = buildSpineEntries(inventory, allIdentityIds);
 
-    // Non-primary credential should not be in entries (it wasn't in the inventory)
-    const nonPrimaryEntry = entries.find(
-      (e) => e.key === "u:google" && e.credential?.identity === NONPRIMARY_GOOGLE_ENTITY_ID,
-    );
-    expect(nonPrimaryEntry).toBeUndefined();
+    // Exactly one u:google entry — the expired primary; non-primary (state "ok") excluded
+    const googleEntries = entries.filter((e) => e.key === "u:google");
+    expect(googleEntries).toHaveLength(1);
+    const [googleEntry] = googleEntries;
+    expect(googleEntry.state).toBe("expired");
   });
 
   it("non-primary account accessible under explicit ?identity= lens [bu-1sz6w spec §Multi-Account Leak Prevention]", () => {
