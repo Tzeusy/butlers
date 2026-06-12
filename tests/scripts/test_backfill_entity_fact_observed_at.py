@@ -143,6 +143,8 @@ async def test_apply_processes_rows_in_bounded_batches() -> None:
 
     assert summary == {"found": 4, "updated": 4, "batches": 2}
     # SELECT was called with the batch-size limit each iteration.
+    # Assert the call count first so the loop below cannot pass vacuously.
+    assert len(pool.fetch.call_args_list) == 3
     for call in pool.fetch.call_args_list:
         assert call.args[1] == 2, "SELECT must be bounded by batch_size"
 
