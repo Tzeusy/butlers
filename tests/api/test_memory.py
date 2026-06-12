@@ -229,6 +229,9 @@ async def test_episodes_status_filter_adds_where_clause(app, status):
 
     assert resp.status_code == 200
     body = resp.json()
+    # Two default pools ("atlas", "memory") each return the single mocked row,
+    # so guard against a vacuous pass before checking element properties.
+    assert len(body["data"]) == 2
     assert all(ep["consolidation_status"] == status for ep in body["data"])
 
     fetch_calls = mock_db.pool_mock.fetch.call_args_list
@@ -277,7 +280,9 @@ async def test_episodes_no_status_filter_omits_clause(app):
 
     assert resp.status_code == 200
     fetch_calls = mock_db.pool_mock.fetch.call_args_list
-    assert fetch_calls
+    # One fetch per default pool ("atlas", "memory"); assert the exact count so
+    # the WHERE-clause check below cannot vacuously pass on an empty list.
+    assert len(fetch_calls) == 2
     # consolidation_status appears in the SELECT column list, but must NOT be
     # part of the WHERE clause when ?status is omitted.
     assert all("consolidation_status = $" not in call.args[0] for call in fetch_calls)
