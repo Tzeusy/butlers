@@ -202,11 +202,22 @@ async def get_memory_stats(
         # Latest consolidation run for THIS pool's butler, read from the shared
         # public.consolidation_runs audit table (core_119). Scoped per-butler so
         # the fan-out picks the globally-latest run without double counting.
-        last_run = await pool.fetchrow(
-            "SELECT consolidated_at, facts_produced FROM public.consolidation_runs"
-            " WHERE butler = $1 ORDER BY consolidated_at DESC LIMIT 1",
-            butler_name,
-        )
+        # Degrade gracefully when the audit table is absent (e.g. core_119 not
+        # yet applied) so the established episode/fact/rule counts still return.
+        try:
+            last_run = await pool.fetchrow(
+                "SELECT consolidated_at, facts_produced FROM public.consolidation_runs"
+                " WHERE butler = $1 ORDER BY consolidated_at DESC LIMIT 1",
+                butler_name,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to fetch latest consolidation run for butler %s; "
+                "omitting consolidation fields for this pool",
+                butler_name,
+                exc_info=True,
+            )
+            last_run = None
         return {
             "total_episodes": await pool.fetchval("SELECT count(*) FROM episodes") or 0,
             "unconsolidated_episodes": await pool.fetchval(
