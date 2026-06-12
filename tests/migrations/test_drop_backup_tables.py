@@ -171,11 +171,13 @@ async def test_backup_tables_absent_after_migration(provisioned_postgres_pool) -
         )
 
         # Verify tables exist before migration.
-        for qual in (
+        targets_pre = (
             "public.contacts_pre_migration_20260531",
             "public.contact_info_dropbak_core_115",
             "relationship._reminders_backup",
-        ):
+        )
+        assert len(targets_pre) == 3
+        for qual in targets_pre:
             exists = await pool.fetchval(f"SELECT to_regclass('{qual}')")
             assert exists is not None, f"Setup failed: {qual} should exist before migration"
 
@@ -194,11 +196,13 @@ async def test_backup_tables_absent_after_migration(provisioned_postgres_pool) -
             await pool.execute("DROP TABLE IF EXISTS relationship._reminders_backup")
 
         # Assert all 3 tables are now absent.
-        for qual in (
+        targets_post = (
             "public.contacts_pre_migration_20260531",
             "public.contact_info_dropbak_core_115",
             "relationship._reminders_backup",
-        ):
+        )
+        assert len(targets_post) == 3
+        for qual in targets_post:
             result = await pool.fetchval(f"SELECT to_regclass('{qual}')")
             assert result is None, (
                 f"Expected {qual} to be absent after migration, but it still exists"
@@ -214,11 +218,13 @@ async def test_migration_idempotent_when_tables_absent(provisioned_postgres_pool
         await pool.execute("CREATE SCHEMA IF NOT EXISTS relationship")
 
         # Tables are intentionally absent — simulates re-run after prior migration.
-        for qual in (
+        targets_absent = (
             "public.contacts_pre_migration_20260531",
             "public.contact_info_dropbak_core_115",
             "relationship._reminders_backup",
-        ):
+        )
+        assert len(targets_absent) == 3
+        for qual in targets_absent:
             # Verify absent.
             result = await pool.fetchval(f"SELECT to_regclass('{qual}')")
             assert result is None, f"Pre-condition: {qual} should be absent for idempotency test"
@@ -232,10 +238,12 @@ async def test_migration_idempotent_when_tables_absent(provisioned_postgres_pool
         await pool.execute("DROP TABLE IF EXISTS relationship._reminders_backup")
 
         # Still absent — no error raised.
-        for qual in (
+        targets_still_absent = (
             "public.contacts_pre_migration_20260531",
             "public.contact_info_dropbak_core_115",
             "relationship._reminders_backup",
-        ):
+        )
+        assert len(targets_still_absent) == 3
+        for qual in targets_still_absent:
             result = await pool.fetchval(f"SELECT to_regclass('{qual}')")
             assert result is None
