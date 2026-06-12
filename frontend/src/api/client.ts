@@ -2648,7 +2648,7 @@ export function disconnectGoogleHealth(opts?: {
   accountEmail?: string;
 }): Promise<GoogleHealthDisconnectResponse> {
   const params = new URLSearchParams();
-  if (opts?.accountEmail) params.set("account_email", opts.accountEmail);
+  if (opts?.accountEmail != null) params.set("account_email", opts.accountEmail);
   const qs = params.toString();
   return apiFetch<GoogleHealthDisconnectResponse>(
     `/connectors/google-health/disconnect${qs ? `?${qs}` : ""}`,
