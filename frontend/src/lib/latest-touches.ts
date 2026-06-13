@@ -90,7 +90,13 @@ export function deriveLatestTouches(
     });
   }
 
-  return [...latestByChannel.values()].sort(
-    (a, b) => tsMillis(b.occurredAt) - tsMillis(a.occurredAt),
-  );
+  return [...latestByChannel.values()].sort((a, b) => {
+    // Compare, not subtract: two missing/invalid timestamps both map to
+    // NEGATIVE_INFINITY, and subtracting those yields NaN — an unstable
+    // comparator return that breaks the deterministic order this module promises.
+    const aMs = tsMillis(a.occurredAt);
+    const bMs = tsMillis(b.occurredAt);
+    if (aMs === bMs) return 0;
+    return bMs > aMs ? 1 : -1;
+  });
 }

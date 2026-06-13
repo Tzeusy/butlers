@@ -119,6 +119,20 @@ describe("deriveLatestTouches", () => {
     expect(telegram[0].summary).toBe("newest");
   });
 
+  it("sorts deterministically when timestamps are missing", () => {
+    // Two touches with null timestamps both map to NEGATIVE_INFINITY. A
+    // subtraction comparator would return NaN here and scramble the order;
+    // the comparison comparator must keep it stable and input-ordered.
+    const touches = deriveLatestTouches(
+      [
+        thread({ source_channel: "telegram", last_received_at: null, last_snippet: "tg" }),
+        thread({ source_channel: "email", last_received_at: null, last_snippet: "em" }),
+      ],
+      [],
+    );
+    expect(touches.map((t) => t.key)).toEqual(["thread:telegram", "thread:email"]);
+  });
+
   it("ignores non-interaction timeline rows", () => {
     const touches = deriveLatestTouches(
       [],
