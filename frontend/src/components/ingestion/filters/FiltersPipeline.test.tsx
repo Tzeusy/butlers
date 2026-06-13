@@ -507,7 +507,7 @@ describe('FiltersPipeline: rule editor wiring', () => {
     })
 
     expect(mockCreateMutateAsync).toHaveBeenCalledTimes(1)
-    const body = mockCreateMutateAsync.mock.calls[0][0] as Record<string, unknown>
+    const body = (mockCreateMutateAsync.mock.calls[0] as unknown[])[0] as Record<string, unknown>
     expect(body.rule_type).toBe('sender_domain')
     expect(body.action).toBe('drop')
     expect((body.condition as Record<string, unknown>).domain).toBe('spam.example.com')
@@ -559,7 +559,7 @@ describe('FiltersPipeline: rule editor wiring', () => {
     await act(async () => { ;(save as HTMLButtonElement).click() })
 
     expect(mockUpdateMutateAsync).toHaveBeenCalledTimes(1)
-    const arg = mockUpdateMutateAsync.mock.calls[0][0] as { id: string }
+    const arg = (mockUpdateMutateAsync.mock.calls[0] as unknown[])[0] as { id: string }
     expect(arg.id).toBe('rule-001')
   })
 
