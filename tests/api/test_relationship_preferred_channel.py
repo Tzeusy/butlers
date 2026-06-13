@@ -190,9 +190,7 @@ class TestContactKeyedWritePathRemoved:
         # ContactPatchRequest via the butler registry (mirrors the pattern in
         # test_relationship_contact_info_migration._get_router_module).
         app = create_app()
-        router_module = next(
-            m for name, m in app.state.butler_routers if name == "relationship"
-        )
+        router_module = next(m for name, m in app.state.butler_routers if name == "relationship")
         assert "preferred_channel" not in router_module.ContactPatchRequest.model_fields
 
     async def test_patch_contact_does_not_write_preferred_channel_column(self):
