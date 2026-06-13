@@ -1139,6 +1139,39 @@ describe("EntitiesIndexPage — bulk gutter", () => {
     });
     expect(archiveMutateAsync).toHaveBeenCalledWith("ent-alice-001");
   });
+
+  it("keeps only the failed entities selected on partial failure", async () => {
+    // Alice succeeds, Bob fails: only Bob must remain selected for retry.
+    archiveMutateAsync.mockImplementation((id: string) =>
+      id === "ent-bob-002" ? Promise.reject(new Error("boom")) : Promise.resolve(undefined),
+    );
+    renderPage();
+    selectRow("Alice Fogg");
+    selectRow("Bob Hatch");
+    const archiveBtn = container.querySelector(
+      "[data-testid='gutter-archive']",
+    ) as HTMLButtonElement;
+    act(() => archiveBtn.click());
+    const commit = document.body.querySelector(
+      "[data-testid='bulk-confirm-commit']",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      commit.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(archiveMutateAsync).toHaveBeenCalledWith("ent-alice-001");
+    expect(archiveMutateAsync).toHaveBeenCalledWith("ent-bob-002");
+    // The failed entity (Bob) stays selected; the gutter still shows 1.
+    const count = container.querySelector("[data-testid='bulk-gutter-count']");
+    expect(count?.querySelector(".tabular-nums")?.textContent).toBe("1");
+    const bobCheckbox = container.querySelector(
+      "input[type='checkbox'][aria-label='Select Bob Hatch']",
+    ) as HTMLInputElement;
+    expect(bobCheckbox.checked).toBe(true);
+    const aliceCheckbox = container.querySelector(
+      "input[type='checkbox'][aria-label='Select Alice Fogg']",
+    ) as HTMLInputElement;
+    expect(aliceCheckbox.checked).toBe(false);
+  });
 });
 
 describe("EntitiesIndexPage — Index keyboard map (focused list container)", () => {

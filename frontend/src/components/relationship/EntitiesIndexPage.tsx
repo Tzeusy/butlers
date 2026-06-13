@@ -1022,18 +1022,32 @@ export function EntitiesIndexPage() {
     const ids = Array.from(selectedIds);
     const mutate = action === "forget" ? forgetMutation : archiveMutation;
     const verb = action === "forget" ? "Deleted" : "Archived";
-    try {
-      await Promise.all(ids.map((id) => mutate.mutateAsync(id)));
-      toast.success(`${verb} ${ids.length} ${ids.length === 1 ? "entity" : "entities"}`);
-      setSelectedIds(new Set());
-      setBulkConfirm(null);
-    } catch (err) {
+    // allSettled, not all: a partial failure must deselect only the entities
+    // that actually succeeded and keep the failed ones selected, so the owner
+    // can see and retry them. Promise.all would reject on the first failure and
+    // leave the whole (now-stale) selection in place.
+    const results = await Promise.allSettled(ids.map((id) => mutate.mutateAsync(id)));
+    const failedIds = ids.filter((_, i) => results[i].status === "rejected");
+    const succeeded = ids.length - failedIds.length;
+
+    if (succeeded > 0) {
+      toast.success(`${verb} ${succeeded} ${succeeded === 1 ? "entity" : "entities"}`);
+    }
+    if (failedIds.length > 0) {
+      const firstReason = results.find((r) => r.status === "rejected") as
+        | PromiseRejectedResult
+        | undefined;
+      const reason =
+        firstReason?.reason instanceof Error ? firstReason.reason.message : "Unknown error";
+      const noun = failedIds.length === 1 ? "entity" : "entities";
       toast.error(
-        `${action === "forget" ? "Delete" : "Archive"} failed: ${
-          err instanceof Error ? err.message : "Unknown error"
-        }`,
+        `${action === "forget" ? "Delete" : "Archive"} failed for ${failedIds.length} ${noun}: ${reason}`,
       );
     }
+
+    // Keep only the failed entities selected.
+    setSelectedIds(new Set(failedIds));
+    setBulkConfirm(null);
   }
 
   // URL is the source of truth for all filter chips.
@@ -1120,20 +1134,10 @@ export function EntitiesIndexPage() {
         });
       };
 
-      if (e.key === "ArrowDown") {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
-        const nextCursor = clamp(cursor < 0 ? 0 : cursor + 1);
-        if (e.shiftKey) {
-          const base = anchor ?? (cursor < 0 ? 0 : cursor);
-          if (anchor === null) setAnchor(base);
-          select(base, nextCursor);
-        } else {
-          setAnchor(null);
-        }
-        setCursor(nextCursor);
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        const nextCursor = clamp(cursor < 0 ? 0 : cursor - 1);
+        const delta = e.key === "ArrowDown" ? 1 : -1;
+        const nextCursor = clamp(cursor < 0 ? 0 : cursor + delta);
         if (e.shiftKey) {
           const base = anchor ?? (cursor < 0 ? 0 : cursor);
           if (anchor === null) setAnchor(base);
