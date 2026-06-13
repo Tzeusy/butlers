@@ -19,6 +19,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -406,6 +407,36 @@ class TestEntityCache:
             task = ha_module._area_refresh_task or ha_module._entity_refresh_task
             assert task is not None
             await asyncio.wait_for(task, timeout=0.1)
+
+    @pytest.mark.parametrize(
+        ("method_name", "message"),
+        [
+            ("_fetch_area_registry", "area registry fetch timed out"),
+            ("_fetch_entity_registry", "entity registry fetch timed out"),
+        ],
+    )
+    async def test_registry_fetch_timeout_is_not_warning(
+        self,
+        ha_module: HomeAssistantModule,
+        caplog: pytest.LogCaptureFixture,
+        method_name: str,
+        message: str,
+    ) -> None:
+        ha_module._ws_connected = True
+        caplog.set_level(logging.INFO, logger="butlers.modules._roster_home")
+
+        with patch.object(ha_module, "_ws_command", new=AsyncMock(side_effect=TimeoutError)):
+            await getattr(ha_module, method_name)()
+
+        assert any(
+            record.levelno == logging.INFO and message in record.message
+            for record in caplog.records
+        )
+        assert not [
+            record
+            for record in caplog.records
+            if record.name == "butlers.modules._roster_home" and record.levelno >= logging.WARNING
+        ]
 
 
 # ---------------------------------------------------------------------------
