@@ -255,11 +255,15 @@ class TestSqlBuilders:
         the module's "SQL and Python derivations are identical" contract. Guards
         against regressing the comparison back to strict ``>``.
         """
-        for sql in (
+        sqls = (
             identity_staleness_band_sql("f"),
             narrative_staleness_band_sql("f"),
             staleness_band_sql_for("$1::timestamptz"),
-        ):
+        )
+        # Assert the collection size before the loop so a regression that drops
+        # a builder cannot make this guard vacuously pass over an empty list.
+        assert len(sqls) == 3
+        for sql in sqls:
             assert ">= now() - INTERVAL" in sql
             # The strict form must NOT appear (would diverge from Python at the edge).
             assert "> now() - INTERVAL" not in sql.replace(">= now() - INTERVAL", "")

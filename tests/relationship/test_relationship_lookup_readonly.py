@@ -219,8 +219,17 @@ async def test_sql_band_matches_python_at_boundaries(pool, age_days):
 
     Insert a fact whose ``observed_at`` is exactly ``age_days`` ago, read it back
     through ``relationship_lookup`` (SQL CASE), and compare to ``staleness_band``
-    (Python). They must agree — including at the inclusive 30d / 180d edges,
-    which a strict ``>`` comparison in SQL would get wrong.
+    (Python). They must agree.
+
+    Note: sub-second wall-clock progression between computing ``observed`` and
+    evaluating ``now()`` in SQL/Python means the effective age at evaluation is
+    ``age_days + ε``. So the exact-edge cases (``FRESH_MAX_DAYS`` = 30,
+    ``AGING_MAX_DAYS`` = 180) actually land just past the boundary in the next
+    band — in BOTH SQL and Python — so this test proves SQL/Python *agree* end to
+    end but does not, by itself, exercise the inclusive ``>=`` edge (exactly 30d
+    classified as ``fresh``). The inclusive-boundary semantics are pinned
+    structurally in ``test_staleness.py::test_band_comparison_is_inclusive_to_match_python``;
+    a strict ``>`` regression would be caught there.
     """
     eid = await pool.fetchval(
         """
