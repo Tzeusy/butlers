@@ -373,7 +373,9 @@ class TestCreateTempContactCentralWriter:
 
         # Inspect every SQL string passed to conn.execute / conn.fetchrow:
         # none may write public.contact_info.
-        for mock_call in [*conn.execute.await_args_list, *conn.fetchrow.await_args_list]:
+        calls = [*conn.execute.await_args_list, *conn.fetchrow.await_args_list]
+        assert calls, "Expected database calls to be recorded"
+        for mock_call in calls:
             sql = mock_call.args[0] if mock_call.args else ""
             assert "contact_info" not in sql.lower(), f"unexpected contact_info SQL: {sql!r}"
 
@@ -398,6 +400,7 @@ class TestCreateTempContactCentralWriter:
             *conn.fetchrow.await_args_list,
             *pool.fetchrow.await_args_list,
         ]
+        assert all_calls, "Expected database calls to be recorded"
         for mock_call in all_calls:
             sql = (mock_call.args[0] if mock_call.args else "").lower()
             assert not write_dml.search(sql), f"unexpected entity_facts write-DML: {sql!r}"
