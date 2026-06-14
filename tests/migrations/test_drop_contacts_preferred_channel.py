@@ -107,6 +107,18 @@ class TestMigrationStructure:
         assert "column_name  = 'preferred_channel'" in src
         assert "pref_col" in src
 
+    def test_rel_003_snapshots_relationship_prefs_before_drop(self):
+        # When core_122 runs first and the public column is gone, the copy omits
+        # preferred_channel; rel_003 must snapshot non-null relationship.contacts
+        # preferences before DROP TABLE so they are not silently lost (they cannot
+        # be backfilled to facts here — entity_facts is created later, in rel_013).
+        src = _REL_003_PATH.read_text()
+        assert "contacts_preferred_channel_dropbak_rel_003" in src
+        # The snapshot must precede the DROP TABLE in source order.
+        assert src.index("contacts_preferred_channel_dropbak_rel_003") < src.index(
+            "DROP TABLE relationship.contacts"
+        )
+
     def test_rel_003_downgrade_also_guards_preferred_channel(self):
         # The downgrade copies contacts back from public.contacts and would
         # SELECT the dropped column unguarded; it must use the same presence

@@ -100,7 +100,29 @@ def upgrade() -> None:
     # core_122 may run BEFORE this rel_003. When the column is gone, omit it from
     # the INSERT so this migration stays order-independent (the column was
     # write-orphaned and superseded by the entity-keyed prefers-channel fact).
-    pref_col = "preferred_channel," if _public_contacts_has_preferred_channel(conn) else ""
+    pref_present = _public_contacts_has_preferred_channel(conn)
+    pref_col = "preferred_channel," if pref_present else ""
+
+    # Data-preservation guard (bu-33077): when core_122 has already dropped
+    # public.contacts.preferred_channel, the copy above omits the column, so any
+    # non-null preference still living in relationship.contacts (rel_002 added the
+    # column) would be silently lost when Step 5 drops the table — and it cannot
+    # be backfilled into a prefers-channel fact here because relationship.entity_facts
+    # is not created until rel_013, which runs after this migration. Snapshot those
+    # values first so they remain recoverable (mirrors core_122's snapshot-before-drop).
+    if not pref_present:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS
+                    public.contacts_preferred_channel_dropbak_rel_003 AS
+                SELECT id, entity_id, preferred_channel
+                FROM relationship.contacts
+                WHERE preferred_channel IS NOT NULL
+                """
+            )
+        )
+
     conn.execute(
         text(f"""
         INSERT INTO public.contacts (
