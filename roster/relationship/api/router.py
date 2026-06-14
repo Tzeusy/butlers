@@ -2404,6 +2404,9 @@ async def create_label(
 ) -> CreateLabelResponse:
     """Create a new label (name must be unique)."""
     pool = _pool(db)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Label name cannot be empty or whitespace only")
     try:
         row = await pool.fetchrow(
             """
@@ -2411,14 +2414,12 @@ async def create_label(
             VALUES ($1, $2)
             RETURNING id, name, color
             """,
-            body.name.strip(),
+            name,
             body.color,
         )
     except Exception as exc:
         if "unique" in str(exc).lower() or "duplicate" in str(exc).lower():
-            raise HTTPException(
-                status_code=409, detail=f"Label '{body.name}' already exists"
-            ) from exc
+            raise HTTPException(status_code=409, detail=f"Label '{name}' already exists") from exc
         raise
     return CreateLabelResponse(id=row["id"], name=row["name"], color=row["color"])
 
@@ -2483,16 +2484,19 @@ async def assign_group_label(
     if not label_exists:
         raise HTTPException(status_code=404, detail="Label not found")
 
-    await pool.execute(
+    inserted = await pool.fetchval(
         """
         INSERT INTO group_labels (group_id, label_id)
         VALUES ($1, $2)
         ON CONFLICT (group_id, label_id) DO NOTHING
+        RETURNING 1
         """,
         group_id,
         label_id,
     )
-    return AssignGroupLabelResponse(group_id=group_id, label_id=label_id, assigned=True)
+    return AssignGroupLabelResponse(
+        group_id=group_id, label_id=label_id, assigned=inserted is not None
+    )
 
 
 # ---------------------------------------------------------------------------

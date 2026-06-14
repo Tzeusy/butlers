@@ -213,6 +213,30 @@ class TestAssignGroupLabel:
             resp = await client.post(f"/api/relationship/groups/{_GID}/labels/{_LID}")
         assert resp.status_code == 404
 
+    async def test_assign_already_exists_returns_assigned_false(self):
+        call_count = 0
+
+        async def _fetchval(q: str, *args):
+            nonlocal call_count
+            call_count += 1
+            # Calls: 1=group exists, 2=label exists, 3=INSERT RETURNING 1 (conflict → None)
+            if call_count <= 2:
+                return 1
+            return None
+
+        pool = _mock_pool()
+        pool.fetchval = AsyncMock(side_effect=_fetchval)
+        app = _make_app(pool)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(f"/api/relationship/groups/{_GID}/labels/{_LID}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["assigned"] is False
+        assert body["group_id"] == str(_GID)
+        assert body["label_id"] == str(_LID)
+
 
 # ---------------------------------------------------------------------------
 # DELETE /relationship/groups/{group_id}/labels/{label_id}

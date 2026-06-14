@@ -17,6 +17,7 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -70,8 +71,12 @@ function CreateLabelDialog() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
+    let formattedColor = color.trim();
+    if (formattedColor && !formattedColor.startsWith("#")) {
+      formattedColor = `#${formattedColor}`;
+    }
     create.mutate(
-      { name: name.trim(), color: color || null },
+      { name: name.trim(), color: formattedColor || null },
       {
         onSuccess: () => {
           setName("");
@@ -147,7 +152,7 @@ function AssignLabelDialog({
   assignedIds: Set<string>;
 }) {
   const [open, setOpen] = useState(false);
-  const { data: allLabels = [] } = useLabels();
+  const { data: allLabels = [], isPending } = useLabels();
   const assign = useAssignGroupLabel();
 
   const available = allLabels.filter((l) => !assignedIds.has(l.id));
@@ -166,8 +171,13 @@ function AssignLabelDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Assign label to group</DialogTitle>
+          <DialogDescription className="sr-only">
+            Select a label to assign to this group.
+          </DialogDescription>
         </DialogHeader>
-        {available.length === 0 ? (
+        {isPending ? (
+          <p className="text-sm text-muted-foreground py-4">Loading labels…</p>
+        ) : available.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4">
             All labels are already assigned, or no labels exist yet.
           </p>
