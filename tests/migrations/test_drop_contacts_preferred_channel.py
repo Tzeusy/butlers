@@ -107,6 +107,16 @@ class TestMigrationStructure:
         assert "column_name  = 'preferred_channel'" in src
         assert "pref_col" in src
 
+    def test_rel_003_downgrade_also_guards_preferred_channel(self):
+        # The downgrade copies contacts back from public.contacts and would
+        # SELECT the dropped column unguarded; it must use the same presence
+        # check so a post-core_122 downgrade stays order-independent.
+        src = _REL_003_PATH.read_text()
+        assert "_public_contacts_has_preferred_channel" in src
+        # Used in both upgrade and downgrade (>= 2 call sites + the definition).
+        assert src.count("_public_contacts_has_preferred_channel") >= 3
+        assert "pref_select" in src
+
 
 # ---------------------------------------------------------------------------
 # (b) Integration: backfill + parity behaviour against a live DB
