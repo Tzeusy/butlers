@@ -69,20 +69,42 @@ def upgrade() -> None:
 
     # Step 1: Copy contacts from relationship.contacts → public.contacts.
     # No ID overlap (verified), so INSERT without conflict handling.
+    #
+    # Cross-chain guard (cross-chain-migration-drop-hazard, bu-1yihq): the core
+    # chain's core_122 DROPs public.contacts.preferred_channel. alembic
+    # version_locations have no guaranteed ordering, so on a fresh provision
+    # core_122 may run BEFORE this rel_003. When the column is gone, omit it from
+    # the INSERT so this migration stays order-independent (the column was
+    # write-orphaned and superseded by the entity-keyed prefers-channel fact).
+    has_pref_channel = (
+        conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name   = 'contacts'
+                  AND column_name  = 'preferred_channel'
+                """
+            )
+        ).scalar()
+        is not None
+    )
+    pref_col = "preferred_channel," if has_pref_channel else ""
     conn.execute(
-        text("""
+        text(f"""
         INSERT INTO public.contacts (
             id, name, details, first_name, last_name, nickname,
             company, job_title, gender, pronouns, avatar_url,
             listed, archived_at, metadata, stay_in_touch_days,
-            entity_id, preferred_channel, created_at, updated_at
+            entity_id, {pref_col} created_at, updated_at
         )
         SELECT
             id, name, details, first_name, last_name, nickname,
             company, job_title, gender, pronouns, avatar_url,
             COALESCE(listed, true),
             archived_at, metadata, stay_in_touch_days,
-            entity_id, preferred_channel,
+            entity_id, {pref_col}
             COALESCE(created_at, now()),
             COALESCE(updated_at, now())
         FROM relationship.contacts
