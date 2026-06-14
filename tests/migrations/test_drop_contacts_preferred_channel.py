@@ -1,4 +1,4 @@
-"""Tests for core_122_drop_contacts_preferred_channel (bu-1yihq).
+"""Tests for core_123_drop_contacts_preferred_channel (bu-1yihq).
 
 Covers:
   (a) Module structure — revision/down_revision, callables, force-env parsing,
@@ -29,7 +29,7 @@ _MIGRATION_PATH = (
     / "alembic"
     / "versions"
     / "core"
-    / "core_122_drop_contacts_preferred_channel.py"
+    / "core_123_drop_contacts_preferred_channel.py"
 )
 _REL_003_PATH = (
     Path(__file__).resolve().parents[2]
@@ -56,23 +56,23 @@ def _load_migration(path: Path, name: str):
 @pytest.mark.unit
 class TestMigrationStructure:
     def test_revision(self):
-        assert _load_migration(_MIGRATION_PATH, "_core_122").revision == "core_122"
+        assert _load_migration(_MIGRATION_PATH, "_core_123").revision == "core_123"
 
-    def test_down_revision_chains_from_121(self):
-        assert _load_migration(_MIGRATION_PATH, "_core_122").down_revision == "core_121"
+    def test_down_revision_chains_from_122(self):
+        assert _load_migration(_MIGRATION_PATH, "_core_123").down_revision == "core_122"
 
     def test_branch_labels_and_depends_on_none(self):
-        mod = _load_migration(_MIGRATION_PATH, "_core_122")
+        mod = _load_migration(_MIGRATION_PATH, "_core_123")
         assert mod.branch_labels is None
         assert mod.depends_on is None
 
     def test_upgrade_downgrade_callable(self):
-        mod = _load_migration(_MIGRATION_PATH, "_core_122")
+        mod = _load_migration(_MIGRATION_PATH, "_core_123")
         assert callable(mod.upgrade)
         assert callable(mod.downgrade)
 
     def test_force_env_parsing(self, monkeypatch):
-        mod = _load_migration(_MIGRATION_PATH, "_core_122")
+        mod = _load_migration(_MIGRATION_PATH, "_core_123")
         monkeypatch.delenv("PREFERRED_CHANNEL_DROP_FORCE", raising=False)
         assert mod._forced() is False
         monkeypatch.setenv("PREFERRED_CHANNEL_DROP_FORCE", "1")
@@ -83,14 +83,14 @@ class TestMigrationStructure:
         # The actual destructive op.
         assert "DROP COLUMN IF EXISTS preferred_channel" in src
         # Self-guarding: snapshot + force override.
-        assert "contacts_preferred_channel_dropbak_core_122" in src
+        assert "contacts_preferred_channel_dropbak_core_123" in src
         assert "PREFERRED_CHANNEL_DROP_FORCE" in src
         # Cross-chain guard against the fact store + column existence.
         assert "to_regclass('relationship.entity_facts')" in src
         assert "information_schema.columns" in src
 
     def test_backfill_is_single_valued_and_idempotent(self):
-        mod = _load_migration(_MIGRATION_PATH, "_core_122")
+        mod = _load_migration(_MIGRATION_PATH, "_core_123")
         sql = mod._BACKFILL_SQL.text
         # One active fact per entity (single-valued supersession analogue).
         assert "DISTINCT ON (c.entity_id)" in sql
@@ -108,7 +108,7 @@ class TestMigrationStructure:
         assert "pref_col" in src
 
     def test_rel_003_snapshots_relationship_prefs_before_drop(self):
-        # When core_122 runs first and the public column is gone, the copy omits
+        # When core_123 runs first and the public column is gone, the copy omits
         # preferred_channel; rel_003 must snapshot non-null relationship.contacts
         # preferences before DROP TABLE so they are not silently lost (they cannot
         # be backfilled to facts here — entity_facts is created later, in rel_013).
@@ -122,7 +122,7 @@ class TestMigrationStructure:
     def test_rel_003_downgrade_also_guards_preferred_channel(self):
         # The downgrade copies contacts back from public.contacts and would
         # SELECT the dropped column unguarded; it must use the same presence
-        # check so a post-core_122 downgrade stays order-independent.
+        # check so a post-core_123 downgrade stays order-independent.
         src = _REL_003_PATH.read_text()
         assert "_public_contacts_has_preferred_channel" in src
         # Used in both upgrade and downgrade (>= 2 call sites + the definition).
@@ -197,12 +197,12 @@ async def _active_channel_facts(pool, subject):
 
 
 def _backfill_sql():
-    mod = _load_migration(_MIGRATION_PATH, "_core_122")
+    mod = _load_migration(_MIGRATION_PATH, "_core_123")
     return mod._BACKFILL_SQL.text.replace(":predicate", "$1")
 
 
 def _parity_sql():
-    mod = _load_migration(_MIGRATION_PATH, "_core_122")
+    mod = _load_migration(_MIGRATION_PATH, "_core_123")
     return mod._PARITY_SQL.text.replace(":predicate", "$1")
 
 

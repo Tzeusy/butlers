@@ -18,7 +18,7 @@ Self-guarding design (mirrors core_115 / core_118)
 1. **Idempotency** — if the column is already gone (re-run / fresh DB where the
    create-with-drop has collapsed), no-op.
 2. **Snapshot** — copies every non-null ``(id, entity_id, preferred_channel)``
-   triple to ``public.contacts_preferred_channel_dropbak_core_122`` so the drop
+   triple to ``public.contacts_preferred_channel_dropbak_core_123`` so the drop
    is recoverable.
 3. **Data migration** — for each contact whose ``preferred_channel`` is non-null
    AND whose ``entity_id`` resolves, assert a single-valued ``prefers-channel``
@@ -42,7 +42,7 @@ Cross-chain hazard (cross-chain-migration-drop-hazard)
 The relationship chain's rel_003 (``003_consolidate_contacts_to_public``) does
 ``INSERT INTO public.contacts (... preferred_channel ...)``. Multiple alembic
 version_locations have NO guaranteed ordering, so on a fresh provision this
-core_122 drop may run BEFORE rel_003 and the column would be missing when rel_003
+core_123 drop may run BEFORE rel_003 and the column would be missing when rel_003
 INSERTs. rel_003 is amended (same change) to detect column presence with
 ``to_regclass``-style ``information_schema`` lookup and omit ``preferred_channel``
 from its INSERT when the column is gone — making the two order-independent.
@@ -66,12 +66,12 @@ from alembic import op
 logger = logging.getLogger("alembic.runtime.migration")
 
 # revision identifiers, used by Alembic.
-revision = "core_122"
-down_revision = "core_121"
+revision = "core_123"
+down_revision = "core_122"
 branch_labels = None
 depends_on = None
 
-_BACKUP_TABLE = "public.contacts_preferred_channel_dropbak_core_122"
+_BACKUP_TABLE = "public.contacts_preferred_channel_dropbak_core_123"
 _PREDICATE = "prefers-channel"
 
 
@@ -109,7 +109,7 @@ _BACKFILL_SQL = sa.text(
     )
     SELECT
         gen_random_uuid(), src.entity_id, :predicate, src.preferred_channel,
-        'literal', 'migration:core_122', 1.0, true, 'active', now(), now()
+        'literal', 'migration:core_123', 1.0, true, 'active', now(), now()
     FROM (
         SELECT DISTINCT ON (c.entity_id)
             c.entity_id, c.preferred_channel
@@ -178,7 +178,7 @@ def upgrade() -> None:
         gap = int(bind.execute(_PARITY_SQL, {"predicate": _PREDICATE}).scalar() or 0)
         if gap > 0:
             msg = (
-                f"core_122 ABORTED: {gap} entity-linked contact(s) carry a non-null "
+                f"core_123 ABORTED: {gap} entity-linked contact(s) carry a non-null "
                 f"preferred_channel with no active 'prefers-channel' fact after backfill; "
                 f"dropping the column would silently lose them. A full snapshot was taken "
                 f"at {_BACKUP_TABLE}. Set PREFERRED_CHANNEL_DROP_FORCE=1 with explicit "
@@ -192,13 +192,11 @@ def upgrade() -> None:
         # migrate values into a fact store that does not exist, so only proceed
         # when there is nothing to lose; otherwise raise.
         remaining = bind.execute(
-            sa.text(
-                "SELECT count(*) FROM public.contacts WHERE preferred_channel IS NOT NULL"
-            )
+            sa.text("SELECT count(*) FROM public.contacts WHERE preferred_channel IS NOT NULL")
         ).scalar()
         if remaining and not _forced():
             raise RuntimeError(
-                f"core_122 ABORTED: relationship.entity_facts is absent so the "
+                f"core_123 ABORTED: relationship.entity_facts is absent so the "
                 f"preferred_channel values cannot be migrated to facts, but "
                 f"public.contacts still holds {remaining} non-null preferred_channel "
                 f"row(s). Apply the relationship chain first, or set "
@@ -207,9 +205,7 @@ def upgrade() -> None:
             )
 
     # 5. Drop the column (CHECK constraint drops with it).
-    op.execute(
-        "ALTER TABLE public.contacts DROP COLUMN IF EXISTS preferred_channel"
-    )
+    op.execute("ALTER TABLE public.contacts DROP COLUMN IF EXISTS preferred_channel")
 
 
 def downgrade() -> None:

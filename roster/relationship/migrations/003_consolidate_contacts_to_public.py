@@ -62,9 +62,9 @@ def _table_exists(conn, table: str) -> bool:
 def _public_contacts_has_preferred_channel(conn) -> bool:
     """Return True if ``public.contacts.preferred_channel`` still exists.
 
-    The core chain's core_122 DROPs this write-orphaned column. alembic
+    The core chain's core_123 DROPs this write-orphaned column. alembic
     version_locations have no guaranteed ordering, so on a fresh provision
-    core_122 may run before this rel_003 migration; both upgrade and downgrade
+    core_123 may run before this rel_003 migration; both upgrade and downgrade
     must stay order-independent and not reference a column that may be gone.
     """
     return (
@@ -95,21 +95,21 @@ def upgrade() -> None:
     # No ID overlap (verified), so INSERT without conflict handling.
     #
     # Cross-chain guard (cross-chain-migration-drop-hazard, bu-1yihq): the core
-    # chain's core_122 DROPs public.contacts.preferred_channel. alembic
+    # chain's core_123 DROPs public.contacts.preferred_channel. alembic
     # version_locations have no guaranteed ordering, so on a fresh provision
-    # core_122 may run BEFORE this rel_003. When the column is gone, omit it from
+    # core_123 may run BEFORE this rel_003. When the column is gone, omit it from
     # the INSERT so this migration stays order-independent (the column was
     # write-orphaned and superseded by the entity-keyed prefers-channel fact).
     pref_present = _public_contacts_has_preferred_channel(conn)
     pref_col = "preferred_channel," if pref_present else ""
 
-    # Data-preservation guard (bu-33077): when core_122 has already dropped
+    # Data-preservation guard (bu-33077): when core_123 has already dropped
     # public.contacts.preferred_channel, the copy above omits the column, so any
     # non-null preference still living in relationship.contacts (rel_002 added the
     # column) would be silently lost when Step 5 drops the table — and it cannot
     # be backfilled into a prefers-channel fact here because relationship.entity_facts
     # is not created until rel_013, which runs after this migration. Snapshot those
-    # values first so they remain recoverable (mirrors core_122's snapshot-before-drop).
+    # values first so they remain recoverable (mirrors core_123's snapshot-before-drop).
     if not pref_present:
         conn.execute(
             text(
@@ -215,7 +215,7 @@ def downgrade() -> None:
     # (We can't perfectly identify which ones came from relationship,
     # so we copy all — the downgrade is best-effort.)
     #
-    # Cross-chain guard (mirror of upgrade): core_122 may have already DROPped
+    # Cross-chain guard (mirror of upgrade): core_123 may have already DROPped
     # public.contacts.preferred_channel, in which case the source column is gone.
     # Select NULL for the recreated relationship.contacts.preferred_channel so the
     # downgrade stays order-independent (best-effort: the canonical store is the
