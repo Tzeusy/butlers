@@ -28,7 +28,11 @@ Schema change
    cannot drop a column, so the view is dropped and recreated. The view body
    mirrors the chronicler_014 shape minus the ``e.entity_id`` projection /
    GROUP BY term.
-3. Drop the column ``chronicler.episodes.entity_id`` (self-guarding via
+3. Backfill any non-null ``episodes.entity_id`` owner link into
+   ``episode_entities`` (role='owner', ``ON CONFLICT DO NOTHING``) so
+   transition-window rows that only ever carried the derived column are not
+   lost — chronicler_014 created the join table empty and never copied these.
+4. Drop the column ``chronicler.episodes.entity_id`` (self-guarding via
    ``IF EXISTS``; the view no longer references it by this point).
 
 ``participant_entity_ids`` is preserved, so the API contract change is the
@@ -139,7 +143,23 @@ def upgrade() -> None:
             o.note
     """)
 
-    # ── 3. Drop the derived column (self-guarding) ──────────────────────────
+    # ── 3. Preserve owner links before dropping the column ──────────────────
+    # chronicler_014 created ``episode_entities`` empty (it did NOT backfill
+    # from the existing ``episodes.entity_id`` values). Episodes set during the
+    # chronicler_013 transition window that were never re-projected through the
+    # post-014 adapter path therefore hold their owner link ONLY in the derived
+    # column. Copy any such non-null link into the join table (role='owner')
+    # before the drop so it survives — the drop is otherwise lossy and the
+    # downgrade cannot restore the values. Idempotent via ON CONFLICT DO NOTHING.
+    op.execute("""
+        INSERT INTO episode_entities (episode_id, entity_id, role)
+        SELECT id, entity_id, 'owner'
+        FROM episodes
+        WHERE entity_id IS NOT NULL
+        ON CONFLICT (episode_id, entity_id) DO NOTHING
+    """)
+
+    # ── 4. Drop the derived column (self-guarding) ──────────────────────────
     op.execute("""
         ALTER TABLE episodes
         DROP COLUMN IF EXISTS entity_id
