@@ -370,7 +370,7 @@ def _ef_row_to_ci_entry(fr: Any) -> Any:
     ci_type = _ef_predicate_to_ci_type(fr["predicate"], raw_obj)
     display_val = _ef_object_to_display_value(fr["predicate"], raw_obj)
     primary_raw = fr["primary"]
-    verified_raw = fr["verified"] if "verified" in fr.keys() else None
+    verified_raw = fr.get("verified")
     return ContactInfoEntry(
         id=fr["id"],
         type=ci_type,
