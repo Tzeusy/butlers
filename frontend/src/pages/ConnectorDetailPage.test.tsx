@@ -17,7 +17,7 @@
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useParams } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import ConnectorDetailPage from "@/pages/ConnectorDetailPage";
@@ -348,8 +348,6 @@ describe("ConnectorDetailPage — error state", () => {
 // ---------------------------------------------------------------------------
 // BatchSettingsCard gate
 // ---------------------------------------------------------------------------
-
-import { useParams } from "react-router";
 
 describe("ConnectorDetailPage — BatchSettingsCard mount gate", () => {
   beforeEach(() => {
