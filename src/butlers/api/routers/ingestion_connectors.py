@@ -43,33 +43,10 @@ from pydantic import BaseModel
 
 from butlers.api.db import DatabaseManager
 from butlers.api.models import ApiResponse
+from butlers.api.models.connector import derive_liveness as _liveness
 from butlers.api.routers.audit import append as _audit_append
 
 logger = logging.getLogger(__name__)
-
-
-def _liveness(last_heartbeat_at: _dt.datetime | None) -> str:
-    """Compute connector liveness from the last heartbeat timestamp.
-
-    Returns one of ``"online"``, ``"stale"``, or ``"offline"`` using the same
-    thresholds as the ``/summaries`` per-connector liveness derivation:
-
-    - ``None`` or heartbeat more than 15 minutes ago → ``"offline"``
-    - Heartbeat more than 5 minutes in the future (clock skew guard) → ``"offline"``
-    - Heartbeat within 5 minutes → ``"online"``
-    - Heartbeat 5–15 minutes ago → ``"stale"``
-    """
-    if last_heartbeat_at is None:
-        return "offline"
-    now = _dt.datetime.now(_dt.UTC)
-    age = (now - last_heartbeat_at).total_seconds()
-    if age < -300:
-        return "offline"
-    elif age <= 300:
-        return "online"
-    elif age <= 900:
-        return "stale"
-    return "offline"
 
 
 router = APIRouter(prefix="/api/ingestion/connectors", tags=["ingestion"])

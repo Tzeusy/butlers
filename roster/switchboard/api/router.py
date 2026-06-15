@@ -32,6 +32,7 @@ from butlers.api.audit_emit import emit_dashboard_audit
 from butlers.api.briefing.cache import BriefingCache, get_cache, resolve_owner_id
 from butlers.api.db import DatabaseManager
 from butlers.api.models import ApiResponse, PaginatedResponse, PaginationMeta
+from butlers.api.models.connector import derive_liveness as _liveness
 from butlers.api.oauth_scope_registry import (
     build_scope_rows,
     compute_auth_status,
@@ -1003,21 +1004,6 @@ async def get_connectors_summary(
     Falls back gracefully to a zero-value summary on DB errors.
     """
     pool = _pool(db)
-
-    def _liveness(last_heartbeat_at: datetime.datetime | None) -> str:
-        """Compute connector liveness from last heartbeat using the same thresholds
-        as the ingestion /summaries and /cross-summary endpoints."""
-        if last_heartbeat_at is None:
-            return "offline"
-        now = datetime.datetime.now(datetime.UTC)
-        age = (now - last_heartbeat_at).total_seconds()
-        if age < -300:
-            return "offline"
-        elif age <= 300:
-            return "online"
-        elif age <= 900:
-            return "stale"
-        return "offline"
 
     try:
         # Fetch per-connector heartbeat + message counters so liveness can be
