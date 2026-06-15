@@ -2384,11 +2384,7 @@ function WorkbenchInspectorRow({ fact }: { fact: EntityFact }) {
     <Row
       density="scan"
       className="px-0"
-      meta={
-        <div className="flex items-center gap-2">
-          <StalenessBand band={fact.staleness_band} />
-        </div>
-      }
+      meta={<StalenessBand band={fact.staleness_band} />}
       data-testid="workbench-inspector-row"
     >
       <div className="min-w-0">
