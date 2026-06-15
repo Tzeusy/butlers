@@ -929,6 +929,20 @@ class ConnectorSettingsUpdateRequest(BaseModel):
     """Request body for PATCH /connectors/{type}/{identity}/settings.
 
     Accepts a partial JSON object that is merged into the existing settings.
+    When ``flush_interval_s`` is present it must be in [60, 7200] — consistent
+    with the frontend validation bounds.
     """
 
     settings: dict
+
+    @field_validator("settings")
+    @classmethod
+    def validate_flush_interval(cls, v: dict) -> dict:
+        flush = v.get("flush_interval_s")
+        if flush is not None:
+            if not isinstance(flush, (int, float)) or isinstance(flush, bool):
+                raise ValueError("flush_interval_s must be a number")
+            flush_int = int(flush)
+            if flush_int < 60 or flush_int > 7200:
+                raise ValueError("flush_interval_s must be between 60 and 7200 seconds")
+        return v
