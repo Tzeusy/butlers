@@ -9,45 +9,47 @@
  * IngestionSubNav for consistent navigation across all ingestion routes.
  * No legacy TabsTrigger shell — sub-nav replaces the old ?tab= switcher.
  *
- * Header aside: live status badge (pulses when events arrive in last 60s,
- * static "Idle" otherwise). Reads from the events query; does not create
- * a new SSE subscription.
+ * Header aside: live status badge. Status is derived from the most-recent
+ * event's received_at: "Live" when an event arrived within the last 60 s,
+ * "Idle" otherwise.  TimelineTab reports freshness via onFreshnessChange
+ * so the badge reflects real pipeline activity, not a wall-clock timer.
  *
  * Spec: openspec/changes/complete-ingestion-redesign-parity/specs/
  *       dashboard-ingestion-dispatch-console/spec.md §"Timeline route replaces legacy tab landing"
  *       §"Timeline Ledger" — header band with live freshness/status pill
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { IngestionSubNav } from '@/components/ingestion/IngestionSubNav'
 import { DispatchLayout, DispatchHeader, DispatchSurface } from '@/components/ingestion/dispatch'
 import { TimelineTab } from '@/components/ingestion/TimelineTab'
 
 // ---------------------------------------------------------------------------
-// LiveStatusBadge — pulses when recently active
+// LiveStatusBadge — driven by real event freshness
 // ---------------------------------------------------------------------------
 
-/**
- * LiveStatusBadge shows "Live" with a pulse animation when events are arriving,
- * and "Idle" when there has been no activity in the last 30 seconds.
- *
- * For the initial implementation the badge derives its state from a simple
- * timestamp tracked in component state: it starts in "checking" state and
- * transitions to "live" or "idle" based on the page focus interval.
- *
- * In a future iteration this can subscribe to the SSE stream for precise timing.
- */
-function LiveStatusBadge() {
-  const [status, setStatus] = useState<'checking' | 'live' | 'idle'>('checking')
+/** Freshness window: an event received within this many ms is "live". */
+const LIVE_FRESHNESS_MS = 60_000
 
-  useEffect(() => {
-    const liveTimer = setTimeout(() => setStatus('live'), 300)
-    const idleTimer = setTimeout(() => setStatus('idle'), 30_000)
-    return () => {
-      clearTimeout(liveTimer)
-      clearTimeout(idleTimer)
-    }
-  }, [])
+type LiveStatus = 'checking' | 'live' | 'idle'
+
+interface LiveStatusBadgeProps {
+  /**
+   * ISO-8601 received_at of the most-recent ingestion event, or null when the
+   * events query has not yet returned (still loading / no events).
+   * null → "checking"; within LIVE_FRESHNESS_MS → "live"; older → "idle".
+   */
+  latestReceivedAt: string | null
+}
+
+function deriveStatus(latestReceivedAt: string | null): LiveStatus {
+  if (latestReceivedAt === null) return 'checking'
+  const age = Date.now() - new Date(latestReceivedAt).getTime()
+  return age <= LIVE_FRESHNESS_MS ? 'live' : 'idle'
+}
+
+function LiveStatusBadge({ latestReceivedAt }: LiveStatusBadgeProps) {
+  const status = deriveStatus(latestReceivedAt)
 
   if (status === 'checking') {
     return (
@@ -90,17 +92,24 @@ function LiveStatusBadge() {
 // ---------------------------------------------------------------------------
 
 export default function IngestionTimelinePage() {
+  // Freshness state: null until TimelineTab reports its first data fetch.
+  const [latestReceivedAt, setLatestReceivedAt] = useState<string | null>(null)
+
+  const handleFreshnessChange = useCallback((ra: string | null) => {
+    setLatestReceivedAt(ra)
+  }, [])
+
   return (
     <DispatchLayout>
       <DispatchHeader
         eyebrow="Ingestion · timeline"
         headline="Today, in order of arrival."
         description="Every external signal the house received, with end-to-end pipeline detail behind each row."
-        aside={<LiveStatusBadge />}
+        aside={<LiveStatusBadge latestReceivedAt={latestReceivedAt} />}
       />
       <IngestionSubNav />
       <DispatchSurface>
-        <TimelineTab isActive={true} />
+        <TimelineTab isActive={true} onFreshnessChange={handleFreshnessChange} />
       </DispatchSurface>
     </DispatchLayout>
   )
