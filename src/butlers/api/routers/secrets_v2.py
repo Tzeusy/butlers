@@ -1473,7 +1473,7 @@ async def get_system_credential(
 
 
 @router.get(
-    "/cli/{credential_id}",
+    "/cli/{credential_id:path}",
     response_model=ApiResponse[CliRuntimeDetail],
 )
 async def get_cli_credential(
@@ -3965,7 +3965,7 @@ class CliRevokeResult(BaseModel):
 
 
 @router.post(
-    "/cli/{credential_id}/rotate",
+    "/cli/{credential_id:path}/rotate",
     response_model=ApiResponse[CliRotateResult],
 )
 async def rotate_cli_credential(
@@ -4073,7 +4073,7 @@ async def rotate_cli_credential(
 
 
 @router.post(
-    "/cli/{credential_id}/revoke",
+    "/cli/{credential_id:path}/revoke",
     response_model=ApiResponse[CliRevokeResult],
 )
 async def revoke_cli_credential(
@@ -4177,7 +4177,7 @@ class CliReauthorizeResponse(BaseModel):
 
 
 @router.post(
-    "/cli/{credential_id}/reauthorize",
+    "/cli/{credential_id:path}/reauthorize",
     response_model=ApiResponse[CliReauthorizeResponse],
 )
 async def reauthorize_cli_credential(
@@ -4210,7 +4210,12 @@ async def reauthorize_cli_credential(
     -----------
     bu-ayp6v.10: Add backend reauthorize bridge for CLI runtime credentials.
     """
-    provider_def = PROVIDERS.get(credential_id)
+    # The inventory id is the credential store key, ``cli-auth/{provider.name}``
+    # (see cli_auth/persistence.py), but PROVIDERS is keyed on the bare provider
+    # name. Strip the ``cli-auth/`` prefix so both the full id (``cli-auth/codex``)
+    # and the bare name (``codex``) resolve.
+    provider_name = credential_id.removeprefix("cli-auth/")
+    provider_def = PROVIDERS.get(provider_name)
     if provider_def is None:
         raise HTTPException(
             status_code=404,

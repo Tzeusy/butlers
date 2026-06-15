@@ -141,6 +141,83 @@ def test_reauthorize_cli_404_detail_mentions_unknown_provider():
 
 
 # ---------------------------------------------------------------------------
+# Tests: prefixed inventory id (cli-auth/<name>) resolves to the provider
+#
+# The secrets inventory surfaces CLI credentials by their credential-store key
+# (``cli-auth/<name>``, which contains a slash), so the frontend "re-authorize"
+# button POSTs the full id URL-encoded. Two things must hold: (1) the route
+# must accept a slashed id (``{credential_id:path}``), and (2) the handler must
+# strip the ``cli-auth/`` prefix before the PROVIDERS lookup (keyed on the bare
+# name). Regression for the /secrets re-authorize "Not Found" bug.
+# ---------------------------------------------------------------------------
+
+
+def test_reauthorize_cli_prefixed_apikey_returns_200():
+    """Prefixed id 'cli-auth/claude' routes and resolves to the claude provider."""
+    mock_db = _make_db()
+    client = _build_app(mock_db)
+
+    resp = client.post("/api/secrets/cli/cli-auth%2Fclaude/reauthorize")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["auth_mode"] == "api_key"
+
+
+def test_reauthorize_cli_prefixed_apikey_audit_target_uses_full_id(monkeypatch):
+    """Prefixed id: audit target is the canonical full key 'c:cli-auth/claude'."""
+    mock_db = _make_db()
+    audit_calls: list[dict] = []
+
+    async def _fake_append(pool, actor, action, **kwargs):
+        audit_calls.append({"actor": actor, "action": action, **kwargs})
+        return 1
+
+    import butlers.api.routers.audit as _audit_mod
+
+    monkeypatch.setattr(_audit_mod, "append", _fake_append)
+    client = _build_app(mock_db)
+    client.post("/api/secrets/cli/cli-auth%2Fclaude/reauthorize")
+
+    attempted = [c for c in audit_calls if c["action"] == "attempted"]
+    assert attempted, "No 'attempted' audit row found"
+    assert attempted[0].get("target") == "c:cli-auth/claude", (
+        f"Expected canonical target 'c:cli-auth/claude'; got: {attempted[0].get('target')!r}"
+    )
+
+
+def test_reauthorize_cli_prefixed_devicecode_returns_200():
+    """Prefixed id 'cli-auth/codex' routes and resolves to the codex provider."""
+    mock_db = _make_db()
+    client = _build_app(mock_db)
+
+    with (
+        patch("butlers.api.routers.secrets_v2.PROVIDERS") as mock_providers,
+        patch("butlers.api.routers.secrets_v2.CLIAuthSession") as mock_session_cls,
+        patch("butlers.api.routers.secrets_v2.store_session"),
+        patch("butlers.api.routers.cli_auth._build_on_success", return_value=None),
+    ):
+        fake_provider = MagicMock()
+        fake_provider.name = "codex"
+        fake_provider.auth_mode = "device_code"
+        fake_provider.binary.return_value = "codex"
+        fake_provider.is_available.return_value = True
+        mock_providers.get.return_value = fake_provider
+
+        session_instance = AsyncMock()
+        session_instance.id = "sess-prefixed"
+        session_instance.state = "awaiting_auth"
+        session_instance.auth_url = "https://auth.openai.com/codex/device"
+        session_instance.device_code = "PR-EF"
+        session_instance.message = None
+        mock_session_cls.return_value = session_instance
+
+        resp = client.post("/api/secrets/cli/cli-auth%2Fcodex/reauthorize")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["auth_mode"] == "device_code"
+        # PROVIDERS lookup received the bare name, not the prefixed id.
+        mock_providers.get.assert_called_once_with("codex")
+
+
+# ---------------------------------------------------------------------------
 # Tests: api_key branch (claude provider — auth_mode='api_key')
 # ---------------------------------------------------------------------------
 
