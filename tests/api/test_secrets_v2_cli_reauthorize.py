@@ -567,9 +567,7 @@ def test_reauthorize_cli_full_credential_id_audit_keeps_full_id(monkeypatch):
         captured["action"] = action
         captured["credential_id"] = credential_id
 
-    monkeypatch.setattr(
-        "butlers.api.routers.secrets_v2._write_cli_audit", _fake_write_cli_audit
-    )
+    monkeypatch.setattr("butlers.api.routers.secrets_v2._write_cli_audit", _fake_write_cli_audit)
 
     mock_db = _make_db()
     client = _build_app(mock_db)
