@@ -1004,19 +1004,33 @@ async def get_connectors_summary(
     """
     pool = _pool(db)
 
+    def _liveness(last_heartbeat_at: datetime.datetime | None) -> str:
+        """Compute connector liveness from last heartbeat using the same thresholds
+        as the ingestion /summaries and /cross-summary endpoints."""
+        if last_heartbeat_at is None:
+            return "offline"
+        now = datetime.datetime.now(datetime.UTC)
+        age = (now - last_heartbeat_at).total_seconds()
+        if age < -300:
+            return "offline"
+        elif age <= 300:
+            return "online"
+        elif age <= 900:
+            return "stale"
+        return "offline"
+
     try:
-        row = await pool.fetchrow(
+        # Fetch per-connector heartbeat + message counters so liveness can be
+        # computed in Python, consistent with /api/ingestion/connectors/summaries
+        # and /cross-summary (all three now share the same liveness thresholds).
+        rows = await pool.fetch(
             """
             SELECT
-                count(*) AS total_connectors,
-                count(*) FILTER (WHERE state = 'healthy') AS online_count,
-                count(*) FILTER (WHERE state = 'degraded') AS stale_count,
-                count(*) FILTER (WHERE state = 'error') AS offline_count,
-                count(*) FILTER (WHERE state NOT IN ('healthy','degraded','error'))
-                    AS unknown_count,
-                coalesce(sum(counter_messages_ingested), 0) AS total_messages_ingested,
-                coalesce(sum(counter_messages_failed), 0) AS total_messages_failed
+                last_heartbeat_at,
+                coalesce(counter_messages_ingested, 0) AS messages_ingested,
+                coalesce(counter_messages_failed, 0)   AS messages_failed
             FROM connector_registry
+            WHERE deleted_at IS NULL
             """,
         )
     except Exception:
@@ -1025,20 +1039,30 @@ async def get_connectors_summary(
         )
         return ApiResponse[ConnectorSummary](data=ConnectorSummary())
 
-    if row is None:
+    if rows is None:
         return ApiResponse[ConnectorSummary](data=ConnectorSummary())
 
-    total_ingested = int(row["total_messages_ingested"] or 0)
-    total_failed = int(row["total_messages_failed"] or 0)
+    online = stale = offline = 0
+    total_ingested = total_failed = 0
+    for r in rows:
+        lv = _liveness(r["last_heartbeat_at"])
+        if lv == "online":
+            online += 1
+        elif lv == "stale":
+            stale += 1
+        else:
+            offline += 1
+        total_ingested += int(r["messages_ingested"] or 0)
+        total_failed += int(r["messages_failed"] or 0)
+
     total_attempts = total_ingested + total_failed
     error_rate_pct = (total_failed / total_attempts * 100.0) if total_attempts > 0 else 0.0
 
     summary = ConnectorSummary(
-        total_connectors=int(row["total_connectors"] or 0),
-        online_count=int(row["online_count"] or 0),
-        stale_count=int(row["stale_count"] or 0),
-        offline_count=int(row["offline_count"] or 0),
-        unknown_count=int(row["unknown_count"] or 0),
+        total_connectors=len(rows),
+        online_count=online,
+        stale_count=stale,
+        offline_count=offline,
         total_messages_ingested=total_ingested,
         total_messages_failed=total_failed,
         error_rate_pct=round(error_rate_pct, 2),
