@@ -1286,9 +1286,12 @@ export function TimelineTab({ isActive, defaultStatuses, defaultViewId, onFreshn
     ...(debouncedQ ? { q: debouncedQ } : {}),
     ...(activeChannels.length > 0 ? { channels: activeChannels.join(",") } : {}),
     ...(statusesCsv ? { statuses: statusesCsv } : {}),
+    // Only apply a lower bound on received_at so the 30 s refetch can pick up
+    // events that arrived after the initial load.  Including an upper bound
+    // (rangeWindow.to) would freeze the query at the moment the range changed,
+    // causing the refetch to silently miss new events.
     from: rangeWindow.from,
-    to: rangeWindow.to,
-  }), [debouncedQ, activeChannels, statusesCsv, rangeWindow]);
+  }), [debouncedQ, activeChannels, statusesCsv, rangeWindow.from]);
 
   const {
     data: infiniteData,

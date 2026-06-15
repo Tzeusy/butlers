@@ -19,7 +19,7 @@
  *       §"Timeline Ledger" — header band with live freshness/status pill
  */
 
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { IngestionSubNav } from '@/components/ingestion/IngestionSubNav'
 import { DispatchLayout, DispatchHeader, DispatchSurface } from '@/components/ingestion/dispatch'
 import { TimelineTab } from '@/components/ingestion/TimelineTab'
@@ -35,21 +35,29 @@ type LiveStatus = 'checking' | 'live' | 'idle'
 
 interface LiveStatusBadgeProps {
   /**
-   * ISO-8601 received_at of the most-recent ingestion event, or null when the
-   * events query has not yet returned (still loading / no events).
-   * null → "checking"; within LIVE_FRESHNESS_MS → "live"; older → "idle".
+   * ISO-8601 received_at of the most-recent ingestion event.
+   * - undefined → initial loading state (before TimelineTab has completed its first fetch)
+   * - null → pipeline is empty (query returned, no events) → "idle"
+   * - string → has events; freshness determines "live" vs "idle"
    */
-  latestReceivedAt: string | null
+  latestReceivedAt: string | null | undefined
 }
 
-function deriveStatus(latestReceivedAt: string | null): LiveStatus {
-  if (latestReceivedAt === null) return 'checking'
-  const age = Date.now() - new Date(latestReceivedAt).getTime()
+function deriveStatus(latestReceivedAt: string | null | undefined, now: number): LiveStatus {
+  if (latestReceivedAt === undefined) return 'checking'
+  if (latestReceivedAt === null) return 'idle'
+  const date = new Date(latestReceivedAt)
+  if (Number.isNaN(date.getTime())) return 'idle'
+  const age = now - date.getTime()
   return age <= LIVE_FRESHNESS_MS ? 'live' : 'idle'
 }
 
 function LiveStatusBadge({ latestReceivedAt }: LiveStatusBadgeProps) {
-  const status = deriveStatus(latestReceivedAt)
+  // Capture the current time once per render via useMemo to satisfy the
+  // react-hooks/purity rule (no bare Date.now() calls in the render path).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const now = useMemo(() => Date.now(), [latestReceivedAt])
+  const status = deriveStatus(latestReceivedAt, now)
 
   if (status === 'checking') {
     return (
@@ -92,8 +100,9 @@ function LiveStatusBadge({ latestReceivedAt }: LiveStatusBadgeProps) {
 // ---------------------------------------------------------------------------
 
 export default function IngestionTimelinePage() {
-  // Freshness state: null until TimelineTab reports its first data fetch.
-  const [latestReceivedAt, setLatestReceivedAt] = useState<string | null>(null)
+  // Freshness state: undefined until TimelineTab reports its first data fetch.
+  // undefined = still loading; null = empty pipeline; string = has events.
+  const [latestReceivedAt, setLatestReceivedAt] = useState<string | null | undefined>(undefined)
 
   const handleFreshnessChange = useCallback((ra: string | null) => {
     setLatestReceivedAt(ra)

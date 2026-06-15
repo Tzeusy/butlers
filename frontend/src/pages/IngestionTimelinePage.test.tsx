@@ -3,7 +3,8 @@
  * Tests for IngestionTimelinePage — focusing on the LiveStatusBadge pill.
  *
  * The pill must reflect real pipeline freshness, not a wall-clock timer:
- * - "checking…"  → while TimelineTab has not yet reported freshness (null)
+ * - "checking…"  → while TimelineTab has not yet reported freshness (undefined)
+ * - "Idle"       → TimelineTab reports null (empty pipeline, no events)
  * - "Live"       → TimelineTab reports a received_at within the last 60 s
  * - "Idle"       → TimelineTab reports a received_at older than 60 s
  *
@@ -114,6 +115,15 @@ describe('IngestionTimelinePage — LiveStatusBadge', () => {
     })
     expect(container.querySelector('[data-testid="live-status-badge-live"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="live-status-badge-idle"]')).toBeNull()
+  })
+
+  it('shows "Idle" when TimelineTab reports null (empty pipeline)', async () => {
+    await renderPage()
+    act(() => {
+      capturedOnFreshnessChange?.(null)
+    })
+    expect(container.querySelector('[data-testid="live-status-badge-idle"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="live-status-badge-live"]')).toBeNull()
   })
 
   it('shows "Idle" when TimelineTab reports a stale received_at', async () => {
