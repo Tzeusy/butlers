@@ -146,7 +146,7 @@ export function PrioritySendersBlock({
 
       {/* Gloss */}
       <p className="font-serif text-sm text-muted-foreground leading-[1.5] mt-3.5 max-w-[60ch]">
-        Mail from these contacts is tagged with a <em>high_priority</em> policy
+        Mail from these contacts is tagged with a <code className="font-mono text-[11px]">high_priority</code> policy
         tier as it enters the ingestion pipeline. That tag surfaces in
         observability (metrics and trace spans) so you can see priority-sender
         activity. It does not currently bypass label or global filter rules, and
