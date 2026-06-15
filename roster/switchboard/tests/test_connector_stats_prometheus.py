@@ -560,3 +560,76 @@ async def test_get_ingestion_fanout_filters_zero_count_rows():
     assert len(result.data) == 1
     assert result.data[0].target_butler == "memory"
     assert result.data[0].message_count == 3
+
+
+# ---------------------------------------------------------------------------
+# Tests: _connector_stats_from_db SQL correctness (query shape)
+# ---------------------------------------------------------------------------
+
+
+async def test_connector_stats_db_query_uses_coalesce_and_tz_aware_bucket():
+    """_connector_stats_from_db must:
+    - filter on COALESCE(source_provider, source_channel) so websocket connectors
+      stored under source_provider are not excluded,
+    - produce a timezone-aware bucket by appending AT TIME ZONE 'UTC' after date_trunc
+      so asyncpg decodes a tz-aware datetime (not naive).
+
+    This test captures the actual SQL sent to the pool and asserts both properties.
+    """
+    import importlib
+    import os
+    from pathlib import Path
+
+    os.environ.pop("PROMETHEUS_URL", None)
+
+    captured_sql: list[str] = []
+
+    class _CapturingPool:
+        async def fetch(self, sql: str, *args, **kwargs):
+            captured_sql.append(sql)
+            return []
+
+        async def fetchrow(self, *args, **kwargs):
+            raise RuntimeError("not expected")
+
+        async def fetchval(self, *args, **kwargs):
+            raise RuntimeError("not expected")
+
+    class _CapturingDB:
+        def pool(self, name: str):
+            return _CapturingPool()
+
+        @property
+        def butler_names(self) -> list[str]:
+            return []
+
+        async def fan_out(self, query: str, args: tuple = (), butler_names=None) -> dict:
+            return {}
+
+    sys.modules.pop("switchboard_api_models", None)
+    router_path = Path(__file__).resolve().parents[1] / "api" / "router.py"
+    spec = importlib.util.spec_from_file_location("_sw_router_sql_check", router_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    await mod.get_connector_stats(
+        connector_type="home_assistant",
+        endpoint_identity="ws://ha.local:8123",
+        period="24h",
+        db=_CapturingDB(),
+    )
+
+    assert len(captured_sql) == 1, "Expected exactly one fetch() call to the pool"
+    sql = captured_sql[0]
+
+    # Both bugs fixed: COALESCE filter and tz-aware bucket
+    assert "COALESCE(source_provider, source_channel)" in sql, (
+        "Query must use COALESCE(source_provider, source_channel) to match websocket connectors "
+        "where connector type is stored in source_provider, not source_channel"
+    )
+    # Two AT TIME ZONE 'UTC' occurrences: one inside date_trunc arg, one after date_trunc
+    tz_count = sql.count("AT TIME ZONE 'UTC'")
+    assert tz_count >= 2, (
+        f"Query must apply AT TIME ZONE 'UTC' twice (inside and after date_trunc) to produce "
+        f"a tz-aware bucket; found {tz_count} occurrence(s) in: {sql!r}"
+    )

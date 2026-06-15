@@ -138,11 +138,13 @@ async def _connector_stats_from_db(
     interval = _DB_INTERVAL[period]
     try:
         rows = await pool.fetch(
-            f"SELECT date_trunc('{trunc}', received_at AT TIME ZONE 'UTC') AS bucket,"
+            f"SELECT date_trunc('{trunc}', received_at AT TIME ZONE 'UTC')"
+            f" AT TIME ZONE 'UTC' AS bucket,"
             f" COUNT(*) FILTER (WHERE status = 'ingested') AS messages_ingested,"
             f" COUNT(*) FILTER (WHERE status = 'failed') AS messages_failed"
             f" FROM public.ingestion_events"
-            f" WHERE source_channel = $1 AND source_endpoint_identity = $2"
+            f" WHERE COALESCE(source_provider, source_channel) = $1"
+            f"   AND source_endpoint_identity = $2"
             f"   AND received_at >= NOW() - INTERVAL '{interval}'"
             f" GROUP BY bucket ORDER BY bucket",
             connector_type,
