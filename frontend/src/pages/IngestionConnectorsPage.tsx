@@ -35,15 +35,20 @@ export default function IngestionConnectorsPage() {
   // Other errors → generic "try re-authorizing" guidance.
   useEffect(() => {
     if (!oauthError) return
-    const params = new URLSearchParams(searchParams)
-    params.delete('oauth_error')
-    setSearchParams(params, { replace: true })
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev)
+        params.delete('oauth_error')
+        return params
+      },
+      { replace: true },
+    )
     if (oauthError === 'no_primary_account') {
       toast.warning('No primary account set. Go to Secrets to set a primary account.')
     } else {
       toast.warning(`OAuth error: ${oauthError.replace(/_/g, ' ')} — try re-authorizing.`)
     }
-  }, [oauthError, searchParams, setSearchParams])
+  }, [oauthError, setSearchParams])
 
   return (
     <DispatchLayout>

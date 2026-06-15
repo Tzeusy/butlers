@@ -121,15 +121,20 @@ export default function ConnectorDetailPage() {
   const oauthError = searchParams.get('oauth_error')
   useEffect(() => {
     if (!oauthError) return
-    const params = new URLSearchParams(searchParams)
-    params.delete('oauth_error')
-    setSearchParams(params, { replace: true })
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev)
+        params.delete('oauth_error')
+        return params
+      },
+      { replace: true },
+    )
     if (oauthError === 'no_primary_account') {
       toast.warning('No primary account set. Go to Secrets to set a primary account.')
     } else {
       toast.warning(`OAuth error: ${oauthError.replace(/_/g, ' ')} — try re-authorizing.`)
     }
-  }, [oauthError, searchParams, setSearchParams])
+  }, [oauthError, setSearchParams])
 
   // Build the onReauth handler: initiates OAuth reauth for this connector's
   // provider (derived from connector_type) and carries connector_detail_path

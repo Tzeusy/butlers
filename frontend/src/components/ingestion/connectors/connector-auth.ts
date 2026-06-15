@@ -110,7 +110,7 @@ export function deriveConnectorDispatchInfo(c: ConnectorSummary): ConnectorDispa
         authStatus: 'needs_reauth',
         health: 'degraded',
         needsAttention: true,
-        authNote: truncate(msg, 48) || 'api forbidden · reauthorization required',
+        authNote: truncate(msg, 48),
       }
     }
     // Other degraded reasons (transient, heartbeat lag, etc.) — not an auth issue
