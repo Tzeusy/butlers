@@ -60,11 +60,8 @@ export function ConnectorRosterRow({
   const detailPath = `/ingestion/connectors/${encodeURIComponent(c.connector_type)}/${encodeURIComponent(c.endpoint_identity)}`
 
   const bars = spark24h ?? Array(24).fill(0)
-  // Fall back to summing hourly_events (real 24h window) then today.messages_ingested.
-  // today.messages_ingested on the /api/ingestion/connectors/summaries endpoint is itself
-  // computed from the hourly sum — so both paths are honest 24h figures.
-  const eventsCount =
-    events24h ?? (c.hourly_events ? c.hourly_events.reduce((a, b) => a + b, 0) : (c.today?.messages_ingested ?? 0))
+  // today.messages_ingested is already the 24h sum on the backend (derived from hourly_events).
+  const eventsCount = events24h ?? c.today?.messages_ingested ?? 0
 
   const authLabel = authStatusLabel(info.authStatus)
   const authColorClass = authStatusColor(info.authStatus)

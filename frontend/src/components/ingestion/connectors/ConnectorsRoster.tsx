@@ -120,11 +120,9 @@ export function ConnectorsRoster() {
   const authNeededCount = allConnectors.filter(
     (c) => deriveConnectorDispatchInfo(c).authStatus === 'needs_reauth',
   ).length
-  // Sum hourly_events (real 24h window from ingestion_events) across all connectors.
-  // today.messages_ingested from this endpoint is itself derived from the hourly sum,
-  // so both fields are honest 24h figures — but hourly_events is the primary source.
+  // today.messages_ingested is already the 24h sum on the backend (derived from hourly_events).
   const totalEvents24h = allConnectors.reduce(
-    (s, c) => s + (c.hourly_events ? c.hourly_events.reduce((a, b) => a + b, 0) : (c.today?.messages_ingested ?? 0)),
+    (s, c) => s + (c.today?.messages_ingested ?? 0),
     0,
   )
 
