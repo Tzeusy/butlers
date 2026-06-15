@@ -173,9 +173,7 @@ async def test_response_shape_contains_required_fields():
     assert item["last_seen"] is not None
     assert item["first_seen"] is not None
     # first_seen must not be later than last_seen
-    from datetime import datetime as dt
-
-    assert dt.fromisoformat(item["first_seen"]) <= dt.fromisoformat(item["last_seen"])
+    assert datetime.fromisoformat(item["first_seen"]) <= datetime.fromisoformat(item["last_seen"])
     assert item["contact_fact_count"] == 2
     assert "created_at" in item
     assert "updated_at" in item
