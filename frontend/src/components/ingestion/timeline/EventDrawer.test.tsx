@@ -41,6 +41,8 @@ vi.mock("@/hooks/use-ingestion-events", () => ({
   useIngestionEventReplays: vi.fn(),
   useIngestionEventPayload: vi.fn(),
   useIngestionEventSessions: vi.fn(),
+  useIngestionEventRollup: vi.fn(),
+  useIngestionEventDetail: vi.fn(),
 }));
 
 import {
@@ -48,6 +50,8 @@ import {
   useIngestionEventReplays,
   useIngestionEventPayload,
   useIngestionEventSessions,
+  useIngestionEventRollup,
+  useIngestionEventDetail,
 } from "@/hooks/use-ingestion-events";
 import { EventDrawer } from "./EventDrawer";
 
@@ -119,7 +123,7 @@ describe("EventDrawer — per-session cost column", () => {
     root = createRoot(container);
     queryClient = makeQueryClient();
 
-    // Default: replays and payload not loaded
+    // Default: replays, payload, and detail not loaded
     vi.mocked(useIngestionEventReplays).mockReturnValue({
       data: undefined,
       isLoading: false,
@@ -131,6 +135,12 @@ describe("EventDrawer — per-session cost column", () => {
       isLoading: true,
       isError: false,
     } as unknown as ReturnType<typeof useIngestionEventPayload>);
+
+    vi.mocked(useIngestionEventDetail).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useIngestionEventDetail>);
   });
 
   afterEach(() => {
@@ -166,7 +176,7 @@ describe("EventDrawer — per-session cost column", () => {
         data: undefined,
         isLoading: false,
         isError: false,
-      } as unknown as ReturnType<typeof useIngestionEventSessions>,
+      } as unknown as ReturnType<typeof useIngestionEventRollup>,
     });
   }
 
@@ -232,7 +242,7 @@ describe("EventDrawer — per-session cost column", () => {
         data: undefined,
         isLoading: true,
         isError: false,
-      } as unknown as ReturnType<typeof useIngestionEventSessions>,
+      } as unknown as ReturnType<typeof useIngestionEventRollup>,
     });
     renderDrawer();
     expect(container.querySelector("[data-testid='sessions-tab-loading']")).not.toBeNull();
