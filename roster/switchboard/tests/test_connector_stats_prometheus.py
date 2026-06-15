@@ -10,8 +10,11 @@ Tested behaviors:
 - get_ingestion_fanout: queries Prometheus instant API for cross-connector matrix.
   Falls back to DB-backed fan-out when PROMETHEUS_URL is not set or Prometheus
   returns an error.
-- get_connector_stats and get_connector_fanout return empty lists when
-  PROMETHEUS_URL is not set (no DB fallback for these).
+- get_connector_stats falls back to public.ingestion_events when PROMETHEUS_URL is
+  not set. Websocket connectors (e.g. home_assistant) that never write heartbeat
+  counter-deltas correctly show non-zero volume via this fallback.
+- get_connector_fanout returns empty list when PROMETHEUS_URL is not set (no DB
+  fallback for fanout).
 """
 
 from __future__ import annotations
@@ -41,16 +44,51 @@ def _load_router():
 
 
 class _FakePool:
-    """Minimal pool stub that raises on any DB access."""
+    """Minimal pool stub — returns empty list for fetch, raises for fetchrow/fetchval.
+
+    The no-Prometheus path now calls pool.fetch() to query public.ingestion_events.
+    Returning [] simulates a connector with no events (empty timeseries).
+    """
 
     async def fetchrow(self, *args, **kwargs):
-        raise RuntimeError("Should not query DB in Prometheus-backed endpoints")
+        raise RuntimeError("Should not query DB via fetchrow in these endpoints")
 
     async def fetch(self, *args, **kwargs):
-        raise RuntimeError("Should not query DB in Prometheus-backed endpoints")
+        return []
 
     async def fetchval(self, *args, **kwargs):
-        raise RuntimeError("Should not query DB in Prometheus-backed endpoints")
+        raise RuntimeError("Should not query DB via fetchval in these endpoints")
+
+
+class _FakePoolWithRows:
+    """Pool stub that returns synthetic ingestion_events rows for websocket connector tests."""
+
+    def __init__(self, rows: list[dict]):
+        self._rows = rows
+
+    async def fetchrow(self, *args, **kwargs):
+        raise RuntimeError("Not used in connector stats fallback")
+
+    async def fetch(self, *args, **kwargs):
+        return self._rows
+
+    async def fetchval(self, *args, **kwargs):
+        raise RuntimeError("Not used in connector stats fallback")
+
+
+class _FakeDBWithRows:
+    def __init__(self, rows: list[dict]):
+        self._rows = rows
+
+    def pool(self, name: str):
+        return _FakePoolWithRows(self._rows)
+
+    @property
+    def butler_names(self) -> list[str]:
+        return []
+
+    async def fan_out(self, query: str, args: tuple = (), butler_names=None) -> dict:
+        return {}
 
 
 class _FakeDB:
@@ -66,12 +104,13 @@ class _FakeDB:
 
 
 # ---------------------------------------------------------------------------
-# Tests: get_connector_stats endpoint — no Prometheus URL → empty list
+# Tests: get_connector_stats endpoint — no Prometheus URL → DB fallback
 # ---------------------------------------------------------------------------
 
 
-async def test_get_connector_stats_no_prometheus_url():
-    """When PROMETHEUS_URL is not set, get_connector_stats returns empty list."""
+async def test_get_connector_stats_no_prometheus_url_empty_db():
+    """When PROMETHEUS_URL is not set, get_connector_stats falls back to
+    public.ingestion_events. An empty pool (no events) returns an empty list."""
     import importlib
     import os
     from pathlib import Path
@@ -90,7 +129,56 @@ async def test_get_connector_stats_no_prometheus_url():
         period="24h",
         db=_FakeDB(),
     )
+    # DB fallback returns empty list when pool.fetch() returns no rows
     assert result.data == []
+
+
+async def test_get_connector_stats_no_prometheus_url_websocket_connector():
+    """Websocket connectors (e.g. home_assistant) that never write heartbeat
+    counter-deltas correctly show non-zero volume via the ingestion_events fallback."""
+    import importlib
+    import os
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    os.environ.pop("PROMETHEUS_URL", None)
+
+    # Simulate two hours of ingestion_events rows for a websocket connector
+    bucket1 = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
+    bucket2 = datetime(2024, 1, 15, 11, 0, 0, tzinfo=UTC)
+
+    # asyncpg returns Record objects; use dicts with dict-like access via mapping
+    class _FakeRecord(dict):
+        pass
+
+    fake_rows = [
+        _FakeRecord({"bucket": bucket1, "messages_ingested": 120, "messages_failed": 2}),
+        _FakeRecord({"bucket": bucket2, "messages_ingested": 87, "messages_failed": 0}),
+    ]
+
+    sys.modules.pop("switchboard_api_models", None)
+    router_path = Path(__file__).resolve().parents[1] / "api" / "router.py"
+    spec = importlib.util.spec_from_file_location("_sw_router_ws_test", router_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    result = await mod.get_connector_stats(
+        connector_type="home_assistant",
+        endpoint_identity="ws://homeassistant.local:8123",
+        period="24h",
+        db=_FakeDBWithRows(fake_rows),
+    )
+
+    assert len(result.data) == 2
+    row0 = result.data[0]
+    assert row0.connector_type == "home_assistant"
+    assert row0.endpoint_identity == "ws://homeassistant.local:8123"
+    assert row0.messages_ingested == 120
+    assert row0.messages_failed == 2
+    assert hasattr(row0, "hour")
+    row1 = result.data[1]
+    assert row1.messages_ingested == 87
+    assert row1.messages_failed == 0
 
 
 # ---------------------------------------------------------------------------
