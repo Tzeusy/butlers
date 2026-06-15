@@ -549,6 +549,10 @@ function BulkActionBar({ selectedCount, selectedIds, onClearSelection, onDeselec
   }
 
   async function handleCopyIds() {
+    if (!navigator.clipboard) {
+      toast.error("Clipboard API not available (requires HTTPS or localhost)");
+      return;
+    }
     try {
       await navigator.clipboard.writeText(selectedIds.join("\n"));
       setCopySuccess(true);

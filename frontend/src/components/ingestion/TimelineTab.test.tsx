@@ -1512,4 +1512,28 @@ describe("TimelineTab — BulkActionBar", () => {
     // Button text should change to "Copied!"
     expect(copyBtn.textContent).toContain("Copied!");
   });
+
+  it("Copy IDs button shows error toast when Clipboard API is unavailable", async () => {
+    // Simulate non-HTTPS context where navigator.clipboard is undefined.
+    Object.defineProperty(navigator, "clipboard", {
+      value: undefined,
+      writable: true,
+      configurable: true,
+    });
+
+    renderAndSelectEvents([makeEvent({ id: EVENT_ID_1 })], 1);
+
+    const copyBtn = container.querySelector(
+      "[data-testid='bulk-copy-ids-button']",
+    ) as HTMLButtonElement;
+    expect(copyBtn).not.toBeNull();
+
+    await act(async () => { copyBtn.click(); });
+
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining("Clipboard API not available"),
+    );
+    // Button should NOT show "Copied!" — copy did not succeed.
+    expect(copyBtn.textContent).not.toContain("Copied!");
+  });
 });
