@@ -605,6 +605,7 @@ export {
 export type {
   IngestionEventStatus,
   IngestionEventSummary,
+  IngestionEventDetail,
   IngestionEventSession,
   IngestionEventRollup,
   IngestionEventReplayResponse,
