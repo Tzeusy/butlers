@@ -119,6 +119,8 @@ function setButlerState(butler: ButlerDetail | null, opts: Partial<UseButlerResu
         hourlyTotal: 0,
         hourlyStripeLoading: false,
         hourlyStripeError: false,
+        schemaUnreachable: false,
+        heartbeatUnavailable: false,
       },
     ],
     aggregates: {
@@ -135,6 +137,11 @@ function setButlerState(butler: ButlerDetail | null, opts: Partial<UseButlerResu
       isError: false,
       error: null,
       refetch: vi.fn(),
+      heartbeatSourceError: false,
+      registrySourceError: false,
+      eligibilityUnavailable: 0,
+      hasPerEntryErrors: false,
+      sourcesPartiallyDegraded: false,
     },
   });
 }

@@ -58,6 +58,11 @@ function makeAggregates(overrides: Partial<StatusBoardAggregates> = {}): StatusB
     isError: false,
     error: null,
     refetch: NO_OP_REFETCH,
+    heartbeatSourceError: false,
+    registrySourceError: false,
+    eligibilityUnavailable: 0,
+    hasPerEntryErrors: false,
+    sourcesPartiallyDegraded: false,
     ...overrides,
   };
 }
@@ -79,6 +84,8 @@ function makeRow(overrides: Partial<StatusBoardRow> = {}): StatusBoardRow {
     hourlyTotal: 0,
     hourlyStripeLoading: false,
     hourlyStripeError: false,
+    schemaUnreachable: false,
+    heartbeatUnavailable: false,
     ...overrides,
   };
 }

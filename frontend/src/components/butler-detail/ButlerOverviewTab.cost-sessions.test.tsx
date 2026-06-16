@@ -190,6 +190,8 @@ function setupDefaultMocks({
         hourlyTotal: 0,
         hourlyStripeLoading: false,
         hourlyStripeError: false,
+        schemaUnreachable: false,
+        heartbeatUnavailable: false,
       },
     ],
     aggregates: {
@@ -206,6 +208,11 @@ function setupDefaultMocks({
       isError: false,
       error: null,
       refetch: vi.fn(),
+      heartbeatSourceError: false,
+      registrySourceError: false,
+      eligibilityUnavailable: 0,
+      hasPerEntryErrors: false,
+      sourcesPartiallyDegraded: false,
     },
   });
 
