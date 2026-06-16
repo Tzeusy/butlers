@@ -292,7 +292,8 @@ the same `(subject, predicate, object_kind='entity')` triple and updated provena
 supersede the old row atomically. For a changed *object* (different organization), you can
 simply assert the new fact — if the old and new objects differ, both rows remain active
 (there's no automatic retraction of the old relationship for a different object). Explicitly
-assert the retraction when needed or use `relationship_lookup` to find the old edge first.
+assert the retraction when needed; for new-object corrections, asserting the corrected edge
+via `relationship_assert_fact` is sufficient to record the new canonical value.
 
 ### Correction workflow for employment/workplace
 
@@ -343,8 +344,9 @@ for fact in old_props:
 - **Never** store an audit predicate like `workplace_correction`. The corrected
   `relationship_assert_fact` call already records the new authoritative value.
 - **Always** resolve or create the new organization entity before asserting the edge.
-- When in doubt about whether the user is correcting vs adding new info, use
-  `relationship_lookup(entity_id=person_entity_id)` to check if a prior edge exists.
+- When in doubt about whether the user is correcting vs adding new info, assert
+  the new edge via `relationship_assert_fact` — the writer handles supersession
+  automatically, so re-asserting the same triple is safe and idempotent.
 
 ## Step 6: Log Interactions
 
