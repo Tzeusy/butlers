@@ -356,6 +356,8 @@ describe("StatusBoardCell: ActivityStripe embedded", () => {
       <StatusBoardCell row={makeRow({ hourlyStripeError: true, hourlyStripeLoading: false })} />,
     )
     expect(html).toContain("data unavailable")
+    // SESS 24H KPI should show the dash fallback instead of 0
+    expect(html).toContain(">—<")
     // The 24 bar cells should NOT appear — stripe is replaced by error message
     expect(html).not.toContain("flex gap-px h-[22px]")
   })

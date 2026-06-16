@@ -137,7 +137,7 @@ export function StatusBoardCell({ row, onRestore }: StatusBoardCellProps) {
   const basePath = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "")
   const href = `${basePath}/butlers/${name}`
 
-  const ariaLabel = `${name}, ${activity}, last run ${lastRunISO ? "recently" : "unknown"}, ${hourlyStripeLoading ? sessions24h : hourlyTotal} sessions in 24h`
+  const ariaLabel = `${name}, ${activity}, last run ${lastRunISO ? "recently" : "unknown"}, ${hourlyStripeLoading ? sessions24h : hourlyStripeError ? "unknown" : hourlyTotal} sessions in 24h`
 
   const containerClass = [
     "group relative flex flex-col",
@@ -211,6 +211,8 @@ export function StatusBoardCell({ row, onRestore }: StatusBoardCellProps) {
           value={
             hourlyStripeLoading ? (
               <Skeleton className="h-3 w-8 mt-0.5" />
+            ) : hourlyStripeError ? (
+              "—"
             ) : (
               hourlyTotal
             )
