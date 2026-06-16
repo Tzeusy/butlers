@@ -565,6 +565,7 @@ def test_looks_like_auth_refresh_failure_negative() -> None:
         "codex_core::compact_remote",
         "",
     ]
+    assert len(unrelated) == 6  # guard against vacuous pass if list shrinks
     for msg in unrelated:
         assert _looks_like_auth_refresh_failure(msg) is False, (
             f"Expected False for {msg!r} but got True"
@@ -789,12 +790,9 @@ async def test_invoke_does_not_write_test_result_for_unrelated_exit1(
             await adapter.invoke(prompt="hello", system_prompt="", mcp_servers={}, env={})
         await asyncio.sleep(0.1)
 
-    # record_test_result must NOT have been called for a non-auth failure
-    # (only ok=True from the success path — but there's no success here)
-    for call in store.record_test_result.await_args_list:
-        # No call should have ok=False triggered by this non-auth error
-        if call.args[1] is False:
-            pytest.fail(f"record_test_result called with ok=False for an unrelated error: {call}")
+    # record_test_result must NOT have been called at all: neither the
+    # auth-refresh path (wrong error) nor the success path (exit-1) fires here.
+    store.record_test_result.assert_not_called()
 
 
 async def test_invoke_writes_test_result_true_on_success(
