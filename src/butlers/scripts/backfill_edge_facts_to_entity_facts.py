@@ -349,7 +349,10 @@ def _print_summary(per_pred: dict[str, _PredicateStats], dry_run: bool) -> None:
     total_errors = sum(s.errors for s in per_pred.values())
     logger.info(
         "Totals: migrated=%d  left_narrative=%d  errors=%d  [%s]",
-        total_migrated, total_left_narrative, total_errors, mode,
+        total_migrated,
+        total_left_narrative,
+        total_errors,
+        mode,
     )
 
     if total_errors:
