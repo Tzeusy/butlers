@@ -181,7 +181,7 @@ export function StatusBoardCell({ row, onRestore }: StatusBoardCellProps) {
             className={[
               "font-mono text-[9px] uppercase tracking-wider cursor-pointer",
               "underline underline-offset-2 decoration-current/50",
-              heartbeatUnavailable ? "text-muted-foreground" : activityChipClasses(activity),
+              heartbeatUnavailable ? "text-muted-foreground" : eligibility === "stale" ? "text-amber-600 dark:text-amber-400" : activityChipClasses(activity),
             ].join(" ")}
           >
             {heartbeatUnavailable ? "—" : eligibility === "stale" ? "STALE" : activityLabel(activity)}
@@ -190,7 +190,7 @@ export function StatusBoardCell({ row, onRestore }: StatusBoardCellProps) {
           <span
             className={[
               "font-mono text-[9px] uppercase tracking-wider",
-              heartbeatUnavailable ? "text-muted-foreground" : activityChipClasses(activity),
+              heartbeatUnavailable ? "text-muted-foreground" : eligibility === "stale" ? "text-amber-600 dark:text-amber-400" : activityChipClasses(activity),
             ].join(" ")}
           >
             {heartbeatUnavailable ? "—" : eligibility === "stale" ? "STALE" : activityLabel(activity)}

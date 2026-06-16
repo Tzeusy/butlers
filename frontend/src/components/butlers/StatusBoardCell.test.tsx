@@ -170,6 +170,7 @@ describe("StatusBoardCell: eligibility=stale", () => {
       />,
     )
     expect(html).toContain("STALE")
+    expect(html).toContain("text-amber-600")
     expect(html).not.toContain("IDLE")
   })
 })
