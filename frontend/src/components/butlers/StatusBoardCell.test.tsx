@@ -459,4 +459,16 @@ describe("StatusBoardCell: heartbeatUnavailable=true renders honest state", () =
     // The LOAD KPI should show '—' (loadPct=null)
     expect(html).toContain("—")
   })
+
+  it("restorable button chip shows '—' (not activity label) when heartbeatUnavailable=true", () => {
+    const onRestore = vi.fn()
+    const html = renderToStaticMarkup(
+      <StatusBoardCell
+        row={makeRow({ activity: "quarantined", cellTone: "red", eligibility: "quarantined", heartbeatUnavailable: true })}
+        onRestore={onRestore}
+      />,
+    )
+    expect(html).toContain("—")
+    expect(html).not.toContain("QUARANTINED")
+  })
 })

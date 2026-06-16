@@ -183,10 +183,10 @@ export function StatusBoardCell({ row, onRestore }: StatusBoardCellProps) {
             className={[
               "font-mono text-[9px] uppercase tracking-wider cursor-pointer",
               "underline underline-offset-2 decoration-current/50",
-              activityChipClasses(activity),
+              heartbeatUnavailable ? "text-muted-foreground" : activityChipClasses(activity),
             ].join(" ")}
           >
-            {activityLabel(activity)}
+            {heartbeatUnavailable ? "—" : activityLabel(activity)}
           </button>
         ) : (
           <span

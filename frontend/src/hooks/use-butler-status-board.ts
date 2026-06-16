@@ -255,8 +255,8 @@ export function useButlerStatusBoard(): StatusBoardResult {
       // Consume the backend per-entry error field: schema_unreachable means this
       // butler's session DB was unreachable when the heartbeat endpoint ran.
       const schemaUnreachable = hb?.error === "schema_unreachable"
-      // heartbeatUnavailable is true for fleet-wide source failure OR per-entry error.
-      const heartbeatUnavailable = heartbeatsQuery.isError || schemaUnreachable
+      // heartbeatUnavailable is true for fleet-wide source failure, pending load, OR per-entry error.
+      const heartbeatUnavailable = heartbeatsQuery.isError || heartbeatsQuery.isPending || schemaUnreachable
       // Only use active_session_count when the heartbeat data is reliable.
       const activeSessionCount = heartbeatUnavailable ? 0 : (hb?.active_session_count ?? 0)
       const lastRunISO = hb?.last_session_at ?? null

@@ -1077,3 +1077,39 @@ describe("sourcesPartiallyDegraded — union of secondary source errors", () => 
     expect(aggregates.registrySourceError).toBe(true)
   })
 })
+
+// ---------------------------------------------------------------------------
+// heartbeat query loading state — isPending → heartbeatUnavailable (bu-vommf)
+// ---------------------------------------------------------------------------
+
+describe("heartbeat query isPending: no false 0%/IDLE during initial load", () => {
+  it("heartbeatUnavailable=true when heartbeatsQuery.isPending=true", () => {
+    mockUseButlers.mockReturnValue(butlersQueryResult([makeButler({ name: "a" })]))
+    mockUseButlerHeartbeats.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isPending: true,
+      isError: false,
+      error: null,
+    })
+    mockUseQueries.mockReturnValue(runtimeResults(1, 4))
+
+    const { rows } = useButlerStatusBoard()
+    expect(rows[0].heartbeatUnavailable).toBe(true)
+  })
+
+  it("loadPct=null (not 0%) when heartbeatsQuery.isPending=true", () => {
+    mockUseButlers.mockReturnValue(butlersQueryResult([makeButler({ name: "a" })]))
+    mockUseButlerHeartbeats.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isPending: true,
+      isError: false,
+      error: null,
+    })
+    mockUseQueries.mockReturnValue(runtimeResults(1, 4))
+
+    const { rows } = useButlerStatusBoard()
+    expect(rows[0].loadPct).toBeNull()
+  })
+})
