@@ -359,10 +359,12 @@ async def contact_import_vcard(pool: asyncpg.Pool, vcf_content: str) -> list[dic
         if hasattr(vcard, "org"):
             org_value = vcard.org.value
             if isinstance(org_value, list) and org_value:
-                update_fields["company"] = org_value[0]
-            elif isinstance(org_value, str) and org_value:
+                val = org_value[0]
+                if val is not None and val.strip():
+                    update_fields["company"] = val
+            elif isinstance(org_value, str) and org_value.strip():
                 update_fields["company"] = org_value
-        if hasattr(vcard, "title") and vcard.title.value:
+        if hasattr(vcard, "title") and vcard.title.value and vcard.title.value.strip():
             update_fields["job_title"] = vcard.title.value
         if update_fields:
             await contact_update(pool, contact["id"], **update_fields)
