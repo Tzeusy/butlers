@@ -76,6 +76,9 @@ function makeRow(overrides: Partial<StatusBoardRow> = {}): StatusBoardRow {
     loadPct: null,
     lastRunISO: null,
     hourlyStripe: Array(24).fill(0),
+    hourlyTotal: 0,
+    hourlyStripeLoading: false,
+    hourlyStripeError: false,
     ...overrides,
   };
 }

@@ -1676,6 +1676,9 @@ function makeRow(name: string, overrides: Partial<StatusBoardRow> = {}): StatusB
     loadPct: null,
     lastRunISO: null,
     hourlyStripe: Array(24).fill(0) as number[],
+    hourlyTotal: 0,
+    hourlyStripeLoading: false,
+    hourlyStripeError: false,
     ...overrides,
   };
 }

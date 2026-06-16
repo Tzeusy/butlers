@@ -187,6 +187,9 @@ function setupDefaultMocks({
         loadPct: null,
         lastRunISO: "2026-05-10T08:00:00Z",
         hourlyStripe: Array(24).fill(0),
+        hourlyTotal: 0,
+        hourlyStripeLoading: false,
+        hourlyStripeError: false,
       },
     ],
     aggregates: {
