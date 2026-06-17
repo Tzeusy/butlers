@@ -211,6 +211,10 @@ def _build_infra_patches(
         "recover_route_inbox": patch.object(
             ButlerDaemon, "_recover_route_inbox", new_callable=AsyncMock
         ),
+        "liveness_reporter_loop": patch.object(
+            ButlerDaemon, "_liveness_reporter_loop", new_callable=AsyncMock
+        ),
+        "scheduler_loop": patch.object(ButlerDaemon, "_scheduler_loop", new_callable=AsyncMock),
         # Exposed so callers can run assertions.
         "mock_spawner": mock_spawner,
         "mock_db": mock_db,
@@ -244,6 +248,8 @@ async def _start_smoke_daemon(
         patches["start_mcp_server"],
         patches["connect_switchboard"],
         patches["recover_route_inbox"],
+        patches["liveness_reporter_loop"],
+        patches["scheduler_loop"],
     ):
         kwargs: dict[str, Any] = {}
         if registry is not None:
