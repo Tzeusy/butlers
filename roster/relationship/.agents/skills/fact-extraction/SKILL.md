@@ -316,9 +316,9 @@ relationships).
 
 | `relationship_to_user` value | Edge to emit (subject → object) | Notes |
 |---|---|---|
-| "Mom" / "Mother" / "Mum" | `child-of` (contact → owner) | Owner is child; contact is parent |
-| "Dad" / "Father" | `child-of` (contact → owner) | Owner is child; contact is parent |
-| "Son" / "Daughter" / "Child" | `parent-of` (contact → owner) | Owner is parent; contact is child |
+| "Mom" / "Mother" / "Mum" | `parent-of` (contact → owner) | Owner is child; contact is parent |
+| "Dad" / "Father" | `parent-of` (contact → owner) | Owner is child; contact is parent |
+| "Son" / "Daughter" / "Child" | `child-of` (contact → owner) | Owner is parent; contact is child |
 | "Brother" / "Sister" / "Sibling" | `family-of` (bidirectional) | |
 | "Partner" / "Spouse" / "Wife" / "Husband" / "Boyfriend" / "Girlfriend" | `partner-of` (contact → owner) | |
 | "Boss" / "Manager" | `manages` (contact → owner) | |
