@@ -40,7 +40,7 @@ RUN --mount=type=cache,target=/root/.npm \
 #   docker run --rm <image> cat /opt/cli-versions.txt
 RUN mkdir -p /opt \
     && node --version > /opt/cli-versions.txt \
-    && npm list -g --depth=0 2>/dev/null >> /opt/cli-versions.txt
+    && (npm list -g --depth=0 2>/dev/null || true) >> /opt/cli-versions.txt
 
 # uv package manager. Install into /usr/local/bin and assert the binary exists so
 # a transient installer/download problem cannot produce a broken base image.
