@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from fastapi import FastAPI
 
 from butlers.api.app import create_app
 
@@ -34,7 +35,7 @@ pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 
 
-def _make_ready_app(**kwargs) -> FastAPI:  # noqa: F821
+def _make_ready_app(**kwargs) -> FastAPI:
     """Create an app and mark it as ready (skips the 503 early-return)."""
     app = create_app(**kwargs)
     app.state.ready = True

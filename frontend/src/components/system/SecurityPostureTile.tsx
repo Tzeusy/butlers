@@ -73,14 +73,16 @@ interface PostureRowProps {
 function PostureRow({ label, secure, secureLabel, insecureLabel, testId }: PostureRowProps) {
   return (
     <div className="flex items-center justify-between gap-2 py-1">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <Badge
-        variant={secure ? "default" : "outline"}
-        className={secure ? "" : "text-amber-600 border-amber-400"}
-        data-testid={testId}
-      >
-        {secure ? secureLabel : insecureLabel}
-      </Badge>
+      <dt className="text-sm text-muted-foreground">{label}</dt>
+      <dd className="m-0">
+        <Badge
+          variant={secure ? "default" : "outline"}
+          className={secure ? "bg-green-600 hover:bg-green-600 text-white" : "text-amber-600 border-amber-400"}
+          data-testid={testId}
+        >
+          {secure ? secureLabel : insecureLabel}
+        </Badge>
+      </dd>
     </div>
   )
 }
