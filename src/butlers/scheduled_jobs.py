@@ -109,10 +109,10 @@ def _build_switchboard_insight_notify_fn(
         channel: str = metadata.get("channel") or "telegram"
 
         if channel == "telegram":
-            recipient = await resolve_owner_entity_info(pool, "telegram_chat_id")
+            recipient = await resolve_owner_entity_info(pool, "telegram")
             if not recipient:
                 logger.error(
-                    "insight-delivery-cycle: no telegram_chat_id configured for owner — "
+                    "insight-delivery-cycle: no telegram recipient configured for owner — "
                     "cannot deliver insight"
                 )
                 return {"status": "error", "error": "No telegram chat ID configured for owner"}
@@ -130,7 +130,7 @@ def _build_switchboard_insight_notify_fn(
                 channel,
             )
             channel = "telegram"
-            recipient = await resolve_owner_entity_info(pool, "telegram_chat_id")
+            recipient = await resolve_owner_entity_info(pool, "telegram")
             if not recipient:
                 return {"status": "error", "error": "No telegram chat ID configured for owner"}
 

@@ -74,7 +74,7 @@ class TestBuildSwitchboardInsightNotifyFn:
             patch(
                 "butlers.credential_store.resolve_owner_entity_info",
                 new=AsyncMock(return_value="12345678"),
-            ),
+            ) as mock_resolve,
             patch(
                 "butlers.tools.switchboard.notification.deliver.deliver",
                 new=AsyncMock(return_value=deliver_return),
@@ -83,6 +83,7 @@ class TestBuildSwitchboardInsightNotifyFn:
             result = await notify_fn("Test insight", {"channel": "telegram", "intent": "insight"})
 
         assert result == deliver_return
+        mock_resolve.assert_awaited_once_with(pool, "telegram")
         mock_deliver.assert_awaited_once()
         call_kwargs = mock_deliver.call_args
         assert call_kwargs.kwargs["channel"] == "telegram"
@@ -102,7 +103,7 @@ class TestBuildSwitchboardInsightNotifyFn:
             patch(
                 "butlers.credential_store.resolve_owner_entity_info",
                 new=AsyncMock(return_value="99887766"),
-            ),
+            ) as mock_resolve,
             patch(
                 "butlers.tools.switchboard.notification.deliver.deliver",
                 new=AsyncMock(return_value={"status": "sent"}),
@@ -111,6 +112,7 @@ class TestBuildSwitchboardInsightNotifyFn:
             # No "channel" key in metadata → should default to telegram
             await notify_fn("Insight without channel", {"intent": "insight"})
 
+        mock_resolve.assert_awaited_once_with(pool, "telegram")
         call_kwargs = mock_deliver.call_args
         assert call_kwargs.kwargs["channel"] == "telegram"
         assert call_kwargs.kwargs["recipient"] == "99887766"
@@ -155,9 +157,10 @@ class TestBuildSwitchboardInsightNotifyFn:
         with patch(
             "butlers.credential_store.resolve_owner_entity_info",
             new=AsyncMock(return_value=None),
-        ):
+        ) as mock_resolve:
             result = await notify_fn("msg", {"channel": "telegram"})
 
+        mock_resolve.assert_awaited_once_with(pool, "telegram")
         assert result["status"] == "error"
         assert "telegram" in result["error"].lower()
 
@@ -199,7 +202,7 @@ class TestBuildSwitchboardInsightNotifyFn:
             patch(
                 "butlers.credential_store.resolve_owner_entity_info",
                 new=AsyncMock(return_value="55554444"),
-            ),
+            ) as mock_resolve,
             patch(
                 "butlers.tools.switchboard.notification.deliver.deliver",
                 new=AsyncMock(return_value={"status": "sent"}),
@@ -208,6 +211,7 @@ class TestBuildSwitchboardInsightNotifyFn:
             await notify_fn("msg", {"channel": "whatsapp"})
 
         # Should have fallen back to telegram
+        mock_resolve.assert_awaited_once_with(pool, "telegram")
         assert mock_deliver.call_args.kwargs["channel"] == "telegram"
 
 
