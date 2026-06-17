@@ -109,6 +109,9 @@ def _load_assert_fact_fn() -> Any:
     spec = importlib.util.spec_from_file_location("_roster_assert_fact", path)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
+    # Register in sys.modules BEFORE exec_module so that @dataclass on
+    # AssertResult can resolve KW_ONLY via sys.modules.get(cls.__module__).
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod.relationship_assert_fact
 
