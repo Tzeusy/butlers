@@ -7,7 +7,7 @@ middleware MUST be a complete no-op.
 
 The four acceptance cases this file locks in:
   1. Key set, bad or missing header  → 401 with UNAUTHORIZED envelope
-  2. Key set, correct header          → pass-through (not 401)
+  2. Key set, correct header          → pass-through (200 from a known dummy route)
   3. Health endpoints                 → always bypass auth (both /health paths)
   4. Key unset                        → no-op, all requests pass through
 """
@@ -61,11 +61,17 @@ async def test_correct_key_passes_through():
     handler decides the final status code (200 / 404 / 503 etc.) — this test
     asserts only that auth does not reject it."""
     app = create_app(api_key="super-secret")
+
+    @app.get("/api/test-auth-pass")
+    async def dummy_route():
+        return {"status": "passed"}
+
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.get("/api/butlers", headers={"X-API-Key": "super-secret"})
-    assert resp.status_code != 401
+        resp = await client.get("/api/test-auth-pass", headers={"X-API-Key": "super-secret"})
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "passed"}
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +103,14 @@ async def test_key_unset_is_noop():
     must be reachable without any header — the network boundary is the only
     gate in this configuration."""
     app = create_app(api_key="")  # '' → force-disable auth in create_app()
+
+    @app.get("/api/test-auth-noop")
+    async def dummy_route():
+        return {"status": "passed"}
+
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
-        resp = await client.get("/api/butlers")  # no X-API-Key, no env key
-    assert resp.status_code != 401
+        resp = await client.get("/api/test-auth-noop")  # no X-API-Key, no env key
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "passed"}
