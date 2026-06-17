@@ -752,7 +752,7 @@ def test_core_migration_smoke_downgrade_upgrade_round_trip(postgres_container):
 
     config = _build_alembic_config(db_url, chains=["core"])
     # Step back one revision from head, then restore.
-    command.downgrade(config, "-1")
+    command.downgrade(config, "core@-1")
     command.upgrade(config, "core@head")
 
     engine = create_engine(db_url)
