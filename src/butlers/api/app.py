@@ -114,12 +114,21 @@ async def lifespan(app: FastAPI):
     # Startup
     init_dependencies()
 
-    # Check for DASHBOARD_EXPORT_SECRET env var
+    # Check for DASHBOARD_EXPORT_SECRET env var (A4 indicator: export_secret_insecure_default).
     if os.environ.get("DASHBOARD_EXPORT_SECRET") in (None, ""):
-        logger.warning(
-            "DASHBOARD_EXPORT_SECRET env var is not set; using insecure 'dev-secret' fallback. "
-            "Download tokens are forgeable. Set this in production."
-        )
+        _env_raw = os.environ.get("ENV", "").strip().lower()
+        if _env_raw.startswith("prod"):
+            logger.error(
+                "DASHBOARD_EXPORT_SECRET is not set (ENV=%r). "
+                "Export token signing will be REFUSED at runtime. "
+                "Set DASHBOARD_EXPORT_SECRET to a strong random secret before serving.",
+                _env_raw,
+            )
+        else:
+            logger.warning(
+                "DASHBOARD_EXPORT_SECRET is not set; using dev-mode fallback. "
+                "Export tokens are forgeable. Set DASHBOARD_EXPORT_SECRET in production."
+            )
 
     # INGESTION_DISPATCH_CONSOLE feature flag.
     # Controls the ingestion sub-route hierarchy (/ingestion/connectors,
