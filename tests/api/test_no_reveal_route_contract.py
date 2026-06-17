@@ -173,6 +173,7 @@ class TestNoRevealRouteContract:
         accidentally match the path under any concrete parameter value.
         """
         app = create_app()
+        assert len(_PROBE_PATHS) == 3, "Probe paths list is empty or modified"
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
