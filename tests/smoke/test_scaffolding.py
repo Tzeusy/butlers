@@ -83,11 +83,16 @@ def test_postgres_container_reachable(postgres_container):
     This confirms the shared DB fixture the rest of the smoke suite depends on
     is healthy.  If this test fails, DB-backed smoke tests will also fail.
     """
-    host = postgres_container.get_container_host_ip()
-    port = int(postgres_container.get_exposed_port(5432))
+    from sqlalchemy import create_engine, text
 
-    assert host, "container host should be non-empty"
-    assert 1 <= port <= 65535, f"exposed port {port} must be a valid TCP port"
+    connection_url = postgres_container.get_connection_url()
+    engine = create_engine(connection_url)
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1"))
+            assert result.scalar() == 1, "postgres_container should respond to SELECT 1"
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.skipif(not _docker_available, reason="Docker not available")
