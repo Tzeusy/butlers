@@ -107,6 +107,9 @@ def test_upgrade_uses_relational_kind() -> None:
 def test_upgrade_uses_entity_object_kind() -> None:
     sqls = _collect_upgrade_sqls()
     insert_sqls = [s for s in sqls if "INSERT INTO relationship.entity_predicate_registry" in s]
+    assert len(insert_sqls) == len(_EXPECTED_PREDICATES), (
+        f"Expected {len(_EXPECTED_PREDICATES)} INSERT statements, got {len(insert_sqls)}"
+    )
     for sql in insert_sqls:
         assert "'entity'" in sql, f"Expected object_kind='entity' in: {sql!r}"
 
@@ -114,6 +117,9 @@ def test_upgrade_uses_entity_object_kind() -> None:
 def test_upgrade_is_idempotent_on_conflict() -> None:
     sqls = _collect_upgrade_sqls()
     insert_sqls = [s for s in sqls if "INSERT INTO relationship.entity_predicate_registry" in s]
+    assert len(insert_sqls) == len(_EXPECTED_PREDICATES), (
+        f"Expected {len(_EXPECTED_PREDICATES)} INSERT statements, got {len(insert_sqls)}"
+    )
     for sql in insert_sqls:
         assert "ON CONFLICT" in sql
         assert "DO NOTHING" in sql
