@@ -52,7 +52,9 @@ async def test_health_returns_ok():
     ) as client:
         resp = await client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    # The health body carries a security-posture ``auth`` block (covered in
+    # detail by test_auth_status_health.py); this test only asserts liveness.
+    assert resp.json()["status"] == "ok"
 
 
 @pytest.mark.parametrize(

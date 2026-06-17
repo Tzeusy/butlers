@@ -56,6 +56,14 @@ vi.mock("@/hooks/use-system", () => ({
   useDatabaseFacts: vi.fn(() => ({ data: null, isLoading: false, error: null })),
   useBackupFacts: vi.fn(() => ({ data: null, isLoading: false, error: null })),
   useEgressFacts: vi.fn(() => ({ data: null, isLoading: false, error: null, isForbidden: false })),
+  // SecurityPostureTile (rendered by SystemPage) calls useHealthPosture; without
+  // it in the mock factory the hook is undefined and SystemPage render throws.
+  useHealthPosture: vi.fn(() => ({
+    data: undefined,
+    isPending: true,
+    isError: false,
+    error: null,
+  })),
 }));
 
 vi.mock("@/hooks/use-ingestion", () => ({
