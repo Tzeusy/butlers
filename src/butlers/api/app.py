@@ -14,7 +14,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.staticfiles import StaticFiles
@@ -351,8 +351,8 @@ def create_app(
 
     @app.get("/api/health")
     @app.get("/health")
-    async def health(request: Request):
-        if not getattr(request.app.state, "ready", False):
+    async def health():
+        if not app.state.ready:
             return JSONResponse(status_code=503, content={"status": "starting"})
         return {"status": "ok"}
 
