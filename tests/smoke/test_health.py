@@ -58,7 +58,9 @@ async def test_health_returns_ok_after_startup(path):
     assert resp.status_code == 200, (
         f"Expected 200 from {path} after startup, got {resp.status_code}"
     )
-    assert resp.json() == {"status": "ok"}
+    # The health body also carries a security-posture ``auth`` block
+    # (covered by test_auth_status_health.py); assert only liveness here.
+    assert resp.json()["status"] == "ok"
 
 
 # ---------------------------------------------------------------------------
