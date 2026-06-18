@@ -214,7 +214,7 @@ def test_user_facing_surface_not_framework(rel_path: str) -> None:
     surface_path = _REPO_ROOT / rel_path
     assert surface_path.exists(), f"User-facing surface not found: {surface_path}"
 
-    text = surface_path.read_text().lower()
+    text = surface_path.read_text(encoding="utf-8").lower()
 
     for phrase in _FORBIDDEN_FRAMEWORK_PHRASES:
         assert phrase not in text, (
