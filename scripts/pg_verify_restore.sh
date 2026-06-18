@@ -102,7 +102,7 @@ run_sql() {
     --no-password \
     --no-align \
     --tuples-only \
-    -c "$query" 2>/dev/null | head -1 | tr -d '[:space:]'
+    -c "$query" 2>/dev/null | head -1 | tr -d '[:space:]' || echo "ERROR"
 }
 
 check_pass() {

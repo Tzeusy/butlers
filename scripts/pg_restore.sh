@@ -130,7 +130,7 @@ if [[ "$DROP_EXISTING" == "true" ]]; then
     --username="$PG_USER" \
     --dbname=postgres \
     --no-password \
-    -c "DROP DATABASE IF EXISTS \"${TARGET_DB}\";" \
+    -c "DROP DATABASE IF EXISTS \"${TARGET_DB}\" WITH (FORCE);" \
     2>&1 | sed 's/^/  /'
 fi
 
@@ -156,7 +156,7 @@ PGPASSWORD="$PG_PASSWORD" gunzip -c "$BACKUP_FILE" | psql \
   --dbname="$TARGET_DB" \
   --no-password \
   --quiet \
-  2>&1 | grep -v "^$" | sed 's/^/  /' || {
+  2>&1 | sed -e '/^$/d' -e 's/^/  /' || {
     echo "[restore] ERROR: psql restore failed" >&2
     exit 1
   }
