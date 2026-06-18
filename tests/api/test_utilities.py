@@ -266,12 +266,23 @@ class TestDepsModuleGlobalIsolation:
 
         # Verify defaults (as documented in deps.py) — None means "not yet
         # initialized via init_*"; these names must NOT be mutated globally.
-        for attr in ("_db_manager", "_mcp_manager", "_butler_configs", "_pricing_config"):
+        # If another test in the same xdist worker already called init_* and
+        # correctly used monkeypatch (which auto-restores), val will be None
+        # again by the time this test runs. If monkeypatch was NOT used, val
+        # may be a leaked mock — catching that is the point of this check.
+        from butlers.api.db import DatabaseManager
+        from butlers.api.deps import MCPClientManager
+        from butlers.api.pricing import PricingConfig
+
+        expected_types = {
+            "_db_manager": DatabaseManager,
+            "_mcp_manager": MCPClientManager,
+            "_butler_configs": list,
+            "_pricing_config": PricingConfig,
+        }
+        for attr, expected_type in expected_types.items():
             val = getattr(deps_mod, attr)
-            # We can only assert the type, not None, because another test in the
-            # same xdist worker may have already called init_* without restoring.
-            # The IMPORTANT check is that the INIT guards (get_*) raise on None.
-            assert val is None or hasattr(val, "__class__"), (
+            assert val is None or isinstance(val, expected_type), (
                 f"{attr} has an unexpected value type: {type(val)}"
             )
 
