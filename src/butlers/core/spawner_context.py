@@ -20,7 +20,7 @@ re-exports so existing import paths and test patches remain valid.
 from __future__ import annotations
 
 import logging
-from typing import Any
+import uuid
 
 import asyncpg
 
@@ -360,7 +360,7 @@ async def store_session_episode(
     pool: asyncpg.Pool | None,
     butler_name: str,
     session_output: str,
-    session_id: Any = None,
+    session_id: uuid.UUID | None = None,
 ) -> bool:
     """Store a session episode through local memory module tools."""
     if pool is None:
