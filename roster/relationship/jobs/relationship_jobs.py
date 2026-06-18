@@ -2500,12 +2500,14 @@ async def run_fact_retraction_curation(db_pool: asyncpg.Pool) -> dict[str, Any]:
                 ) AS group_size
             FROM facts f
             WHERE f.validity  = 'active'
+              AND f.scope     = 'relationship'
               AND f.entity_id IS NOT NULL
               AND EXISTS (
                   SELECT 1 FROM facts f2
                   WHERE f2.entity_id  = f.entity_id
                     AND f2.predicate  = f.predicate
                     AND f2.validity   = 'active'
+                    AND f2.scope      = 'relationship'
                     AND f2.content   <> f.content
                     AND f2.id        <> f.id
               )
@@ -2546,6 +2548,7 @@ async def run_fact_retraction_curation(db_pool: asyncpg.Pool) -> dict[str, Any]:
                 f.metadata
             FROM facts f
             WHERE f.validity   = 'active'
+              AND f.scope      = 'relationship'
               AND f.confidence IS NOT NULL
               AND f.confidence  < $1
             ORDER BY f.confidence ASC NULLS LAST
