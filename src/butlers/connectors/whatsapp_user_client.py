@@ -856,15 +856,20 @@ class WhatsAppUserClientConnector:
             raise
 
     async def _link_watchdog_loop(self) -> None:
-        """Restart the connector if the bridge link stays down past the threshold.
+        """Restart the connector if a *recoverable* link outage persists.
 
         A passive connector receiving no messages is indistinguishable from a
         dead link by message flow alone, so this watchdog is the independent
-        liveness signal. On a persistent outage — notably a StreamReplaced, where
-        whatsmeow deliberately does not auto-reconnect — it exits the process so
-        Docker restarts the container and a fresh bridge ``Connect()`` re-claims
-        the WhatsApp session. Transient disconnects that self-heal reset the
-        bridge's degraded clock and never trip this.
+        liveness signal. On a persistent recoverable outage — notably a
+        StreamReplaced, where whatsmeow deliberately does not auto-reconnect — it
+        exits the process so Docker restarts the container and a fresh bridge
+        ``Connect()`` re-claims the WhatsApp session.
+
+        It deliberately does NOT restart on terminal degraded states
+        (pairing timeout, session invalidated, pair_required): those need a human
+        QR re-pair, so a restart would only re-degrade in a pointless loop.
+        Transient disconnects that self-heal reset the bridge's degraded clock
+        and never trip this.
         """
         logger.debug(
             "WA stale-link watchdog started (threshold=%ds, interval=%ds)",
@@ -882,11 +887,17 @@ class WhatsAppUserClientConnector:
             raise
 
     def _link_is_stale(self) -> bool:
-        """True if the bridge link has been degraded past the restart threshold."""
+        """True if a *recoverable* link outage has exceeded the restart threshold.
+
+        Terminal degraded states (needs human re-pair) are excluded: restarting
+        cannot recover them, so the watchdog must not loop on them.
+        """
         if self._bridge_manager is None:
             return False
         threshold = self._config.stale_restart_threshold_s
         if threshold <= 0:
+            return False
+        if self._bridge_manager.is_degraded_terminal:
             return False
         down_s = self._bridge_manager.degraded_duration_s
         return down_s is not None and down_s >= threshold

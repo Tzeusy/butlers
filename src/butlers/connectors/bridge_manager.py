@@ -251,6 +251,10 @@ class BridgeSubprocessManager:
         # Monotonic timestamp of when the bridge most recently entered degraded
         # mode, or None while healthy. Drives the connector's stale-link watchdog.
         self._degraded_since: float | None = None
+        # True when the current degraded state is terminal — it needs a human
+        # re-pair (QR scan), so a process/container restart cannot recover it.
+        # The stale-link watchdog skips these: restarting would just re-degrade.
+        self._degraded_terminal = False
 
         # Restart backoff state
         self._restart_attempt = 0
@@ -278,6 +282,16 @@ class BridgeSubprocessManager:
     def degraded_reason(self) -> str | None:
         """Human-readable reason for degraded mode, or None."""
         return self._degraded_reason
+
+    @property
+    def is_degraded_terminal(self) -> bool:
+        """True if the current degraded state needs a human re-pair to recover.
+
+        Terminal states (pairing timeout, session invalidated, pair_required)
+        cannot be fixed by restarting the process — only by scanning a new QR —
+        so the stale-link watchdog must not restart-loop on them.
+        """
+        return self._degraded and self._degraded_terminal
 
     @property
     def degraded_duration_s(self) -> float | None:
@@ -575,7 +589,7 @@ class BridgeSubprocessManager:
                 await self._spawn()
             except RuntimeError:
                 logger.exception("Failed to respawn bridge binary — giving up")
-                self._set_degraded("Bridge binary not found during restart")
+                self._set_degraded("Bridge binary not found during restart", terminal=True)
                 break
 
             # Wait until the bridge is healthy again before counting this as
@@ -615,25 +629,35 @@ class BridgeSubprocessManager:
             logger.warning(
                 "Bridge exited with pairing timeout (rc=1) — no restart; re-pair required"
             )
-            self._set_degraded("Pairing timeout — re-pair required")
+            self._set_degraded("Pairing timeout — re-pair required", terminal=True)
             return False
 
         if rc == _EXIT_SESSION_INVALID:
             logger.warning("Bridge session invalidated (rc=2) — no restart; re-pair required")
-            self._set_degraded("Session invalidated — re-pair required")
+            self._set_degraded("Session invalidated — re-pair required", terminal=True)
             return False
 
         logger.error("Bridge exited unexpectedly (rc=%s) — scheduling restart", rc)
         return True
 
-    def _set_degraded(self, reason: str) -> None:
-        """Enter degraded mode with the given human-readable reason."""
+    def _set_degraded(self, reason: str, *, terminal: bool = False) -> None:
+        """Enter degraded mode with the given human-readable reason.
+
+        Args:
+            reason: Human-readable degraded reason.
+            terminal: True if recovery needs a human re-pair (QR scan) rather
+                than a restart. Terminal states are exempt from the stale-link
+                watchdog's restart so it does not loop pointlessly.
+        """
         # Stamp the degraded-since clock only on the transition into degraded so
         # repeated health polls while down do not keep resetting the duration.
         if not self._degraded:
             self._degraded_since = time.monotonic()
         self._degraded = True
         self._degraded_reason = reason
+        # Reflect the latest reason's recoverability, even if a recoverable
+        # degradation later escalates to a terminal one mid-outage.
+        self._degraded_terminal = terminal
         if self._config.startup_allow_degraded:
             self._startup_ready_event.set()
         logger.warning("Bridge entering degraded mode: %s", reason)
@@ -643,6 +667,7 @@ class BridgeSubprocessManager:
         self._degraded = False
         self._degraded_reason = None
         self._degraded_since = None
+        self._degraded_terminal = False
 
     # ------------------------------------------------------------------
     # Private helpers — health polling
@@ -685,7 +710,7 @@ class BridgeSubprocessManager:
                     self._startup_ready_event.set()
                     break
                 if self._config.startup_allow_degraded and state == "pair_required":
-                    self._set_degraded("pair_required")
+                    self._set_degraded("pair_required", terminal=True)
                     self._startup_ready_event.set()
                     break
                 if self._config.startup_allow_degraded and state == "disconnected":
@@ -775,6 +800,6 @@ class BridgeSubprocessManager:
             self._set_degraded(f"Bridge status: {state}")
         elif state == "pair_required":
             logger.warning("Bridge requires pairing — entering degraded mode")
-            self._set_degraded("pair_required")
+            self._set_degraded("pair_required", terminal=True)
         else:
             logger.warning("Unrecognised bridge state: %r", state)

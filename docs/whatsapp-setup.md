@@ -151,6 +151,11 @@ intentional: it avoids a reconnect war with a genuinely-competing session while
 still self-healing a transient takeover within an hour. Set the env var to `0` to
 disable the watchdog, or lower it to re-claim faster (at higher war risk).
 
+The watchdog only fires on **recoverable** outages (a restart can re-claim the
+link). Terminal states that need a human QR re-pair — `pair_required`, session
+invalidated (rc=2), pairing timeout (rc=1) — are exempt; restarting could not
+recover them, so they follow the re-pair flow in section 2.2 instead.
+
 If this fires repeatedly, two stacks are sharing one WhatsApp session — stop the
 duplicate rather than lowering the threshold.
 

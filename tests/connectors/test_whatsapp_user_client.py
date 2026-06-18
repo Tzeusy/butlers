@@ -391,6 +391,7 @@ def test_link_stale_at_or_above_threshold() -> None:
     connector = _connector_with_threshold(3600)
     connector._bridge_manager = MagicMock()
     connector._bridge_manager.degraded_duration_s = 3600.0
+    connector._bridge_manager.is_degraded_terminal = False
     assert connector._link_is_stale() is True
 
 
@@ -450,6 +451,7 @@ async def test_watchdog_loop_triggers_restart_when_stale(
     connector._running = True
     connector._bridge_manager = MagicMock()
     connector._bridge_manager.degraded_duration_s = 4000.0
+    connector._bridge_manager.is_degraded_terminal = False
     connector._bridge_manager.degraded_reason = "down"
 
     monkeypatch.setattr(wac, "_LINK_WATCHDOG_INTERVAL_S", 0)
@@ -481,3 +483,21 @@ async def test_watchdog_loop_exits_cleanly_on_cancel(
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+def test_link_not_stale_when_degraded_terminal() -> None:
+    """A terminal degraded state (needs re-pair) must not trip the watchdog."""
+    connector = _connector_with_threshold(3600)
+    connector._bridge_manager = MagicMock()
+    connector._bridge_manager.degraded_duration_s = 99999.0
+    connector._bridge_manager.is_degraded_terminal = True
+    assert connector._link_is_stale() is False
+
+
+def test_link_stale_when_recoverable_past_threshold() -> None:
+    """A recoverable outage past threshold does trip the watchdog."""
+    connector = _connector_with_threshold(3600)
+    connector._bridge_manager = MagicMock()
+    connector._bridge_manager.degraded_duration_s = 3601.0
+    connector._bridge_manager.is_degraded_terminal = False
+    assert connector._link_is_stale() is True

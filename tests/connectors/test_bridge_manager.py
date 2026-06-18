@@ -350,3 +350,40 @@ async def test_poll_status_healthy_without_liveness_fields(
     )
     await mgr._poll_status()
     assert not mgr.is_degraded
+
+
+def test_set_degraded_terminal_flag() -> None:
+    """Terminal degraded states are flagged so the watchdog skips them."""
+    mgr = BridgeSubprocessManager(_make_config())
+    mgr._set_degraded("Session invalidated — re-pair required", terminal=True)
+    assert mgr.is_degraded_terminal is True
+
+
+def test_set_degraded_recoverable_is_not_terminal() -> None:
+    """A recoverable degradation (e.g. session taken over) is not terminal."""
+    mgr = BridgeSubprocessManager(_make_config())
+    mgr._set_degraded("Link down despite state=connected (session taken over?)")
+    assert mgr.is_degraded_terminal is False
+
+
+def test_is_degraded_terminal_false_when_healthy() -> None:
+    mgr = BridgeSubprocessManager(_make_config())
+    assert mgr.is_degraded_terminal is False
+
+
+def test_clear_degraded_resets_terminal_flag() -> None:
+    mgr = BridgeSubprocessManager(_make_config())
+    mgr._set_degraded("pair_required", terminal=True)
+    mgr._clear_degraded()
+    assert mgr.is_degraded_terminal is False
+
+
+def test_recoverable_then_terminal_updates_flag_without_resetting_clock() -> None:
+    """Escalating a recoverable outage to terminal flips the flag but keeps the clock."""
+    mgr = BridgeSubprocessManager(_make_config())
+    mgr._set_degraded("Bridge status: disconnected")
+    since = mgr._degraded_since
+    assert mgr.is_degraded_terminal is False
+    mgr._set_degraded("pair_required", terminal=True)
+    assert mgr.is_degraded_terminal is True
+    assert mgr._degraded_since == since
