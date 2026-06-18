@@ -248,6 +248,9 @@ class BridgeSubprocessManager:
         # Degraded mode (no-restart exit codes)
         self._degraded = False
         self._degraded_reason: str | None = None
+        # Monotonic timestamp of when the bridge most recently entered degraded
+        # mode, or None while healthy. Drives the connector's stale-link watchdog.
+        self._degraded_since: float | None = None
 
         # Restart backoff state
         self._restart_attempt = 0
@@ -275,6 +278,17 @@ class BridgeSubprocessManager:
     def degraded_reason(self) -> str | None:
         """Human-readable reason for degraded mode, or None."""
         return self._degraded_reason
+
+    @property
+    def degraded_duration_s(self) -> float | None:
+        """Seconds the bridge has been continuously degraded, or None if healthy.
+
+        Resets to None whenever the bridge recovers to a connected+logged-in
+        state, so a transient disconnect that self-heals never accumulates.
+        """
+        if self._degraded_since is None:
+            return None
+        return time.monotonic() - self._degraded_since
 
     @property
     def is_running(self) -> bool:
@@ -305,8 +319,7 @@ class BridgeSubprocessManager:
                 readiness contract within ``config.startup_timeout_s`` seconds.
         """
         self._stopping = False
-        self._degraded = False
-        self._degraded_reason = None
+        self._clear_degraded()
         self._connected_event.clear()
         self._startup_ready_event.clear()
 
@@ -615,11 +628,21 @@ class BridgeSubprocessManager:
 
     def _set_degraded(self, reason: str) -> None:
         """Enter degraded mode with the given human-readable reason."""
+        # Stamp the degraded-since clock only on the transition into degraded so
+        # repeated health polls while down do not keep resetting the duration.
+        if not self._degraded:
+            self._degraded_since = time.monotonic()
         self._degraded = True
         self._degraded_reason = reason
         if self._config.startup_allow_degraded:
             self._startup_ready_event.set()
         logger.warning("Bridge entering degraded mode: %s", reason)
+
+    def _clear_degraded(self) -> None:
+        """Leave degraded mode and reset the degraded-since clock."""
+        self._degraded = False
+        self._degraded_reason = None
+        self._degraded_since = None
 
     # ------------------------------------------------------------------
     # Private helpers — health polling
@@ -713,15 +736,37 @@ class BridgeSubprocessManager:
             return
 
         state = data.get("state", "unknown")
-        logger.debug("Bridge /status: state=%s", state)
+        # The live whatsmeow probe (added to /status) is authoritative for
+        # liveness. When present, a dead link (connected=false or logged_in=false)
+        # is degraded even if the event-driven `state` field still says
+        # "connected" — this is the StreamReplaced false-green guard.
+        connected = data.get("connected")
+        logged_in = data.get("logged_in")
+        logger.debug(
+            "Bridge /status: state=%s connected=%s logged_in=%s",
+            state,
+            connected,
+            logged_in,
+        )
 
-        if state == "connected":
+        link_dead = connected is False or logged_in is False
+
+        if state == "connected" and not link_dead:
             # Clear degraded if we were previously in it due to a transient issue
             if self._degraded:
                 logger.info("Bridge recovered — clearing degraded mode")
-                self._degraded = False
-                self._degraded_reason = None
+                self._clear_degraded()
             self._connected_event.set()
+        elif state == "connected" and link_dead:
+            # State says connected but the live link is down (e.g. session taken
+            # over by another device). Trust the live probe.
+            logger.warning(
+                "Bridge /status reports state=connected but link is down "
+                "(connected=%s logged_in=%s) — entering degraded mode",
+                connected,
+                logged_in,
+            )
+            self._set_degraded("Link down despite state=connected (session taken over?)")
         elif state in ("disconnected", "connecting"):
             # Post-startup: 'connecting' means the bridge dropped its session
             # and is attempting to reconnect.  Treat this as degraded until it
