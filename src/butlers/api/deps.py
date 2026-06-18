@@ -382,12 +382,22 @@ async def init_db_manager(
     all_schema_scoped = bool(butler_configs) and all(cfg.db_schema for cfg in butler_configs)
     one_db_schema_topology = len(effective_db_names) == 1 and all_schema_scoped
 
+    # Track role-enforcement state across all butler DB connections.  Each
+    # Database instance exposes role_enforcement_disabled reflecting whether
+    # SET ROLE was successfully established.  Since Database.from_env() does
+    # not receive a role parameter here (schema isolation is established at
+    # the butler-daemon layer, not the API layer), enforcement is disabled for
+    # all API-managed pools.  This honest state is surfaced on the health
+    # endpoint so operators can see that the API connects without SET ROLE.
+    all_role_enforcement_disabled = True
     for cfg in butler_configs:
         try:
             effective_db_name = cfg.db_name or "butlers"
             db = Database.from_env(effective_db_name)
             db.set_schema(cfg.db_schema)
             await db.provision()
+            if not db.role_enforcement_disabled:
+                all_role_enforcement_disabled = False
             await mgr.add_butler(
                 cfg.name,
                 db_name=effective_db_name,
@@ -402,6 +412,7 @@ async def init_db_manager(
                 cfg.db_schema or "default",
                 exc_info=True,
             )
+    mgr.set_role_enforcement_disabled(all_role_enforcement_disabled)
 
     configured_shared_db_name = shared_db_name_from_env()
     shared_db_env_override = os.environ.get("BUTLER_SHARED_DB_NAME")
