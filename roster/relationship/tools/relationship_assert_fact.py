@@ -32,6 +32,12 @@ Contract (Amendment 14 + spec §"Requirement: Central writer"):
    registering their own channel handles.  These writes bypass ``pending_actions``
    and go directly to ``entity_facts``.  Third-party assertions about the owner
    (any other ``src``) still park for approval.
+
+   **Security (bu-vj46x)** — trusted sources are reachable ONLY from internal
+   daemon/bootstrap code paths.  The MCP tool wrapper removes ``src`` from its
+   public signature (hardcoded to ``"relationship"``), and the dashboard API
+   models reject trusted sources via a Pydantic field validator, so neither
+   LLM sessions nor HTTP callers can spoof them.
 """
 
 from __future__ import annotations
@@ -176,10 +182,17 @@ _FAMILY_GATE_CONF: float = 0.8
 #   "owner-self"       — owner-setup tools where the owner is explicitly
 #                        entering their own channel identifiers.
 #
-# Security guarantee: these source strings are set by internal code paths
-# (not propagated from untrusted external input), so third parties cannot
-# spoof them through the normal ingestion / LLM session path.  Any write
-# whose ``src`` is NOT in this set still goes through the normal
+# Security guarantee: these source strings MUST be set only by internal code
+# paths (daemon startup, owner-setup tools).  They are NOT safe to propagate
+# from untrusted external input — ``src`` is a free-form string at the library
+# level, so caller discipline is the only gate.  Enforcement layers (bu-vj46x):
+#   • MCP tool wrapper — ``src`` is removed from the tool signature and
+#     hardcoded to ``"relationship"`` inside the wrapper so an LLM session can
+#     never supply a trusted source.
+#   • Dashboard API models — ``AddContactRequest`` and ``UpdateContactRequest``
+#     reject ``owner-self`` / ``owner-bootstrap`` via a Pydantic field validator
+#     so an HTTP caller cannot supply a trusted source.
+# Any write whose ``src`` is NOT in this set still goes through the normal
 # pending_actions gate.
 _OWNER_SELF_SOURCES: frozenset[str] = frozenset({"owner-bootstrap", "owner-self"})
 
