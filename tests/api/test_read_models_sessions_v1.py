@@ -93,7 +93,7 @@ def _detail_record(**overrides) -> dict:
 def _make_record(d: dict):
     """Wrap a dict in a MagicMock that supports subscript access."""
     m = MagicMock()
-    m.__getitem__ = MagicMock(side_effect=lambda k: d[k])
+    m.__getitem__ = lambda self, k: d[k]
     return m
 
 

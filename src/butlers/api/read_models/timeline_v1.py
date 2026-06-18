@@ -213,10 +213,9 @@ async def query_timeline_notifications_single(
         idx += 1
 
     if source_butlers is not None:
-        placeholders = ", ".join(f"${idx + i}" for i in range(len(source_butlers)))
-        conditions.append(f"source_butler IN ({placeholders})")
-        args.extend(source_butlers)
-        idx += len(source_butlers)
+        conditions.append(f"source_butler = ANY(${idx})")
+        args.append(source_butlers)
+        idx += 1
 
     where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     sql = (

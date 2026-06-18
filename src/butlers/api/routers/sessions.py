@@ -48,6 +48,8 @@ from butlers.api.models.session import (
 )
 from butlers.api.read_models.sessions_v1 import (
     SUMMARY_COLUMNS,
+    SessionDetailRow,
+    SessionSummaryRow,
     query_session_detail_fan_out,
     query_session_detail_single,
     query_session_summaries_fan_out,
@@ -140,7 +142,7 @@ def _resolve_success_filter(
     return success
 
 
-def _dto_to_summary(dto) -> SessionSummary:
+def _dto_to_summary(dto: SessionSummaryRow) -> SessionSummary:
     """Convert a SessionSummaryRow DTO (sessions_v1) to a response model."""
     return SessionSummary(
         id=dto.id,
@@ -159,7 +161,7 @@ def _dto_to_summary(dto) -> SessionSummary:
     )
 
 
-def _dto_to_detail(dto) -> SessionDetail:
+def _dto_to_detail(dto: SessionDetailRow) -> SessionDetail:
     """Convert a SessionDetailRow DTO (sessions_v1) to a response model."""
     return SessionDetail(
         id=dto.id,
@@ -413,10 +415,10 @@ async def get_butler_session(
     # Route through the versioned sessions read-model boundary (sessions_v1)
     single_result = await query_session_detail_single(pool, session_id, butler=name)
 
-    if not single_result.found:
+    if single_result.row is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    detail = _dto_to_detail(single_result.row)  # type: ignore[arg-type]
+    detail = _dto_to_detail(single_result.row)
     await _attach_session_extras(detail, pool, session_id)
 
     return ApiResponse[SessionDetail](data=detail)
