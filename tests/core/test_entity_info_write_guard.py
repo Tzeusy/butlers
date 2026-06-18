@@ -46,6 +46,14 @@ class TestAssertEntityInfoSecured:
         """telegram_api_id with secured=True is also fine (stricter, always passes)."""
         assert_entity_info_secured("telegram_api_id", secured=True)
 
+    def test_home_assistant_url_not_secured_allowed(self) -> None:
+        """home_assistant_url is a service URL config entry; no predicate home in entity_facts."""
+        assert_entity_info_secured("home_assistant_url", secured=False)
+
+    def test_home_assistant_url_secured_also_allowed(self) -> None:
+        """home_assistant_url with secured=True is also fine (stricter, always passes)."""
+        assert_entity_info_secured("home_assistant_url", secured=True)
+
     # -----------------------------------------------------------------------
     # Rejected: non-secret types that belong in entity_facts
     # -----------------------------------------------------------------------

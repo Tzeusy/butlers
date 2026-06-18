@@ -68,15 +68,15 @@ _TABLE = "butler_secrets"
 # Non-secret facts / identifiers / routing handles belong in
 # relationship.entity_facts via relationship_assert_fact() instead.
 #
-# The ONLY approved non-secured type in entity_info is ``telegram_api_id``,
-# which is a technical API credential component (not a channel handle) required
-# to initialise the Telegram user-client.  All channel handles (telegram,
-# telegram_chat_id, email, phone, etc.) are non-secret and must NOT be written
-# here — they belong in entity_facts as has-handle / has-email / has-phone
-# triples.
+# Approved non-secured types are technical configuration entries that have no
+# predicate home in entity_facts (they are not contact-channel triples about a
+# person/entity).  All channel handles (telegram, telegram_chat_id, email,
+# phone, etc.) are non-secret and must NOT be written here — they belong in
+# entity_facts as has-handle / has-email / has-phone triples.
 _ENTITY_INFO_NON_SECRET_ALLOWED_TYPES: frozenset[str] = frozenset(
     {
         "telegram_api_id",  # technical API credential component, not a channel handle
+        "home_assistant_url",  # service URL config entry; no predicate home in entity_facts
     }
 )
 
@@ -87,7 +87,10 @@ def assert_entity_info_secured(info_type: str, secured: bool) -> None:
     This is the write-time enforcement of the seam law declared in RFC 0004
     Amendment 3: ``public.entity_info`` is a secrets store.  Non-secret
     identifiers and channel handles must go to ``relationship.entity_facts``
-    via ``relationship_assert_fact()`` instead.
+    via ``relationship_assert_fact()`` instead.  The only permitted
+    ``secured=False`` types are technical configuration entries that have no
+    predicate home in entity_facts (see
+    ``_ENTITY_INFO_NON_SECRET_ALLOWED_TYPES``).
 
     Parameters
     ----------

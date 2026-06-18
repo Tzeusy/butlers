@@ -60,8 +60,8 @@ The split axis is SENSITIVITY, not TYPE.
   chat IDs, websites, …).
 - **`public.entity_info`** holds ONLY `secured=True` credentials (OAuth tokens,
   API hashes, session strings) plus a narrow whitelist of non-secret technical
-  identifiers that have no predicate home in entity_facts (currently only
-  `telegram_api_id`).
+  configuration entries that have no predicate home in entity_facts
+  (`telegram_api_id`, `home_assistant_url`).
 
 A write-time guard (`credential_store.assert_entity_info_secured()`) enforces
 this rule at every `public.entity_info` write surface and raises `ValueError`
@@ -87,6 +87,7 @@ Extended identity-bound data linked to entities. Used for credentials that belon
 | `telegram_api_hash` | Telegram user-client API hash | yes | |
 | `steam_api_key` | Steam Web API key for the gaming butler | yes | |
 | `telegram_user_session` | Telegram user-client StringSession | yes | |
+| `home_assistant_url` | Home Assistant service base URL | no | Service URL config entry; no predicate home in entity_facts |
 
 **Mapping of previously misrouted types:**
 
@@ -247,8 +248,9 @@ The split axis is **SENSITIVITY**, not TYPE.
   identifiers, and relationships — including channel routing handles such as `telegram_chat_id`.
 - **`public.entity_info`** is a **credentials-only** store. It holds ONLY `secured=True`
   credential entries (OAuth tokens, API hashes, session strings) plus a narrow whitelist of
-  non-secret technical identifiers that have no predicate home in entity_facts (currently
-  only `telegram_api_id`, a technical Telegram client API credential component).
+  non-secret technical configuration entries that have no predicate home in entity_facts
+  (`telegram_api_id` — Telegram client API credential component; `home_assistant_url` —
+  service URL config entry).
 
 **Changes made:**
 
@@ -263,8 +265,8 @@ The split axis is **SENSITIVITY**, not TYPE.
   - `upsert_owner_entity_info()` — function-call level enforcement
   - `POST /api/relationship/entity-info` — HTTP API level enforcement (HTTP 422 on violation)
 - `public.entity_info` table documentation updated to reflect the seam law, add a `secured`
-  column note, add the whitelisted non-secret type (`telegram_api_id`), and show the
-  migration table for previously misrouted types.
+  column note, add whitelisted non-secret types (`telegram_api_id`, `home_assistant_url`),
+  and show the migration table for previously misrouted types.
 
 **Previously misrouted types** (were written to `entity_info` with `secured=False`; must now
 go to `relationship.entity_facts`):
