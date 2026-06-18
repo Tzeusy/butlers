@@ -3330,7 +3330,6 @@ async def run_episodic_predicate_curation(db_pool: asyncpg.Pool) -> dict[str, An
               AND f.scope       = 'relationship'
               AND f.predicate   = ANY($1::text[])
               AND f.permanence  = ANY($2::text[])
-            ORDER BY f.predicate, f.created_at DESC
             """,
             list(_EPISODIC_PREDICATES),
             list(_EPISODIC_DURABLE_PERMANENCES),
