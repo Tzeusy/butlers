@@ -850,8 +850,10 @@ async def _dispatch_approved_action(
                 # but they key the phantom id differently: gate.py uses 'action_id' while
                 # the notify email-guard uses 'pending_action_id'. Try both so the error
                 # message always names the phantom action regardless of which path fired.
-                new_action_id = tool_result.get("action_id") or tool_result.get(
-                    "pending_action_id", "<unknown>"
+                _aid = tool_result.get("action_id")
+                _paid = tool_result.get("pending_action_id")
+                new_action_id = (
+                    _aid if _aid is not None else _paid if _paid is not None else "<unknown>"
                 )
                 logger.error(
                     "Approved action %s (%s) re-entered the approval gate instead of executing "
