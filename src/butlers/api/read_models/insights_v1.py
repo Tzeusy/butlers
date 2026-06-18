@@ -120,16 +120,7 @@ async def query_insight_delivery_state(
         Typed delivery-state DTO, or ``None`` if the aggregate query returns no row
         (should not happen for a bare aggregate with no GROUP BY, but guarded for safety).
     """
-    row = await pool.fetchrow(
-        "SELECT "
-        "COUNT(*) FILTER (WHERE status = 'pending') AS queued, "
-        "COUNT(*) FILTER (WHERE status = 'delivered') AS delivered, "
-        "COUNT(*) FILTER ("
-        "WHERE status = 'filtered' AND delivery_attempt_count >= 3"
-        ") AS failed, "
-        "MAX(delivered_at) FILTER (WHERE status = 'delivered') AS last_delivery_at "
-        "FROM public.insight_candidates"
-    )
+    row = await pool.fetchrow(f"SELECT {INSIGHT_DELIVERY_COLUMNS} FROM public.insight_candidates")
 
     if row is None:
         return None

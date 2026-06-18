@@ -177,6 +177,18 @@ async def test_query_insight_delivery_state_queries_public_insight_candidates():
     assert "public.insight_candidates" in sql
 
 
+async def test_query_insight_delivery_state_sql_uses_column_constant():
+    """SQL projection uses INSIGHT_DELIVERY_COLUMNS constant (no inline duplication)."""
+    mock_pool = AsyncMock()
+    row = _make_record(_aggregate_dict())
+    mock_pool.fetchrow = AsyncMock(return_value=row)
+
+    await query_insight_delivery_state(mock_pool)
+
+    sql = mock_pool.fetchrow.call_args[0][0]
+    assert INSIGHT_DELIVERY_COLUMNS in sql
+
+
 async def test_query_insight_delivery_state_sql_has_delivery_attempt_count_filter():
     """SQL must filter failed by delivery_attempt_count >= 3."""
     mock_pool = AsyncMock()

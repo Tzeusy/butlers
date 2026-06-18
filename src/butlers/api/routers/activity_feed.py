@@ -53,6 +53,24 @@ def _get_db_manager() -> DatabaseManager:
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _normalize_tz(dt: datetime | None) -> datetime | None:
+    """Return *dt* with UTC tzinfo attached if it is naive, or unchanged if already aware.
+
+    Asyncpg returns tz-aware datetimes for TIMESTAMPTZ columns, but plain
+    TIMESTAMP columns (or test mocks that forget tzinfo) produce naive datetimes.
+    Normalising here prevents ``TypeError: can't compare offset-naive and
+    offset-aware datetimes`` when the merged event list is sorted.
+    """
+    if dt is not None and dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
+
+
+# ---------------------------------------------------------------------------
 # Event builders
 # ---------------------------------------------------------------------------
 
@@ -63,7 +81,7 @@ def _session_to_event(row: ActivitySessionRow) -> ActivityEvent:
     summary = (prompt[:120] + "...") if len(prompt) > 120 else prompt
     return ActivityEvent(
         event_type="session_completed",
-        ts=row.completed_at,
+        ts=_normalize_tz(row.completed_at),
         summary=summary or "Session completed",
         entity_id=str(row.id),
         metadata={
@@ -83,7 +101,7 @@ def _action_to_event(row: ActivityActionRow) -> ActivityEvent:
         summary = summary[:120] + "..."
     return ActivityEvent(
         event_type="approval_raised",
-        ts=row.requested_at,
+        ts=_normalize_tz(row.requested_at),
         summary=summary,
         entity_id=str(row.id),
         metadata={
@@ -100,7 +118,7 @@ def _episode_to_event(row: ActivityEpisodeRow) -> ActivityEvent:
     summary = (content[:120] + "...") if len(content) > 120 else content
     return ActivityEvent(
         event_type="memory_write",
-        ts=row.created_at,
+        ts=_normalize_tz(row.created_at),
         summary=summary or "Memory episode written",
         entity_id=str(row.id),
         metadata={
