@@ -422,12 +422,46 @@ class TestEntityCache:
         method_name: str,
         message: str,
     ) -> None:
+        from butlers.modules._roster_home import (
+            CachedArea,
+            CachedEntity,
+            CachedEntityRegistryEntry,
+        )
+
         ha_module._ws_connected = True
         caplog.set_level(logging.INFO, logger="butlers.modules._roster_home")
+        initial_area_cache = {
+            "kitchen": CachedArea(area_id="kitchen", name="Kitchen"),
+        }
+        initial_entity_registry = {
+            "sensor.kitchen": CachedEntityRegistryEntry(
+                entity_id="sensor.kitchen",
+                area_id="kitchen",
+                device_id="device-1",
+                platform="sensor",
+            ),
+        }
+        initial_entity_area_map = {"sensor.kitchen": "kitchen"}
+        initial_entity_cache = {
+            "sensor.kitchen": CachedEntity(
+                entity_id="sensor.kitchen",
+                state="21",
+                attributes={"unit_of_measurement": "°C"},
+                area_id="kitchen",
+            ),
+        }
+        ha_module._area_cache = dict(initial_area_cache)
+        ha_module._entity_registry = dict(initial_entity_registry)
+        ha_module._entity_area_map = dict(initial_entity_area_map)
+        ha_module._entity_cache = dict(initial_entity_cache)
 
         with patch.object(ha_module, "_ws_command", new=AsyncMock(side_effect=TimeoutError)):
             await getattr(ha_module, method_name)()
 
+        assert ha_module._area_cache == initial_area_cache
+        assert ha_module._entity_registry == initial_entity_registry
+        assert ha_module._entity_area_map == initial_entity_area_map
+        assert ha_module._entity_cache == initial_entity_cache
         assert any(
             record.levelno == logging.INFO and message in record.message
             for record in caplog.records
