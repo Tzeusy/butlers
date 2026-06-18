@@ -74,7 +74,8 @@ def test_contact_info_type_to_predicate_known_types() -> None:
 def test_contact_info_type_to_predicate_unmapped_returns_none() -> None:
     """Types with no predicate home return None (callers must skip the triple write)."""
     unmapped = [
-        "telegram_chat_id",  # group/channel routing key
+        # "telegram_chat_id" was moved HERE before RFC 0004 Amendment 3
+        # (PR #2471) mapped it to has-handle.  Use a genuinely unmapped type.
         "google_health",  # OAuth routing/credential identifier
         "home_assistant_url",  # service URL, not a contact channel
         "address",
