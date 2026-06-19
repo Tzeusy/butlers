@@ -26,6 +26,22 @@ Returns ``None`` when the UUID is not found via any path.  Callers should
 treat ``None`` as "identity not yet resolved" and continue gracefully; facts
 stored with ``entity_id=None`` will not appear on the entity detail page but
 the data is otherwise preserved.
+
+Schema-qualification note
+-------------------------
+SQL below uses unqualified table names (``contacts_source_links``,
+``contact_entity_map``).  This is intentional:
+
+- In production the asyncpg pool's ``search_path`` is set to
+  ``relationship,public`` (see ``butlers.db.schema_search_path``), so
+  unqualified names resolve to the ``relationship`` schema tables correctly.
+- Integration tests (e.g. ``tests/features/test_vcard.py``) run the
+  relationship migration chain without a schema override, landing all tables in
+  ``public``.  Hard-coding ``relationship.`` would break those tests while
+  providing no benefit in production where search_path already handles it.
+
+``UndefinedTableError`` catches here mean "table does not exist" (contacts
+module not loaded, or rel_029 not yet applied), not "table not in search_path".
 """
 
 from __future__ import annotations
@@ -53,13 +69,14 @@ async def resolve_contact_entity_id(
     """
     # ------------------------------------------------------------------
     # Step 1: contacts_source_links (externally-synced contacts)
+    # Unqualified — search_path handles schema resolution; see module docstring.
     # Skipped gracefully if the contacts module is not loaded.
     # ------------------------------------------------------------------
     try:
         row = await pool.fetchrow(
             """
             SELECT local_entity_id
-            FROM relationship.contacts_source_links
+            FROM contacts_source_links
             WHERE local_contact_id = $1
               AND deleted_at IS NULL
             LIMIT 1
@@ -85,12 +102,13 @@ async def resolve_contact_entity_id(
 
     # ------------------------------------------------------------------
     # Step 2: contact_entity_map (ALL contacts — CRM + synced, rel_029)
+    # Unqualified — search_path handles schema resolution; see module docstring.
     # Populated by contact_create at write time; backfilled by rel_029.
     # Skipped gracefully if rel_029 migration has not been applied yet.
     # ------------------------------------------------------------------
     try:
         map_row = await pool.fetchrow(
-            "SELECT entity_id FROM relationship.contact_entity_map WHERE contact_id = $1",
+            "SELECT entity_id FROM contact_entity_map WHERE contact_id = $1",
             contact_id,
         )
     except (asyncpg.UndefinedTableError, asyncpg.UndefinedColumnError):

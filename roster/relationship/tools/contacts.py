@@ -301,7 +301,7 @@ async def contact_create(
         try:
             await pool.execute(
                 """
-                INSERT INTO relationship.contact_entity_map (contact_id, entity_id)
+                INSERT INTO contact_entity_map (contact_id, entity_id)
                 VALUES ($1, $2)
                 ON CONFLICT (contact_id) DO NOTHING
                 """,
