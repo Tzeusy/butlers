@@ -175,23 +175,28 @@ def downgrade() -> None:
                 ALTER TABLE {_TABLE} DROP COLUMN entity_id;
             END IF;
 
-            -- Re-add the contacts FK (best-effort — skipped if contacts is gone or
-            -- rows with entity-only UUIDs in contact_id would violate the constraint).
-            IF to_regclass('public.contacts') IS NOT NULL
-               AND NOT EXISTS (
-                   SELECT 1 FROM information_schema.table_constraints
-                   WHERE constraint_schema = 'connectors'
-                     AND table_name        = 'home_assistant_persons'
-                     AND constraint_name   = '{_FK_CONTACTS}'
-                     AND constraint_type   = 'FOREIGN KEY'
-               )
-            THEN
-                ALTER TABLE {_TABLE}
-                    ADD CONSTRAINT {_FK_CONTACTS}
-                    FOREIGN KEY (contact_id)
-                    REFERENCES public.contacts(id)
-                    ON DELETE CASCADE;
-            END IF;
+            -- Re-add the contacts FK (best-effort — skipped if contacts is gone;
+            -- exception-caught if orphaned contact_id rows would violate the constraint).
+            BEGIN
+                IF to_regclass('public.contacts') IS NOT NULL
+                   AND NOT EXISTS (
+                       SELECT 1 FROM information_schema.table_constraints
+                       WHERE constraint_schema = 'connectors'
+                         AND table_name        = 'home_assistant_persons'
+                         AND constraint_name   = '{_FK_CONTACTS}'
+                         AND constraint_type   = 'FOREIGN KEY'
+                   )
+                THEN
+                    ALTER TABLE {_TABLE}
+                        ADD CONSTRAINT {_FK_CONTACTS}
+                        FOREIGN KEY (contact_id)
+                        REFERENCES public.contacts(id)
+                        ON DELETE CASCADE;
+                END IF;
+            EXCEPTION WHEN others THEN
+                RAISE NOTICE 'core_132 downgrade: contacts FK re-add skipped (best-effort) — %',
+                    SQLERRM;
+            END;
         END
         $$;
     """)
