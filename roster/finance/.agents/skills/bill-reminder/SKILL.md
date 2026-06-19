@@ -19,7 +19,7 @@ Before starting the bill reminder workflow, gather context:
    bills that already have matching debits on record. Bills settled here will not appear in the
    triage list and require no manual action. Note auto-settled bills to report them to the user.
 2. Get upcoming bills: `upcoming_bills(days_ahead=14, include_overdue=true)` to surface all
-   remaining due bills (already-reconciled bills will appear as `paid` and can be skipped)
+   remaining due bills (already-reconciled bills are marked as `paid` and excluded from results)
 3. Understand user's reminder preference: `memory_recall(topic="bill reminder preference")`
    (default: 3 days before due date)
 4. Verify calendar is available if setting reminders
