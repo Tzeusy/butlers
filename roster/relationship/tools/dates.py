@@ -82,12 +82,21 @@ async def upcoming_dates(pool: asyncpg.Pool, days_ahead: int = 30) -> list[dict[
         UNION ALL
 
         -- Entity-anchored path (contacts_004): local_entity_id → entities directly
+        -- Guard: if this entity has contacts, require at least one to be listed=true,
+        -- so archived contacts' dates remain hidden even after the contacts_004 backfill.
         SELECT d.*,
                COALESCE(e.canonical_name, 'Unknown') AS contact_name
         FROM important_dates d
         JOIN public.entities e ON e.id = d.local_entity_id
         WHERE d.contact_id IS NULL
           AND d.local_entity_id IS NOT NULL
+          AND (
+              NOT EXISTS (SELECT 1 FROM contacts c WHERE c.entity_id = d.local_entity_id)
+              OR EXISTS (
+                  SELECT 1 FROM contacts c
+                  WHERE c.entity_id = d.local_entity_id AND c.listed = true
+              )
+          )
 
         ORDER BY month, day
         """

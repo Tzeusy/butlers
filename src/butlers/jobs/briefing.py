@@ -578,6 +578,8 @@ async def run_relationship_briefing_contribution(
         UNION ALL
 
         -- Entity-anchored path (contacts_004): local_entity_id → entities directly
+        -- Guard: if this entity has contacts, require at least one to be listed=true,
+        -- so archived contacts' birthdays remain hidden even after the contacts_004 backfill.
         SELECT COALESCE(e.canonical_name, 'Unknown') AS name,
                id.label, id.month, id.day, id.year
         FROM important_dates id
@@ -585,6 +587,13 @@ async def run_relationship_briefing_contribution(
         WHERE LOWER(id.label) LIKE '%birthday%'
           AND id.contact_id IS NULL
           AND id.local_entity_id IS NOT NULL
+          AND (
+              NOT EXISTS (SELECT 1 FROM contacts c WHERE c.entity_id = id.local_entity_id)
+              OR EXISTS (
+                  SELECT 1 FROM contacts c
+                  WHERE c.entity_id = id.local_entity_id AND c.listed = true
+              )
+          )
           AND EXISTS (
             SELECT 1 FROM unnest($1::int[], $2::int[]) AS t(m, d)
             WHERE t.m = id.month AND t.d = id.day

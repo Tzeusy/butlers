@@ -466,6 +466,8 @@ async def test_run_relationship_briefing_birthday_sql_contains_both_paths():
     assert "JOIN public.entities e ON e.id = id.local_entity_id" in birthday_sql
     assert "id.contact_id IS NULL" in birthday_sql
     assert "id.local_entity_id IS NOT NULL" in birthday_sql
+    # Listed guard: archived contacts' birthdays must stay hidden after contacts_004 backfill
+    assert "c.listed = true" in birthday_sql
 
 
 async def test_run_relationship_briefing_contact_anchored_birthday():
