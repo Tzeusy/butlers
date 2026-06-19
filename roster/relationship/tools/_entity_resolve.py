@@ -59,7 +59,7 @@ async def resolve_contact_entity_id(
         row = await pool.fetchrow(
             """
             SELECT local_entity_id
-            FROM contacts_source_links
+            FROM relationship.contacts_source_links
             WHERE local_contact_id = $1
               AND deleted_at IS NULL
             LIMIT 1
@@ -90,7 +90,7 @@ async def resolve_contact_entity_id(
     # ------------------------------------------------------------------
     try:
         map_row = await pool.fetchrow(
-            "SELECT entity_id FROM contact_entity_map WHERE contact_id = $1",
+            "SELECT entity_id FROM relationship.contact_entity_map WHERE contact_id = $1",
             contact_id,
         )
     except (asyncpg.UndefinedTableError, asyncpg.UndefinedColumnError):
