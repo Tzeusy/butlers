@@ -5103,7 +5103,7 @@ async def get_dunbar_ranking(
     # Fetch canonical names and avatar URLs for all entity IDs returned by the ranking.
     # avatar_url is stored in public.entities.metadata->'profile'->>'avatar_url' by the
     # contacts backfill (ContactBackfill._deep_set(metadata, "profile.avatar_url", ...)).
-    entity_ids = [r["entity_id"] for r in ranked if r["entity_id"] is not None]
+    entity_ids = list({r["entity_id"] for r in ranked if r["entity_id"] is not None})
     contact_ids = [r["contact_id"] for r in ranked if r["entity_id"] is not None]
     entity_name_rows, owner_row, interaction_30d_rows = await asyncio.gather(
         pool.fetch(
