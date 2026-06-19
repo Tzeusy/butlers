@@ -149,7 +149,9 @@ async def test_post_priority_contact_validates_against_entities(app):
         "added_by": "dashboard",
     }
     pool = AsyncMock()
-    pool.fetchval = AsyncMock(return_value=True)  # entity exists
+    # Two fetchval calls: (1) entity-exists check → True, (2) entity_id duplicate
+    # guard → False (not yet a priority contact).
+    pool.fetchval = AsyncMock(side_effect=[True, False])
     pool.fetchrow = AsyncMock(return_value=_make_record(inserted_row))
     _app_with_mock_db(app, shared_pool=pool)
 
@@ -161,8 +163,7 @@ async def test_post_priority_contact_validates_against_entities(app):
             json={"contact_id": str(contact_id)},
         )
 
-    # The entity-existence check is the first fetchval call; later calls
-    # come from the audit log pathway.
+    # The entity-existence check is the first fetchval call.
     first_fetchval_sql = pool.fetchval.call_args_list[0][0][0]
     assert "public.contacts" not in first_fetchval_sql
     assert "public.entities" in first_fetchval_sql
@@ -190,7 +191,8 @@ async def test_post_priority_contact_201(app):
         "added_by": "dashboard",
     }
     pool = AsyncMock()
-    pool.fetchval = AsyncMock(return_value=True)  # entity exists
+    # Two fetchval calls: entity-exists → True, entity_id duplicate guard → False.
+    pool.fetchval = AsyncMock(side_effect=[True, False])
     pool.fetchrow = AsyncMock(return_value=_make_record(inserted_row))
     _app_with_mock_db(app, shared_pool=pool)
 
@@ -243,10 +245,31 @@ async def test_post_priority_contact_400_on_roles_field(app):
     assert "role" in resp.json()["detail"].lower()
 
 
-async def test_post_priority_contact_409_on_duplicate(app):
-    """A duplicate contact_id must return HTTP 409."""
+async def test_post_priority_contact_409_on_duplicate_entity_id(app):
+    """409 when entity_id already exists in priority_contacts (backfilled legacy row)."""
     pool = AsyncMock()
-    pool.fetchval = AsyncMock(return_value=True)  # entity exists
+    # entity-exists → True, entity_id duplicate guard → True (already present).
+    pool.fetchval = AsyncMock(side_effect=[True, True])
+    _app_with_mock_db(app, shared_pool=pool)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/api/ingestion/priority-contacts",
+            json={"contact_id": str(uuid4())},
+        )
+
+    assert resp.status_code == 409
+
+
+async def test_post_priority_contact_409_on_contact_id_pk_violation(app):
+    """409 via PK constraint when a same-session race causes a UniqueViolationError."""
+    contact_id = uuid4()
+    pool = AsyncMock()
+    # entity-exists → True, entity_id duplicate guard → False (passed),
+    # but the INSERT hits a PK conflict (race condition).
+    pool.fetchval = AsyncMock(side_effect=[True, False])
 
     async def _raise_duplicate(*_args, **_kwargs):
         raise asyncpg.UniqueViolationError()
@@ -259,7 +282,7 @@ async def test_post_priority_contact_409_on_duplicate(app):
     ) as client:
         resp = await client.post(
             "/api/ingestion/priority-contacts",
-            json={"contact_id": str(uuid4())},
+            json={"contact_id": str(contact_id)},
         )
 
     assert resp.status_code == 409
@@ -312,7 +335,8 @@ async def test_post_priority_contact_emits_audit(app):
         "added_by": "dashboard",
     }
     pool = AsyncMock()
-    pool.fetchval = AsyncMock(return_value=True)
+    # Two fetchval calls: entity-exists → True, entity_id duplicate guard → False.
+    pool.fetchval = AsyncMock(side_effect=[True, False])
     pool.fetchrow = AsyncMock(return_value=_make_record(inserted_row))
     _app_with_mock_db(app, shared_pool=pool)
 

@@ -271,6 +271,20 @@ async def add_priority_contact(
             detail=f"Contact '{body.contact_id}' not found",
         )
 
+    # Guard against duplicate entries via entity_id — catches backfilled legacy rows
+    # where contact_id holds the old contacts UUID but entity_id already equals
+    # body.contact_id.  The PK constraint on contact_id alone cannot detect this
+    # because legacy rows carry a different value in contact_id.
+    already_exists = await pool.fetchval(
+        "SELECT EXISTS(SELECT 1 FROM public.priority_contacts WHERE entity_id = $1)",
+        body.contact_id,
+    )
+    if already_exists:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Priority contact {body.contact_id} already exists",
+        )
+
     # Insert — contact_id now carries an entity UUID (core_131); entity_id
     # stores the same value so the GET display-name join resolves correctly.
     # Conflict on PK raises HTTP 409.

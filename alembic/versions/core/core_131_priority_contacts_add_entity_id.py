@@ -182,6 +182,17 @@ def downgrade() -> None:
                 ALTER TABLE {_TABLE} DROP COLUMN entity_id;
             END IF;
 
+            -- Purge new-format rows (contact_id = entity UUID) that would violate
+            -- the contacts FK being re-added; such rows are non-representable in the
+            -- pre-core_131 schema and must be removed before the constraint can be
+            -- applied.
+            IF to_regclass('public.contacts') IS NOT NULL THEN
+                DELETE FROM {_TABLE} pc
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM public.contacts c WHERE c.id = pc.contact_id
+                );
+            END IF;
+
             -- Re-add the contacts FK (best-effort — skipped if contacts is gone).
             IF to_regclass('public.contacts') IS NOT NULL
                AND NOT EXISTS (
