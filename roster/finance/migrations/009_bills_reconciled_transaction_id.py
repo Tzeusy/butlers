@@ -43,9 +43,16 @@ depends_on = None
 UPGRADE_SQL: tuple[str, ...] = (
     # No FK constraint per spec — see design notes above.
     "ALTER TABLE bills ADD COLUMN IF NOT EXISTS reconciled_transaction_id UUID",
+    # Partial index: covers the reverse-lookup "has this transaction already settled a bill?"
+    # check (WHERE reconciled_transaction_id = @txn_id) used by the reconciliation engine.
+    # Partial (WHERE IS NOT NULL) keeps the index small since most rows are unreconciled.
+    "CREATE INDEX IF NOT EXISTS idx_bills_reconciled_transaction_id"
+    " ON bills (reconciled_transaction_id)"
+    " WHERE reconciled_transaction_id IS NOT NULL",
 )
 
 DOWNGRADE_SQL: tuple[str, ...] = (
+    "DROP INDEX IF EXISTS idx_bills_reconciled_transaction_id",
     "ALTER TABLE bills DROP COLUMN IF EXISTS reconciled_transaction_id",
 )
 

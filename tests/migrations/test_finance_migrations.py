@@ -393,6 +393,16 @@ class TestBillsReconciledTransactionIdMigration:
         # (the value is implicitly NULL when the column is omitted from an INSERT).
         assert col["column_default"] is None, "no explicit DEFAULT expression expected"
 
+        # Index check: partial index must exist after upgrade.
+        indexes = await pool.fetch(
+            "SELECT indexname FROM pg_indexes"
+            " WHERE tablename = 'bills'"
+            "   AND indexname = 'idx_bills_reconciled_transaction_id'"
+        )
+        assert len(indexes) == 1, (
+            "Partial index on reconciled_transaction_id must exist after upgrade"
+        )
+
         # Behavioural check: INSERT without specifying the column yields NULL.
         row = await pool.fetchrow(
             """
@@ -408,7 +418,7 @@ class TestBillsReconciledTransactionIdMigration:
 
     @pytest.mark.integration
     async def test_downgrade_drops_column(self, bills_pool: asyncpg.Pool) -> None:
-        """After upgrade then downgrade the column is absent from the schema."""
+        """After upgrade then downgrade the column and its index are absent from the schema."""
         pool = bills_pool
         mod = _load_migration("finance_009", _MIGRATION_009)
         await _apply(pool, mod, "upgrade")
@@ -420,3 +430,12 @@ class TestBillsReconciledTransactionIdMigration:
             "WHERE table_name = 'bills' AND column_name = 'reconciled_transaction_id'"
         )
         assert col is None, "reconciled_transaction_id column must be absent after downgrade"
+
+        indexes = await pool.fetch(
+            "SELECT indexname FROM pg_indexes"
+            " WHERE tablename = 'bills'"
+            "   AND indexname = 'idx_bills_reconciled_transaction_id'"
+        )
+        assert len(indexes) == 0, (
+            "Partial index on reconciled_transaction_id must be absent after downgrade"
+        )
