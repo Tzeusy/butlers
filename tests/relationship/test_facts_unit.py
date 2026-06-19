@@ -23,7 +23,6 @@ import pytest
 pytestmark = pytest.mark.unit
 
 _CONTACT_ID = uuid.uuid4()
-_ENTITY_ID = uuid.uuid4()
 _FACTS_MODULE = "butlers.tools.relationship.facts"
 _RESOLVER_TARGET = f"{_FACTS_MODULE}.resolve_contact_entity_id"
 
@@ -34,18 +33,18 @@ _FACTS_PY = Path(__file__).resolve().parents[2] / "roster" / "relationship" / "t
 # ---------------------------------------------------------------------------
 
 
-def _pool_with_entity(entity_id: uuid.UUID | None):
+def _pool_with_entity(entity_id: uuid.UUID | None = None):
     """Return a mock asyncpg.Pool whose fetchrow returns a plausible facts row."""
     pool = MagicMock(spec=asyncpg.Pool)
     pool.execute = AsyncMock(return_value=None)
     facts_row = MagicMock()
-    facts_row.__getitem__ = lambda self, k: {  # type: ignore[override]
+    facts_row.__getitem__.side_effect = {
         "id": uuid.uuid4(),
         "predicate": "color",
         "content": "blue",
         "metadata": {},
         "created_at": None,
-    }[k]
+    }.__getitem__
     pool.fetchrow = AsyncMock(return_value=facts_row)
     pool.fetch = AsyncMock(return_value=[])
     return pool
