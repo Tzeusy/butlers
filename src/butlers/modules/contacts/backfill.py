@@ -163,8 +163,12 @@ class ContactBackfillResolver:
                 """
                 SELECT ef.subject AS entity_id
                 FROM relationship.entity_facts ef
+                JOIN public.entities e ON e.id = ef.subject
                 WHERE ef.predicate = 'has-email' AND ef.object_kind = 'literal'
                   AND ef.validity = 'active' AND lower(ef.object) = $1
+                  AND e.entity_type = 'person'
+                  AND (e.metadata->>'merged_into') IS NULL
+                  AND (e.metadata->>'deleted_at') IS NULL
                 ORDER BY ef.created_at ASC NULLS LAST LIMIT 1
                 """,
                 normalized,
@@ -184,10 +188,14 @@ class ContactBackfillResolver:
                 """
                 SELECT ef.subject AS entity_id
                 FROM relationship.entity_facts ef
+                JOIN public.entities e ON e.id = ef.subject
                 WHERE ef.predicate = 'has-phone'
                   AND ef.object_kind = 'literal'
                   AND ef.validity    = 'active'
                   AND (ef.object = $1 OR ef.object = $2)
+                  AND e.entity_type = 'person'
+                  AND (e.metadata->>'merged_into') IS NULL
+                  AND (e.metadata->>'deleted_at') IS NULL
                 ORDER BY ef.created_at ASC NULLS LAST LIMIT 1
                 """,
                 normalized,
@@ -206,12 +214,13 @@ class ContactBackfillResolver:
         rows = await self._pool.fetch(
             """
             SELECT id FROM public.entities
-            WHERE (
+            WHERE entity_type = 'person'
+              AND (
                 canonical_name ILIKE $1
                 OR EXISTS (SELECT 1 FROM unnest(aliases) AS a WHERE a ILIKE $1)
-            )
-            AND (metadata->>'merged_into') IS NULL
-            AND (metadata->>'deleted_at') IS NULL
+              )
+              AND (metadata->>'merged_into') IS NULL
+              AND (metadata->>'deleted_at') IS NULL
             """,
             name_stripped,
         )
@@ -288,13 +297,14 @@ class ContactBackfillWriter:
         commit atomically — otherwise an interrupted sync can leave a link-less
         entity that the next sync cannot find and re-creates as a duplicate.
 
-        Entity resolution deliberately runs on the pool, NOT on ``executor``:
-        ``_ensure_entity`` recovers from a duplicate canonical_name by catching
-        ``UniqueViolationError`` and re-SELECTing, but in Postgres a raised
-        error aborts the *enclosing* transaction even when Python catches it, so
-        the recovery query would fail if it shared the caller's transaction. The
-        entity is committed independently first; a metadata-less entity is
-        harmless and updated if the source-link transaction rolls back.
+        Entity resolution and the pre-transaction metadata read both run on the
+        pool, NOT on ``executor``: ``_ensure_entity`` recovers from a duplicate
+        canonical_name by catching ``UniqueViolationError`` and re-SELECTing, but
+        in Postgres a raised error aborts the *enclosing* transaction even when
+        Python catches it, so those queries would fail if they shared the caller's
+        transaction.  The entity is committed independently first; a stale or
+        partial-metadata entity is safe and corrected when the source-link
+        transaction rolls back and the next sync retries.
         """
         first = contact.first_name
         last = contact.last_name
@@ -309,7 +319,26 @@ class ContactBackfillWriter:
             primary_photo = contact.photos[0]
         avatar_url = primary_photo.url if primary_photo else None
 
-        metadata: dict[str, Any] = {}
+        entity_id = await self._ensure_entity(first, last, nickname, company)
+
+        if entity_id is None:
+            raise ValueError(
+                f"ContactBackfill: could not resolve or create entity for external_id="
+                f"{contact.external_id!r}"
+            )
+
+        # Read existing metadata from pool before entering caller's transaction so the
+        # deep-merge below does not overwrite nested keys already present on the entity
+        # (e.g. when _ensure_entity recovers an existing entity via UniqueViolationError
+        # instead of inserting a new one with empty metadata).  The fetch runs on
+        # self._pool (autonomous) for the same reason _ensure_entity does: a raised error
+        # inside a Postgres transaction aborts it even when Python catches it, so any
+        # reads needed before the atomic commit must happen outside that transaction.
+        existing_row = await self._pool.fetchrow(
+            "SELECT metadata FROM public.entities WHERE id = $1", entity_id
+        )
+        metadata: dict[str, Any] = _parse_jsonb(existing_row["metadata"]) if existing_row else {}
+
         if first is not None:
             _deep_set(metadata, "profile.first_name", first)
         if last is not None:
@@ -324,20 +353,11 @@ class ContactBackfillWriter:
             _deep_set(metadata, "profile.avatar_url", avatar_url)
         self._stamp_provenance(metadata, contact)
 
-        entity_id = await self._ensure_entity(first, last, nickname, company)
-
-        if entity_id is None:
-            raise ValueError(
-                f"ContactBackfill: could not resolve or create entity for external_id="
-                f"{contact.external_id!r}"
-            )
-
         db = executor or self._pool
-        # Pass the dict directly: the pool's registered JSONB codec encodes it
+        # Pass the full merged dict directly: the pool's registered JSONB codec encodes it
         # (json.dumps once). Wrapping in json.dumps here would double-encode.
         await db.execute(
-            "UPDATE public.entities SET metadata = metadata || $1::jsonb, updated_at = now()"
-            " WHERE id = $2",
+            "UPDATE public.entities SET metadata = $1, updated_at = now() WHERE id = $2",
             metadata,
             entity_id,
         )

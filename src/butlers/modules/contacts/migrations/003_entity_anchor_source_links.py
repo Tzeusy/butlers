@@ -123,10 +123,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS idx_contacts_source_links_local_entity")
-    op.execute("""
-        ALTER TABLE contacts_source_links
-        DROP CONSTRAINT IF EXISTS contacts_source_links_local_entity_id_fkey
-    """)
+    op.execute(
+        "ALTER TABLE IF EXISTS contacts_source_links"
+        " DROP CONSTRAINT IF EXISTS contacts_source_links_local_entity_id_fkey;"
+    )
     op.execute("""
         DO $$
         BEGIN

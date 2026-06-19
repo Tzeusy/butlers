@@ -294,7 +294,7 @@ async def query_contact_search(
     try:
         entity_rows = await pool.fetch(
             f"""
-            SELECT DISTINCT ON (e.id) {CONTACT_COLUMNS}
+            SELECT {CONTACT_COLUMNS}
             FROM public.entities e
             WHERE e.entity_type = 'person'
               AND (e.metadata->>'merged_into') IS NULL
@@ -314,7 +314,7 @@ async def query_contact_search(
                     AND ef.object ILIKE $1
                 )
               )
-            ORDER BY e.id, e.canonical_name
+            ORDER BY e.canonical_name
             LIMIT $2
             """,
             pattern,

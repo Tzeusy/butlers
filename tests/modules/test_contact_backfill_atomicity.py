@@ -188,7 +188,9 @@ class _RecordingExec:
 
     async def fetchrow(self, query: str, *args, **kwargs):
         self.queries.append(query)
-        return {"id": self._return_id}
+        # Return both 'id' (for INSERT … RETURNING id) and 'metadata' (for
+        # SELECT metadata … after _ensure_entity) so both callers get a valid row.
+        return {"id": self._return_id, "metadata": None}
 
     async def execute(self, query: str, *args, **kwargs) -> None:
         self.queries.append(query)
