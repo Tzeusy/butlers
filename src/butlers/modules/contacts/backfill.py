@@ -280,10 +280,10 @@ class ContactBackfillWriter:
                 # labels is a reference table; only child tables get local_entity_id.
                 col_row = await self._pool.fetchrow(
                     """
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name   = $1
-                      AND column_name  = 'local_entity_id'
-                      AND table_schema = current_schema()
+                    SELECT 1 FROM pg_attribute
+                    WHERE attrelid = to_regclass($1)
+                      AND attname  = 'local_entity_id'
+                      AND NOT attisdropped
                     """,
                     tbl,
                 )

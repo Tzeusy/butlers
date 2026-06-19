@@ -55,11 +55,13 @@ class _FakePool:
 
     async def fetchrow(self, query: str, *args: Any) -> dict[str, Any] | None:
         self.fetchrows_called.append(query)
-        if "to_regclass" in query:
-            return {"exists": self._tables_exist}
-        if "information_schema.columns" in query:
+        # Check pg_attribute before to_regclass: the entity-anchor probe
+        # uses to_regclass inside its pg_attribute query, so order matters.
+        if "pg_attribute" in query:
             # Entity-anchor column probe
             return {"col": 1} if self._entity_columns_exist else None
+        if "to_regclass" in query:
+            return {"exists": self._tables_exist}
         # Duplicate-check queries return None (no existing row).
         return None
 
