@@ -166,7 +166,9 @@ class TestDunbarRankingWarmth:
             fetch_call_count[0] += 1
             if fetch_call_count[0] == 1:
                 # entity name rows
-                return [_row(id=entity_id, canonical_name="Alice Test", aliases=[], avatar_url=None)]
+                return [
+                    _row(id=entity_id, canonical_name="Alice Test", aliases=[], avatar_url=None)
+                ]
             else:
                 # interaction_30d rows — 2 interactions in last 30d
                 # (avatar_url query removed from public.contacts — bu-j77a5)
