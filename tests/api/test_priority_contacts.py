@@ -123,6 +123,51 @@ async def test_list_priority_contacts_count_query_is_unfiltered(app):
     assert "where" not in count_sql.lower()
 
 
+async def test_list_priority_contacts_uses_entities_for_name(app):
+    """GET data query must join public.entities (not public.contacts) for display name."""
+    pool = AsyncMock()
+    pool.fetchval = AsyncMock(return_value=0)
+    pool.fetch = AsyncMock(return_value=[])
+    _app_with_mock_db(app, shared_pool=pool)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await client.get("/api/ingestion/priority-contacts")
+
+    data_sql = pool.fetch.call_args[0][0]
+    assert "public.contacts" not in data_sql
+    assert "public.entities" in data_sql
+
+
+async def test_post_priority_contact_validates_against_entities(app):
+    """POST validation must query public.entities, not public.contacts (bu-vat93)."""
+    contact_id = uuid4()
+    inserted_row = {
+        "contact_id": contact_id,
+        "added_at": _NOW,
+        "added_by": "dashboard",
+    }
+    pool = AsyncMock()
+    pool.fetchval = AsyncMock(return_value=True)  # entity exists
+    pool.fetchrow = AsyncMock(return_value=_make_record(inserted_row))
+    _app_with_mock_db(app, shared_pool=pool)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await client.post(
+            "/api/ingestion/priority-contacts",
+            json={"contact_id": str(contact_id)},
+        )
+
+    # The entity-existence check is the first fetchval call; later calls
+    # come from the audit log pathway.
+    first_fetchval_sql = pool.fetchval.call_args_list[0][0][0]
+    assert "public.contacts" not in first_fetchval_sql
+    assert "public.entities" in first_fetchval_sql
+
+
 async def test_list_priority_contacts_503_on_db_unavailable(app):
     _app_with_mock_db(app, shared_pool_error=KeyError("no shared pool"))
     async with httpx.AsyncClient(
@@ -145,7 +190,7 @@ async def test_post_priority_contact_201(app):
         "added_by": "dashboard",
     }
     pool = AsyncMock()
-    pool.fetchval = AsyncMock(return_value=True)  # contact exists
+    pool.fetchval = AsyncMock(return_value=True)  # entity exists
     pool.fetchrow = AsyncMock(return_value=_make_record(inserted_row))
     _app_with_mock_db(app, shared_pool=pool)
 
@@ -165,7 +210,7 @@ async def test_post_priority_contact_201(app):
 
 async def test_post_priority_contact_400_on_unknown_contact(app):
     pool = AsyncMock()
-    pool.fetchval = AsyncMock(return_value=False)  # contact does NOT exist
+    pool.fetchval = AsyncMock(return_value=False)  # entity does NOT exist
     _app_with_mock_db(app, shared_pool=pool)
 
     async with httpx.AsyncClient(
@@ -201,7 +246,7 @@ async def test_post_priority_contact_400_on_roles_field(app):
 async def test_post_priority_contact_409_on_duplicate(app):
     """A duplicate contact_id must return HTTP 409."""
     pool = AsyncMock()
-    pool.fetchval = AsyncMock(return_value=True)  # contact exists
+    pool.fetchval = AsyncMock(return_value=True)  # entity exists
 
     async def _raise_duplicate(*_args, **_kwargs):
         raise asyncpg.UniqueViolationError()
