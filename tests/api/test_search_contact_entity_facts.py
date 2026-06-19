@@ -63,8 +63,7 @@ async def _get(app: FastAPI, q: str) -> dict:
 
 
 async def test_contact_found_by_name(app: FastAPI) -> None:
-    """Contact matched by c.name ILIKE → appears in results with correct title."""
-    contact_id = uuid4()
+    """Person entity matched by canonical_name ILIKE → appears with correct title."""
     entity_id = uuid4()
 
     contact_row = _make_record({"id": entity_id, "name": "Alice Smith", "entity_id": entity_id})
