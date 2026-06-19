@@ -555,6 +555,17 @@ async def test_contact_update_entity_id_updates_map(pool):
         "contact_entity_map entity_id must reflect the updated entity_id"
     )
 
+    # Clear the entity_id — map row must be deleted.
+    updated_none = await contact_update(pool, contact_id, entity_id=None)
+    assert updated_none["entity_id"] is None, "contact row entity_id must be None after clearing"
+
+    map_row_none = await pool.fetchrow(
+        "SELECT entity_id FROM contact_entity_map WHERE contact_id = $1", contact_id
+    )
+    assert map_row_none is None, (
+        "contact_entity_map row must be deleted when entity_id is explicitly set to None"
+    )
+
 
 async def test_contact_get(pool):
     """contact_get returns the contact by ID."""

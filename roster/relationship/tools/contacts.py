@@ -435,27 +435,33 @@ async def contact_update(
                 nickname=result.get("nickname"),
             )
 
-    # Upsert contact_entity_map when entity_id is being changed (rel_029 / bu-0tg4s).
+    # Sync contact_entity_map when entity_id is being changed (rel_029 / bu-0tg4s).
     # contact_create populates this map at creation time; contact_update must keep it
-    # in sync when entity_id is explicitly reassigned.  Best-effort: catch
+    # in sync when entity_id is explicitly reassigned or cleared.  Best-effort: catch
     # UndefinedTableError so the update degrades gracefully if rel_029 has not run.
-    if "entity_id" in to_update and to_update["entity_id"] is not None:
+    if "entity_id" in to_update:
         try:
-            await pool.execute(
-                """
-                INSERT INTO contact_entity_map (contact_id, entity_id)
-                VALUES ($1, $2)
-                ON CONFLICT (contact_id) DO UPDATE SET entity_id = EXCLUDED.entity_id
-                """,
-                contact_id,
-                to_update["entity_id"],
-            )
+            if to_update["entity_id"] is not None:
+                await pool.execute(
+                    """
+                    INSERT INTO contact_entity_map (contact_id, entity_id)
+                    VALUES ($1, $2)
+                    ON CONFLICT (contact_id) DO UPDATE SET entity_id = EXCLUDED.entity_id
+                    """,
+                    contact_id,
+                    to_update["entity_id"],
+                )
+            else:
+                await pool.execute(
+                    "DELETE FROM contact_entity_map WHERE contact_id = $1",
+                    contact_id,
+                )
         except asyncpg.UndefinedTableError:
             # rel_029 migration has not run yet; not fatal.
             pass
         except asyncpg.PostgresError:
             logger.warning(
-                "contact_update: failed to upsert contact_entity_map for %s",
+                "contact_update: failed to sync contact_entity_map for %s",
                 contact_id,
                 exc_info=True,
             )
