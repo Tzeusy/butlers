@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import uuid as _uuid_mod
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -680,13 +680,21 @@ async def record_transaction(
                 match_transaction_to_bills,
             )
 
+            # Ensure posted_at is timezone-aware (defensive: callers should pass
+            # TZ-aware datetimes, but guard against naive inputs so that
+            # astimezone(UTC) inside match_transaction_to_bills never silently
+            # shifts the date by assuming the system local timezone).
+            _posted_at_tz = (
+                posted_at if posted_at.tzinfo is not None else posted_at.replace(tzinfo=UTC)
+            )
+
             _txn_for_match: dict[str, Any] = {
                 "id": str(row["id"]),
                 "direction": effective_direction,
                 "merchant": merchant,
                 "currency": currency.upper(),
-                "amount": float(stored_amount),
-                "posted_at": posted_at,
+                "amount": stored_amount,  # keep Decimal; reconciliation converts internally
+                "posted_at": _posted_at_tz,
                 "metadata": meta_dict,
             }
             _match = await match_transaction_to_bills(pool, _txn_for_match)
@@ -699,8 +707,8 @@ async def record_transaction(
                     _bill["id"],
                     {
                         "id": str(row["id"]),
-                        "amount": float(stored_amount),
-                        "posted_at": posted_at,
+                        "amount": stored_amount,  # keep Decimal; _settle_bill converts internally
+                        "posted_at": _posted_at_tz,
                         "payment_method": payment_method,
                     },
                 )
@@ -710,11 +718,7 @@ async def record_transaction(
                             "bill_id": str(_bill["id"]),
                             "payee": _bill["payee"],
                             "amount": float(stored_amount),
-                            "paid_at": (
-                                posted_at.isoformat()
-                                if hasattr(posted_at, "isoformat")
-                                else str(posted_at)
-                            ),
+                            "paid_at": _posted_at_tz.isoformat(),
                             "txn_id": str(row["id"]),
                         }
                     }
