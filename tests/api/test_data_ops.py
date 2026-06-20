@@ -442,6 +442,23 @@ async def test_download_skip_columns_excludes_embeddings(app):
     assert "description_embedding" not in row
 
 
+async def test_download_table_fetch_failure_returns_500(app):
+    """If a table fetch fails mid-export, the endpoint returns 500 (fail-fast, no silent truncation)."""
+    pool = _make_pool()
+    pool.fetch = AsyncMock(side_effect=RuntimeError("db error"))
+    db = _make_db(pool)
+    app.dependency_overrides[_get_db_manager] = lambda: db
+
+    export_id = "test-export-fetch-fail"
+    url = _make_download_url(export_id, "audit")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(url)
+
+    assert resp.status_code == 500
+    assert "Export failed" in resp.json()["detail"]
+
+
 async def test_download_content_type_and_disposition(app):
     """Download response has application/octet-stream content-type and .enc filename."""
     pool = _make_pool()

@@ -428,6 +428,8 @@ async def _build_export_zip(pool: object, scope: str) -> bytes:  # type: ignore[
 
     Raises:
         HTTPException(400): if *scope* is not a recognised scope name.
+        HTTPException(500): if a database fetch fails for any table in the scope
+            (fail-fast — a partial export is worse than a clear error).
     """
     resolved = _SCOPE_ALIASES.get(scope, scope)
     if resolved == "all":
@@ -450,17 +452,21 @@ async def _build_export_zip(pool: object, scope: str) -> bytes:  # type: ignore[
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for table_name, query in table_entries:
-            lines: list[str] = []
+            safe_name = table_name.replace(".", "_").replace("/", "_")
             try:
                 rows = await pool.fetch(query)  # type: ignore[attr-defined]
-                for row in rows:
-                    cleaned = {k: v for k, v in dict(row).items() if k not in _SKIP_COLUMNS}
-                    lines.append(json.dumps(cleaned, default=str))
-            except Exception:
-                logger.warning("export: failed to fetch table %s", table_name, exc_info=True)
-                # Continue — include what we can; omission is logged above.
-            safe_name = table_name.replace(".", "_").replace("/", "_")
-            zf.writestr(f"{safe_name}.ndjson", "\n".join(lines))
+                with zf.open(f"{safe_name}.ndjson", "w") as member_file:
+                    for row in rows:
+                        cleaned = {k: v for k, v in dict(row).items() if k not in _SKIP_COLUMNS}
+                        member_file.write((json.dumps(cleaned, default=str) + "\n").encode())
+            except HTTPException:
+                raise
+            except Exception as exc:
+                logger.error("export: failed to export table %s", table_name, exc_info=True)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Export failed: unable to fetch table {table_name}",
+                ) from exc
 
     return buf.getvalue()
 
