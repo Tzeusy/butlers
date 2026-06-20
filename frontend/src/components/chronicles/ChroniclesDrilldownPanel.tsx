@@ -16,7 +16,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ChevronRight } from "lucide-react";
 
 import { useChroniclesAggregates, useChroniclesPointEvents } from "@/hooks/use-chronicles";
-import { startOfDayInTz, endOfDayInTz } from "@/components/chronicles/tz-format";
+import { dayWindowInTz } from "@/components/chronicles/tz-format";
 import { Section } from "@/components/overview/Section";
 import { Scrubber } from "@/components/workspace/Scrubber";
 import { MapPanContext, useMapPanContextValue } from "@/components/workspace/map-pan-store";
@@ -54,6 +54,7 @@ export function ChroniclesDrilldownPanel({ date, tz }: ChroniclesDrilldownPanelP
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
+        aria-controls="chronicles-day-detail"
         className="inline-flex cursor-pointer items-center gap-2 tnum uppercase"
         style={{
           fontFamily: "var(--font-mono)",
@@ -72,7 +73,9 @@ export function ChroniclesDrilldownPanel({ date, tz }: ChroniclesDrilldownPanelP
         />
         {open ? "Hide the day in detail" : "Open the day in detail"}
       </button>
-      {open ? <DrilldownBody date={date} tz={tz} /> : null}
+      {/* Wrapper always present so aria-controls resolves even when collapsed;
+          the heavy body mounts only on expand (lazy-loaded on first interaction). */}
+      <div id="chronicles-day-detail">{open ? <DrilldownBody date={date} tz={tz} /> : null}</div>
     </section>
   );
 }
@@ -80,12 +83,10 @@ export function ChroniclesDrilldownPanel({ date, tz }: ChroniclesDrilldownPanelP
 function DrilldownBody({ date, tz }: ChroniclesDrilldownPanelProps) {
   const mapPanValue = useMapPanContextValue();
 
-  // The day window: tz-local midnight boundaries, matching the backend's
-  // day_window_utc. The date string is anchored at UTC noon so the calendar
-  // day never drifts with the browser timezone.
-  const dayAnchor = useMemo(() => new Date(`${date}T12:00:00Z`), [date]);
-  const from = useMemo(() => startOfDayInTz(dayAnchor, tz), [dayAnchor, tz]);
-  const to = useMemo(() => endOfDayInTz(dayAnchor, tz), [dayAnchor, tz]);
+  // The day window: tz-local midnight boundaries, identical to the backend's
+  // day_window_utc for every zone (the day string is treated as naive local
+  // midnight in tz, never reinterpreted through a UTC anchor).
+  const { from, to } = useMemo(() => dayWindowInTz(date, tz), [date, tz]);
 
   // A settled past day never changes: polling is off.
   const refetchInterval = false as const;

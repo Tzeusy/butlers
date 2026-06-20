@@ -96,3 +96,18 @@ and the existing eyebrow tokens; no raw hex.
 - Updating the stale `archetype="workspace"` reference to `ChroniclesPage` in
   `about/lay-and-land/frontend.md` (the code and the dashboard-chronicles spec
   are already editorial; the topology doc lags and is tracked separately).
+
+## Consciously deferred (from the adversarial review)
+
+- **Eyebrow date label in UTC+13/+14 zones.** The selected-day label renders
+  via the doctrine-mandated `<Time precision="short-date">`, whose date-only
+  handling anchors at UTC noon and so reads one day early only for UTC+13/+14
+  zones. The owner default is Asia/Singapore (UTC+8), which is exact. The
+  drilldown window itself is exact for every zone (see Decision 1 / the
+  `dayWindowInTz` helper). Bypassing `<Time>` for a calendar-date label to fix
+  the exotic-zone edge was judged not worth violating the single-formatter rule.
+- **`earliest_date` ignores override tombstones.** It is `MIN(start_at)` over
+  non-tombstoned base episodes. An override that tombstones the single earliest
+  episode could leave the backward bound one day early. The bound is advisory
+  (it only stops infinite empty backward stepping), so the extra override join
+  was not worth the cost.

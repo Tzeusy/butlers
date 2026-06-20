@@ -6,6 +6,7 @@ import {
   greetSubject,
   isAtEarliest,
   isAtLatest,
+  isValidIsoDay,
   nextIsoDay,
   prevIsoDay,
 } from "./chronicles-date-nav";
@@ -36,6 +37,20 @@ describe("chronicles-date-nav", () => {
     // no known earliest => never at the earliest
     expect(isAtEarliest("2020-01-01", null)).toBe(false);
     expect(isAtEarliest("2020-01-01", undefined)).toBe(false);
+  });
+
+  it("validates ISO day strings and rejects malformed input", () => {
+    expect(isValidIsoDay("2026-05-08")).toBe(true);
+    expect(isValidIsoDay("2024-02-29")).toBe(true); // real leap day
+    expect(isValidIsoDay(null)).toBe(false);
+    expect(isValidIsoDay(undefined)).toBe(false);
+    expect(isValidIsoDay("")).toBe(false);
+    expect(isValidIsoDay("garbage")).toBe(false);
+    expect(isValidIsoDay("2026-5-8")).toBe(false); // not zero-padded
+    expect(isValidIsoDay("2026-13-01")).toBe(false); // impossible month
+    expect(isValidIsoDay("2026-02-30")).toBe(false); // impossible day
+    expect(isValidIsoDay("2025-02-29")).toBe(false); // not a leap year
+    expect(isValidIsoDay("2026-05-08T00:00:00")).toBe(false); // has time
   });
 
   it("derives a date-relative greeting subject", () => {

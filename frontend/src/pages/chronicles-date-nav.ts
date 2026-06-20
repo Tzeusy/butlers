@@ -35,6 +35,20 @@ const MONTHS_SHORT = [
   "Dec",
 ] as const;
 
+const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * True when `s` is a real "YYYY-MM-DD" calendar date. Guards against malformed
+ * `?date=` deep links that would otherwise produce Invalid Dates downstream
+ * (a crashing stepper or an "undefined" greeting).
+ */
+export function isValidIsoDay(s: string | null | undefined): s is string {
+  if (!s || !ISO_DAY_RE.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  // Round-trip rejects normalized impossibilities (e.g. 2026-02-30, 2026-13-01).
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
 function isoToUtc(iso: string): Date {
   return new Date(`${iso}T00:00:00Z`);
 }

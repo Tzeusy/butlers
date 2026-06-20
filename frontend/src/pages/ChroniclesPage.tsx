@@ -38,6 +38,7 @@ import {
   greetSubject,
   isAtEarliest,
   isAtLatest,
+  isValidIsoDay,
   nextIsoDay,
   prevIsoDay,
 } from "@/pages/chronicles-date-nav";
@@ -158,7 +159,9 @@ export default function ChroniclesPage() {
   // The most recent settled day is the default and the forward bound: today is
   // incomplete and is not shown.
   const latest = yesterdayInTimeZone(ownerTz);
-  const requestedDate = searchParams.get("date") ?? latest;
+  // Ignore malformed ?date= values so every downstream date is a real day.
+  const dateParam = searchParams.get("date");
+  const requestedDate = isValidIsoDay(dateParam) ? dateParam : latest;
 
   // Forward-clamp immediately; the backward (earliest) bound needs earliest_date
   // from the response, so it is applied after the first fetch.
@@ -230,7 +233,13 @@ export default function ChroniclesPage() {
             >
               <ChevronLeft aria-hidden />
             </Button>
-            <span className="tnum" style={EYEBROW_STYLE}>
+            <span
+              className="tnum"
+              style={EYEBROW_STYLE}
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
               <Time value={selectedDate} mode="absolute" precision="short-date" showTitle={false} />
             </span>
             <Button
@@ -246,6 +255,7 @@ export default function ChroniclesPage() {
               <span
                 style={{ ...EYEBROW_STYLE, fontSize: "9px", letterSpacing: "0.08em" }}
                 title="The day-close summary may be out of date."
+                aria-label="Day-close summary may be out of date"
               >
                 stale
               </span>

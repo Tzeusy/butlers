@@ -250,4 +250,79 @@ describe("ChroniclesPage editorial archetype", () => {
     expect(_briefingArgs?.date).toBe("2026-05-08");
     unmount();
   });
+
+  it("forward-clamps an out-of-range (future) deep link to the most recent settled day", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-09T16:30:00.000Z"));
+    _briefing = buildBriefing();
+
+    const { unmount } = mountPage("/chronicles?date=2099-01-01");
+
+    // The self-heal path resolves a future deep link to yesterday.
+    expect(_briefingArgs?.date).toBe("2026-05-09");
+    unmount();
+  });
+
+  it("selects a day when a recent-days row is clicked", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-09T16:30:00.000Z"));
+    _briefing = buildBriefing({
+      recent_days: [
+        { date: "2026-05-05", total_minutes: 120, top_lane: "tasks", episode_count: 4 },
+      ],
+    });
+
+    const { container, unmount } = mountPage();
+    const row = container.querySelector('button[aria-label^="View "]') as HTMLButtonElement;
+    expect(row).toBeTruthy();
+    act(() => {
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(_briefingArgs?.date).toBe("2026-05-05");
+    unmount();
+  });
+
+  it("disables the previous-day button at the earliest chronicled day", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-09T16:30:00.000Z"));
+    _briefing = buildBriefing({ date: "2026-01-01", earliest_date: "2026-01-01" });
+
+    const { container, unmount } = mountPage("/chronicles?date=2026-01-01");
+    const prev = container.querySelector('button[aria-label="Previous day"]') as HTMLButtonElement;
+    const next = container.querySelector('button[aria-label="Next day"]') as HTMLButtonElement;
+    expect(prev.disabled).toBe(true);
+    expect(next.disabled).toBe(false);
+    unmount();
+  });
+
+  it("leaves backward navigation open when earliest_date is null", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-09T16:30:00.000Z"));
+    _briefing = buildBriefing({ date: "2026-03-01", earliest_date: null });
+
+    const { container, unmount } = mountPage("/chronicles?date=2026-03-01");
+    const prev = container.querySelector('button[aria-label="Previous day"]') as HTMLButtonElement;
+    expect(prev.disabled).toBe(false);
+    unmount();
+  });
+
+  it("renders KPI and greeting edge branches", () => {
+    _briefing = buildBriefing({
+      state_class: "urgent",
+      headline: "2 things need attention.",
+      kpi: {
+        hours_by_top_lanes: [],
+        longest_episode_minutes: 0,
+        longest_episode_title: null,
+        longest_gap_minutes: 400, // >= 6h
+        sleep_minutes: 0,
+        streaks: { sleep: 0, exercise: 0 },
+      },
+    });
+    const html = renderPage();
+    expect(html).toContain("no lane data");
+    expect(html).toContain("above 6h waking");
+    // urgent state predicate, with the most-recent-day subject.
+    expect(html).toContain("had loose ends.");
+  });
 });
