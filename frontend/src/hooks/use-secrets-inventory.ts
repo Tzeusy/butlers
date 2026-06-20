@@ -248,9 +248,10 @@ function isCliAuthSystemCredential(credential: SystemCredential): boolean {
  * is server-generated and write-only, and the Spotify tokens are OAuth runtime
  * artifacts. They are configured via their drawers in the Add → providers flow.
  *
- * Keep this in sync with the drawer roster in ProviderConfigDrawer.tsx. (Home
- * Assistant, Steam, and WhatsApp credentials are not stored as system secrets,
- * so only the categories that actually appear in butler_secrets are listed.)
+ * Keep this in sync with the drawer roster (DRAWER_PROVIDER_SLUGS in
+ * pages.tsx). (Home Assistant, Steam, and WhatsApp credentials are not stored
+ * as system secrets, so only the categories that actually appear in
+ * butler_secrets are listed.)
  */
 const PROVIDER_MANAGED_SYSTEM_CATEGORIES = new Set(["owntracks", "spotify"]);
 
