@@ -244,6 +244,8 @@ export type {
   ButlerSkill,
   ButlerSummary,
   ProcessFacts,
+  CalendarConflictEntry,
+  CalendarSuggestedSlot,
   CalendarWorkspaceCapabilities,
   CalendarWorkspaceCapabilitiesSync,
   CalendarWorkspaceButlerMutationAction,
