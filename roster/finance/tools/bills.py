@@ -15,6 +15,8 @@ from butlers.tools.finance._helpers import _deserialize_row
 
 logger = logging.getLogger(__name__)
 
+_background_tasks: set[asyncio.Task[None]] = set()
+
 _VALID_STATUSES = ("pending", "paid", "overdue")
 _VALID_FREQUENCIES = ("one_time", "weekly", "monthly", "quarterly", "yearly", "custom")
 
@@ -247,7 +249,9 @@ async def track_bill(
 
     # Fire-and-forget SPO mirror write to public.facts. Scheduled as a
     # background task so failures never roll back the primary upsert.
-    asyncio.create_task(
+    # Hold a strong reference in _background_tasks so the task is not
+    # garbage-collected before it completes; the done-callback removes it.
+    _task = asyncio.create_task(
         _mirror_bill_to_spo(
             pool=pool,
             payee=payee,
@@ -263,6 +267,8 @@ async def track_bill(
             source_message_id=source_message_id,
         )
     )
+    _background_tasks.add(_task)
+    _task.add_done_callback(_background_tasks.discard)
 
     return result
 
