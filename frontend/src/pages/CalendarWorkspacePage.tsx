@@ -2549,18 +2549,28 @@ export default function CalendarWorkspacePage() {
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium opacity-70">Suggested times:</p>
                       <div className="flex flex-wrap gap-2">
-                        {userEventConflict.suggested_slots.slice(0, 3).map((slot, idx) => (
-                          <button
-                            key={idx}
-                            type="button"
-                            data-testid="conflict-slot-pill"
-                            onClick={() => submitConflictSlot(slot)}
-                            disabled={userEventMutation.isPending}
-                            className="rounded-full border border-[var(--amber,#f59e0b)] px-3 py-1 text-xs font-medium hover:bg-[color-mix(in_srgb,var(--amber,#f59e0b)_15%,transparent)] transition-colors disabled:opacity-40"
-                          >
-                            {format(parseISO(slot.start_at), "h:mm a")} – {format(parseISO(slot.end_at), "h:mm a")}
-                          </button>
-                        ))}
+                        {userEventConflict.suggested_slots.slice(0, 3).map((slot, idx) => {
+                          const originalDay = format(
+                            parseISO(userEventConflict.pendingMutation.payload.start_at as string),
+                            "yyyy-MM-dd",
+                          );
+                          const slotDay = format(parseISO(slot.start_at), "yyyy-MM-dd");
+                          const isDifferentDay = slotDay !== originalDay;
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              data-testid="conflict-slot-pill"
+                              onClick={() => submitConflictSlot(slot)}
+                              disabled={userEventMutation.isPending}
+                              className="rounded-full border border-[var(--amber,#f59e0b)] px-3 py-1 text-xs font-medium hover:bg-[color-mix(in_srgb,var(--amber,#f59e0b)_15%,transparent)] transition-colors disabled:opacity-40"
+                            >
+                              {isDifferentDay
+                                ? `${format(parseISO(slot.start_at), "MMM d, h:mm a")} – ${format(parseISO(slot.end_at), "h:mm a")}`
+                                : `${format(parseISO(slot.start_at), "h:mm a")} – ${format(parseISO(slot.end_at), "h:mm a")}`}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   ) : null}

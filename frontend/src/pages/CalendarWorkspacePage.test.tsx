@@ -939,6 +939,68 @@ describe("CalendarWorkspacePage", () => {
     expect(bookAnyway).toBeDefined();
   });
 
+  it("slot pill shows date prefix when suggested slot is on a different day", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({
+      data: {
+        action: "create",
+        tool_name: "calendar_create_event",
+        request_id: "req-cross-day",
+        result: { status: "conflict", policy: "suggest" },
+        conflicts: [],
+        suggested_slots: [
+          {
+            // Same day as original request — no date prefix expected
+            start_at: "2026-03-01T10:30:00Z",
+            end_at: "2026-03-01T11:00:00Z",
+            timezone: "UTC",
+          },
+          {
+            // Different day — date prefix expected
+            start_at: "2026-03-02T09:00:00Z",
+            end_at: "2026-03-02T09:30:00Z",
+            timezone: "UTC",
+          },
+        ],
+        projection_version: null,
+        staleness_ms: null,
+        projection_freshness: null,
+      },
+      meta: {},
+    });
+    setUserMutationState({ mutateAsync });
+
+    renderPage("/calendar?view=user&range=week&anchor=2026-03-01");
+
+    const openCreateButton = document.querySelector(
+      'button[aria-label="Create user event"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      openCreateButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flush();
+    });
+
+    const dialog = findDialogByTitle("Create user event");
+    const titleInput = dialog?.querySelector("#event-title") as HTMLInputElement;
+    await act(async () => {
+      setInputValue(titleInput, "Cross-day test");
+      await flush();
+    });
+
+    const form = titleInput.closest("form") as HTMLFormElement;
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await flush();
+    });
+
+    const pills = dialog?.querySelectorAll('[data-testid="conflict-slot-pill"]') as NodeListOf<HTMLButtonElement>;
+    expect(pills?.length).toBe(2);
+    // First pill: same day — time only, no date prefix
+    expect(pills[0].textContent).toMatch(/^\d+:\d+ [AP]M/);
+    expect(pills[0].textContent).not.toMatch(/Mar \d/);
+    // Second pill: different day — must include the date prefix
+    expect(pills[1].textContent).toContain("Mar 2");
+  });
+
   it("slot pill re-submits with new start/end and same request_id", async () => {
     const requestId = "req-slot-retry";
     let callCount = 0;
