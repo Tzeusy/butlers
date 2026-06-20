@@ -965,6 +965,97 @@ class TestCalendarIdRoleSeparation:
             == "butlers@group.calendar.google.com"
         )
 
+    async def test_on_startup_restores_default_target_calendar_id(self):
+        """on_startup must restore a saved default-target calendar ID from the credential store."""
+        mod = CalendarModule()
+        store = AsyncMock()
+
+        async def _load_shared(key):
+            return {
+                _CREDENTIAL_KEY_CALENDAR_ID: "butlers@group.calendar.google.com",
+                _CREDENTIAL_KEY_DEFAULT_TARGET_CALENDAR_ID: "chosen@example.com",
+            }.get(key)
+
+        store.load_shared.side_effect = _load_shared
+        db = MagicMock()
+        db.pool = MagicMock()
+
+        async def _noop_poller():
+            pass
+
+        mock_provider_factory = MagicMock(return_value=MagicMock())
+
+        with (
+            patch.object(mod, "_resolve_credentials", new=AsyncMock(return_value=MagicMock())),
+            patch.object(
+                mod,
+                "_resolve_startup_calendar_id",
+                new=AsyncMock(return_value="butlers@group.calendar.google.com"),
+            ),
+            patch.object(
+                mod,
+                "_discover_and_register_all_calendars",
+                new=AsyncMock(
+                    return_value=["chosen@example.com", "butlers@group.calendar.google.com"]
+                ),
+            ),
+            patch.object(mod, "_run_internal_projection_poller", new=_noop_poller),
+            patch.dict(CalendarModule._PROVIDER_CLASSES, {"google": mock_provider_factory}),
+        ):
+            await mod.on_startup(
+                {"provider": "google"},
+                db=db,
+                credential_store=store,
+            )
+
+        assert mod._default_target_calendar_id == "chosen@example.com"
+
+    async def test_on_startup_ignores_stale_default_target_not_in_discovered_list(self):
+        """on_startup must not apply a stored default-target that is no longer a known calendar."""
+        mod = CalendarModule()
+        store = AsyncMock()
+
+        async def _load_shared(key):
+            return {
+                _CREDENTIAL_KEY_CALENDAR_ID: "butlers@group.calendar.google.com",
+                _CREDENTIAL_KEY_DEFAULT_TARGET_CALENDAR_ID: "stale@example.com",
+            }.get(key)
+
+        store.load_shared.side_effect = _load_shared
+        db = MagicMock()
+        db.pool = MagicMock()
+
+        async def _noop_poller():
+            pass
+
+        mock_provider_factory = MagicMock(return_value=MagicMock())
+
+        with (
+            patch.object(mod, "_resolve_credentials", new=AsyncMock(return_value=MagicMock())),
+            patch.object(
+                mod,
+                "_resolve_startup_calendar_id",
+                new=AsyncMock(return_value="butlers@group.calendar.google.com"),
+            ),
+            patch.object(
+                mod,
+                "_discover_and_register_all_calendars",
+                new=AsyncMock(
+                    return_value=["owner@example.com", "butlers@group.calendar.google.com"]
+                ),
+            ),
+            patch.object(mod, "_run_internal_projection_poller", new=_noop_poller),
+            patch.dict(CalendarModule._PROVIDER_CLASSES, {"google": mock_provider_factory}),
+        ):
+            await mod.on_startup(
+                {"provider": "google"},
+                db=db,
+                credential_store=store,
+            )
+
+        # stale@example.com is not in the discovered list — must be silently dropped.
+        assert mod._default_target_calendar_id is None
+
 
 # ---------------------------------------------------------------------------
 # Error hierarchy
