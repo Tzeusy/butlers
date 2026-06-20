@@ -604,14 +604,24 @@ async def get_medication_adherence(
     pool = _pool(db)
 
     # Determine the effective window boundaries and duration in days.
+    # Normalise all datetimes to UTC-aware so arithmetic never raises TypeError
+    # when a query param arrives without timezone info (e.g. "?start=2026-01-01T00:00:00").
     now = datetime.now(UTC)
     effective_end = end if end is not None else now
+    if effective_end.tzinfo is None:
+        effective_end = effective_end.replace(tzinfo=UTC)
+
     if start is not None:
-        effective_start = start
-        window = max((effective_end - effective_start).days, 1)
+        effective_start = start if start.tzinfo is not None else start.replace(tzinfo=UTC)
+        if effective_start > effective_end:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="start cannot be after end",
+            )
+        window = max((effective_end - effective_start).total_seconds() / 86400, 1.0)
     else:
         days = window_days if window_days is not None else _DEFAULT_ADHERENCE_WINDOW_DAYS
-        window = days
+        window = float(days)
         effective_start = effective_end - timedelta(days=days)
 
     try:

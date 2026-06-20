@@ -374,6 +374,58 @@ async def test_adherence_forwards_window(monkeypatch):
     assert seen["end"] is not None
 
 
+async def test_adherence_naive_start_with_no_end(monkeypatch):
+    """Naive start param + omitted end must not raise TypeError (timezone mismatch).
+
+    When ``start`` lacks timezone info and ``end`` is omitted, ``effective_end``
+    defaults to ``datetime.now(UTC)`` (timezone-aware).  Without normalisation the
+    subtraction raises ``TypeError: can't subtract offset-naive and offset-aware
+    datetimes``, producing a 500.  The route must normalise both sides to UTC and
+    return 200.
+    """
+    med_id = str(uuid.uuid4())
+
+    async def fake_history(pool, medication_id, *, start_date, end_date):
+        return {
+            "medication": {"id": med_id, "frequency": "daily"},
+            "doses": [],
+            "adherence_rate": None,
+        }
+
+    monkeypatch.setattr(health_tools, "medication_history", fake_history)
+
+    app, _ = _make_app()
+    async with _client(app) as client:
+        # Naive ISO-8601 (no trailing Z or offset) — FastAPI parses as naive datetime
+        resp = await client.get(
+            f"/api/health/medications/{med_id}/adherence",
+            params={"start": "2026-01-01T00:00:00"},
+        )
+    # Must not 500; effective window is today-minus-jan1 days (≥1)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["expected_doses"] >= 1
+
+
+async def test_adherence_start_after_end_returns_400(monkeypatch):
+    """start > end must return 400 Bad Request."""
+    med_id = str(uuid.uuid4())
+
+    async def fake_history(pool, medication_id, *, start_date, end_date):  # pragma: no cover
+        return {"medication": {}, "doses": [], "adherence_rate": None}
+
+    monkeypatch.setattr(health_tools, "medication_history", fake_history)
+
+    app, _ = _make_app()
+    async with _client(app) as client:
+        resp = await client.get(
+            f"/api/health/medications/{med_id}/adherence",
+            params={"start": "2026-01-31T00:00:00Z", "end": "2026-01-01T00:00:00Z"},
+        )
+    assert resp.status_code == 400
+    assert "start" in resp.json()["detail"].lower()
+
+
 async def test_adherence_404_when_medication_missing(monkeypatch):
     """A ValueError from the tool maps to 404."""
     med_id = str(uuid.uuid4())
