@@ -95,7 +95,8 @@ and the existing eyebrow tokens; no raw hex.
 - A live "today so far" mode (Chronicles shows settled days only).
 - Updating the stale `archetype="workspace"` reference to `ChroniclesPage` in
   `about/lay-and-land/frontend.md` (the code and the dashboard-chronicles spec
-  are already editorial; the topology doc lags and is tracked separately).
+  are already editorial; the topology doc lags). This drift predates this change
+  and is tracked in bu-26j38.
 
 ## Consciously deferred (from the adversarial review)
 

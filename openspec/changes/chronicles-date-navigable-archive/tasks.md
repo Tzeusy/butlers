@@ -36,4 +36,4 @@
 - Pop-over calendar month picker (no calendar primitive exists yet).
 - Live "today so far" mode.
 - Refreshing the stale `archetype="workspace"` Chronicles reference in
-  `about/lay-and-land/frontend.md` (tracked separately).
+  `about/lay-and-land/frontend.md` (pre-existing drift, tracked in bu-26j38).
