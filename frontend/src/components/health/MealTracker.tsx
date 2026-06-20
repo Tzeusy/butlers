@@ -369,6 +369,7 @@ export default function MealTracker({
             <input
               type="date"
               value={since}
+              max={until || undefined}
               onChange={(e) => {
                 setSince(e.target.value);
                 setPage(0);
@@ -381,6 +382,7 @@ export default function MealTracker({
             <input
               type="date"
               value={until}
+              min={since || undefined}
               onChange={(e) => {
                 setUntil(e.target.value);
                 setPage(0);
