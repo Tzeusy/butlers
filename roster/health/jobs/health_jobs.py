@@ -559,7 +559,7 @@ async def run_insight_scan(
     # -----------------------------------------------------------------------
     # 5. Cross-signal correlation: adherence dip preceding a symptom flare
     # -----------------------------------------------------------------------
-    if not await _scan_adherence_symptom_correlation(db_pool, now_utc, _submit):
+    if not await _scan_adherence_symptom_correlation(db_pool, now_utc, _submit, med_rows):
         logger.info("Health insight scan: verbosity=off, exiting early after adherence correlation")
         stats["early_exit"] = True
         return stats
@@ -567,7 +567,7 @@ async def run_insight_scan(
     # -----------------------------------------------------------------------
     # 6. Cross-signal correlation: slow measurement drift
     # -----------------------------------------------------------------------
-    if not await _scan_measurement_drift_correlation(db_pool, now_utc, _submit):
+    if not await _scan_measurement_drift_correlation(db_pool, now_utc, _submit, measurement_types):
         logger.info("Health insight scan: verbosity=off, exiting early after drift correlation")
         stats["early_exit"] = True
         return stats
@@ -608,6 +608,7 @@ async def _scan_adherence_symptom_correlation(
     db_pool: asyncpg.Pool,
     now_utc: datetime,
     submit: _SubmitFn,
+    med_rows: list[Any],
 ) -> bool:
     """Correlate a recent medication-adherence dip with a following symptom flare.
 
@@ -618,6 +619,10 @@ async def _scan_adherence_symptom_correlation(
     window fall below half the prescribed schedule, and several higher-severity
     symptom entries land in the flare window. The framing is co-occurrence only.
 
+    ``med_rows`` is the already-fetched list of active medication rows from the
+    caller (same query as section 2 in ``run_insight_scan``); passing it avoids
+    a redundant database round-trip.
+
     Returns False when the broker signals verbosity=off (caller exits early).
     """
     dip_start = now_utc - timedelta(days=_ADHERENCE_DIP_WINDOW_DAYS + _ADHERENCE_FLARE_WINDOW_DAYS)
@@ -625,18 +630,6 @@ async def _scan_adherence_symptom_correlation(
     prior_start = dip_start - timedelta(days=_ADHERENCE_DIP_WINDOW_DAYS)
     flare_start = dip_end
     year_week = now_utc.strftime("%Y-W%W")
-
-    med_rows = await db_pool.fetch(
-        """
-        SELECT id, metadata->>'name' AS name, metadata->>'frequency' AS frequency
-        FROM facts
-        WHERE predicate = 'medication'
-          AND validity = 'active'
-          AND scope = 'health'
-          AND (metadata->>'active')::boolean = true
-        ORDER BY metadata->>'name' ASC
-        """
-    )
 
     # A symptom flare is shared across medications; count once per run.
     flare_count = await db_pool.fetchval(
@@ -731,6 +724,7 @@ async def _scan_measurement_drift_correlation(
     db_pool: asyncpg.Pool,
     now_utc: datetime,
     submit: _SubmitFn,
+    measurement_types: list[str],
 ) -> bool:
     """Detect a slow drift in a measurement type's median across recent readings.
 
@@ -738,21 +732,13 @@ async def _scan_measurement_drift_correlation(
     into an oldest third and a newest third; a sustained relative change between
     their medians flags a gradual drift. The framing is observational only.
 
+    ``measurement_types`` is the already-computed list of type suffixes (e.g.
+    ``["weight", "glucose"]``) from the caller's section-1 query; passing it
+    avoids a redundant ``SELECT DISTINCT predicate`` round-trip.
+
     Returns False when the broker signals verbosity=off (caller exits early).
     """
     year_week = now_utc.strftime("%Y-W%W")
-
-    type_rows = await db_pool.fetch(
-        """
-        SELECT DISTINCT predicate
-        FROM facts
-        WHERE predicate LIKE 'measurement~_%' ESCAPE '~'
-          AND scope = 'health'
-          AND validity = 'active'
-        ORDER BY predicate
-        """
-    )
-    measurement_types = [row["predicate"].removeprefix("measurement_") for row in type_rows]
 
     for mtype in measurement_types:
         predicate = f"measurement_{mtype}"
