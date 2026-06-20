@@ -39,8 +39,12 @@ from pydantic import BaseModel, ValidationError
 
 from butlers.modules.base import Module
 from butlers.modules.calendar import (
+    _CREDENTIAL_KEY_CALENDAR_ID,
+    _CREDENTIAL_KEY_DEFAULT_TARGET_CALENDAR_ID,
     BUTLER_GENERATED_PRIVATE_KEY,
     BUTLER_NAME_PRIVATE_KEY,
+    CALENDAR_ROLE_BUTLERS,
+    CALENDAR_ROLE_DEFAULT_TARGET,
     DEFAULT_BUTLER_NAME,
     AttendeeInfo,
     CalendarAuthError,
@@ -835,6 +839,131 @@ class TestProjectionPersistence:
         )
 
         assert _calendar_events_fetchrow_args(pool)[-2] == "health"
+
+
+# ---------------------------------------------------------------------------
+# Calendar-id role separation (Butlers calendar vs user default-target)
+# ---------------------------------------------------------------------------
+
+
+class TestCalendarIdRoleSeparation:
+    async def _make_module_with_store(
+        self,
+    ) -> tuple[CalendarModule, _StubMCP, AsyncMock]:
+        provider = _ProviderDouble()
+        mcp = _StubMCP()
+        store = AsyncMock()
+        store.load_shared.return_value = None
+        mod = CalendarModule()
+        mod._provider = provider
+        mod._credential_store = store
+        # Immutable Butlers calendar id + a user-owned primary calendar.
+        mod._resolved_calendar_id = "butlers@group.calendar.google.com"
+        mod._primary_calendar_id = "owner@example.com"
+        mod._all_provider_calendar_ids = [
+            "owner@example.com",
+            "butlers@group.calendar.google.com",
+        ]
+        mod._provider_calendar_discovery_completed = True
+        await mod.register_tools(
+            mcp=mcp,
+            config={"provider": "google", "calendar_id": "butlers@group.calendar.google.com"},
+            db=None,
+            butler_name="test-butler",
+        )
+        return mod, mcp, store
+
+    async def test_set_primary_updates_default_target_only_leaves_resolved_untouched(self):
+        """calendar_set_primary must not clobber the immutable Butlers calendar id."""
+        mod, mcp, store = await self._make_module_with_store()
+
+        result = await mcp.tools["calendar_set_primary"](calendar_id="owner@example.com")
+
+        assert result["status"] == "ok"
+        # Butlers calendar id is left intact.
+        assert mod._resolved_calendar_id == "butlers@group.calendar.google.com"
+        # The user's default-target selection is recorded on its own field.
+        assert mod._default_target_calendar_id == "owner@example.com"
+        assert result["new_calendar_id"] == "owner@example.com"
+
+        # Persistence targets the default-target cred key, NEVER GOOGLE_CALENDAR_ID.
+        persisted_keys = [call.args[0] for call in store.store_shared.await_args_list]
+        assert _CREDENTIAL_KEY_DEFAULT_TARGET_CALENDAR_ID in persisted_keys
+        assert _CREDENTIAL_KEY_CALENDAR_ID not in persisted_keys
+
+    async def test_set_primary_rejects_unknown_calendar(self):
+        mod, mcp, store = await self._make_module_with_store()
+
+        result = await mcp.tools["calendar_set_primary"](calendar_id="stranger@example.com")
+
+        assert result["status"] == "error"
+        # Nothing mutated, nothing persisted.
+        assert mod._resolved_calendar_id == "butlers@group.calendar.google.com"
+        assert mod._default_target_calendar_id is None
+        store.store_shared.assert_not_awaited()
+
+    def test_resolve_role_butlers_returns_resolved_id(self):
+        mod = CalendarModule()
+        mod._resolved_calendar_id = "butlers@group.calendar.google.com"
+        mod._primary_calendar_id = "owner@example.com"
+        mod._default_target_calendar_id = "chosen@example.com"
+
+        assert (
+            mod._resolve_role_calendar_id(CALENDAR_ROLE_BUTLERS)
+            == "butlers@group.calendar.google.com"
+        )
+
+    def test_resolve_role_default_target_precedence(self):
+        mod = CalendarModule()
+        mod._resolved_calendar_id = "butlers@group.calendar.google.com"
+
+        # Falls back to the Butlers calendar when nothing else is known.
+        assert (
+            mod._resolve_role_calendar_id(CALENDAR_ROLE_DEFAULT_TARGET)
+            == "butlers@group.calendar.google.com"
+        )
+
+        # Discovered primary takes precedence over the Butlers fallback.
+        mod._primary_calendar_id = "owner@example.com"
+        assert mod._resolve_role_calendar_id(CALENDAR_ROLE_DEFAULT_TARGET) == "owner@example.com"
+
+        # An explicit user default-target selection wins over the primary.
+        mod._default_target_calendar_id = "chosen@example.com"
+        assert mod._resolve_role_calendar_id(CALENDAR_ROLE_DEFAULT_TARGET) == "chosen@example.com"
+
+    def test_resolve_role_unknown_raises(self):
+        mod = CalendarModule()
+        with pytest.raises(ValueError, match="Unknown calendar role"):
+            mod._resolve_role_calendar_id("nonsense")
+
+    def test_resolve_calendar_id_no_override_honours_default_target(self):
+        mod = CalendarModule()
+        mod._resolved_calendar_id = "butlers@group.calendar.google.com"
+        mod._primary_calendar_id = "owner@example.com"
+
+        # Without a chosen default target, the no-override default is the primary.
+        assert mod._resolve_calendar_id(None) == "owner@example.com"
+
+        # A chosen default target overrides the implicit primary default.
+        mod._default_target_calendar_id = "chosen@example.com"
+        assert mod._resolve_calendar_id(None) == "chosen@example.com"
+
+    async def test_set_primary_default_target_drives_no_override_resolution(self):
+        """End-to-end: selecting a default target redirects no-override mutations."""
+        mod, mcp, _store = await self._make_module_with_store()
+
+        # Default (no selection) lands on the discovered primary.
+        assert mod._resolve_calendar_id(None) == "owner@example.com"
+
+        await mcp.tools["calendar_set_primary"](calendar_id="butlers@group.calendar.google.com")
+
+        # After selecting, no-override resolution follows the default-target field,
+        # while the Butlers calendar id is still intact and queryable via its role.
+        assert mod._resolve_calendar_id(None) == "butlers@group.calendar.google.com"
+        assert (
+            mod._resolve_role_calendar_id(CALENDAR_ROLE_BUTLERS)
+            == "butlers@group.calendar.google.com"
+        )
 
 
 # ---------------------------------------------------------------------------
