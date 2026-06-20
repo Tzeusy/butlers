@@ -348,7 +348,7 @@ interface NextDose {
 }
 
 /** Parse a schedule entry like "08:00" into minutes-since-midnight, or null. */
-export function parseScheduleTime(raw: unknown): number | null {
+function parseScheduleTime(raw: unknown): number | null {
   if (typeof raw !== "string") return null;
   const m = /^(\d{1,2}):(\d{2})$/.exec(raw.trim());
   if (!m) return null;
