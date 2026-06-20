@@ -176,6 +176,14 @@ async def _fetch_environment_readings(
         )
         return []
 
+    if not isinstance(history_data, list):
+        logger.warning(
+            "health insight scan: HA history API returned invalid type: expected list, got %s; "
+            "environment correlation will be skipped",
+            type(history_data).__name__,
+        )
+        return []
+
     readings: list[dict[str, Any]] = []
     for entity_history in history_data:
         if not isinstance(entity_history, list):
@@ -185,7 +193,7 @@ async def _fetch_environment_readings(
             metric = entity_map.get(entity_id)
             if not metric:
                 continue
-            state_str = state_entry.get("state", "")
+            state_str = state_entry.get("state") or ""
             captured = _parse_ha_datetime(
                 state_entry.get("last_changed") or state_entry.get("last_updated")
             )

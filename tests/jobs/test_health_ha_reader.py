@@ -177,7 +177,7 @@ async def test_reader_classifies_temperature_readings():
 
     pool = _make_pool(snapshot_rows=[{"entity_id": "sensor.bedroom_temperature"}])
 
-    # HA history API response: two readings — one adverse (too cold), one ok.
+    # HA history API response: two readings — one adverse (too cold), one ok, one null state.
     history_response = [
         [
             {
@@ -188,6 +188,11 @@ async def test_reader_classifies_temperature_readings():
             {
                 "entity_id": "sensor.bedroom_temperature",
                 "state": "72.0",  # 72°F — in range → not adverse
+                "last_changed": day2.isoformat(),
+            },
+            {
+                "entity_id": "sensor.bedroom_temperature",
+                "state": None,  # null state — should degrade gracefully (not adverse)
                 "last_changed": day2.isoformat(),
             },
         ]
@@ -208,12 +213,12 @@ async def test_reader_classifies_temperature_readings():
         assert reader is not None
         readings = await reader()
 
-    assert len(readings) == 2
+    assert len(readings) == 3
     adverse = [r for r in readings if r["adverse"]]
     ok = [r for r in readings if not r["adverse"]]
     assert len(adverse) == 1
     assert adverse[0]["metric"] == "temperature"
-    assert len(ok) == 1
+    assert len(ok) == 2
     assert all(r["metric"] == "temperature" for r in readings)
     assert all("captured_at" in r for r in readings)
 
