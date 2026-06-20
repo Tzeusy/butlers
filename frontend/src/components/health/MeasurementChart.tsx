@@ -96,11 +96,18 @@ function extractValue(m: Measurement, key: string): number | null {
   return null;
 }
 
-/** Format a measurement's value object as `key: value` pairs for display. */
+/** Format a measurement's value object as a readable string for display. */
 function formatValue(m: Measurement): string {
-  const entries = Object.entries(m.value);
+  const v = m.value ?? {};
+  if (m.type === "blood_pressure" && v.systolic != null && v.diastolic != null) {
+    return `${v.systolic}/${v.diastolic}`;
+  }
+  if ("value" in v && v.value != null) {
+    return String(v.value);
+  }
+  const entries = Object.entries(v).filter(([, val]) => val != null);
   if (entries.length === 0) return "—";
-  return entries.map(([k, v]) => `${k}: ${v}`).join(", ");
+  return entries.map(([k, val]) => `${k}: ${val}`).join(", ");
 }
 
 /** Round a trend value to at most one decimal place. */
@@ -145,6 +152,8 @@ export default function MeasurementChart({ initialType }: MeasurementChartProps)
     bucket: "daily",
   });
   const buckets = useMemo(() => trendQuery.data?.buckets ?? [], [trendQuery.data]);
+  // Show newest bucket first so the most relevant data is at the top.
+  const reversedBuckets = useMemo(() => [...buckets].reverse(), [buckets]);
 
   // --- Raw measurements (chart + table) -------------------------------------
   const params: MeasurementParams = {
@@ -248,8 +257,9 @@ export default function MeasurementChart({ initialType }: MeasurementChartProps)
           <EmptyLine>No trend for {typeLabel} in the last {windowDays} days.</EmptyLine>
         ) : (
           <div className="divide-y divide-border/60 border-y border-border/60">
-            {buckets.map((b, i) => {
-              const prev = i > 0 ? buckets[i - 1] : null;
+            {reversedBuckets.map((b, i, arr) => {
+              // arr[i + 1] is the chronologically prior bucket (reversed order).
+              const prev = i < arr.length - 1 ? arr[i + 1] : null;
               const delta = prev ? b.value_mean - prev.value_mean : null;
               return (
                 <div
