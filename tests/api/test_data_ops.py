@@ -874,6 +874,7 @@ def test_decrypt_export_rejects_tampered_ciphertext():
 def test_every_known_scope_resolves_to_real_tables():
     """No known scope silently maps to 'no tables' (spec: a known scope MUST
     cover the data its name promises)."""
+    assert len(_KNOWN_SCOPES) == 5, f"Expected 5 known scopes, got {len(_KNOWN_SCOPES)}"
     for scope in _KNOWN_SCOPES:
         resolved = _SCOPE_ALIASES.get(scope, scope)
         if resolved == "all":
