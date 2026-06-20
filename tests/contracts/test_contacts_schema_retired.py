@@ -88,16 +88,26 @@ def _is_known_allowed(path: Path, line: str) -> bool:
 
 
 def _scan(pattern: re.Pattern[str], paths: list[Path]) -> list[tuple[str, int, str]]:
+    # Scan the WHOLE file text (not line-by-line) so the ``\s+`` in the patterns
+    # matches across newlines — multi-line SQL like ``FROM\n    public.contacts``
+    # (a common triple-quoted-string pattern) would otherwise slip past the guard.
+    # The reported line/lineno anchors on where the match STARTS (the verb keyword).
     hits: list[tuple[str, int, str]] = []
     for path in paths:
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            if pattern.search(line):
-                rel = str(path.relative_to(_REPO_ROOT))
-                hits.append((rel, lineno, line.strip()))
+        rel = str(path.relative_to(_REPO_ROOT))
+        for match in pattern.finditer(text):
+            start_idx = match.start()
+            lineno = text.count("\n", 0, start_idx) + 1
+            line_start = text.rfind("\n", 0, start_idx) + 1
+            line_end = text.find("\n", start_idx)
+            if line_end == -1:
+                line_end = len(text)
+            line = text[line_start:line_end].strip()
+            hits.append((rel, lineno, line))
     return hits
 
 

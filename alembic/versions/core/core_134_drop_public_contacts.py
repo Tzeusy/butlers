@@ -26,9 +26,13 @@ upgrade() sequence (idempotent, self-guarding, single transaction)
 1. **Guard** the whole body in ``IF to_regclass('public.contacts') IS NOT NULL``
    — a re-run (or a fresh/scoped provision where the table never existed) skips
    cleanly with a NOTICE.
-2. **SNAPSHOT** — ``CREATE TABLE IF NOT EXISTS public.contacts_dropbak AS TABLE
-   public.contacts``. This is the PERMANENT recovery artifact (NOT temp); it
-   persists after the drop so the data is recoverable.
+2. **SNAPSHOT** — ``DROP TABLE IF EXISTS public.contacts_dropbak`` then
+   ``CREATE TABLE public.contacts_dropbak AS TABLE public.contacts``. This is the
+   PERMANENT recovery artifact (NOT temp); it persists after the drop so the data
+   is recoverable. The snapshot is ALWAYS refreshed (not skipped when a prior
+   dropbak exists) so it captures the exact rows being dropped — otherwise a
+   downgrade -> in-place-edit -> re-upgrade cycle could leave a stale dropbak that
+   passes the count-only parity check while losing those edits.
 3. **PARITY RAISE** — assert ``count(public.contacts) = count(public.contacts_dropbak)``;
    RAISE EXCEPTION (abort, drop nothing) if they differ. Proves the snapshot
    copied every row before we destroy the original.
@@ -91,10 +95,15 @@ BEGIN
         RETURN;
     END IF;
 
-    -- 2. Snapshot to a PERMANENT recovery table (only copy if not already taken).
-    IF to_regclass('public.contacts_dropbak') IS NULL THEN
-        CREATE TABLE public.contacts_dropbak AS TABLE public.contacts;
-    END IF;
+    -- 2. Snapshot to a PERMANENT recovery table. ALWAYS refresh so the backup
+    --    reflects the exact rows about to be dropped. (A downgrade -> in-place
+    --    edit -> re-upgrade cycle could otherwise leave a STALE dropbak that
+    --    still passes the count-only parity check below while silently losing
+    --    those edits.) In the production single forward run dropbak is absent,
+    --    so this is simply a fresh snapshot; the DROP is guarded above so this
+    --    only runs while public.contacts still exists.
+    DROP TABLE IF EXISTS public.contacts_dropbak;
+    CREATE TABLE public.contacts_dropbak AS TABLE public.contacts;
 
     -- 3. Parity raise: every live row must be present in the backup. Abort the
     --    whole migration (drop nothing) if the snapshot is incomplete.
