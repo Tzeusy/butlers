@@ -67,17 +67,21 @@ function fmtScalar(
 ): string {
   if (!entry) return "—";
   const v = entry.value;
-  if (key && typeof v === "object" && v !== null) {
-    const keyed = (v as Record<string, unknown>)[key];
-    return fmtNum(keyed as string | number | null | undefined);
+  if (typeof v === "number" || typeof v === "string") {
+    return fmtNum(v);
   }
-  for (const k of ["value", "v", "amount", "reading", "bpm", "mg_dl", "kg", "lbs"]) {
-    const keyed = (v as Record<string, unknown>)[k];
-    if (keyed !== undefined && keyed !== null) {
+  if (v && typeof v === "object") {
+    if (key) {
+      const keyed = (v as Record<string, unknown>)[key];
       return fmtNum(keyed as string | number | null | undefined);
     }
+    for (const k of ["value", "v", "amount", "reading", "bpm", "mg_dl", "kg", "lbs"]) {
+      const keyed = (v as Record<string, unknown>)[k];
+      if (keyed !== undefined && keyed !== null) {
+        return fmtNum(keyed as string | number | null | undefined);
+      }
+    }
   }
-  if (typeof v === "number") return fmtNum(v);
   return "—";
 }
 
@@ -93,12 +97,11 @@ function fmtNum(raw: string | number | null | undefined): string {
  * Returns "—" when absent or missing both keys.
  */
 function fmtBloodPressure(entry: LatestMeasurementEntry | null | undefined): string {
-  if (!entry) return "—";
+  if (!entry || typeof entry.value !== "object" || entry.value === null) return "—";
   const v = entry.value as Record<string, unknown>;
   const sys = fmtNum(v["systolic"] as string | number | null | undefined);
   const dia = fmtNum(v["diastolic"] as string | number | null | undefined);
   if (sys === "—" && dia === "—") return "—";
-  if (sys === "—" || dia === "—") return sys !== "—" ? sys : dia;
   return `${sys}/${dia}`;
 }
 
@@ -125,35 +128,38 @@ interface FreshnessChipsProps {
 }
 
 function FreshnessChips({ sources }: FreshnessChipsProps) {
-  const active = sources.filter((s) => s.last_sample_at !== null);
-  if (active.length === 0) return null;
+  const chips = sources
+    .map((s) => {
+      const age = freshnessLabel(s.last_sample_at);
+      return age ? { name: s.name, age } : null;
+    })
+    .filter((c): c is { name: string; age: string } => c !== null);
+
+  if (chips.length === 0) return null;
+
   return (
     <div
       style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}
       aria-label="Data freshness"
       data-testid="freshness-chips"
     >
-      {active.map((s) => {
-        const age = freshnessLabel(s.last_sample_at);
-        if (!age) return null;
-        return (
-          <span
-            key={s.name}
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "9px",
-              lineHeight: 1,
-              color: "var(--muted-foreground)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--radius-sm)",
-              padding: "2px 6px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {s.name} · synced {age}
-          </span>
-        );
-      })}
+      {chips.map((c) => (
+        <span
+          key={c.name}
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "9px",
+            lineHeight: 1,
+            color: "var(--muted-foreground)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-sm)",
+            padding: "2px 6px",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {c.name} · synced {c.age}
+        </span>
+      ))}
     </div>
   );
 }
@@ -219,6 +225,9 @@ function toAttentionItems(candidates: InsightCandidate[]): AttentionListItem[] {
 // Page
 // ---------------------------------------------------------------------------
 
+const KPI_TYPES = ["weight", "blood_pressure", "heart_rate", "blood_sugar"];
+const INSIGHT_PARAMS = { butler: "health", status: "pending" };
+
 export default function HealthOverviewPage() {
   // --- Voice briefing (no refetchInterval — LLM cost guard) ---
   const {
@@ -228,8 +237,7 @@ export default function HealthOverviewPage() {
   } = useHealthBriefing();
 
   // --- KPI measurements latest ---
-  const KPI_TYPES = ["weight", "blood_pressure", "heart_rate", "blood_sugar"] as const;
-  const { data: latestData } = useMeasurementsLatest(Array.from(KPI_TYPES));
+  const { data: latestData } = useMeasurementsLatest(KPI_TYPES);
   const measurements = latestData?.measurements ?? {};
 
   // --- Source freshness ---
@@ -237,7 +245,7 @@ export default function HealthOverviewPage() {
   const sources = sourcesData ?? [];
 
   // --- Insight candidates (no refetchInterval — manual refresh via pill) ---
-  const { data: insights } = useInsights({ butler: "health", status: "pending" });
+  const { data: insights } = useInsights(INSIGHT_PARAMS);
   const attentionItems = toAttentionItems(insights ?? []);
 
   // --- Derived briefing values with safe fallbacks ---
