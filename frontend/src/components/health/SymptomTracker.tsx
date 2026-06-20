@@ -36,7 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Time } from "@/components/ui/time";
-import { useDeleteSymptom, useSymptoms } from "@/hooks/use-health";
+import { useConditions, useDeleteSymptom, useSymptoms } from "@/hooks/use-health";
 
 const PAGE_SIZE = 50;
 
@@ -78,9 +78,11 @@ function SkeletonRows({ count = 5 }: { count?: number }) {
 
 function SymptomRow({
   symptom,
+  conditionName,
   onEdit,
 }: {
   symptom: Symptom;
+  conditionName?: string;
   onEdit: (symptom: Symptom) => void;
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -115,8 +117,8 @@ function SymptomRow({
           <span>
             <Time value={symptom.occurred_at} mode="absolute" />
           </span>
-          {symptom.condition_id && (
-            <span className="uppercase tracking-[0.1em]">· {symptom.condition_id}</span>
+          {conditionName && (
+            <span className="uppercase tracking-[0.1em]">· {conditionName}</span>
           )}
           {symptom.notes && (
             <span className="text-muted-foreground/80 min-w-0 truncate font-sans">
@@ -193,6 +195,11 @@ export default function SymptomTracker() {
   };
 
   const { data, isLoading } = useSymptoms(params);
+  // Fetch all conditions (up to 500) for ID → name resolution in rows.
+  const { data: conditionsData } = useConditions({ limit: 500 });
+  const conditionNameById = Object.fromEntries(
+    (conditionsData?.data ?? []).map((c) => [c.id, c.name]),
+  );
 
   const symptoms = data?.data ?? [];
   const total = data?.meta?.total ?? 0;
@@ -273,7 +280,12 @@ export default function SymptomTracker() {
       ) : (
         <div className="divide-y divide-border/60 border-y border-border/60">
           {symptoms.map((symptom) => (
-            <SymptomRow key={symptom.id} symptom={symptom} onEdit={setFormTarget} />
+            <SymptomRow
+              key={symptom.id}
+              symptom={symptom}
+              conditionName={symptom.condition_id ? conditionNameById[symptom.condition_id] : undefined}
+              onEdit={setFormTarget}
+            />
           ))}
         </div>
       )}
