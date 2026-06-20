@@ -3726,10 +3726,8 @@ class CalendarModule(Module):
                         if not effective_action or (
                             effective_action == _CALENDAR_EVENT_DEFAULT_ACTION
                         ):
-                            import zoneinfo as _zoneinfo
-
                             try:
-                                _tz_obj = _zoneinfo.ZoneInfo(effective_timezone)
+                                _tz_obj = ZoneInfo(effective_timezone)
                                 _local_start = start_at.astimezone(_tz_obj)
                                 _time_str = _local_start.strftime("%H:%M %Z")
                             except Exception:

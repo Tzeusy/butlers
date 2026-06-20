@@ -111,7 +111,7 @@ def _make_due_task(
     until_at: datetime | None = None,
 ) -> dict:
 
-    _now = datetime(2026, 6, 20, 1, 15, tzinfo=UTC)
+    _now = datetime.now(UTC)
     return {
         "id": task_id,
         "name": name,
