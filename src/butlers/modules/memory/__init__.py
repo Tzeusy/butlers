@@ -1063,13 +1063,26 @@ class MemoryModule(Module):
             Returns:
                 Dict with key entity_id (UUID string).
             """
-            return await _entities.entity_create(
-                module._get_pool(),
-                canonical_name,
-                entity_type,
-                aliases=aliases,
-                metadata=metadata,
-            )
+            try:
+                return await _entities.entity_create(
+                    module._get_pool(),
+                    canonical_name,
+                    entity_type,
+                    aliases=aliases,
+                    metadata=metadata,
+                )
+            except ValueError as exc:
+                if "already exists" not in str(exc):
+                    raise
+
+                existing = await _entities.entity_find_by_canonical(
+                    module._get_pool(),
+                    canonical_name,
+                    entity_type,
+                )
+                if existing is None:
+                    raise
+                return {"entity_id": existing["id"]}
 
         @_tool("entity")
         async def memory_entity_get(
