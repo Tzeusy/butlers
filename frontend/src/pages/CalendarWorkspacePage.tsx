@@ -4740,7 +4740,7 @@ export default function CalendarWorkspacePage() {
                   data-testid="recurrence-preview"
                   className="space-y-1.5 rounded-[3px] border border-[var(--border)] p-3"
                 >
-                  <Eyebrow>Preview</Eyebrow>
+                  <Eyebrow>Preview ({Intl.DateTimeFormat().resolvedOptions().timeZone})</Eyebrow>
                   {recurrencePreview.isError ? (
                     <p className="text-sm text-[var(--mfg)]">
                       Couldn’t preview this recurrence — check the rule or cron expression.

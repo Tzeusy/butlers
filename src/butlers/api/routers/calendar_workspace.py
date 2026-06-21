@@ -1676,29 +1676,35 @@ def _build_butler_event_preview(
     expansion so the preview reflects exactly what the scheduler would fire —
     including any lossy degradation. Nothing is persisted and no LLM runs.
     """
-    start = body.start_at or datetime.now(UTC)
-    if start.tzinfo is None:
-        if body.timezone:
-            try:
-                start = start.replace(tzinfo=ZoneInfo(body.timezone))
-            except ZoneInfoNotFoundError as exc:
-                raise HTTPException(
-                    status_code=422, detail=f"Unknown timezone {body.timezone!r}"
-                ) from exc
-        else:
-            start = start.replace(tzinfo=UTC)
-    start = start.astimezone(UTC)
+
+    def _localize(dt: datetime) -> datetime:
+        """Coerce a naive datetime to UTC via the request timezone; fail fast on a bad tz.
+
+        Both ``start_at`` and ``until_at`` flow through here so a naive pair is
+        always interpreted in the *same* zone — otherwise a naive ``until_at``
+        would silently fall back to UTC while ``start_at`` honoured ``timezone``,
+        producing off-by-hours truncation of the window.
+        """
+        if dt.tzinfo is None:
+            if body.timezone:
+                try:
+                    dt = dt.replace(tzinfo=ZoneInfo(body.timezone))
+                except ZoneInfoNotFoundError as exc:
+                    raise HTTPException(
+                        status_code=422, detail=f"Unknown timezone {body.timezone!r}"
+                    ) from exc
+            else:
+                dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
+
+    start = _localize(body.start_at or datetime.now(UTC))
 
     window_start = start
     window_end = start + _PREVIEW_WINDOW
 
     until_bound: datetime | None = None
     if body.until_at is not None:
-        until_bound = (
-            body.until_at.replace(tzinfo=UTC)
-            if body.until_at.tzinfo is None
-            else body.until_at.astimezone(UTC)
-        )
+        until_bound = _localize(body.until_at)
 
     notes: list[str] = []
     if body.cron:
