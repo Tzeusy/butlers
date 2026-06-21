@@ -1057,8 +1057,9 @@ class MemoryModule(Module):
         ) -> dict[str, Any]:
             """Create a new named entity in the memory entity graph.
 
-            Inserts a new entity record. Fails if (canonical_name, entity_type)
-            already exists.
+            Inserts a new entity record. If a live entity with the same
+            (canonical_name, entity_type) already exists, returns that entity's
+            ID; other validation errors still raise.
 
             Returns:
                 Dict with key entity_id (UUID string).
