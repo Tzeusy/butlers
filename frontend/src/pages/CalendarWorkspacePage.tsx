@@ -71,6 +71,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { CalendarAgendaView } from "@/components/calendar/CalendarAgendaView";
 import { DayBriefingCard } from "@/components/calendar/DayBriefingCard";
 import { MeetingPrepRailContainer } from "@/components/calendar/MeetingPrepRail";
 import { CalendarProposalsPanel } from "@/components/calendar/CalendarProposalsPanel";
@@ -2179,6 +2180,7 @@ export default function CalendarWorkspacePage() {
   );
 
   const [sourcesDialogOpen, setSourcesDialogOpen] = useState(false);
+  const [agendaOpen, setAgendaOpen] = useState(false);
   // The backend is the source of truth for whether a calendar is enabled as a
   // sync source (``sync_enabled`` on each connected source). We mirror that into
   // a local Set for snappy optimistic toggling; it is re-seeded whenever meta
@@ -4081,6 +4083,12 @@ export default function CalendarWorkspacePage() {
             Search
           </PillButton>
           <PillButton
+            onClick={() => setAgendaOpen(true)}
+            aria-label="Open printable agenda"
+          >
+            Agenda
+          </PillButton>
+          <PillButton
             onClick={() => setSourcesDialogOpen(true)}
             aria-label="Configure sources"
           >
@@ -5194,6 +5202,16 @@ export default function CalendarWorkspacePage() {
           view={view}
           timezone={timezone}
           onJump={handleSearchJump}
+        />
+      ) : null}
+
+      {agendaOpen ? (
+        <CalendarAgendaView
+          entries={entries}
+          rangeLabel={headlineLabel(range, start, end)}
+          timezone={timezone}
+          view={view === "butler" ? "butler" : "user"}
+          onClose={() => setAgendaOpen(false)}
         />
       ) : null}
 
