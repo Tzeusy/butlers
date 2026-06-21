@@ -266,6 +266,26 @@ async def test_list_actions_unknown_butler_returns_empty(app):
     assert body["meta"]["total"] == 0
 
 
+async def test_list_executed_actions_butler_filter(app):
+    """?butler= on /actions/executed scopes results to that butler only.
+
+    Guards against leaking every butler's executed actions: with two butlers
+    each holding one executed row, ?butler=home must return only home's row.
+    """
+    home_action = _make_action(tool_name="notify", status="executed")
+    general_action = _make_action(tool_name="send_telegram", status="executed")
+    app = _app_with_two_butlers(app, home_rows=[home_action], general_rows=[general_action])
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/approvals/actions/executed?butler=home")
+    assert resp.status_code == 200
+    actions = resp.json()["data"]
+    assert len(actions) == 1
+    assert actions[0]["butler"] == "home"
+    assert actions[0]["tool_name"] == "notify"
+
+
 # ---------------------------------------------------------------------------
 # list_rules: active (tri-state) + butler filters (bu-2176m)
 # ---------------------------------------------------------------------------

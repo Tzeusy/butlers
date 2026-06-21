@@ -214,6 +214,21 @@ class TestResponseShape:
         item = resp.json()["items"][0]
         assert item["evidence"] == evidence
 
+    async def test_queue_sql_excludes_archived_and_tombstoned_entities(self):
+        """The queue data query must emit ``_active_entity_condition`` (router.py),
+        excluding archived/tombstoned/deleted entities via IS NULL / IS DISTINCT
+        FROM clauses on metadata->>'archived_at', 'tombstone', 'deleted_at'.
+        """
+        app, pool = _app_with_pool(total=0, fetch_rows=[])
+        resp = await _get(app)
+
+        assert resp.status_code == 200
+        fetch_sql = pool.fetch.call_args[0][0]
+        assert "archived" in fetch_sql
+        assert "archived_at" in fetch_sql
+        assert "tombstone" in fetch_sql
+        assert "deleted_at" in fetch_sql
+
 
 # ---------------------------------------------------------------------------
 # Scenario: Unidentified bucket

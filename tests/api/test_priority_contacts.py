@@ -104,6 +104,24 @@ async def test_list_priority_contacts_200(app):
     assert "butler" not in body["data"][0]
 
 
+async def test_list_priority_contacts_uses_entities_for_name(app):
+    """GET data query must join public.entities (not the retired public.contacts)
+    for the display name (bu-vat93)."""
+    pool = AsyncMock()
+    pool.fetchval = AsyncMock(return_value=0)
+    pool.fetch = AsyncMock(return_value=[])
+    _app_with_mock_db(app, shared_pool=pool)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        await client.get("/api/ingestion/priority-contacts")
+
+    data_sql = pool.fetch.call_args[0][0]
+    assert "public.contacts" not in data_sql
+    assert "public.entities" in data_sql
+
+
 async def test_post_priority_contact_validates_against_entities(app):
     """POST validation must query public.entities, not public.contacts (bu-vat93)."""
     contact_id = uuid4()

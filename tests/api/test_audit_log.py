@@ -182,6 +182,36 @@ async def test_append_inserts_row_and_returns_id():
     assert call_args[2] == "model_priority_change"
 
 
+async def test_append_binds_target_note_ip_request_id_at_positions_3_through_6():
+    """target/note/ip/request_id bind to INSERT positions 3/4/5/6 in that order.
+
+    The INSERT column list is ``(actor, action, target, note, ip, request_id,
+    metadata, result, error)``, so the positional args after the SQL string
+    (call_args[0]) carry actor at idx 1, action at idx 2, then target/note/ip/
+    request_id at idx 3/4/5/6.  Pins the binding order against an accidental
+    swap that would silently corrupt append-only rows.
+    """
+    rid = uuid.uuid4()
+    pool = AsyncMock()
+    pool.fetchval = AsyncMock(return_value=11)
+
+    await append(
+        pool,
+        "owner",
+        "setting_change",
+        target="rule:7",
+        note="Changed threshold",
+        ip="10.10.10.10",
+        request_id=rid,
+    )
+
+    call_args = pool.fetchval.call_args[0]
+    assert call_args[3] == "rule:7"
+    assert call_args[4] == "Changed threshold"
+    assert call_args[5] == "10.10.10.10"
+    assert call_args[6] == rid
+
+
 async def test_append_persists_metadata_result_error():
     """append() forwards metadata/result/error (core_122) into the INSERT.
 

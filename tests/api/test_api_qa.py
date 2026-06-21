@@ -433,6 +433,33 @@ class TestGetQaSummary:
         assert body["kpis"]["active_cases_now"] == 3
         assert body["active_breakdown"] == {"awaiting_ci": 1, "escalated_open_cases": 0}
 
+    async def test_summary_kpi_sql_scopes_to_qa_origin_and_active_status_list(self) -> None:
+        """The summary KPI query is QA-scoped and uses the active-status IN-list.
+
+        Two invariants on the SQL shape recorded from the mock pool:
+
+        1. Both the KPI aggregate query (the one containing ``active_cases_now``)
+           and the active-breakdown query (``AS escalated_open_cases``) scope to
+           QA-originated attempts via ``qa_patrol_id IS NOT NULL`` — they must not
+           count non-QA healing attempts.
+        2. ``active_cases_now`` is computed over the in-flight status set
+           ``status IN ('dispatch_pending', 'investigating', 'pr_open')`` — terminal
+           human-action cases are excluded from the live caseload.
+        """
+        app, pool = _build_summary_app()
+
+        assert (await _call(app, "get", "/api/qa/summary")).status_code == 200
+
+        kpi_sql = _single_fetchrow_query_containing(pool, "active_cases_now")
+        active_breakdown_sql = _single_fetchrow_query_containing(pool, "AS escalated_open_cases")
+
+        # (1) QA-origin scoping on both queries.
+        assert "qa_patrol_id IS NOT NULL" in kpi_sql
+        assert "qa_patrol_id IS NOT NULL" in active_breakdown_sql
+
+        # (2) active_cases_now uses the in-flight status IN-list.
+        assert "status IN ('dispatch_pending', 'investigating', 'pr_open')" in kpi_sql
+
     async def test_summary_escalated_count_uses_terminal_human_action_sql(self) -> None:
         app, pool = _build_summary_app(
             active_breakdown=_make_active_breakdown_row(awaiting_ci=1, escalated_open_cases=3)

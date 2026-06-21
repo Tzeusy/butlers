@@ -314,6 +314,21 @@ async def test_inspect_returns_results(app):
     assert resp.status_code == 200
 
 
+async def test_inspect_kind_filter_restricts_queries(app):
+    """When kind=episode only the episodes table is queried, not facts/rules."""
+    rows = [_make_inspect_row(content="An episode")]
+    mock_pool, _ = _wire_memory_mock(app, inspect_rows=rows)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/memory/inspect?kind=episode&limit=5")
+
+    assert resp.status_code == 200
+    fetched_sqls = [str(call.args[0]) for call in mock_pool.fetch.call_args_list]
+    assert all("facts" not in sql and "rules" not in sql for sql in fetched_sqls)
+
+
 async def test_inspect_invalid_kind_returns_400(app):
     """Inspect with an invalid kind returns 400."""
     _wire_memory_mock(app)

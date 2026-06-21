@@ -676,3 +676,57 @@ async def test_dispatch_attempts_by_session_id(app):
     assert data[1]["outcome"] == "success"
     assert data[1]["attempt_index"] == 1
     assert data[0]["logical_session_id"] == "req-abc-001"
+
+
+async def test_dispatch_attempts_by_logical_session_id(app):
+    """GET /api/dispatch/attempts?logical_session_id=... uses the logical_session_id=$1 branch.
+
+    The endpoint has a distinct branch for the logical-session filter (no
+    session_id::uuid cast): ``WHERE logical_session_id = $1``. Assert both the
+    behavioral output and the SQL shape of the recorded mock-pool fetch call so
+    a regression that routes through the session_id cast branch is caught.
+    """
+    from datetime import UTC, datetime
+
+    logical_id = "req-xyz-999"
+    attempt_ts = datetime(2026, 5, 25, 10, 0, 0, tzinfo=UTC)
+
+    rows_data = [
+        {
+            "ts": attempt_ts,
+            "butler": "general",
+            "outcome": "quota_skip",
+            "attempt_index": 0,
+            "failure_reason": "Token quota exhausted: 24h",
+            "error_code": None,
+            "error_message": None,
+            "tool_call_count": 0,
+            "session_id": None,
+            "logical_session_id": logical_id,
+        },
+    ]
+
+    _, mock_pool = _app_with_pool(app)
+    mock_pool.fetch = AsyncMock(return_value=[_mock_record(r) for r in rows_data])
+    mock_pool.fetchval = AsyncMock(return_value=1)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(f"/api/dispatch/attempts?logical_session_id={logical_id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    data = body["data"]
+    assert len(data) == 1
+    assert data[0]["outcome"] == "quota_skip"
+    assert data[0]["session_id"] is None
+    assert data[0]["logical_session_id"] == logical_id
+
+    # SQL-shape: the recorded fetch uses the logical-only WHERE clause (no
+    # session_id::uuid cast) and binds the logical id as the first positional arg.
+    fetch_call = mock_pool.fetch.call_args
+    sql = fetch_call.args[0]
+    assert "WHERE logical_session_id = $1" in sql
+    assert "session_id = $1::uuid" not in sql
+    assert fetch_call.args[1] == logical_id

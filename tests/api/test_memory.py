@@ -204,6 +204,30 @@ async def test_episodes_unknown_butler_returns_empty_200_without_querying_any_po
     mock_db.pool_mock.fetchval.assert_not_called()
 
 
+async def test_episodes_butler_filter_combined_with_consolidated(app):
+    """?butler and ?consolidated can be combined; both land in the WHERE clause."""
+    rows = [_make_episode_row(butler="atlas")]
+    mock_db = _wire_memory_db(app, rows=rows)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/memory/episodes", params={"butler": "atlas", "consolidated": "false"}
+        )
+
+    assert resp.status_code == 200
+    # Only the atlas pool should have been queried.
+    queried_names = {call.args[0] for call in mock_db.pool_lookup.call_args_list}
+    assert queried_names == {"atlas"}
+    # Both args should appear in the fetch call — check positional args directly.
+    fetch_calls = mock_db.pool_mock.fetch.call_args_list
+    assert any("butler = $1" in call.args[0] and "atlas" in call.args[1:] for call in fetch_calls)
+    assert any(
+        "consolidated = $2" in call.args[0] and False in call.args[1:] for call in fetch_calls
+    )
+
+
 @pytest.mark.parametrize(
     "status",
     ["pending", "consolidated", "failed", "dead_letter"],

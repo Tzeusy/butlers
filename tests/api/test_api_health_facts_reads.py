@@ -102,6 +102,170 @@ async def _request(app, method: str, path: str, **kwargs) -> httpx.Response:
 
 
 # ---------------------------------------------------------------------------
+# Populated-row serialization (one mapping guard per read entity).
+#
+# The empty-row GET tests above only exercise the predicate/WHERE shape; they
+# never feed a non-empty fact row through the row->model serializer.  These
+# guards pin the field mapping (e.g. dose taken_at = row created_at, symptom
+# occurred_at = valid_at, medication active default) which would otherwise be
+# tested by ZERO tests.
+# ---------------------------------------------------------------------------
+
+
+def _med_fact_row(*, name="Vitamin D", active=True) -> _Row:
+    return _row(
+        {
+            "id": uuid.uuid4(),
+            "content": f"{name} 1000IU daily",
+            "created_at": _NOW,
+            "metadata": {
+                "name": name,
+                "dosage": "1000IU",
+                "frequency": "daily",
+                "schedule": ["08:00"],
+                "active": active,
+                "notes": "with breakfast",
+            },
+        }
+    )
+
+
+def _dose_fact_row(*, medication_id: str, skipped=False) -> _Row:
+    return _row(
+        {
+            "id": uuid.uuid4(),
+            "valid_at": _NOW,
+            "created_at": _NOW,
+            "metadata": {
+                "medication_id": medication_id,
+                "skipped": skipped,
+                "notes": "took it",
+            },
+        }
+    )
+
+
+def _condition_fact_row(*, name="Hypertension", status="managed") -> _Row:
+    return _row(
+        {
+            "id": uuid.uuid4(),
+            "content": f"{name}: {status}",
+            "created_at": _NOW,
+            "metadata": {
+                "name": name,
+                "status": status,
+                "diagnosed_at": "2024-01-01T00:00:00+00:00",
+                "notes": "monitor BP",
+            },
+        }
+    )
+
+
+def _symptom_fact_row(*, name="Headache", severity=5, condition_id=None) -> _Row:
+    meta: dict[str, Any] = {"severity": severity, "notes": "dull ache"}
+    if condition_id is not None:
+        meta["condition_id"] = condition_id
+    return _row(
+        {
+            "id": uuid.uuid4(),
+            "content": name,
+            "valid_at": _NOW,
+            "created_at": _NOW,
+            "metadata": meta,
+        }
+    )
+
+
+def _research_fact_row(*, title="Magnesium and sleep", tags=None) -> _Row:
+    return _row(
+        {
+            "id": uuid.uuid4(),
+            "content": "Studies suggest magnesium improves sleep latency.",
+            "created_at": _NOW,
+            "metadata": {
+                "title": title,
+                "tags": tags if tags is not None else ["sleep", "supplements"],
+                "source_url": "https://example.com/study",
+                "condition_id": None,
+            },
+        }
+    )
+
+
+async def test_medications_returns_fact_based_entry():
+    row = _med_fact_row(name="Vitamin D")
+    app, _ = _make_app(fetch_rows=[row], fetchval_result=1)
+    resp = await _get(app, "/api/health/medications")
+    assert resp.status_code == 200
+    m = resp.json()["data"][0]
+    assert m["id"] == str(row["id"])
+    assert m["name"] == "Vitamin D"
+    assert m["dosage"] == "1000IU"
+    assert m["frequency"] == "daily"
+    assert m["schedule"] == ["08:00"]
+    assert m["active"] is True
+    assert m["notes"] == "with breakfast"
+
+
+async def test_doses_returns_fact_based_entry():
+    med_id = str(uuid.uuid4())
+    row = _dose_fact_row(medication_id=med_id, skipped=False)
+    app, _ = _make_app(fetch_rows=[row])
+    resp = await _get(app, f"/api/health/medications/{med_id}/doses")
+    assert resp.status_code == 200
+    d = resp.json()[0]
+    assert d["id"] == str(row["id"])
+    assert d["medication_id"] == med_id
+    assert d["skipped"] is False
+    assert d["notes"] == "took it"
+    # taken_at maps off the fact's created_at, not a relational column.
+    assert d["taken_at"] == _NOW.isoformat()
+
+
+async def test_conditions_returns_fact_based_entry():
+    row = _condition_fact_row(name="Hypertension", status="managed")
+    app, _ = _make_app(fetch_rows=[row], fetchval_result=1)
+    resp = await _get(app, "/api/health/conditions")
+    assert resp.status_code == 200
+    c = resp.json()["data"][0]
+    assert c["id"] == str(row["id"])
+    assert c["name"] == "Hypertension"
+    assert c["status"] == "managed"
+    assert c["diagnosed_at"] == "2024-01-01T00:00:00+00:00"
+    assert c["notes"] == "monitor BP"
+
+
+async def test_symptoms_returns_fact_based_entry():
+    cond_id = str(uuid.uuid4())
+    row = _symptom_fact_row(name="Headache", severity=7, condition_id=cond_id)
+    app, _ = _make_app(fetch_rows=[row], fetchval_result=1)
+    resp = await _get(app, "/api/health/symptoms")
+    assert resp.status_code == 200
+    s = resp.json()["data"][0]
+    assert s["id"] == str(row["id"])
+    assert s["name"] == "Headache"
+    assert s["severity"] == 7
+    assert s["condition_id"] == cond_id
+    assert s["notes"] == "dull ache"
+    # occurred_at maps off the fact's valid_at.
+    assert s["occurred_at"] == _NOW.isoformat()
+
+
+async def test_research_returns_fact_based_entry():
+    row = _research_fact_row(title="Magnesium and sleep")
+    app, _ = _make_app(fetch_rows=[row], fetchval_result=1)
+    resp = await _get(app, "/api/health/research")
+    assert resp.status_code == 200
+    r = resp.json()["data"][0]
+    assert r["id"] == str(row["id"])
+    assert r["title"] == "Magnesium and sleep"
+    assert r["content"].startswith("Studies suggest")
+    assert r["tags"] == ["sleep", "supplements"]
+    assert r["source_url"] == "https://example.com/study"
+    assert r["condition_id"] is None
+
+
+# ---------------------------------------------------------------------------
 # GET /medications
 # ---------------------------------------------------------------------------
 

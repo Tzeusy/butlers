@@ -728,6 +728,44 @@ async def test_audit_empty_when_no_rows(app):
     assert data["entries"] == []
 
 
+async def test_audit_payload_summary_redacts_to_allowlist(app):
+    """The audit payload_summary carries only allowlisted keys, never raw internal fields.
+
+    Guards _extract_payload_summary: action_payload JSONB may contain arbitrary
+    fields, but the audit response must surface only the recognised allowlist
+    (title/start_at/...) and drop anything else (e.g. internal_field).
+    """
+    rows = {
+        "general": [
+            _audit_row(
+                action_type="workspace_user_create",
+                action_status="applied",
+            )
+        ]
+    }
+    # Override the payload to contain a mix of allowlisted + internal fields.
+    rows["general"][0]["action_payload"] = {
+        "title": "My event",
+        "start_at": "2026-06-20T10:00:00Z",
+        "internal_field": "should-not-appear",
+    }
+    app, _ = _build_audit_app(app, audit_rows=rows)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/calendar/workspace/audit")
+
+    assert resp.status_code == 200
+    entry = resp.json()["data"]["entries"][0]
+    summary = entry["payload_summary"]
+    assert "title" in summary
+    assert "start_at" in summary
+    # Non-allowlisted internal field is redacted out of the summary.
+    assert "internal_field" not in summary
+    assert set(summary) == {"title", "start_at"}
+
+
 # ---------------------------------------------------------------------------
 # Single-entry lookup — GET /api/calendar/workspace/entries/{entry_id}
 # ---------------------------------------------------------------------------

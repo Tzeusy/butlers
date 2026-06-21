@@ -833,6 +833,37 @@ async def test_top_sessions_butler_filter_returns_only_that_butler(app):
     assert not any(s["butler"] == "gen" for s in data)
 
 
+async def test_top_sessions_no_butler_filter_aggregates_all(app):
+    """Omitting ?butler on /top-sessions returns sessions from all butlers."""
+    configs = [
+        ButlerConnectionInfo(name="sw", port=41100),
+        ButlerConnectionInfo(name="gen", port=41101),
+    ]
+    session_data = {
+        "sessions": [
+            {
+                "session_id": "session-x",
+                "model": "claude-sonnet-4-20250514",
+                "input_tokens": 1000,
+                "output_tokens": 500,
+                "cached_input_tokens": 0,
+                "started_at": "2026-05-01T08:00:00Z",
+            }
+        ]
+    }
+    mgr = _mock_mgr({"sw": _make_tool_result(session_data), "gen": _make_tool_result(session_data)})
+    _wire(app, mgr, configs, _flat_pricing())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/spend/top-sessions")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    butlers_returned = {s["butler"] for s in data}
+    assert "sw" in butlers_returned
+    assert "gen" in butlers_returned
+
+
 async def test_top_sessions_unknown_butler_returns_empty_200(app):
     """?butler=nonexistent on /top-sessions returns an empty list 200."""
     configs = [ButlerConnectionInfo(name="sw", port=41100)]
