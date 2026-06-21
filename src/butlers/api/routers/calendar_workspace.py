@@ -1997,10 +1997,19 @@ async def accept_proposal(
         only_if_status="pending",
     )
     if updated is None:
-        # Lost a race (concurrently accepted) — return the persisted state.
+        # Lost a race (concurrently accepted or dismissed) — reconcile with the
+        # persisted state instead of returning a misleading 500.
         refreshed = await query_calendar_proposal_by_id(db, proposal_id=proposal_id)
-        if refreshed is not None and refreshed.status == "accepted":
-            return ApiResponse[CalendarProposalActionResponse](data=_proposal_response(refreshed))
+        if refreshed is not None:
+            if refreshed.status == "accepted":
+                return ApiResponse[CalendarProposalActionResponse](
+                    data=_proposal_response(refreshed)
+                )
+            if refreshed.status == "dismissed":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Proposal '{proposal_id}' is dismissed and cannot be accepted",
+                )
         raise HTTPException(
             status_code=500,
             detail=f"Failed to mark proposal '{proposal_id}' accepted after provider create",
@@ -2059,9 +2068,19 @@ async def dismiss_proposal(
         only_if_status="pending",
     )
     if updated is None:
+        # Lost a race (concurrently dismissed or accepted) — reconcile with the
+        # persisted state instead of returning a misleading 500.
         refreshed = await query_calendar_proposal_by_id(db, proposal_id=proposal_id)
-        if refreshed is not None and refreshed.status == "dismissed":
-            return ApiResponse[CalendarProposalActionResponse](data=_proposal_response(refreshed))
+        if refreshed is not None:
+            if refreshed.status == "dismissed":
+                return ApiResponse[CalendarProposalActionResponse](
+                    data=_proposal_response(refreshed)
+                )
+            if refreshed.status == "accepted":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Proposal '{proposal_id}' is accepted and cannot be dismissed",
+                )
         raise HTTPException(
             status_code=500,
             detail=f"Failed to mark proposal '{proposal_id}' dismissed",

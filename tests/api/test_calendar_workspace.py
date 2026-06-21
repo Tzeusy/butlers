@@ -2081,6 +2081,52 @@ async def test_dismiss_proposal_unknown_id_returns_404(app, monkeypatch):
     assert resp.status_code == 404
 
 
+async def test_accept_proposal_lost_race_to_dismiss_is_conflict(app, monkeypatch):
+    """If a proposal is concurrently dismissed after the guard read, the guarded
+    update no-ops (returns None) and the refreshed row is dismissed → 409, not 500."""
+    proposal_id = uuid4()
+    event_id = uuid4()
+    pending = _proposal_dto(status="pending", proposal_id=proposal_id)
+    dismissed = _proposal_dto(status="dismissed", proposal_id=proposal_id)
+
+    # First read sees pending (passes the guard); refresh after the lost-race
+    # update sees the concurrently-dismissed row.
+    fetch = AsyncMock(side_effect=[pending, dismissed])
+    update = AsyncMock(return_value=None)  # guarded update matched no pending row
+    _patch_proposal_reads(monkeypatch, fetch=fetch, update=update)
+
+    create_client = AsyncMock()
+    create_client.call_tool = AsyncMock(
+        return_value=_mock_mcp_result({"status": "created", "event_id": str(event_id)})
+    )
+    app, _, _ = _build_app(app, mcp_clients={"general": create_client})
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(f"/api/calendar/workspace/proposals/{proposal_id}/accept")
+    assert resp.status_code == 409
+
+
+async def test_dismiss_proposal_lost_race_to_accept_is_conflict(app, monkeypatch):
+    """If a proposal is concurrently accepted after the guard read, the guarded
+    update no-ops (returns None) and the refreshed row is accepted → 409, not 500."""
+    proposal_id = uuid4()
+    pending = _proposal_dto(status="pending", proposal_id=proposal_id)
+    accepted = _proposal_dto(status="accepted", accepted_event_id=uuid4(), proposal_id=proposal_id)
+
+    fetch = AsyncMock(side_effect=[pending, accepted])
+    update = AsyncMock(return_value=None)
+    _patch_proposal_reads(monkeypatch, fetch=fetch, update=update)
+    app, _, _ = _build_app(app)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post(f"/api/calendar/workspace/proposals/{proposal_id}/dismiss")
+    assert resp.status_code == 409
+
+
 async def test_accept_proposal_applies_inline_overrides(app, monkeypatch):
     """Inline overrides in the request body take precedence over stored values."""
     proposal_id = uuid4()
