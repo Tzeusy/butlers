@@ -1754,6 +1754,75 @@ describe("CalendarWorkspacePage", () => {
     );
   });
 
+  it("reports an error (not success) when a recurring edit returns status=conflict", async () => {
+    const userMutateAsync = vi.fn().mockResolvedValue({
+      data: { result: { status: "conflict" }, conflicts: [], suggested_slots: [] },
+      meta: {},
+    });
+    setUserMutationState({ mutateAsync: userMutateAsync } as Partial<UseUserMutationResult>);
+    setWorkspaceState({
+      data: {
+        data: {
+          entries: [
+            {
+              entry_id: "rec-1",
+              view: "user",
+              source_type: "provider_event",
+              source_key: "google:primary",
+              title: "Standup",
+              start_at: "2026-03-01T09:00:00Z",
+              end_at: "2026-03-01T09:30:00Z",
+              timezone: "UTC",
+              all_day: false,
+              calendar_id: "primary",
+              provider_event_id: "evt-rec",
+              butler_name: "general",
+              schedule_id: null,
+              reminder_id: null,
+              rrule: "RRULE:FREQ=DAILY",
+              cron: null,
+              until_at: null,
+              status: "active",
+              sync_state: "fresh",
+              editable: true,
+              metadata: {},
+            },
+          ],
+          source_freshness: [],
+          lanes: [],
+          next_cursor: null,
+          has_more: false,
+        },
+        meta: {},
+      },
+    } as Partial<UseWorkspaceResult>);
+    renderPage("/calendar?view=user&range=day&anchor=2026-03-01");
+
+    const eventButton = findGridEvent("Standup");
+    await act(async () => {
+      firePointer(eventButton!, "pointerdown", 600);
+      firePointer(eventButton!, "pointermove", 660);
+      firePointer(eventButton!, "pointerup", 660);
+      await flush();
+    });
+
+    const editDialog = findDialogByTitle("Edit recurring event");
+    const saveButton = Array.from(editDialog?.querySelectorAll("button") ?? []).find(
+      (button) => button.textContent?.trim() === "Save changes",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      saveButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flush();
+    });
+
+    // A conflict is NOT a success: surface an error and keep the scope sheet open
+    // (the edit never landed) instead of falsely reporting the change applied.
+    expect(userMutateAsync).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("conflicts"));
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="edit-recurrence-scope"]')).not.toBeNull();
+  });
+
   it("shows an error toast (not success) when a butler delete soft-fails", async () => {
     setButlerWorkspaceFixtures();
     // Invoke onSuccess with a soft-failed envelope, as react-query would on HTTP 200.

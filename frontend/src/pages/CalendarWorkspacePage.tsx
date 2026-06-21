@@ -643,6 +643,11 @@ function occurrenceImpactText(
   entries: UnifiedCalendarEntry[],
   providerEventId: string | null | undefined,
 ): string {
+  // Without a base provider event id we cannot count siblings; matching on a
+  // falsy id would wrongly bucket every non-provider entry together.
+  if (!providerEventId) {
+    return "Changes only this occurrence.";
+  }
   const loaded = entries.filter((e) => e.provider_event_id === providerEventId).length;
   return loaded > 1
     ? `Changes 1 of ~${loaded} loaded occurrences.`
@@ -3153,6 +3158,15 @@ export default function CalendarWorkspacePage() {
         payload,
       });
       const result = response.data.result;
+      // `isCalendarMutationOk` intentionally treats 'conflict' as non-terminal
+      // (handled interactively elsewhere), so check it explicitly here — this
+      // sheet has no conflict-resolution path, and silently reporting success
+      // would close the dialog without the edit ever landing.
+      const status = maybeText(result?.status);
+      if (status === "conflict") {
+        toast.error(`Could not update ${label}: the new time conflicts with another event.`);
+        return;
+      }
       if (!isCalendarMutationOk(result)) {
         toast.error(
           `Failed to update ${label}: ${calendarMutationErrorMessage(result, "Update failed.")}`,
