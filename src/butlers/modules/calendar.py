@@ -7767,11 +7767,14 @@ class CalendarModule(Module):
 
     def _resolve_calendar_id(self, override_calendar_id: str | None) -> str:
         if override_calendar_id is None:
-            # Resolve the user-facing DEFAULT-TARGET calendar: the user's chosen
-            # default target if set, else the discovered primary calendar, else
-            # the Butlers calendar.  The default-target selection is kept
-            # separate from the immutable Butlers calendar id.
-            target = self._resolve_role_calendar_id(CALENDAR_ROLE_DEFAULT_TARGET)
+            # Butler-authored creates default to the dedicated "Butlers"
+            # calendar (``_resolved_calendar_id``), NOT the user's
+            # default-target/primary.  The explicit ``calendar_id`` override
+            # branch below is the documented opt-out for "put this on my
+            # primary calendar".  The default-target selection
+            # (``calendar_set_primary``) deliberately does not affect this
+            # no-override default.
+            target = self._resolve_role_calendar_id(CALENDAR_ROLE_BUTLERS)
             if target is None:
                 raise RuntimeError("Calendar ID not resolved; call on_startup first")
             return target
