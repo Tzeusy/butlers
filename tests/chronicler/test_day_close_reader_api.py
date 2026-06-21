@@ -476,6 +476,35 @@ class TestDayCloseCorrectedStartAtStaleness:
         assert body["prose"] == "Yesterday was a productive day."
 
 
+class TestDayCloseStalenessQueryShape:
+    """Source-shape guard for the staleness CTE in get_day_close_cache.
+
+    The staleness query is a UNION of nine sub-SELECTs feeding MAX(ts). The
+    behavioral tests above mock the staleness fetchrow's MAX result, so they
+    cannot catch a refactor that silently drops one of the nine signal
+    branches (the mock would still return a non-null MAX from whatever branch
+    remains). This single source-text guard re-pins the CTE window shape so a
+    refactor that drops the corrected_start_at branches or collapses the
+    episode/point_event target_kind split fails here rather than silently in
+    production.
+    """
+
+    def test_staleness_query_contains_signal_branch_markers(self):
+        source = _ROUTER_PATH.read_text()
+        # corrected_start_at signals (8 + 9) move an episode/point_event INTO
+        # the window via an override; without this column the override-window
+        # signals collapse back to the start_at/occurred_at scoped branches.
+        assert "corrected_start_at" in source
+        # episode-scoped override branch must filter on target_kind = 'episode'
+        # so episode overrides do not catch point_event targets and vice versa.
+        assert "o.target_kind = 'episode'" in source
+        # signal-9 marker: the point_event corrected_start_at branch is the only
+        # place the `point_events pe` join alias appears. Its absence means the
+        # point_event corrected_start_at signal was dropped.
+        assert "JOIN point_events pe ON pe.id = o.target_id" in source
+        assert "o.target_kind = 'point_event'" in source
+
+
 class TestDayCloseCorrectedStartAtPointEventStaleness:
     """Staleness signal 9: override sets corrected_start_at on a point_event inside the cached window.
 
