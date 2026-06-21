@@ -240,6 +240,24 @@ _MIGRATION_NOISE = (
             "401",
             id="nested-numeric-code",
         ),
+        # OpenCode provider failures wrap the useful message under error.data.
+        pytest.param(
+            "",
+            json.dumps(
+                {
+                    "type": "error",
+                    "timestamp": 123456,
+                    "sessionID": "session-123",
+                    "error": {
+                        "name": "APIError",
+                        "data": {"message": "provider overloaded, retry after 30s"},
+                    },
+                }
+            ),
+            1,
+            "APIError: provider overloaded, retry after 30s",
+            id="nested-apierror-data-message",
+        ),
         # Migration banner alone is not a useful diagnostic → fall back to exit code.
         pytest.param(_MIGRATION_NOISE, "", 1, "exit code 1", id="migration-noise-only"),
     ],
