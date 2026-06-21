@@ -470,6 +470,36 @@ class TestReminderDismiss:
         assert result["recurrence"] == "recurring"
         pool.execute.assert_not_called()
 
+    async def test_dismiss_recurring_uses_confirmed_status_filter(self):
+        """The recurring-dismiss instance query MUST target status = 'confirmed'.
+
+        Regression guard: if the WHERE clause were relaxed to
+        ``status != 'cancelled'``, a tentative/superseded instance could be
+        selected and cancelled. The instance selection happens in the DB, so a
+        mock pool cannot replay the filter — we pin the SQL shape sent to
+        ``pool.fetchrow`` for the instance lookup (the 2nd fetchrow call on a
+        recurring dismiss).
+        """
+        event_row = _dismiss_event_row(recurrence_rule="RRULE:FREQ=YEARLY")
+        instance_id = uuid.uuid4()
+        instance_data = {"id": instance_id, "starts_at": _DUE_AT}
+        instance_row = MagicMock()
+        instance_row.__getitem__ = lambda self, key: instance_data[key]
+
+        pool = _make_pool(fetchrow_side_effect=[event_row, instance_row])
+        mcp, mod = await _make_module(pool=pool)
+
+        await mcp.tools["reminder_dismiss"](event_id=str(_EVENT_ID))
+
+        # The instance lookup is the 2nd fetchrow (1st is the event row).
+        instance_query_sql = pool.fetchrow.call_args_list[1][0][0]
+        normalized = " ".join(instance_query_sql.split())
+        assert "calendar_event_instances" in normalized
+        assert "status = 'confirmed'" in normalized
+        # A regression to a negated filter must fail this guard.
+        assert "!= 'cancelled'" not in normalized
+        assert "<> 'cancelled'" not in normalized
+
 
 # ---------------------------------------------------------------------------
 # _insert_reminder_to_calendar_events: source_butler set correctly

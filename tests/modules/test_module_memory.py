@@ -350,6 +350,40 @@ class TestToolDelegation:
             source_schema=None,
         )
 
+    @pytest.mark.parametrize(
+        ("valid_at", "retention_class"),
+        [
+            ("2026-03-15T10:00:00Z", "long_term"),
+            ("2025-01-01T00:00:00Z", "ephemeral"),
+        ],
+    )
+    async def test_memory_store_fact_forwards_valid_at_and_retention_class(
+        self, valid_at, retention_class
+    ):
+        """Non-default valid_at and a custom retention_class must reach writing verbatim.
+
+        Guards against a tool-layer regression that hardcodes/ignores these
+        caller-supplied values (e.g. always sending valid_at=None or
+        retention_class='operational').
+        """
+        mod, tools, pool, writing, *_ = await self._setup_and_register()
+        mod._embedding_engine = make_embedding_engine_mock(mod._config.embedding_model)
+        writing.memory_store_fact = AsyncMock(return_value={"id": "abc"})
+        entity_uuid = "550e8400-e29b-41d4-a716-446655440000"
+
+        await tools["memory_store_fact"](
+            subject="user",
+            predicate="visited",
+            content="Paris",
+            entity_id=entity_uuid,
+            valid_at=valid_at,
+            retention_class=retention_class,
+        )
+
+        _, kwargs = writing.memory_store_fact.call_args
+        assert kwargs["valid_at"] == valid_at
+        assert kwargs["retention_class"] == retention_class
+
     async def test_memory_search_delegates(self):
         mod, tools, pool, _, reading, *_ = await self._setup_and_register()
         mod._embedding_engine = make_embedding_engine_mock(mod._config.embedding_model)
