@@ -255,6 +255,7 @@ async def test_appointment_sorts_before_medication_on_shared_date():
 async def test_empty_domain_writes_has_entries_false_for_every_date():
     result, cap, _ = await _run()
     overlay_envs = [v for k, v in cap.store.items() if k.startswith(OVERLAY_KEY_PREFIX)]
+    assert len(overlay_envs) == HEALTH_OVERLAY_LOOKAHEAD_DAYS + 1
     assert all(env["has_entries"] is False for env in overlay_envs)
     assert all(env["entries"] == [] for env in overlay_envs)
     assert all(env["butler"] == "health" for env in overlay_envs)
@@ -266,9 +267,9 @@ async def test_appointment_outside_window_is_dropped():
     appts = [_appointment(valid_at=_sgt_noon(far))]
     result, cap, _ = await _run(appointments=appts)
     assert result["appointment_entries"] == 0
-    assert all(
-        v["has_entries"] is False for k, v in cap.store.items() if k.startswith(OVERLAY_KEY_PREFIX)
-    )
+    overlay_envs = [v for k, v in cap.store.items() if k.startswith(OVERLAY_KEY_PREFIX)]
+    assert len(overlay_envs) == HEALTH_OVERLAY_LOOKAHEAD_DAYS + 1
+    assert all(env["has_entries"] is False for env in overlay_envs)
 
 
 # ---------------------------------------------------------------------------
