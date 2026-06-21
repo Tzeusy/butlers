@@ -288,7 +288,14 @@ describe("SettingsPermissionsPage — inherited cell semantics [bu-9q1dx.3]", ()
 // is excluded. This guards against a regression to an unfiltered request.
 describe("SettingsPermissionsPage — audit reel filters operational noise [bu-9q1dx.5]", () => {
   beforeEach(() => {
-    useAuditLogMock.mockClear();
+    // mockReset() (not mockClear()) so a prior test's mockReturnValue cannot
+    // leak across cases; re-apply the default privileged-empty implementation.
+    useAuditLogMock.mockReset();
+    useAuditLogMock.mockImplementation(() => ({
+      data: { data: [] },
+      isLoading: false,
+      error: null,
+    }));
     fetchMock.mockReset();
     fetchMock.mockImplementation((url: string) => defaultFetch(url));
     global.fetch = fetchMock as unknown as typeof fetch;
