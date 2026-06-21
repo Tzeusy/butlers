@@ -613,6 +613,7 @@ async def _fetch_flattened_workspace_rows(
     flattened.sort(key=lambda r: (r["instance_starts_at"], r["instance_id"]))
     return flattened
 
+
 def _cluster_key(row: Mapping[str, Any], match_pass: str, *, aggressive: bool) -> str:
     """Serialise a row's dedup-cluster identity for the given pass.
 
