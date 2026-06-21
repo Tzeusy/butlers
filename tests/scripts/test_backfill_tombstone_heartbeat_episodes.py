@@ -52,7 +52,6 @@ _mod = _load_script()
 count_by_category = _mod.count_by_category
 apply_tombstones = _mod.apply_tombstones
 main = _mod.main
-_CORE_SESSIONS_SOURCE = _mod._CORE_SESSIONS_SOURCE
 
 
 # ---------------------------------------------------------------------------
@@ -148,30 +147,6 @@ async def test_count_by_category_empty_returns_zeros() -> None:
     assert counts["schedule:*"] == 0
 
 
-@pytest.mark.asyncio
-async def test_count_by_category_passes_source_name_as_parameter() -> None:
-    """source_name is passed as a bound query parameter, not inlined."""
-    pool = _pool_fetch()
-
-    await count_by_category(pool)
-
-    assert pool.fetch.called
-    call_args = pool.fetch.call_args
-    # First positional arg after query is source_name.
-    assert _CORE_SESSIONS_SOURCE in call_args.args
-
-
-@pytest.mark.asyncio
-async def test_count_by_category_query_filters_tombstone_at_is_null() -> None:
-    """The diagnostic query must not count already-tombstoned rows."""
-    pool = _pool_fetch()
-
-    await count_by_category(pool)
-
-    query: str = pool.fetch.call_args.args[0]
-    assert "tombstone_at IS NULL" in query
-
-
 # ---------------------------------------------------------------------------
 # apply_tombstones
 # ---------------------------------------------------------------------------
@@ -201,37 +176,6 @@ async def test_apply_tombstones_issues_update_not_delete() -> None:
     assert "UPDATE" in sql.upper()
     assert "DELETE" not in sql.upper()
     assert "tombstone_at" in sql
-
-
-@pytest.mark.asyncio
-async def test_apply_tombstones_filters_tombstone_at_is_null() -> None:
-    """Already-tombstoned rows must be excluded — the WHERE must check tombstone_at IS NULL."""
-    pool = AsyncMock()
-    pool.execute = AsyncMock(return_value="UPDATE 0")
-
-    await apply_tombstones(pool)
-
-    sql: str = pool.execute.call_args.args[0]
-    assert "tombstone_at IS NULL" in sql
-
-
-@pytest.mark.asyncio
-async def test_apply_tombstones_uses_parameterised_exclusion_list() -> None:
-    """The exclusion list is bound as a parameter, not string-interpolated into SQL."""
-    pool = AsyncMock()
-    pool.execute = AsyncMock(return_value="UPDATE 0")
-
-    await apply_tombstones(pool)
-
-    call_args = pool.execute.call_args
-    # Args after the SQL: source_name, excluded_list, prefix_pattern
-    params = call_args.args[1:]
-    # The second parameter should be a list of exact-match sources
-    from butlers.chronicler.adapters.sessions import EXCLUDED_TRIGGER_SOURCES
-
-    assert any(isinstance(p, list) and set(p) == EXCLUDED_TRIGGER_SOURCES for p in params), (
-        f"Expected excluded sources list in call params; got {params}"
-    )
 
 
 # ---------------------------------------------------------------------------

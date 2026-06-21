@@ -52,32 +52,11 @@ _mod = _load_script()
 
 
 # ---------------------------------------------------------------------------
-# SQL-shape tests (no DB)
-# ---------------------------------------------------------------------------
-
-
-class TestSqlShape:
-    def test_update_uses_coalesce_last_seen_created_at(self) -> None:
-        sql = _mod._UPDATE_BATCH_SQL.lower()
-        assert "coalesce(last_seen, created_at)" in sql.replace("\n", " ")
-        assert "set observed_at" in sql.replace("\n", " ")
-
-    def test_update_rechecks_observed_at_null(self) -> None:
-        """Concurrency safety: only stamp rows still NULL."""
-        sql = _mod._UPDATE_BATCH_SQL.lower()
-        assert "observed_at is null" in sql.replace("\n", " ")
-
-    def test_select_batch_is_bounded_by_limit(self) -> None:
-        sql = _mod._SELECT_BATCH_SQL.lower()
-        assert "where observed_at is null" in sql.replace("\n", " ")
-        assert "limit $1" in sql.replace("\n", " ")
-
-    def test_default_batch_size_positive(self) -> None:
-        assert _mod._DEFAULT_BATCH_SIZE > 0
-
-
-# ---------------------------------------------------------------------------
 # Behavior tests with a mocked pool
+#
+# The NULL-only stamping, bounded batching, and idempotency that the SQL
+# constants encode are asserted behaviorally below (bounded-batches checks the
+# LIMIT, idempotent-second-run / safety-valve check the IS NULL re-stamp).
 # ---------------------------------------------------------------------------
 
 
