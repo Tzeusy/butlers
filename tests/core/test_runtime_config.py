@@ -155,6 +155,11 @@ async def test_concurrent_seed_race():
     assert all(r.butler_name == "test" for r in results)
     # Both should succeed without error
     assert pool.execute.call_count == 2
+    # Seed INSERT must be race-safe / idempotent: ON CONFLICT DO NOTHING
+    # (concurrent daemon starts must not raise a unique-violation).
+    seed_sql = pool.execute.await_args_list[0].args[0]
+    assert "ON CONFLICT" in seed_sql
+    assert "DO NOTHING" in seed_sql
 
 
 async def test_invalidate_cache():

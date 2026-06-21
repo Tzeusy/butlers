@@ -568,6 +568,9 @@ class TestAssertSenderChannelFactPrefixesTelegram:
         with patch(_ASSERT_FACT_PATCH, new_callable=AsyncMock) as mock_assert:
             await assert_sender_channel_fact(pool, entity_id, channel_type, raw_value)
 
+        # Exactly-once fact-write contract: a duplicate write would slip past the
+        # await_args unpacking below (which only inspects the LAST call).
+        mock_assert.assert_awaited_once()
         # Central writer signature: (pool, subject, predicate, object, ...)
         _pool, subject, predicate, obj = mock_assert.await_args.args
         assert subject == entity_id
@@ -587,6 +590,9 @@ class TestAssertSenderChannelFactPrefixesTelegram:
         with patch(_ASSERT_FACT_PATCH, new_callable=AsyncMock) as mock_assert:
             await assert_sender_channel_fact(pool, entity_id, "email", "a@b.com")
 
+        # Exactly-once fact-write contract (a duplicate write would be masked by
+        # the await_args unpacking, which only sees the LAST call).
+        mock_assert.assert_awaited_once()
         _pool, _subject, predicate, obj = mock_assert.await_args.args
         assert predicate == "has-email"
         assert obj == "a@b.com"
