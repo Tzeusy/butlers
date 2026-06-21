@@ -151,9 +151,7 @@ def _coerce_tier(raw: Any) -> int | None:
     return None
 
 
-async def prune_old_prep_contributions(
-    pool: asyncpg.Pool, *, live_event_ids: set[str]
-) -> int:
+async def prune_old_prep_contributions(pool: asyncpg.Pool, *, live_event_ids: set[str]) -> int:
     """Delete prep envelopes for events no longer in the lookahead window.
 
     Prep envelopes are keyed per-event (not per-date), so the prune deletes any
@@ -362,8 +360,7 @@ async def run_relationship_calendar_prep_contribution(
     pruned = await prune_old_prep_contributions(pool, live_event_ids=live_event_ids)
 
     logger.info(
-        "Relationship calendar prep contribution: date=%s events_written=%d "
-        "attendees=%d pruned=%d",
+        "Relationship calendar prep contribution: date=%s events_written=%d attendees=%d pruned=%d",
         today_str,
         events_written,
         attendees_total,
