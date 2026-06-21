@@ -9,6 +9,7 @@ import { toast } from "sonner";
 
 import CalendarWorkspacePage from "@/pages/CalendarWorkspacePage";
 import {
+  useCalendarMeetingPrep,
   useCalendarWorkspace,
   useCalendarWorkspaceMeta,
   useFindCalendarWorkspaceTime,
@@ -2382,6 +2383,64 @@ describe("CalendarWorkspacePage", () => {
 
       // sync_state chip visible (non-null sync_state → chip rendered)
       expect(panel?.textContent).toContain("stale");
+    });
+
+    it("keys the meeting-prep rail on event_id (calendar_events.id), not entry_id (bu-jemrk)", async () => {
+      setWorkspaceState({
+        data: {
+          data: {
+            entries: [
+              {
+                entry_id: "instance-entry-1",
+                event_id: "evt-backing-1",
+                view: "user" as const,
+                source_type: "provider_event" as const,
+                source_key: "google:primary",
+                title: "Prep keying test",
+                start_at: "2026-03-01T09:00:00Z",
+                end_at: "2026-03-01T09:30:00Z",
+                timezone: "UTC",
+                all_day: false,
+                calendar_id: "primary",
+                provider_event_id: "evt-prov",
+                butler_name: "general",
+                schedule_id: null,
+                reminder_id: null,
+                rrule: null,
+                cron: null,
+                until_at: null,
+                status: "active",
+                sync_state: null,
+                editable: true,
+                metadata: {},
+                source_butler: null,
+                source_session_id: null,
+              },
+            ],
+            source_freshness: [],
+            lanes: [],
+            next_cursor: null,
+            has_more: false,
+          },
+          meta: {},
+        },
+      });
+
+      renderPage("/calendar?view=user&range=list&anchor=2026-03-01");
+
+      const detailButton = findButton("Detail");
+      await act(async () => {
+        detailButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await flush();
+      });
+
+      // The prep rail must fetch using the backing calendar_events.id, not the
+      // per-instance entry_id — otherwise contributions never match.
+      const prepCalls = vi.mocked(useCalendarMeetingPrep).mock.calls;
+      expect(prepCalls.length).toBeGreaterThan(0);
+      const eventIdArgs = prepCalls.map((call) => call[0]);
+      expect(eventIdArgs).toContain("evt-backing-1");
+      expect(eventIdArgs).not.toContain("instance-entry-1");
     });
 
     it("closes the panel when close button is pressed", async () => {
