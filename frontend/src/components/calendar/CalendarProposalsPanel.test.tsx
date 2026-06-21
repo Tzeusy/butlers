@@ -160,6 +160,40 @@ describe("CalendarProposalsPanel", () => {
     expect(toastMocks.error).not.toHaveBeenCalled();
   });
 
+  it("shows the full end date for a multi-day proposal span", () => {
+    renderPanel({
+      entries: [
+        proposalEntry({
+          start_at: "2026-06-22T22:00:00+00:00",
+          end_at: "2026-06-23T06:00:00+00:00",
+        }),
+      ],
+    });
+    // The end date (Jun 23) must be visible, not just the end time, so an
+    // overnight span is not misread as ending the same day.
+    const row = screen.getByTestId("proposal-row");
+    expect(row.textContent).toContain("Jun 23");
+  });
+
+  it("blocks an edit where the end is not after the start", async () => {
+    const { acceptMutation } = renderPanel();
+
+    fireEvent.click(screen.getByTestId("proposal-edit"));
+    // Start at 12:00, end at 09:00 on the same day — inverted range.
+    fireEvent.change(screen.getByTestId("proposal-edit-start"), {
+      target: { value: "2026-06-22T12:00" },
+    });
+    fireEvent.change(screen.getByTestId("proposal-edit-end"), {
+      target: { value: "2026-06-22T09:00" },
+    });
+    fireEvent.click(screen.getByTestId("proposal-edit-save"));
+
+    expect(toastMocks.error).toHaveBeenCalled();
+    expect(acceptMutation.mutateAsync).not.toHaveBeenCalled();
+    // The edit form stays open so the user can correct the range.
+    expect(screen.getByTestId("proposal-edit-form")).toBeTruthy();
+  });
+
   it("forwards inline edits as overrides to the accept mutation", async () => {
     const { acceptMutation } = renderPanel();
 

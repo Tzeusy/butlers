@@ -201,16 +201,27 @@ export function CalendarProposalsPanel({
 
   function submitEdit(entry: UnifiedCalendarEntry) {
     if (!editDraft) return;
+
+    // Effective start/end after applying any edits (falling back to the
+    // proposal's current values). Guard against an inverted range before we
+    // optimistically remove the row and hit the backend.
+    const startIso = localInputToIso(editDraft.startLocal) ?? entry.start_at;
+    const endIso = localInputToIso(editDraft.endLocal) ?? entry.end_at;
+    const startMs = startIso ? Date.parse(startIso) : NaN;
+    const endMs = endIso ? Date.parse(endIso) : NaN;
+    if (!Number.isNaN(startMs) && !Number.isNaN(endMs) && startMs >= endMs) {
+      toast.error("End time must be after the start time.");
+      return;
+    }
+
     const overrides: CalendarProposalAcceptRequest = {};
     const trimmedTitle = editDraft.title.trim();
     if (trimmedTitle && trimmedTitle !== entry.title) {
       overrides.title = trimmedTitle;
     }
-    const startIso = localInputToIso(editDraft.startLocal);
     if (startIso && startIso !== entry.start_at) {
       overrides.start_at = startIso;
     }
-    const endIso = localInputToIso(editDraft.endLocal);
     if (endIso && endIso !== entry.end_at) {
       overrides.end_at = endIso;
     }
@@ -271,10 +282,24 @@ export function CalendarProposalsPanel({
             const isEditing = editingId === entry.entry_id;
             const start = parseISO(entry.start_at);
             const end = parseISO(entry.end_at);
-            const whenLabel = Number.isNaN(start.getTime())
+            const startValid = !Number.isNaN(start.getTime());
+            const endValid = !Number.isNaN(end.getTime());
+            // For a multi-day span (e.g. an overnight event) show the full end
+            // date; a bare end time would hide that it ends on another day.
+            const sameDay =
+              startValid &&
+              endValid &&
+              start.getFullYear() === end.getFullYear() &&
+              start.getMonth() === end.getMonth() &&
+              start.getDate() === end.getDate();
+            const whenLabel = !startValid
               ? ""
               : `${format(start, "EEE, MMM d · HH:mm")}${
-                  Number.isNaN(end.getTime()) ? "" : `–${format(end, "HH:mm")}`
+                  !endValid
+                    ? ""
+                    : sameDay
+                      ? `–${format(end, "HH:mm")}`
+                      : ` – ${format(end, "EEE, MMM d · HH:mm")}`
                 }`;
 
             return (
