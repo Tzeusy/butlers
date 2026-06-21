@@ -4555,7 +4555,9 @@ class CalendarModule(Module):
                 raise ValueError("attendees must contain at least one non-empty email address")
 
             provider = module._require_provider()
-            resolved_calendar_id = module._resolve_calendar_id(calendar_id)
+            resolved_calendar_id = await module._resolve_home_calendar_id(
+                event_id=normalized_event_id, override_calendar_id=calendar_id
+            )
             try:
                 event = await provider.add_attendees(
                     calendar_id=resolved_calendar_id,
@@ -4608,7 +4610,9 @@ class CalendarModule(Module):
                 raise ValueError("attendees must contain at least one non-empty email address")
 
             provider = module._require_provider()
-            resolved_calendar_id = module._resolve_calendar_id(calendar_id)
+            resolved_calendar_id = await module._resolve_home_calendar_id(
+                event_id=normalized_event_id, override_calendar_id=calendar_id
+            )
             try:
                 event = await provider.remove_attendees(
                     calendar_id=resolved_calendar_id,
