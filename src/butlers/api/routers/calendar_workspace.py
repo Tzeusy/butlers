@@ -1978,12 +1978,12 @@ def _butler_event_create_args(
     timezone = (
         (overrides.timezone if overrides and overrides.timezone else None) or row.timezone or "UTC"
     )
-    description = overrides.description if overrides and overrides.description is not None else None
-    if description is None:
-        description = row.description
-    location = overrides.location if overrides and overrides.location is not None else None
-    if location is None:
-        location = row.location
+    # Falsy fallback (consistent with title/start_at/timezone above): a blank
+    # override does not blank out the stored value.
+    description = (
+        overrides.description if overrides and overrides.description else None
+    ) or row.description
+    location = (overrides.location if overrides and overrides.location else None) or row.location
 
     start_iso = start_at.isoformat() if isinstance(start_at, datetime) else start_at
     end_iso = end_at.isoformat() if isinstance(end_at, datetime) else end_at
