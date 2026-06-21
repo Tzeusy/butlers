@@ -1874,9 +1874,7 @@ def _compute_free_slots(
     if duration <= timedelta(0) or limit < 1 or search_end <= search_start:
         return []
 
-    apply_prefs = (
-        scheduling_preferences is not None and scheduling_preferences.has_constraints
-    )
+    apply_prefs = scheduling_preferences is not None and scheduling_preferences.has_constraints
     tz = display_timezone or (scheduling_preferences.timezone if scheduling_preferences else None)
 
     def _localize(dt: datetime) -> datetime:
