@@ -94,16 +94,21 @@ function makeResponse(
   };
 }
 
-function makeMutation(impl?: (vars: unknown) => Promise<unknown>) {
+type PanelProps = Parameters<typeof CalendarDuplicatesPanel>[0];
+
+function makeMutation<T extends PanelProps["rulesMutation"] | PanelProps["keepSeparateMutation"]>(
+  impl?: (vars: unknown) => Promise<unknown>,
+): T {
   return {
     mutateAsync: vi.fn(impl ?? (async () => ({ data: {} }))),
     isPending: false,
-  } as unknown as Parameters<typeof CalendarDuplicatesPanel>[0]["rulesMutation"];
+  } as unknown as T;
 }
 
-function renderPanel(props: Partial<Parameters<typeof CalendarDuplicatesPanel>[0]> = {}) {
-  const rulesMutation = props.rulesMutation ?? makeMutation();
-  const keepSeparateMutation = props.keepSeparateMutation ?? makeMutation();
+function renderPanel(props: Partial<PanelProps> = {}) {
+  const rulesMutation = props.rulesMutation ?? makeMutation<PanelProps["rulesMutation"]>();
+  const keepSeparateMutation =
+    props.keepSeparateMutation ?? makeMutation<PanelProps["keepSeparateMutation"]>();
   render(
     <CalendarDuplicatesPanel
       data={props.data ?? makeResponse()}
@@ -201,8 +206,8 @@ describe("CalendarDuplicatesPanel", () => {
     const { rerender } = render(
       <CalendarDuplicatesPanel
         isLoading
-        rulesMutation={makeMutation()}
-        keepSeparateMutation={makeMutation()}
+        rulesMutation={makeMutation<PanelProps["rulesMutation"]>()}
+        keepSeparateMutation={makeMutation<PanelProps["keepSeparateMutation"]>()}
         timezone="UTC"
       />,
     );
@@ -211,8 +216,8 @@ describe("CalendarDuplicatesPanel", () => {
       <CalendarDuplicatesPanel
         isError
         error={new Error("boom")}
-        rulesMutation={makeMutation()}
-        keepSeparateMutation={makeMutation()}
+        rulesMutation={makeMutation<PanelProps["rulesMutation"]>()}
+        keepSeparateMutation={makeMutation<PanelProps["keepSeparateMutation"]>()}
         timezone="UTC"
       />,
     );
