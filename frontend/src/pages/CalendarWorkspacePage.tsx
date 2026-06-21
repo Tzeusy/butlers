@@ -3336,7 +3336,12 @@ export default function CalendarWorkspacePage() {
         <div className="flex items-start border-b border-[var(--border)] py-3">
           <QuickAddBar
             timezone={defaultTimezone}
-            butlerName={submittableCalendars[0]?.butler_name ?? undefined}
+            butlerName={
+              (selectedSourceKey !== "all"
+                ? submittableCalendars.find((c) => c.source_key === selectedSourceKey)
+                : submittableCalendars[0]
+              )?.butler_name ?? undefined
+            }
             disabled={!canCreateUserEvents}
             onConfirm={confirmQuickAddDraft}
           />

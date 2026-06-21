@@ -137,7 +137,10 @@ def _coerce_draft(raw: str) -> dict[str, Any] | None:
         "title": title.strip(),
         "start_at": _opt_str("start_at"),
         "end_at": _opt_str("end_at"),
-        "all_day": bool(parsed.get("all_day", False)),
+        # Only explicit truthy values count. ``bool()`` would coerce a stray
+        # string like "false" (which the LLM can emit) to True; match the
+        # JSON/string forms the model is told to produce instead.
+        "all_day": parsed.get("all_day") in (True, "true", "True", 1, "1"),
         "location": _opt_str("location"),
         "description": _opt_str("description"),
     }

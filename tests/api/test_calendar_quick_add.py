@@ -178,3 +178,35 @@ async def test_parse_quick_add_unparseable_output(app):
     assert data["draft"] is None
     assert isinstance(data["reason"], str) and data["reason"]
     mock_mgr.get_client.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# all_day coercion: a stringy "false" from the LLM must NOT become True
+# ---------------------------------------------------------------------------
+
+
+async def test_parse_quick_add_all_day_string_false_is_false(app):
+    app, _, mock_mgr = _build_app(app)
+
+    dispatcher = MagicMock()
+    # LLMs sometimes emit booleans as strings; "false" must coerce to False,
+    # not True (a naive bool("false") would be truthy).
+    dispatcher.call = AsyncMock(return_value='{"title": "Standup", "all_day": "false"}')
+
+    with (
+        patch(
+            "butlers.api.calendar.quick_add.resolve_model",
+            new=AsyncMock(return_value=_FAKE_MODEL),
+        ),
+        patch(
+            "butlers.api.calendar.quick_add.DiscretionDispatcher",
+            return_value=dispatcher,
+        ),
+    ):
+        resp = await _post(app, {"text": "standup tomorrow"})
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["parse_available"] is True
+    assert data["draft"]["all_day"] is False
+    mock_mgr.get_client.assert_not_called()

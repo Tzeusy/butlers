@@ -207,7 +207,7 @@ export function QuickAddBar({ timezone, butlerName, disabled, onConfirm }: Quick
             <button
               type="button"
               onClick={() => void handleConfirm()}
-              disabled={confirming || draft.title.trim().length === 0}
+              disabled={disabled || confirming || draft.title.trim().length === 0}
               className={cn(
                 PILL,
                 "bg-[var(--fg)] text-[var(--bg)] border-[var(--fg)] hover:opacity-90",
