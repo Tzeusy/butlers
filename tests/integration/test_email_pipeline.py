@@ -58,6 +58,11 @@ class TestToolFlows:
         assert bot_reply["thread_id"] == "thread-1"
         assert send_mock.await_count == 2
         assert reply_mock.await_count == 2
+        # Blast-radius guard: the tool must forward args positionally to the
+        # helper in the source signature order (to, subject, body) and
+        # (to, thread_id, body, subject). A reorder/drop would silently misroute.
+        send_mock.assert_any_await("a@example.com", "Hi", "Hello")
+        reply_mock.assert_any_await("a@example.com", "thread-1", "Reply body", None)
 
     async def test_inbox_tools_delegate_helpers(self):
         """Inbox search and read tools delegate to internal helpers."""

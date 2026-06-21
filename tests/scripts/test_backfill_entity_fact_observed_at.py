@@ -144,6 +144,16 @@ async def test_apply_passes_only_selected_ids_to_update() -> None:
     assert update_call.args[1] == ids, "UPDATE must target exactly the selected ids"
 
 
+def test_update_batch_sql_rechecks_null_and_derives_value() -> None:
+    """The batch UPDATE must re-check observed_at IS NULL (concurrency-safe) and
+    derive the value from COALESCE(last_seen, created_at) per the spec."""
+    sql = _mod._UPDATE_BATCH_SQL.lower()
+    # Re-check guard: without it a concurrent stamp would be clobbered.
+    assert "observed_at is null" in sql
+    # Value derivation per specs/relationship-facts/spec.md.
+    assert "coalesce(last_seen, created_at)" in sql
+
+
 @pytest.mark.asyncio
 async def test_idempotent_second_run_is_noop() -> None:
     """Second run sees count 0 → no fetch/execute (idempotency contract)."""

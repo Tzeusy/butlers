@@ -145,6 +145,12 @@ async def test_count_by_category_empty_returns_zeros() -> None:
     assert counts["qa"] == 0
     assert counts["healing"] == 0
     assert counts["schedule:*"] == 0
+    # The diagnostic query must exclude already-tombstoned rows so the count
+    # reflects remaining work; dropping `tombstone_at IS NULL` would re-count
+    # rows the apply pass already handled.
+    assert pool.fetch.called
+    fetch_sql: str = pool.fetch.call_args.args[0]
+    assert "tombstone_at IS NULL" in fetch_sql
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +182,10 @@ async def test_apply_tombstones_issues_update_not_delete() -> None:
     assert "UPDATE" in sql.upper()
     assert "DELETE" not in sql.upper()
     assert "tombstone_at" in sql
+    # Idempotency guard: the UPDATE must exclude already-tombstoned rows.
+    # Dropping `AND tombstone_at IS NULL` would re-tombstone (re-stamp now())
+    # rows on every re-run, breaking the idempotency contract.
+    assert "tombstone_at IS NULL" in sql
 
 
 # ---------------------------------------------------------------------------
