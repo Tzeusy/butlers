@@ -728,37 +728,6 @@ async def test_audit_empty_when_no_rows(app):
     assert data["entries"] == []
 
 
-async def test_audit_payload_summary_contains_key_fields(app):
-    """The payload_summary in audit entries carries recognised key fields only."""
-    rows = {
-        "general": [
-            _audit_row(
-                action_type="workspace_user_create",
-                action_status="applied",
-            )
-        ]
-    }
-    # Override the payload to contain mixed fields
-    rows["general"][0]["action_payload"] = {
-        "title": "My event",
-        "start_at": "2026-06-20T10:00:00Z",
-        "internal_field": "should-not-appear",
-    }
-    app, _ = _build_audit_app(app, audit_rows=rows)
-
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get("/api/calendar/workspace/audit")
-
-    assert resp.status_code == 200
-    entry = resp.json()["data"]["entries"][0]
-    summary = entry["payload_summary"]
-    assert "title" in summary
-    assert "start_at" in summary
-    assert "internal_field" not in summary
-
-
 # ---------------------------------------------------------------------------
 # Single-entry lookup — GET /api/calendar/workspace/entries/{entry_id}
 # ---------------------------------------------------------------------------

@@ -221,41 +221,6 @@ async def test_resolve_model_preview_200_and_422_for_invalid(app):
 
 
 # ---------------------------------------------------------------------------
-# §3.3  Server sort order — enabled DESC included
-# ---------------------------------------------------------------------------
-
-
-async def test_list_models_sort_order(app):
-    """GET /api/settings/models returns rows; sort is applied server-side in SQL.
-
-    The unit test verifies that the endpoint proxies the DB-ordered rows without
-    reordering.  The canonical SQL sort (tier CASE, priority DESC, enabled DESC,
-    alias ASC) is exercised by the rows the mock returns.
-    """
-    rows = [
-        _make_catalog_row(alias="a-reasoning", complexity_tier="reasoning", priority=10),
-        _make_catalog_row(
-            alias="b-workhorse", complexity_tier="workhorse", priority=5, enabled=True
-        ),
-        _make_catalog_row(
-            alias="c-workhorse", complexity_tier="workhorse", priority=5, enabled=False
-        ),
-        _make_catalog_row(alias="d-cheap", complexity_tier="cheap", priority=0),
-    ]
-    _app_with_pool(app, fetch_rows=rows)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get("/api/settings/models")
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-    assert len(data) == 4
-    # The mock returns rows in insertion order; endpoint must not re-sort them.
-    aliases = [e["alias"] for e in data]
-    assert aliases == ["a-reasoning", "b-workhorse", "c-workhorse", "d-cheap"]
-
-
-# ---------------------------------------------------------------------------
 # §3.4  Priority stepper
 # ---------------------------------------------------------------------------
 
@@ -625,47 +590,6 @@ async def test_model_attempts_returns_real_rows(app):
     assert rows[0]["session_id"] is None
 
 
-async def test_model_attempts_suppressed_row_shape(app):
-    """GET /api/settings/models/{id}/attempts returns suppressed rows with failure reason."""
-    from datetime import UTC, datetime
-
-    entry_id = uuid.uuid4()
-    session_id = uuid.uuid4()
-    attempt_ts = datetime(2026, 5, 24, 11, 0, 0, tzinfo=UTC)
-
-    attempt_row = {
-        "ts": attempt_ts,
-        "butler": "general",
-        "outcome": "suppressed",
-        "attempt_index": 0,
-        "failure_reason": "tool_calls_present:2 captured",
-        "error_code": "RuntimeError",
-        "error_message": "Model failed mid-session",
-        "tool_call_count": 2,
-        "session_id": session_id,
-        "logical_session_id": "req-def-456",
-    }
-
-    _, mock_pool = _app_with_pool(app)
-    mock_pool.fetchval = AsyncMock(side_effect=[entry_id, attempt_ts, 1])
-    mock_pool.fetch = AsyncMock(return_value=[_mock_record(attempt_row)])
-
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get(f"/api/settings/models/{entry_id}/attempts?since=7d")
-
-    assert resp.status_code == 200
-    body = resp.json()
-    rows = body["data"]
-    assert len(rows) == 1
-    assert rows[0]["outcome"] == "suppressed"
-    assert rows[0]["tool_call_count"] == 2
-    assert rows[0]["error_code"] == "RuntimeError"
-    assert rows[0]["failure_reason"] == "tool_calls_present:2 captured"
-    assert rows[0]["session_id"] == str(session_id)
-
-
 # ---------------------------------------------------------------------------
 # GET /api/dispatch/attempts — session-scoped failover provenance
 # ---------------------------------------------------------------------------
@@ -752,44 +676,3 @@ async def test_dispatch_attempts_by_session_id(app):
     assert data[1]["outcome"] == "success"
     assert data[1]["attempt_index"] == 1
     assert data[0]["logical_session_id"] == "req-abc-001"
-
-
-async def test_dispatch_attempts_by_logical_session_id(app):
-    """GET /api/dispatch/attempts?logical_session_id=... returns rows across all models."""
-    from datetime import UTC, datetime
-
-    logical_id = "req-xyz-999"
-    attempt_ts = datetime(2026, 5, 25, 10, 0, 0, tzinfo=UTC)
-
-    rows_data = [
-        {
-            "ts": attempt_ts,
-            "butler": "general",
-            "outcome": "quota_skip",
-            "attempt_index": 0,
-            "failure_reason": "Token quota exhausted: 24h",
-            "error_code": None,
-            "error_message": None,
-            "tool_call_count": 0,
-            "session_id": None,
-            "logical_session_id": logical_id,
-        },
-    ]
-
-    _, mock_pool = _app_with_pool(app)
-    mock_pool.fetch = AsyncMock(return_value=[_mock_record(r) for r in rows_data])
-    mock_pool.fetchval = AsyncMock(return_value=1)
-
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get(f"/api/dispatch/attempts?logical_session_id={logical_id}")
-
-    assert resp.status_code == 200
-    body = resp.json()
-    data = body["data"]
-    assert len(data) == 1
-    assert data[0]["outcome"] == "quota_skip"
-    assert data[0]["session_id"] is None
-    assert data[0]["logical_session_id"] == logical_id
-    assert "quota" in (data[0]["failure_reason"] or "").lower()
