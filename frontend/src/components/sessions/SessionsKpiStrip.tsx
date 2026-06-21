@@ -13,6 +13,7 @@
 
 import type { SessionParams } from "@/api/types"
 import { KpiStrip } from "@/components/overview/KpiStrip"
+import { KPI_EYEBROW_STYLE } from "@/components/overview/kpi-eyebrow"
 import { useSessionAggregate } from "@/hooks/use-sessions"
 
 const DASH = "—"
@@ -43,18 +44,7 @@ export function SessionsKpiStrip({ filterParams }: SessionsKpiStripProps) {
 
   return (
     <div data-testid="sessions-kpi-strip">
-      <p
-        className="tnum uppercase"
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: "10px",
-          letterSpacing: "0.14em",
-          lineHeight: 1,
-          color: "var(--muted-foreground)",
-          margin: 0,
-          marginBottom: "12px",
-        }}
-      >
+      <p className="tnum uppercase" style={{ ...KPI_EYEBROW_STYLE, marginBottom: "12px" }}>
         Matching filters
       </p>
       <KpiStrip

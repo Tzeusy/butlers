@@ -305,7 +305,8 @@ async def list_sessions(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=f"Invalid cursor: {exc}") from exc
 
-    where_clause, args, idx = _build_where(
+    # Keyset path indexes cursor params inside the read-model; the param index is unused here.
+    where_clause, args, _ = _build_where(
         trigger_source=trigger_source,
         success=_resolve_success_filter(status, success),
         running=status == "running",
@@ -376,7 +377,8 @@ async def get_session_aggregate(
     ``success_rate`` is ``success_count / (success_count + failed_count)`` or
     ``null`` when no completed sessions exist.  Cost is intentionally omitted.
     """
-    where_clause, args, idx = _build_where(
+    # Aggregate path binds no extra params beyond the WHERE clause; param index is unused here.
+    where_clause, args, _ = _build_where(
         trigger_source=trigger_source,
         success=_resolve_success_filter(status, success),
         running=status == "running",

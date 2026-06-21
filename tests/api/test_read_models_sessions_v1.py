@@ -249,6 +249,14 @@ async def test_keyset_fan_out_merges_and_sorts_across_butlers():
     assert isinstance(result, FanOutKeysetResult)
     started = [r.started_at for r in result.rows]
     assert started == sorted(started, reverse=True)
+    # Every butler's rows must survive the merge and interleave by (started_at DESC).
+    # A descending order alone is satisfied by any single butler's subset, so pin
+    # the row count, the id set, and the exact interleaved order (a1=_NOW newest,
+    # g1=_NOW-5s, a2=_NOW-10s). Source records are subscriptable MagicMocks (use
+    # a1["id"]); merged rows are real SessionSummaryRow objects (use r.id).
+    assert len(result.rows) == 3
+    assert {r.id for r in result.rows} == {a1["id"], a2["id"], g1["id"]}
+    assert [r.id for r in result.rows] == [a1["id"], g1["id"], a2["id"]]
     assert result.has_more is False
     assert result.next_cursor is None
 
@@ -273,6 +281,43 @@ async def test_keyset_fan_out_has_more_and_next_cursor():
     assert decoded_at == result.rows[-1].started_at
 
 
+async def test_keyset_fan_out_has_more_boundary_crosses_butlers():
+    """The (limit+1)th global row may live in a DIFFERENT butler than row[0].
+
+    Each butler returns up to limit+1 rows; the merge-then-truncate boundary,
+    has_more, and next_cursor must all be computed on the MERGED set, not per
+    butler. With a single butler "compute has_more on merged length" and
+    "compute has_more per butler" are indistinguishable, so this pins the
+    cross-shard contract documented in query_session_summaries_keyset_fan_out.
+    """
+    # atlas holds the two newest, general the next three (older).
+    a0 = _summary_at(_NOW)
+    a1 = _summary_at(_NOW - timedelta(seconds=10))
+    g2 = _summary_at(_NOW - timedelta(seconds=20))
+    g3 = _summary_at(_NOW - timedelta(seconds=30))
+    g4 = _summary_at(_NOW - timedelta(seconds=40))
+
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.butler_names = ["atlas", "general"]
+    mock_db.fan_out = AsyncMock(return_value={"atlas": [a0, a1], "general": [g2, g3, g4]})
+
+    result = await query_session_summaries_keyset_fan_out(
+        mock_db, "", (), limit=3, butler_names=["atlas", "general"]
+    )
+
+    # Merged DESC = [a0, a1, g2, g3, g4]; kept = first 3, has_more from the rest.
+    assert len(result.rows) == 3
+    assert result.has_more is True
+    assert result.rows[0].butler == "atlas"
+    # The limit-th (last kept) row crosses into the OTHER butler.
+    assert result.rows[-1].butler == "general"
+    assert result.rows[-1].id == g2["id"]
+    decoded_at, decoded_id = decode_session_cursor(result.next_cursor)
+    assert (decoded_at, decoded_id) == (g2["started_at"], g2["id"])
+    # next_cursor points at the last RETURNED row, not the first dropped one.
+    assert decoded_id != g3["id"]
+
+
 async def test_keyset_fan_out_appends_cursor_predicate():
     """With a cursor, the SQL gains the (started_at, id) < (...) keyset predicate."""
     cursor = encode_session_cursor(_NOW, uuid4())
@@ -288,8 +333,12 @@ async def test_keyset_fan_out_appends_cursor_predicate():
     sql = call.args[0]
     assert "(started_at, id) < ($2, $3)" in sql
     assert "LIMIT 51" in sql  # limit + 1
-    # The cursor (started_at, id) is appended after the existing WHERE arg.
+    # The cursor (started_at, id) is appended after the existing WHERE arg, and
+    # the appended VALUES must be the decoded cursor tuple (a swapped/reordered
+    # or raw-string bind would still produce 3 args, so pin the values too).
     assert len(call.args[1]) == 3
+    started_at, row_id = decode_session_cursor(cursor)
+    assert tuple(call.args[1][-2:]) == (started_at, row_id)
     assert call.kwargs.get("butler_names") == ["atlas"]
 
 

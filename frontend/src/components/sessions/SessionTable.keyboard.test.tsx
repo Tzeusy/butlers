@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, fireEvent, cleanup } from "@testing-library/react";
+import { render, fireEvent, createEvent, cleanup } from "@testing-library/react";
 
 import type { SessionSummary } from "@/api/types";
 import { SessionTable } from "@/components/sessions/SessionTable";
@@ -47,13 +47,18 @@ describe("SessionTable keyboard accessibility", () => {
     expect(onSessionClick).toHaveBeenCalledTimes(1);
   });
 
-  it("opens the drawer when Space is pressed on a row", () => {
+  it("opens the drawer and suppresses page scroll when Space is pressed on a row", () => {
     const onSessionClick = vi.fn();
     const { getByRole } = render(
       <SessionTable sessions={[makeSession()]} isLoading={false} onSessionClick={onSessionClick} />,
     );
-    fireEvent.keyDown(getByRole("button"), { key: " " });
+    const row = getByRole("button");
+    // Space must call preventDefault (suppress native page scroll) — the
+    // load-bearing difference from the Enter branch.
+    const ev = createEvent.keyDown(row, { key: " " });
+    fireEvent(row, ev);
     expect(onSessionClick).toHaveBeenCalledTimes(1);
+    expect(ev.defaultPrevented).toBe(true);
   });
 
   it("does not make rows interactive when no click handler is supplied", () => {

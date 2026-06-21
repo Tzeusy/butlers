@@ -35,10 +35,8 @@ export function useSessions(params?: SessionParams, options?: SessionQueryOption
  */
 export function useSessionAggregate(params?: SessionParams, options?: SessionQueryOptions) {
   // Defensively drop pagination fields so paging never re-keys the aggregate.
-  const { cursor: _cursor, offset: _offset, limit: _limit, ...filterParams } = params ?? {};
-  void _cursor;
-  void _offset;
-  void _limit;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- strip pagination; key only on filters
+  const { cursor, offset, limit, ...filterParams } = params ?? {};
   return useQuery({
     queryKey: ["session-aggregate", filterParams],
     queryFn: () => getSessionAggregate(filterParams),
