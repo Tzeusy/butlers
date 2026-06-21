@@ -136,6 +136,10 @@ _RATE_LIMIT_MARKERS: tuple[str, ...] = (
     "insufficient balance",
     "insufficient credits",
     "credit balance",
+    "out of credits",
+    "balance exhausted",
+    "billing limit reached",
+    "credit limit reached",
 )
 
 # Substrings matched (lowercased) against the exception message to detect a

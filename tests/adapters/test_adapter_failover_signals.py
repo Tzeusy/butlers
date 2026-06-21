@@ -318,6 +318,23 @@ class TestRateLimitAuthModelUnavailableTimeoutMapping:
         assert info.get("is_pre_tool_call") is True
 
     @pytest.mark.parametrize(
+        "message",
+        [
+            "Provider rejected request: out of credits",
+            "Provider rejected request: balance exhausted",
+            "Provider rejected request: billing limit reached",
+            "Provider rejected request: credit limit reached",
+        ],
+    )
+    def test_billing_credit_exhaustion_variants_are_classifiable(self, message: str) -> None:
+        decision = classify_failover_eligibility(
+            FailoverContext(exception=RuntimeError(message), tool_calls=[])
+        )
+
+        assert decision.eligible
+        assert "rate_limit" in decision.reason
+
+    @pytest.mark.parametrize(
         "stderr",
         [
             b"ProviderModelNotFoundError: gpt-9 not found",
