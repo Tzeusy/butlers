@@ -985,7 +985,10 @@ def _project_prep_contributions(
     for row in prep_rows:
         value = _normalize_json_object(row.value)
         envelope_butler = value.get("butler")
-        if row.butler is not None and envelope_butler is not None and envelope_butler != row.butler:
+        if row.butler is not None and envelope_butler != row.butler:
+            # RFC 0010 guardrail #2: skip an envelope whose payload butler
+            # disagrees with the view's hardcoded source column — including the
+            # malformed missing/null payload-butler case (None != literal).
             logger.warning(
                 "prep contribution butler mismatch (column=%r payload=%r); skipping",
                 row.butler,

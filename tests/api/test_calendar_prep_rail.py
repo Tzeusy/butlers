@@ -301,3 +301,24 @@ async def test_prep_rail_skips_butler_mismatch(app):
     assert body["has_prep_context"] is False
     assert body["attendees"] == []
     assert body["source_butlers"] == []
+
+
+async def test_prep_rail_skips_missing_payload_butler(app):
+    """An envelope with a missing/null payload ``butler`` is malformed → skipped."""
+    event_id = str(uuid4())
+    row = _prep_row(
+        butler="relationship",
+        event_id=event_id,
+        attendees=[_attendee(entity_id=str(uuid4()), name="Mallory")],
+        envelope_butler=None,  # malformed: payload omits the butler literal
+    )
+    app, _, _ = _build_prep_app(
+        app, prep_rows={"relationship": [row]}, calendar_butlers=["relationship"]
+    )
+
+    resp = await _get_prep(app, event_id)
+
+    body = resp.json()["data"]
+    assert body["has_prep_context"] is False
+    assert body["attendees"] == []
+    assert body["source_butlers"] == []
