@@ -130,6 +130,34 @@ class TestDowngradeSQLShape:
             mod.downgrade()
         assert not sqls, f"downgrade() must be a no-op, but found SQL statements:\n{sqls}"
 
+    def test_upgrade_uses_in_not_like(self) -> None:
+        """upgrade() UPDATE must filter titles via an exact `IN` list, NOT
+        `LIKE 'memory_%'`.
+
+        A LIKE 'memory_%' bug would silently tombstone legitimate user calendar
+        events whose title merely starts with 'memory_' (e.g. 'memory_journal',
+        'memory_personal_note'). The integration tests do not catch this — their
+        legitimate-row titles like 'Team retrospective' don't match LIKE
+        'memory_%'. This pins the exact-IN-list safety boundary at the SQL level.
+        """
+        mod = _load_migration()
+        sqls: list[str] = []
+        mock_op = MagicMock()
+        mock_op.execute.side_effect = lambda sql: sqls.append(sql)
+        mock_bind = MagicMock()
+        mock_bind.execute.return_value.fetchall.return_value = []
+        mock_op.get_bind.return_value = mock_bind
+        with patch.object(mod, "op", mock_op):
+            mod.upgrade()
+
+        update_sql = "\n".join(s for s in sqls if "UPDATE episodes" in s)
+        assert update_sql, f"upgrade() did not emit an UPDATE episodes statement: {sqls}"
+        assert " IN (" in update_sql, "upgrade() UPDATE must use an exact `IN (...)` title filter"
+        assert "LIKE" not in update_sql.upper(), (
+            "upgrade() UPDATE must NOT use LIKE — a LIKE 'memory_%' filter would "
+            "wrongly tombstone legit user events titled 'memory_*'"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Integration tests — require Docker + Postgres
@@ -333,8 +361,16 @@ class TestTombstoneMemoryCalendarEpisodesIntegration:
         """Legitimate calendar episodes are left untouched by the migration."""
         pool = episodes_pool
 
+        # 'memory_personal_note' has the lowercase 'memory_' prefix but is NOT
+        # in the exact IN-list — it pins the IN-not-LIKE safety boundary: a
+        # LIKE 'memory_%' bug would wrongly tombstone this legit user event.
         for idx, title in enumerate(
-            ("Team retrospective", "Doctor appointment", "Memory workshop")
+            (
+                "Team retrospective",
+                "Doctor appointment",
+                "Memory workshop",
+                "memory_personal_note",
+            )
         ):
             await self._insert_episode(
                 pool,
@@ -345,16 +381,21 @@ class TestTombstoneMemoryCalendarEpisodesIntegration:
 
         await self._run_upgrade(pool)
 
-        # All three legitimate rows must remain with tombstone_at IS NULL.
+        # All four legitimate rows must remain with tombstone_at IS NULL.
         count = await pool.fetchval(
             """
             SELECT COUNT(*) FROM episodes
             WHERE source_name = 'google_calendar.completed'
               AND tombstone_at IS NULL
-              AND title IN ('Team retrospective', 'Doctor appointment', 'Memory workshop')
+              AND title IN (
+                  'Team retrospective',
+                  'Doctor appointment',
+                  'Memory workshop',
+                  'memory_personal_note'
+              )
             """
         )
-        assert count == 3, f"Expected 3 legitimate episodes to remain untombstoned, got {count}"
+        assert count == 4, f"Expected 4 legitimate episodes to remain untombstoned, got {count}"
 
     @pytest.mark.asyncio(loop_scope="session")
     async def test_other_source_episodes_not_tombstoned(self, episodes_pool) -> None:

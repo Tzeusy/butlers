@@ -69,6 +69,7 @@ def test_rel_migration_revision_chain():
         "ix_calendar_events_source_butler",
         # title backfill from metadata
         "metadata->>'title'",
+        "metadata->>'display_title'",
         "'(untitled)'",
     ],
 )
@@ -96,8 +97,11 @@ def test_core_migration_downgrade_drops_columns_and_table():
         "calendar_event_entities",
         # rrule mapping + entity resolution + idempotency
         "RRULE:FREQ=YEARLY",
+        "RRULE:FREQ=MONTHLY",
         "public.contacts",
         "ON CONFLICT",
+        # old-reminder-fact cleanup
+        "DELETE FROM facts",
         # renames reminders table to backup
         "RENAME TO _reminders_backup",
     ],
