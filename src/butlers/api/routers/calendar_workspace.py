@@ -1978,11 +1978,17 @@ def _butler_event_create_args(
     timezone = (
         (overrides.timezone if overrides and overrides.timezone else None) or row.timezone or "UTC"
     )
+    description = overrides.description if overrides and overrides.description is not None else None
+    if description is None:
+        description = row.description
+    location = overrides.location if overrides and overrides.location is not None else None
+    if location is None:
+        location = row.location
 
     start_iso = start_at.isoformat() if isinstance(start_at, datetime) else start_at
     end_iso = end_at.isoformat() if isinstance(end_at, datetime) else end_at
 
-    return {
+    args: dict[str, Any] = {
         "butler_name": schema,
         "title": str(title or "Untitled"),
         "start_at": start_iso,
@@ -1990,6 +1996,13 @@ def _butler_event_create_args(
         "timezone": timezone,
         "request_id": request_id,
     }
+    # Only forward description/location when present so the tool's optional
+    # parameters keep their defaults for proposals that carry neither.
+    if description is not None:
+        args["description"] = description
+    if location is not None:
+        args["location"] = location
+    return args
 
 
 @router.post(
