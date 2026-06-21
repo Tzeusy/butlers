@@ -1655,6 +1655,16 @@ class TestMergeAndSubtractHelpers:
         )
         assert gaps == [(_dt(9), _dt(10)), (_dt(11), _dt(12))]
 
+    def test_subtract_ignores_busy_starting_after_window(self):
+        # A busy window opening after end_at must not inflate the trailing gap
+        # past end_at (regression: gap was returned as (start, busy.start)).
+        gaps = _subtract_busy(
+            _dt(10),
+            _dt(12),
+            [BusyWindow(start_at=_dt(13), end_at=_dt(14))],
+        )
+        assert gaps == [(_dt(10), _dt(12))]
+
 
 class TestComputeFreeSlots:
     def test_subtracts_busy_and_respects_duration(self):

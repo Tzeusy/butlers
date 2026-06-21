@@ -1821,6 +1821,11 @@ def _subtract_busy(
     gaps: list[tuple[datetime, datetime]] = []
     cursor = start_at
     for window in busy:
+        # ``busy`` is sorted by ``start_at``; once a window opens at/after the
+        # search end, every later window does too, so nothing can clip the
+        # remaining gap — break before a past-``end_at`` window inflates it.
+        if window.start_at >= end_at:
+            break
         ws = max(window.start_at, start_at)
         we = min(window.end_at, end_at)
         if we <= cursor:
@@ -1880,7 +1885,7 @@ def _compute_free_slots(
     def _localize(dt: datetime) -> datetime:
         if tz is None or dt.tzinfo is None:
             return dt
-        return dt.astimezone(ZoneInfo(tz))
+        return dt.astimezone(_coerce_zoneinfo(tz))
 
     candidates: list[tuple[datetime, datetime, bool]] = []
     for gap_start, gap_end in _subtract_busy(search_start, search_end, busy):
