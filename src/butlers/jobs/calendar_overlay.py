@@ -662,7 +662,7 @@ async def run_relationship_calendar_overlay_contribution(
     # birthday/important_date split happens in Python by label.
     date_rows = await pool.fetch(
         """
-        SELECT e.canonical_name AS name, id.label, id.month, id.day, id.year
+        SELECT COALESCE(e.canonical_name, 'Unknown') AS name, id.label, id.month, id.day, id.year
         FROM important_dates id
         JOIN contact_entity_map cem ON cem.contact_id = id.contact_id
         JOIN public.entities e ON e.id = cem.entity_id
@@ -745,7 +745,7 @@ async def run_relationship_calendar_overlay_contribution(
         kind = "birthday" if is_birthday else "important_date"
         entry: OverlayEntry = {
             "kind": kind,
-            "label": str(row["name"]),
+            "label": row["name"],
             "priority": _annual_date_priority(days_until),
             "meta": {
                 "person": row["name"],
@@ -771,7 +771,7 @@ async def run_relationship_calendar_overlay_contribution(
         is_overdue = sgt_date < today
         entry = {
             "kind": "follow_up",
-            "label": str(row["label"] or "follow-up"),
+            "label": row["label"] or "follow-up",
             "priority": _follow_up_priority(days_until),
             "meta": {
                 "person": row["name"],

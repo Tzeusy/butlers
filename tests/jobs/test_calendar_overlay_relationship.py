@@ -219,6 +219,7 @@ async def test_entries_ordered_priority_descending_on_shared_date():
 async def test_empty_domain_writes_has_entries_false_for_every_date():
     result, cap, _ = await _run()
     overlay_envs = [v for k, v in cap.store.items() if k.startswith(OVERLAY_KEY_PREFIX)]
+    assert len(overlay_envs) == RELATIONSHIP_OVERLAY_LOOKAHEAD_DAYS + 1
     assert all(env["has_entries"] is False for env in overlay_envs)
     assert all(env["entries"] == [] for env in overlay_envs)
     assert all(env["butler"] == "relationship" for env in overlay_envs)
