@@ -349,9 +349,23 @@ class TestSwitchboardInsightDeliveryJobWiring:
 class TestBrokerChannelSelectionInNotifyMetadata:
     """Verify the broker computes the majority delivery channel and includes it in metadata."""
 
+    @pytest.mark.parametrize(
+        ("channels", "expected_channel"),
+        [
+            # 2 telegram, 1 email → majority is telegram
+            (["telegram", "telegram", "email"], "telegram"),
+            # all-None candidate set → no candidate specifies a channel, so the
+            # broker must yield channel=None (notify_fn resolves the owner's
+            # primary channel). Guards against a crash on empty Counter input or
+            # emitting a non-None channel for an all-None set.
+            ([None, None, None], None),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_majority_channel_wins_for_digest(self):
-        """When candidates have mixed channels, the majority channel is used."""
+    async def test_majority_channel_for_digest(self, channels, expected_channel):
+        """The broker computes meta['channel'] from candidate channels:
+        majority vote when present, None when no candidate specifies one.
+        """
         from butlers.tools.switchboard.insight.broker import delivery_cycle  # noqa: PLC0415
 
         captured_metadata: list[dict] = []
@@ -368,7 +382,6 @@ class TestBrokerChannelSelectionInNotifyMetadata:
         cid2 = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
         cid3 = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 
-        # 2 telegram, 1 email → majority is telegram
         candidates = [
             {
                 "id": cid1,
@@ -378,7 +391,7 @@ class TestBrokerChannelSelectionInNotifyMetadata:
                 "dedup_key": "health:test:a:2026",
                 "cooldown_days": None,
                 "message": "Insight 1",
-                "channel": "telegram",
+                "channel": channels[0],
                 "metadata": None,
             },
             {
@@ -389,7 +402,7 @@ class TestBrokerChannelSelectionInNotifyMetadata:
                 "dedup_key": "finance:test:b:2026",
                 "cooldown_days": None,
                 "message": "Insight 2",
-                "channel": "telegram",
+                "channel": channels[1],
                 "metadata": None,
             },
             {
@@ -400,7 +413,7 @@ class TestBrokerChannelSelectionInNotifyMetadata:
                 "dedup_key": "relationship:test:c:2026",
                 "cooldown_days": None,
                 "message": "Insight 3",
-                "channel": "email",
+                "channel": channels[2],
                 "metadata": None,
             },
         ]
@@ -462,6 +475,6 @@ class TestBrokerChannelSelectionInNotifyMetadata:
 
         assert len(captured_metadata) >= 1, "notify_fn should have been called"
         meta = captured_metadata[0]
-        assert meta.get("channel") == "telegram", (
-            f"Expected majority channel 'telegram' (2 vs 1), got {meta.get('channel')!r}"
+        assert meta.get("channel") == expected_channel, (
+            f"Expected channel {expected_channel!r}, got {meta.get('channel')!r}"
         )
