@@ -13,8 +13,6 @@
  * `meta`); this module never synthesizes narrative text.
  */
 
-import { format } from "date-fns";
-
 import type { UnifiedCalendarEntry } from "@/api/types.ts";
 
 /** Overlay priority as written by the contribution jobs. */
@@ -85,7 +83,11 @@ export function overlaysByDay(
   const buckets = new Map<string, UnifiedCalendarEntry[]>();
   for (const entry of entries) {
     if (!isOverlayEntry(entry)) continue;
-    const key = format(new Date(entry.start_at), "yyyy-MM-dd");
+    // Bucket by the ISO date portion directly (timezone-independent). The backend
+    // sets ``start_at`` to local midnight on the contribution's target date, so
+    // ``YYYY-MM-DD`` is the intended day. Parsing via ``new Date()`` and
+    // reformatting in the browser's local timezone could shift the day.
+    const key = entry.start_at.slice(0, 10);
     const bucket = buckets.get(key) ?? [];
     bucket.push(entry);
     buckets.set(key, bucket);

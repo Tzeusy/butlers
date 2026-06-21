@@ -698,17 +698,21 @@ def _normalize_overlay_envelope(
     start: datetime,
     end: datetime,
     display_tz: ZoneInfo | None,
-) -> list[UnifiedCalendarEntry] | None:
+) -> tuple[list[UnifiedCalendarEntry], bool] | None:
     """Project one overlay-contribution envelope into unified entries.
 
     Returns ``None`` when the envelope is malformed and must be skipped (the
     view's hardcoded ``butler`` column disagrees with the envelope's
     ``value->>'butler'``, or a required field — ``butler`` / ``date`` /
-    ``has_entries`` — is missing). Returns a possibly-empty list of entries when
-    the envelope is valid: empty when ``has_entries`` is false or the target
-    date falls outside ``[start, end)`` (a valid-but-contextless envelope, which
-    still signals ``has_domain_context``; the caller distinguishes the two via
-    the ``None`` vs ``[]`` return).
+    ``has_entries`` — is missing). Otherwise returns ``(entries, in_range)`` for
+    a valid envelope: ``in_range`` is whether the target date falls within
+    ``[start, end)`` and ``entries`` is the (possibly empty) projection for this
+    window — empty when out of range or when ``has_entries`` is false. A valid
+    in-range envelope still signals ``has_domain_context`` even with no entries;
+    the caller distinguishes the cases via ``in_range`` and the entry count.
+
+    Computing range membership here (rather than re-parsing the date in a second
+    pass) keeps the date/timezone logic in one place.
 
     Each entry in the envelope's ``entries`` array becomes a non-editable
     ``UnifiedCalendarEntry`` (``source_type="overlay_contribution"``) carrying
@@ -748,12 +752,13 @@ def _normalize_overlay_envelope(
 
     # Out-of-range envelopes contribute domain context (the specialist DID write
     # for nearby dates) but no entries for this window.
-    if not (start <= start_at < end):
-        return []
+    in_range = start <= start_at < end
+    if not in_range:
+        return [], False
 
     raw_entries = value.get("entries")
     if not isinstance(raw_entries, list):
-        return []
+        return [], True
 
     entries: list[UnifiedCalendarEntry] = []
     for index, raw_entry in enumerate(raw_entries):
@@ -795,7 +800,7 @@ def _normalize_overlay_envelope(
                 source_butler=envelope_butler,
             )
         )
-    return entries
+    return entries, True
 
 
 async def _fetch_overlay_entries(
@@ -826,40 +831,13 @@ async def _fetch_overlay_entries(
         if projected is None:
             # Malformed envelope — skipped, contributes no domain context.
             continue
-        if projected:
-            # In-range envelope with at least one domain entry.
+        projected_entries, in_range = projected
+        if in_range:
+            # A valid in-range envelope signals domain context for the range even
+            # when it projects zero entries (has_entries=false → honest empty-state).
             has_domain_context = True
-            entries.extend(projected)
-        elif _overlay_envelope_in_range(overlay, start=start, end=end, display_tz=display_tz):
-            # Valid in-range envelope with no entries (has_entries=false) still
-            # signals domain context for the range (honest empty-state).
-            has_domain_context = True
+            entries.extend(projected_entries)
     return entries, has_domain_context
-
-
-def _overlay_envelope_in_range(
-    overlay: CalendarOverlayRow,
-    *,
-    start: datetime,
-    end: datetime,
-    display_tz: ZoneInfo | None,
-) -> bool:
-    """Return whether a (validated) overlay envelope's target date is in range.
-
-    Used only to compute ``has_domain_context`` for envelopes that projected to
-    zero entries; malformed envelopes never reach here.
-    """
-    value = _normalize_json_object(overlay.value)
-    date_str = value.get("date")
-    if date_str is None:
-        return False
-    try:
-        target_date = datetime.fromisoformat(str(date_str)).date()
-    except ValueError:
-        return False
-    tz = display_tz or _OVERLAY_DEFAULT_TZ
-    start_at = datetime(target_date.year, target_date.month, target_date.day, tzinfo=tz)
-    return start <= start_at < end
 
 
 @router.get("", response_model=ApiResponse[CalendarWorkspaceReadResponse])
