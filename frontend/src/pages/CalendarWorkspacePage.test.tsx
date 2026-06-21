@@ -158,6 +158,7 @@ function setWorkspaceState(state?: Partial<UseWorkspaceResult>) {
         entries: [
           {
             entry_id: "entry-1",
+            event_id: "evt-entry-1",
             view: "user",
             source_type: "provider_event",
             source_key: "google:primary",
@@ -397,6 +398,7 @@ function setButlerWorkspaceFixtures() {
         entries: [
           {
             entry_id: "entry-butler-1",
+            event_id: "evt-entry-butler-1",
             view: "butler",
             source_type: "scheduled_task",
             source_key: "internal_scheduler:general",
@@ -422,6 +424,7 @@ function setButlerWorkspaceFixtures() {
           },
           {
             entry_id: "entry-butler-2",
+            event_id: "evt-entry-butler-2",
             view: "butler",
             source_type: "butler_reminder",
             source_key: "internal_reminders:health",
@@ -997,6 +1000,7 @@ describe("CalendarWorkspacePage", () => {
   it("deletes a recurring occurrence with the chosen recurrence scope", async () => {
     const recurringEntry = (suffix: string, start: string) => ({
       entry_id: `rec-${suffix}`,
+      event_id: `evt-rec-${suffix}`,
       view: "user" as const,
       source_type: "provider_event" as const,
       source_key: "google:primary",
@@ -1833,6 +1837,7 @@ describe("CalendarWorkspacePage", () => {
           entries: [
             {
               entry_id: "rec-1",
+              event_id: "evt-rec-1",
               view: "user",
               source_type: "provider_event",
               source_key: "google:primary",
@@ -1938,6 +1943,7 @@ describe("CalendarWorkspacePage", () => {
           entries: [
             {
               entry_id: "rec-1",
+              event_id: "evt-rec-1",
               view: "user",
               source_type: "provider_event",
               source_key: "google:primary",
@@ -2313,6 +2319,7 @@ describe("CalendarWorkspacePage", () => {
             entries: [
               {
                 entry_id: "entry-prov",
+                event_id: "evt-entry-prov",
                 view: "user" as const,
                 source_type: "provider_event" as const,
                 source_key: "google:primary",
@@ -2412,6 +2419,7 @@ describe("CalendarWorkspacePage", () => {
             entries: [
               {
                 entry_id: "rec-detail-1",
+                event_id: "evt-rec-detail-1",
                 view: "user",
                 source_type: "provider_event",
                 source_key: "google:primary",
@@ -2718,6 +2726,7 @@ describe("CalendarWorkspacePage", () => {
     ) {
       return Array.from({ length: count }, (_, i) => ({
         entry_id: `entry-${scheduleId}-${dayPrefix}-${i}`,
+        event_id: `evt-entry-${scheduleId}-${dayPrefix}-${i}`,
         view: "butler" as const,
         source_type: "scheduled_task" as const,
         source_key: "internal_scheduler:general",
