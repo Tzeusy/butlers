@@ -105,7 +105,11 @@ def _stringify_error_payload(payload: Any) -> str | None:
             value = payload.get(key)
             detail = _stringify_error_payload(value)
             if detail:
-                if error_name and detail != error_name:
+                if (
+                    error_name
+                    and detail.lower() != error_name.lower()
+                    and not detail.lower().startswith(error_name.lower())
+                ):
                     return f"{error_name}: {detail}"
                 return detail
         if error_name:

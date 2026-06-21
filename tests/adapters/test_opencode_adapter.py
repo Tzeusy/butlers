@@ -258,6 +258,30 @@ _MIGRATION_NOISE = (
             "APIError: provider overloaded, retry after 30s",
             id="nested-apierror-data-message",
         ),
+        # Avoid duplicate prefixes when the nested payload is already named.
+        pytest.param(
+            "",
+            json.dumps(
+                {
+                    "type": "error",
+                    "error": {
+                        "name": "APIError",
+                        "data": {"message": "APIError: provider rejected the request"},
+                    },
+                }
+            ),
+            1,
+            "APIError: provider rejected the request",
+            id="nested-apierror-data-message-with-prefix",
+        ),
+        # Scalar diagnostics under structured payloads are preserved.
+        pytest.param(
+            "",
+            json.dumps({"type": "error", "error": {"name": "APIError", "data": {"status": 503}}}),
+            1,
+            "APIError: 503",
+            id="nested-apierror-scalar-status",
+        ),
         # Migration banner alone is not a useful diagnostic → fall back to exit code.
         pytest.param(_MIGRATION_NOISE, "", 1, "exit code 1", id="migration-noise-only"),
     ],
