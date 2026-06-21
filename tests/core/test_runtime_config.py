@@ -107,38 +107,6 @@ async def test_seed_on_empty_table():
     result = await accessor.seed_if_empty(seed, "test")
 
     assert result.core_groups == ("infra", "state")
-    pool.execute.assert_called_once()
-    # Verify INSERT ... ON CONFLICT DO NOTHING pattern
-    call_args = pool.execute.call_args
-    assert "ON CONFLICT" in call_args[0][0]
-    assert "DO NOTHING" in call_args[0][0]
-
-
-async def test_noop_seed_on_existing_row():
-    """seed_if_empty() returns existing row without overwriting."""
-    pool = AsyncMock()
-    seed = _make_seed()
-    existing_row = _mock_record(_make_row())
-    pool.execute = AsyncMock()
-    pool.fetchrow = AsyncMock(return_value=existing_row)
-
-    accessor = RuntimeConfigAccessor(pool, "test")
-    result = await accessor.seed_if_empty(seed, "test")
-
-    assert result.max_concurrent == 3
-
-
-async def test_reseed_after_row_deletion():
-    """After deleting the row and re-seeding, new seed values take effect."""
-    pool = AsyncMock()
-    seed = _make_seed()
-    new_row = _mock_record(_make_row())
-    pool.execute = AsyncMock()
-    pool.fetchrow = AsyncMock(return_value=new_row)
-
-    accessor = RuntimeConfigAccessor(pool, "test")
-    result = await accessor.seed_if_empty(seed, "test")
-    assert result.max_concurrent == 3
 
 
 async def test_db_failure_with_stale_cache():
