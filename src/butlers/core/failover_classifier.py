@@ -130,6 +130,12 @@ _RATE_LIMIT_MARKERS: tuple[str, ...] = (
     # model (e.g. opencode) is the correct response.
     "usage limit",
     "hit your usage limit",
+    # Provider account billing / credit exhaustion. These are account-state
+    # rejections before any model work starts, equivalent to quota exhaustion
+    # for failover purposes.
+    "insufficient balance",
+    "insufficient credits",
+    "credit balance",
 )
 
 # Substrings matched (lowercased) against the exception message to detect a
