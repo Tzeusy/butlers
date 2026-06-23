@@ -39,7 +39,7 @@ from pathlib import Path
 
 import asyncpg
 
-from butlers.core.healing.anonymizer import anonymize, validate_anonymized
+from butlers.core.healing.anonymizer import anonymize, sanitize_labels, validate_anonymized
 from butlers.core.healing.fingerprint import (
     FingerprintResult,
     compute_fingerprint,
@@ -495,9 +495,42 @@ async def _create_pr(
         )
         return None, None, "anonymization_failed"
 
+    # Step 3b: Sanitize + validate labels — labels are externally visible on the
+    # public destination and must clear the same gate as the title/body.
+    sanitized_labels, label_violations = sanitize_labels(labels, repo_root)
+    if label_violations:
+        logger.warning(
+            "Anonymization validation failed for healing PR labels (attempt=%s): "
+            "%d violation(s): %s",
+            attempt_id,
+            len(label_violations),
+            label_violations[:3],
+        )
+        await asyncio.create_subprocess_exec(
+            "git",
+            "push",
+            "origin",
+            "--delete",
+            branch_name,
+            cwd=str(repo_root),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=env,
+        )
+        return None, None, "anonymization_failed"
+
+    # Gate passed across every externally-visible field. Record that the gate ran
+    # (pass) for audit without persisting any sanitized/raw field content.
+    logger.info(
+        "Healing publication sanitization gate PASSED (attempt=%s): "
+        "title, body, and %d label(s) clean",
+        attempt_id,
+        len(sanitized_labels),
+    )
+
     # Step 4: gh pr create
     label_args: list[str] = []
-    for label in labels:
+    for label in sanitized_labels:
         label_args.extend(["--label", label])
 
     gh_cmd = [
