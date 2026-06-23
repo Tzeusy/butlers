@@ -481,8 +481,10 @@ async def _create_pr(
             len(violations),
             violations[:3],  # log first 3 for diagnosis without revealing PII
         )
-        # Delete the remote branch that was just pushed
-        await asyncio.create_subprocess_exec(
+        # Delete the remote branch that was just pushed. Await completion so the
+        # branch is actually gone before we return and so the subprocess transport
+        # is closed (avoids ResourceWarning on unawaited processes).
+        delete_proc = await asyncio.create_subprocess_exec(
             "git",
             "push",
             "origin",
@@ -493,6 +495,7 @@ async def _create_pr(
             stderr=asyncio.subprocess.DEVNULL,
             env=env,
         )
+        await delete_proc.communicate()
         return None, None, "anonymization_failed"
 
     # Step 3b: Sanitize + validate labels — labels are externally visible on the
@@ -506,7 +509,9 @@ async def _create_pr(
             len(label_violations),
             label_violations[:3],
         )
-        await asyncio.create_subprocess_exec(
+        # Await completion so the branch is actually deleted before returning and
+        # the subprocess transport is closed (avoids ResourceWarning).
+        delete_proc = await asyncio.create_subprocess_exec(
             "git",
             "push",
             "origin",
@@ -517,6 +522,7 @@ async def _create_pr(
             stderr=asyncio.subprocess.DEVNULL,
             env=env,
         )
+        await delete_proc.communicate()
         return None, None, "anonymization_failed"
 
     # Gate passed across every externally-visible field. Record that the gate ran
