@@ -34,9 +34,6 @@ class TestResolveAllowedSensitivities:
     def test_default_normal_only(self) -> None:
         assert catalog_search.resolve_allowed_sensitivities("normal") == ["normal"]
 
-    def test_none_fails_closed_to_normal(self) -> None:
-        assert catalog_search.resolve_allowed_sensitivities(None) == ["normal"]
-
     def test_unknown_level_fails_closed_to_normal(self) -> None:
         assert catalog_search.resolve_allowed_sensitivities("topsecret") == ["normal"]
 

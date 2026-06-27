@@ -118,7 +118,7 @@ async def memory_catalog_search(
     memory_type: str | None = None,
     limit: int = 10,
     mode: str = "hybrid",
-    max_sensitivity: str | None = "normal",
+    max_sensitivity: str = "normal",
 ) -> list[dict[str, Any]]:
     """Search the shared memory catalog for cross-butler memory discovery.
 

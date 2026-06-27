@@ -786,7 +786,7 @@ _CATALOG_RRF_K = 60
 # whose authorization is unknown) only ever sees ``normal`` entries.
 #
 # Fail-closed semantics:
-#   * an unrecognized / None authorization ceiling collapses to ``normal``-only;
+#   * an unrecognized authorization ceiling collapses to ``normal``-only;
 #   * catalog rows whose ``sensitivity`` is NULL are treated as ``normal``
 #     (the canonical source tables default to ``normal``);
 #   * catalog rows carrying a value outside this hierarchy are never returned,
@@ -795,15 +795,12 @@ CATALOG_SENSITIVITY_LEVELS: tuple[str, ...] = ("normal", "pii", "confidential")
 DEFAULT_CATALOG_SENSITIVITY = "normal"
 
 
-def resolve_allowed_sensitivities(max_sensitivity: str | None) -> list[str]:
+def resolve_allowed_sensitivities(max_sensitivity: str) -> list[str]:
     """Return the sensitivity levels a caller authorized up to ``max_sensitivity`` may view.
 
     The result always includes ``normal`` and every level up to and including
-    ``max_sensitivity``. Unknown or ``None`` ceilings fail closed to
-    ``["normal"]``.
+    ``max_sensitivity``. Unknown ceilings fail closed to ``["normal"]``.
     """
-    if max_sensitivity is None:
-        return [DEFAULT_CATALOG_SENSITIVITY]
     try:
         ceiling = CATALOG_SENSITIVITY_LEVELS.index(max_sensitivity)
     except ValueError:
@@ -901,7 +898,7 @@ async def search_catalog(
     memory_type: str | None = None,
     limit: int = 10,
     mode: str = "hybrid",
-    max_sensitivity: str | None = DEFAULT_CATALOG_SENSITIVITY,
+    max_sensitivity: str = DEFAULT_CATALOG_SENSITIVITY,
 ) -> list[dict]:
     """Search ``public.memory_catalog`` for cross-butler memory discovery.
 
@@ -921,9 +918,9 @@ async def search_catalog(
         mode: Search mode — 'semantic', 'keyword', or 'hybrid' (default).
         max_sensitivity: Highest sensitivity level the caller is authorized to
             view. Results above this ceiling are excluded. Defaults to
-            ``'normal'`` (the most restrictive level); unknown or ``None``
-            values fail closed to ``'normal'``-only. See
-            ``CATALOG_SENSITIVITY_LEVELS`` for the ordered hierarchy.
+            ``'normal'`` (the most restrictive level); unknown values fail
+            closed to ``'normal'``-only. See ``CATALOG_SENSITIVITY_LEVELS``
+            for the ordered hierarchy.
 
     Returns:
         List of dicts with catalog row fields plus ``similarity`` (semantic),
