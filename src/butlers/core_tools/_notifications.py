@@ -859,6 +859,7 @@ def register_notification_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable
                             f"{resolved_recipient!r}. Message: {message!r}"
                         ),
                         session_id=get_current_runtime_session_id(),
+                        butler_name=butler_name,
                     )
                     if not _decision.allowed:
                         return {

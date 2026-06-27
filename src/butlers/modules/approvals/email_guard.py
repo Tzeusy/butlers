@@ -472,7 +472,7 @@ async def check_recipient(
             target,
             action_id,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.warning(
             "recipient guard: failed to park pending_action for %s %r",
             channel,
