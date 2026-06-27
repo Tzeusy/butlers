@@ -233,7 +233,7 @@ All relationship facts use `entity_id = contact_entity_id` (resolved contact ent
 | `loan` | Loan with contact (money lent or borrowed) | `person` | |
 | `contact_task` | Task related to a contact | `person` | |
 | `reminder` | Reminder about a contact | `person` | |
-| `dunbar_tier_override` | Manual override for Dunbar tier assignment | `person` | Pins contact to specific tier (5, 15, 50, 150, 500, 1500). Seeded in the RDF `relationship.entity_predicate_registry` (rel_014/017/021), NOT the memory `predicate_registry` — see Part 6 note. |
+| `dunbar_tier_override` | Manual override for Dunbar tier assignment | `person` | Pins contact to specific tier (5, 15, 50, 150, 500, 1500). Seeded in the RDF `relationship.entity_predicate_registry` (rel_014/017/021), NOT the memory `predicate_registry` (see Part 6 note). |
 
 **quick_facts migration:** The `quick_facts` table stores `(contact_id, key, value)` — already SPO-shaped. Migration: `predicate = key`, `content = value`, `entity_id = contact_entity_id`. Keys become predicates directly; no fixed predicate name. These facts use `is_temporal = false` and support supersession by `(entity_id, scope, predicate)`.
 
