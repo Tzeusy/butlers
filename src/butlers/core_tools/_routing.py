@@ -660,6 +660,57 @@ def register_routing_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> 
         modules_by_name = {module.name: module for module in daemon._modules}
 
         try:
+            # Channel-general role-based approval gating for NON-email channels
+            # (telegram, whatsapp, and any future channel).  route.execute calls
+            # module delivery methods directly (not MCP tools), so the MCP-level
+            # approval wrappers are not in this path.  Mirror what notify() does
+            # via check_recipient (bu-nsml2 / #2722) so a non-owner recipient on
+            # any non-email channel is gated/parked exactly as on email:
+            # owner-directed sends auto-approve on any active verified owner
+            # channel, while non-owner recipients require a standing rule or are
+            # parked (fail-closed).  Email is gated separately in its own block
+            # below via check_email_recipient, which additionally enforces the
+            # email-only channel-primacy / context-conflict incident behaviour.
+            if channel != "email" and intent in {"send", "reply"}:
+                if intent == "send":
+                    gate_target = notify_request.delivery.recipient
+                else:  # reply — mirror the email block's source-sender targeting
+                    gate_target = notify_context.source_sender_identity if notify_context else None
+
+                if gate_target:
+                    approval_pool = daemon.db.pool if daemon.db is not None else None
+                    if approval_pool is not None:
+                        from butlers.core.approvals_hooks import check_recipient
+
+                        decision = await check_recipient(
+                            approval_pool,
+                            channel=channel,
+                            target=gate_target,
+                            rule_tool_name="route.execute",
+                            rule_match_args={"to": gate_target, "channel": channel},
+                            park_tool_name="route.execute",
+                            park_tool_args={
+                                "to": gate_target,
+                                "channel": channel,
+                                "intent": intent,
+                                "message": message_text,
+                                "origin_butler": origin,
+                            },
+                            park_summary=(
+                                f"route.execute blocked: {channel} to {gate_target!r}. "
+                                f"Message: {message_text!r}"
+                            ),
+                            session_id=get_current_runtime_session_id(),
+                            butler_name=origin,
+                        )
+                        if not decision.allowed:
+                            raise ValueError(
+                                f"Delivery blocked: {channel} target '{gate_target}' is a "
+                                f"{decision.contact_desc} and no standing approval rule "
+                                f"matches. Parked for owner review on the approval "
+                                f"dashboard (action_id={decision.action_id})."
+                            )
+
             if channel == "telegram":
                 telegram_module = modules_by_name.get("telegram")
                 if telegram_module is None:
