@@ -37,6 +37,23 @@ def _visible_capture_input(kwargs: dict[str, Any]) -> dict[str, Any]:
     return {k: kwargs.get(k) for k in _VISIBLE_CAPTURE_INPUT_FIELDS if k in kwargs}
 
 
+def _declared_tool_name(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str | None:
+    """Resolve the tool name explicitly declared at registration, if any.
+
+    FastMCP's ``tool(name_or_fn=None, *, name=None, ...)`` accepts an overriding
+    tool name either as the keyword ``name=`` or as the first positional argument
+    (e.g. ``@mcp.tool("telegram_send_message")``). A bare ``@mcp.tool`` passes the
+    function itself positionally, so only treat a *string* first positional as a
+    declared name. Resolving both forms here keeps the channel-egress ownership
+    guard fail-closed: a positionally-named egress tool must not slip through by
+    falling back to the (unmatched) function name.
+    """
+    declared = kwargs.get("name")
+    if declared is None and args and isinstance(args[0], str):
+        declared = args[0]
+    return declared
+
+
 def _log_tool_call_failure(
     *,
     butler_name: str,
@@ -136,7 +153,7 @@ class _SpanWrappingMCP:
 
     def tool(self, *args, **kwargs):
         """Return a decorator that wraps the handler with tool_span."""
-        declared_name = kwargs.get("name")
+        declared_name = _declared_tool_name(args, kwargs)
         original_decorator = self._mcp.tool(*args, **kwargs)
 
         def wrapper(fn):  # noqa: ANN001, ANN202
@@ -242,7 +259,7 @@ class _ToolCallLoggingMCP:
 
     def tool(self, *args, **kwargs):
         """Return a decorator that logs each call into a registered tool."""
-        declared_name = kwargs.get("name")
+        declared_name = _declared_tool_name(args, kwargs)
         original_decorator = self._mcp.tool(*args, **kwargs)
 
         def wrapper(fn):  # noqa: ANN001, ANN202

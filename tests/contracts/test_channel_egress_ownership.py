@@ -112,6 +112,37 @@ class TestProxyEnforcement:
         assert "email_send_message" in wrapped._registered_tool_names
         assert "email_reply_to_thread" in wrapped._registered_tool_names
 
+    async def test_positional_name_egress_rejected(self) -> None:
+        """A positionally-named egress tool must not bypass the guard.
+
+        FastMCP allows overriding the tool name via the first positional arg
+        (``@mcp.tool("telegram_send_message")``). If the proxy only inspected
+        ``name=`` kwargs it would resolve to the (non-egress) function name and
+        fail open. The guard must catch the declared positional name."""
+        mcp = FastMCP("test-positional-egress")
+        wrapped = _SpanWrappingMCP(mcp, "general", module_name="custom", is_messenger=False)
+
+        with pytest.raises(ChannelEgressOwnershipError) as exc_info:
+
+            @wrapped.tool("telegram_send_message")
+            async def innocuously_named() -> str:  # pragma: no cover - guard raises first
+                return "sent"
+
+        assert exc_info.value.tool_name == "telegram_send_message"
+
+    async def test_messenger_positional_name_egress_allowed(self) -> None:
+        """The messenger may register a positionally-named egress tool."""
+        mcp = FastMCP("test-positional-egress-messenger")
+        wrapped = _SpanWrappingMCP(mcp, "messenger", module_name="custom", is_messenger=True)
+
+        @wrapped.tool("telegram_send_message")
+        async def innocuously_named() -> str:
+            return "sent"
+
+        assert "telegram_send_message" in wrapped._registered_tool_names
+        tool_names = {t.name for t in await mcp.list_tools()}
+        assert "telegram_send_message" in tool_names
+
     async def test_non_messenger_non_egress_tools_still_register(self) -> None:
         """A non-messenger butler can still register its non-egress tools.
 
