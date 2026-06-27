@@ -186,6 +186,45 @@ async def test_rest_fallback_activates_and_ingests_after_three_failed_reconnects
 
 
 @pytest.mark.asyncio
+async def test_rest_poll_checkpoint_pins_rest_fallback_during_recovery_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A REST-polled event checkpoints as ``rest_fallback`` even if WS recovers
+    mid-dispatch (``_rest_fallback_active`` flips to False before the
+    checkpoint-save await)."""
+    saved_transports: list[str] = []
+
+    async def _fake_save(_pool, _eid, _ts, _entity, transport):  # type: ignore[no-untyped-def]
+        saved_transports.append(transport)
+
+    monkeypatch.setattr(ha_checkpoint, "save_ha_checkpoint", _fake_save)
+
+    connector = _build_connector()
+    _ws_client, rest_poller, _controller = _wire(connector)
+
+    states = [
+        {
+            "entity_id": "light.living_room",
+            "state": "on",
+            "attributes": {"friendly_name": "Living Room"},
+            "last_changed": "2026-06-27T10:00:00+00:00",
+            "last_updated": "2026-06-27T10:00:00+00:00",
+        }
+    ]
+    monkeypatch.setattr(ha_rest.aiohttp, "ClientSession", lambda *a, **k: _FakeSession(states))
+
+    # Simulate the recovery race: the WS client has just reconnected, so the
+    # connector's dynamic transport now reads "websocket". The REST poller's
+    # explicit transport pin must still win for this polled event.
+    connector._rest_fallback_active = False
+
+    diffs = await rest_poller.poll_once()
+    assert len(diffs) == 1
+
+    assert saved_transports == ["rest_fallback"]
+
+
+@pytest.mark.asyncio
 async def test_rest_fallback_deactivates_on_ws_reconnect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

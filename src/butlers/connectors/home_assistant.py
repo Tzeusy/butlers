@@ -61,10 +61,10 @@ import logging
 import os
 import random
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from threading import Thread
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 from urllib.parse import urlparse
 
 from prometheus_client import Counter, Gauge, Histogram, generate_latest
@@ -139,9 +139,18 @@ _WS_EVENT_SUBSCRIPTIONS = (
 # HAWebSocketClient (tasks 3.1–3.6)
 # ---------------------------------------------------------------------------
 
-# Type alias for the event dispatch callback:
-#   async def dispatch(event_type: str, event: dict) -> None
-_EventDispatch = Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]
+
+# Structural type for the event dispatch callback. A Protocol (rather than a
+# Callable alias) so the optional ``transport`` override is part of the
+# statically-checkable signature:
+#   async def dispatch(event_type, event, transport=None) -> None
+class _EventDispatch(Protocol):
+    async def __call__(
+        self,
+        event_type: str,
+        event: dict[str, Any],
+        transport: str | None = None,
+    ) -> None: ...
 
 
 class HAWebSocketClient:
@@ -608,8 +617,17 @@ class HAWebSocketClient:
                 )
                 # Signal the failed reconnect attempt so the connector can count
                 # consecutive failures and activate the REST fallback per spec.
+                # Guard the callback: this loop runs as a fire-and-forget task,
+                # so an unhandled callback error (e.g. while starting the REST
+                # poller) would otherwise kill reconnection entirely.
                 if self._on_reconnect_failed is not None:
-                    self._on_reconnect_failed()
+                    try:
+                        self._on_reconnect_failed()
+                    except Exception as callback_exc:
+                        logger.exception(
+                            "HAWebSocketClient: error in on_reconnect_failed callback: %s",
+                            callback_exc,
+                        )
                 delay = min(delay * 2, self._reconnect_max_s)
                 attempt += 1
                 continue
@@ -1759,16 +1777,32 @@ def _make_event_dispatcher(
     # Tracked entity count for metrics
     _tracked_entities: set[str] = set()
 
-    def _current_transport() -> str:
-        """Checkpoint transport literal for the active ingestion path."""
+    def _resolve_transport(transport: str | None) -> str:
+        """Checkpoint transport literal for this dispatch.
+
+        An explicit ``transport`` (passed by the REST poller) wins; otherwise
+        fall back to the connector's current transport. Resolving once per
+        dispatch — rather than re-reading ``_rest_fallback_active`` at each
+        checkpoint-save ``await`` — keeps the literal stable even if the WS
+        client reconnects mid-dispatch.
+        """
+        if transport is not None:
+            return transport
         return "rest_fallback" if connector._rest_fallback_active else "websocket"
 
-    async def _dispatch(event_type: str, event: dict[str, Any]) -> None:
+    async def _dispatch(
+        event_type: str, event: dict[str, Any], transport: str | None = None
+    ) -> None:
         """Route a HA event through the filter pipeline and persist.
 
         Only ``state_changed`` and ``automation_triggered`` events are
         processed.  ``call_service`` events are counted but not forwarded.
+        ``transport`` lets the caller pin the checkpoint transport literal
+        (the REST poller passes ``"rest_fallback"``); when omitted it is
+        inferred from the connector's active transport.
         """
+        active_transport = _resolve_transport(transport)
+
         if event_type == "call_service":
             # call_service events are not persisted; count as not-forwarded.
             connector.on_event_received(passed_all_filters=False)
@@ -1854,7 +1888,7 @@ def _make_event_dispatcher(
             connector.on_event_received(passed_all_filters=True)
             if db_pool is not None:
                 await save_ha_checkpoint(
-                    db_pool, endpoint_identity, event_ts, entity_id, _current_transport()
+                    db_pool, endpoint_identity, event_ts, entity_id, active_transport
                 )
             return
 
@@ -1996,7 +2030,7 @@ def _make_event_dispatcher(
         # Update checkpoint after successful Switchboard submission
         if db_pool is not None:
             await save_ha_checkpoint(
-                db_pool, endpoint_identity, event_ts, entity_id, _current_transport()
+                db_pool, endpoint_identity, event_ts, entity_id, active_transport
             )
 
         # Flush filtered event buffer and drain replay queue
@@ -2036,7 +2070,9 @@ def _build_transport_supervisor(
     async def _on_rest_state_changed(
         _old_snap: Any, _new_snap: Any, event_dict: dict[str, Any]
     ) -> None:
-        await dispatch("state_changed", event_dict)
+        # Pin the checkpoint transport: events polled via REST must record
+        # ``rest_fallback`` even if the WS client reconnects mid-dispatch.
+        await dispatch("state_changed", event_dict, "rest_fallback")
 
     rest_poller = HARestPoller(
         base_url=ha_base_url,
