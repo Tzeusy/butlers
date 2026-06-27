@@ -158,7 +158,12 @@ export default function QaStafferCard() {
     );
   }
 
-  const emailValid = authorEmail.trim().includes("@");
+  // Mirror the backend validation (qa.py update_git_author): the email must
+  // contain "@" and may not start or end with it, so a malformed value disables
+  // Save instead of triggering an unexpected 422.
+  const trimmedEmail = authorEmail.trim();
+  const emailValid =
+    trimmedEmail.includes("@") && !trimmedEmail.startsWith("@") && !trimmedEmail.endsWith("@");
   const canSaveAuthor =
     authorName.trim().length > 0 && emailValid && !updateGitAuthor.isPending;
 
@@ -302,6 +307,9 @@ export default function QaStafferCard() {
                   value={authorName}
                   disabled={updateGitAuthor.isPending}
                   onChange={(e) => setAuthorName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleSaveAuthor();
+                  }}
                 />
                 <Input
                   aria-label="Git author email"
@@ -310,6 +318,9 @@ export default function QaStafferCard() {
                   value={authorEmail}
                   disabled={updateGitAuthor.isPending}
                   onChange={(e) => setAuthorEmail(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleSaveAuthor();
+                  }}
                 />
                 <Button
                   variant="outline"
