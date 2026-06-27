@@ -1345,11 +1345,11 @@ class ButlerDaemon:
         for mod in self._active_modules:
             try:
                 declared = mod.tool_metadata()
+                if declared:
+                    tool_metadata.update(declared)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Module '%s' tool_metadata() failed: %s", mod.name, exc)
                 continue
-            if declared:
-                tool_metadata.update(declared)
 
         originals = await apply_approval_gates(
             self.mcp, approval_config, pool, self.config.name, tool_metadata=tool_metadata

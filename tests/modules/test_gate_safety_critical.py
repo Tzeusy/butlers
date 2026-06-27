@@ -151,6 +151,12 @@ class TestUnpinnedSafetyCriticalArgs:
         rule = _rule("{ not valid json")
         assert _unpinned_safety_critical_args({"to": RECIPIENT}, meta, rule) == ["to"]
 
+    def test_non_dict_constraints_fail_closed(self) -> None:
+        """Valid JSON that decodes to a non-object (list) must fail closed, not crash."""
+        meta = ToolMeta(arg_sensitivities={"to": True})
+        rule = _rule("[1, 2]")
+        assert _unpinned_safety_critical_args({"to": RECIPIENT}, meta, rule) == ["to"]
+
 
 # ---------------------------------------------------------------------------
 # Real gate-path decision tests

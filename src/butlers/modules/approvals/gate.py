@@ -77,6 +77,10 @@ def _unpinned_safety_critical_args(
     raw = matching_rule.get("arg_constraints", {}) if isinstance(matching_rule, dict) else {}
     try:
         constraints = parse_constraints(raw) if raw else {}
+        if not isinstance(constraints, dict):
+            # Valid JSON that is not an object (e.g. "[1,2]", "123", "null").
+            # Refuse to auto-approve rather than crash on constraints.get(...).
+            raise TypeError(f"constraints must be a dict, got {type(constraints).__name__}")
     except Exception:  # noqa: BLE001 — malformed constraints: refuse to auto-approve
         logger.warning(
             "Gate: failed to parse rule constraints for safety-critical check; "
