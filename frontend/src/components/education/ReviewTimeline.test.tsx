@@ -83,7 +83,11 @@ function mockReviewsPerMap(maps: MindMap[]) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // Use mockReset (not clearAllMocks) so both call history AND any prior
+  // implementation are dropped per test. Every test re-applies its own mock
+  // implementation, so no shared default leaks across cases.
+  mockUseMindMaps.mockReset();
+  mockUseAllPendingReviews.mockReset();
 });
 
 afterEach(() => {
