@@ -571,6 +571,9 @@ function AddWebhookModal({ open, onClose, onCreated }: AddWebhookModalProps) {
   async function handleCopy() {
     if (!createdSecret) return;
     try {
+      if (!navigator.clipboard) {
+        throw new Error("Clipboard API not available");
+      }
       await navigator.clipboard.writeText(createdSecret);
       toast.success("Secret copied to clipboard");
     } catch {

@@ -56,6 +56,14 @@ _TEST_TIMEOUT_SECONDS = 10
 #: identification.  The full secret is never echoed after creation.
 _SECRET_PREFIX_LEN = 6
 
+#: Column projection for endpoints returning the public ``WebhookRow`` shape
+#: (no ``secret_encrypted``).  Centralised so the SELECT/RETURNING column lists
+#: stay in lockstep with :func:`_row_to_model`.
+_WEBHOOK_PROJECTION = (
+    "id, endpoint, events, enabled, secret_prefix, last_test_at, last_test_ok, "
+    "retry_policy, created_at, updated_at"
+)
+
 
 def _get_db_manager() -> DatabaseManager:
     """Dependency stub — overridden at app startup or in tests."""
@@ -280,9 +288,7 @@ async def list_webhooks(
         raise HTTPException(status_code=503, detail="Switchboard database is not available")
 
     rows = await pool.fetch(
-        "SELECT id, endpoint, events, enabled, secret_prefix, last_test_at, last_test_ok, "
-        "       retry_policy, created_at, updated_at "
-        "FROM public.webhooks ORDER BY created_at DESC"
+        f"SELECT {_WEBHOOK_PROJECTION} FROM public.webhooks ORDER BY created_at DESC"
     )
     return ApiResponse(data=[_row_to_model(r) for r in rows])
 
@@ -321,8 +327,7 @@ async def create_webhook(
         "(id, endpoint, events, enabled, secret_encrypted, secret_prefix, "
         " retry_policy, created_at, updated_at) "
         "VALUES ($1::uuid, $2, $3::jsonb, $4, $5, $6, $7::jsonb, $8, $9) "
-        "RETURNING id, endpoint, events, enabled, secret_prefix, last_test_at, last_test_ok, "
-        "          retry_policy, created_at, updated_at",
+        f"RETURNING {_WEBHOOK_PROJECTION}",
         row_id,
         body.endpoint,
         json.dumps(body.events),
@@ -357,9 +362,7 @@ async def get_webhook(
         raise HTTPException(status_code=503, detail="Switchboard database is not available")
 
     row = await pool.fetchrow(
-        "SELECT id, endpoint, events, enabled, secret_prefix, last_test_at, last_test_ok, "
-        "       retry_policy, created_at, updated_at "
-        "FROM public.webhooks WHERE id = $1::uuid",
+        f"SELECT {_WEBHOOK_PROJECTION} FROM public.webhooks WHERE id = $1::uuid",
         str(webhook_id),
     )
     if row is None:
@@ -430,8 +433,7 @@ async def update_webhook(
         "SET endpoint = $1, events = $2::jsonb, enabled = $3, secret_encrypted = $4, "
         "    secret_prefix = $5, retry_policy = $6::jsonb, updated_at = $7 "
         "WHERE id = $8::uuid "
-        "RETURNING id, endpoint, events, enabled, secret_prefix, last_test_at, last_test_ok, "
-        "          retry_policy, created_at, updated_at",
+        f"RETURNING {_WEBHOOK_PROJECTION}",
         new_endpoint,
         json.dumps(new_events),
         new_enabled,
