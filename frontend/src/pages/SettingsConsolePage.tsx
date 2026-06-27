@@ -520,9 +520,16 @@ export default function SettingsConsolePage() {
   // (spec: dashboard-settings-console — Settings Console Live Stream). Until the
   // first snapshot arrives (or if the socket is down) we fall back to the GET
   // fetch above.
-  const { data: liveConsoleData } = useSettingsConsoleStream();
+  const { data: liveConsoleData, status: streamStatus } = useSettingsConsoleStream();
 
-  const consoleData = liveConsoleData ?? consoleResp?.data;
+  // Prefer the live stream while it is connecting/open. If the socket is down
+  // (e.g. a proxy/firewall blocks the WS permanently), `liveConsoleData` would
+  // otherwise stay frozen at its last value forever; in that case fall back to
+  // the periodic GET poll so the safety net actually refreshes the view.
+  const consoleData =
+    streamStatus === "closed"
+      ? (consoleResp?.data ?? liveConsoleData)
+      : (liveConsoleData ?? consoleResp?.data);
 
   function handleNavigate(route: string) {
     navigate(route);

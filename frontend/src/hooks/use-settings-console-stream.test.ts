@@ -75,7 +75,7 @@ function getLastWsInstance(): MockWsInstance | null {
 beforeEach(() => {
   vi.stubGlobal("WebSocket", MockWebSocket);
   instances.length = 0;
-  wsConstructorSpy.mockClear();
+  wsConstructorSpy.mockReset();
 });
 
 afterEach(() => {
