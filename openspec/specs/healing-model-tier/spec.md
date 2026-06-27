@@ -2,12 +2,12 @@
 
 ## Purpose
 
-Healing agents resolve models through the shared `specialty` complexity tier of the Model Catalog. The previously dedicated `self_healing` tier was retired in migration core_092 and folded into `specialty`; operators control what powers healing by managing the `specialty` tier entries. Note that `specialty` is a shared tier, so changes to it also affect other specialty-class work, not healing alone.
+Healing agents resolve models through the shared `specialty` complexity tier of the Model Catalog. The previously dedicated `self_healing` tier was retired in migration core_093 and folded into `specialty`; operators control what powers healing by managing the `specialty` tier entries. Note that `specialty` is a shared tier, so changes to it also affect other specialty-class work, not healing alone.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Specialty Complexity Tier for Healing
-The `Complexity` enum and the `complexity_tier` constraint on `public.model_catalog` SHALL use the canonical tiers (`reasoning`, `workhorse`, `cheap`, `specialty`, `local`, `legacy`). Healing resolves models from the `specialty` tier. The legacy value `self_healing` is accepted only as a deprecated alias that remaps to `specialty` with a logged warning (retired in migration core_092).
+The `Complexity` enum and the `complexity_tier` constraint on `public.model_catalog` SHALL use the canonical tiers (`reasoning`, `workhorse`, `cheap`, `specialty`, `local`, `legacy`). Healing resolves models from the `specialty` tier. The legacy value `self_healing` is accepted only as a deprecated alias that remaps to `specialty` with a logged warning (retired in migration core_093).
 
 #### Scenario: Enum exposes specialty
 - **WHEN** the `Complexity` enum is used
@@ -19,7 +19,7 @@ The `Complexity` enum and the `complexity_tier` constraint on `public.model_cata
 
 #### Scenario: Deprecated self_healing alias remaps
 - **WHEN** code or config emits the legacy `self_healing` complexity value
-- **THEN** it is remapped to `specialty` and a warning is logged noting the old vocabulary was retired in migration core_092
+- **THEN** it is remapped to `specialty` and a warning is logged noting the old vocabulary was retired in migration core_093
 
 ### Requirement: Healing Agent Model Resolution
 The healing dispatcher SHALL resolve models using `resolve_model(pool, butler_name, Complexity.SPECIALTY)`. If no specialty tier model is available, the healing attempt is NOT spawned.
@@ -43,7 +43,7 @@ The `model_catalog_defaults.toml` SHALL include at least one default entry for t
 
 #### Scenario: Default specialty model
 - **WHEN** the catalog is seeded from defaults
-- **THEN** at least one entry exists with `complexity_tier = "specialty"` (see `model_catalog_defaults.toml` lines 182 and 197)
+- **THEN** at least one entry exists with `complexity_tier = "specialty"` (see the `specialty`-tier `[[models]]` entries in `model_catalog_defaults.toml`)
 - **AND** the entry is enabled by default
 
 ### Requirement: Dashboard Tier Visibility
@@ -51,7 +51,7 @@ The Model Settings UI at `/butlers/settings` SHALL display the canonical complex
 
 #### Scenario: Tiers appear in dropdown
 - **WHEN** an operator opens the model settings page and clicks the tier dropdown
-- **THEN** the dropdown lists the canonical tiers `reasoning`, `workhorse`, `cheap`, `specialty`, `local`, and `legacy` (the old vocabulary trivial/medium/high/extra_high/discretion/self_healing was retired in migration core_092)
+- **THEN** the dropdown lists the canonical tiers `reasoning`, `workhorse`, `cheap`, `specialty`, `local`, and `legacy` (the old vocabulary trivial/medium/high/extra_high/discretion/self_healing was retired in migration core_093)
 
 #### Scenario: Disabling all specialty models stops healing
 - **WHEN** an operator disables all catalog entries with tier `specialty`

@@ -11,7 +11,7 @@ The QA dispatcher SHALL create investigations for novel findings, using the exis
 
 #### Scenario: Create investigation from finding
 - **WHEN** a novel finding passes admission gates and is accepted for investigation
-- **THEN** a row is inserted in `public.healing_attempts` with: `id` (UUIDv7), `fingerprint` matching the finding, `butler_name` matching the finding's `source_butler`, `status = "investigating"`, `severity` from the finding, `exception_type` and `call_site` from the finding, `sanitized_msg` from the finding's `event_summary`
+- **THEN** a row is inserted in `public.healing_attempts` with: `id` (UUIDv4, from the table's legacy `gen_random_uuid()` default), `fingerprint` matching the finding, `butler_name` matching the finding's `source_butler`, `status = "investigating"`, `severity` from the finding, `exception_type` and `call_site` from the finding, `sanitized_msg` from the finding's `event_summary`
 - **AND** the row includes `qa_patrol_id` linking it to the originating patrol cycle
 - **AND** the finding's `qa_findings.healing_attempt_id` is updated with the new attempt ID
 
@@ -90,7 +90,7 @@ The QA investigation agent SHALL receive a prompt that includes the error contex
 
 #### Scenario: Agent uses specialty model tier
 - **WHEN** the investigation agent is spawned
-- **THEN** it uses `Complexity.SPECIALTY` for model resolution (the legacy `self_healing` tier was retired in migration core_092 and is accepted only as a deprecated alias that remaps to `specialty`)
+- **THEN** it uses `Complexity.SPECIALTY` for model resolution (the legacy `self_healing` tier was retired in migration core_093 and is accepted only as a deprecated alias that remaps to `specialty`)
 - **AND** if no model is available in the `specialty` tier, the investigation is skipped with status `failed` and reason `"no_model_available"`
 
 #### Scenario: Agent context from reactive butler reports
