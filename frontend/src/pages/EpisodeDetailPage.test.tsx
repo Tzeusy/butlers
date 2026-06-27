@@ -124,6 +124,12 @@ describe("EpisodeDetailPage", () => {
     expect(out).toContain("session sess-abc");
   });
 
+  it("falls back to the truncated episode id when the episode has no session", () => {
+    setEpisode({ ...BASE_EPISODE, session_id: null });
+    const out = html();
+    expect(out).toContain(`Episode ${BASE_EPISODE.id.slice(0, 8)}`);
+  });
+
   it("renders the metadata as a mono code block when non-empty", () => {
     setEpisode({ ...BASE_EPISODE, metadata: { source: "telegram", chat_id: 42 } });
     const out = html();

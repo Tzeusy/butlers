@@ -108,9 +108,14 @@ export default function EpisodeDetailPage() {
 
       {/* Heading: the episode's opening line; the session reference is the
           record-identity subtitle below it (per the detail-page archetype —
-          a session-scoped record derives identity from its session). Omitted
-          when the episode has no session. */}
-      <DetailHeading subtitle={episode.session_id ? `session ${episode.session_id}` : undefined}>
+          a session-scoped record derives identity from its session). Falls
+          back to the truncated episode id when the episode has no session, so
+          the record-identity line is never absent (per the domain-pages spec). */}
+      <DetailHeading
+        subtitle={
+          episode.session_id ? `session ${episode.session_id}` : `Episode ${episode.id.slice(0, 8)}`
+        }
+      >
         {heading}
       </DetailHeading>
 
