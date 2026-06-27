@@ -115,7 +115,7 @@ The shell SHALL implement a responsive sidebar + main content layout that fills 
 
 - **WHEN** the viewport width is at or above the `md` Tailwind breakpoint (768px)
 - **THEN** the desktop sidebar renders as a persistent `<aside>` element with a right border
-- **AND** the sidebar width is fixed at 56px (`w-14`); it is not collapsible
+- **AND** the sidebar renders expanded at 240px (`md:w-60`) by default and is collapsible to a 56px (`md:w-14`) icon rail; the collapsed state is persisted to `localStorage` under `butlers.sidebar-collapsed`
 - **AND** the main content area is `flex-1` (flex sibling of the aside; no margin offset needed)
 - **AND** the mobile drawer is not visible
 

@@ -6,7 +6,7 @@ Defines the dashboard surfaces for the Relationship butler: the contact detail A
 ## Requirements
 ### Requirement: Contact detail API
 
-The dashboard API SHALL expose `GET /api/relationship/contacts/:id` which returns a single contact's full record with joined data from related tables via a direct database read. The query MUST read from `public.contacts` (not `relationship.contacts`).
+The retired `public.contacts` / `public.contact_info` tables were dropped (core_134 / core_115) and there is no `GET /api/relationship/contacts/:id` endpoint. The canonical single-record read is `GET /api/relationship/entities/:id` (roster/relationship/api/router.py), which joins `public.entities` with contact-fact triples from `relationship.entity_facts` and secured rows from `public.entity_info`.
 
 The response MUST include:
 - All columns from the `public.contacts` table (`id`, `first_name`, `last_name`, `nickname`, `company`, `job_title`, `gender`, `pronouns`, `avatar_url`, `listed`, `metadata`, `roles`, `entity_id`, `created_at`, `updated_at`)
@@ -200,7 +200,7 @@ defined in the `detail-page-archetype` spec.
 
 ### Requirement: Secured contact info reveal API
 
-The dashboard API SHALL expose `GET /api/contacts/{id}/secrets/{info_id}` which returns the unmasked value of a secured `contact_info` entry.
+The dashboard API SHALL expose `GET /api/relationship/entities/{entity_id}/secrets/{info_id}` which returns the unmasked value of a secured `public.entity_info` entry (rejecting non-secured rows with HTTP 400).
 
 #### Scenario: Reveal a secured value
 
@@ -370,7 +370,7 @@ main entity table when pending contacts exist.
 
 ### Requirement: Dashboard roles management API
 
-The dashboard API SHALL expose `PATCH /api/contacts/{id}` which allows updating contact fields including `roles`. This is the sole endpoint through which `roles` can be modified.
+Roles live on the `public.entities.roles` column and are managed through the entity surface, not a contacts endpoint. The retired `public.contacts` table was dropped in core_134, so there is no `PATCH /api/contacts/{id}` endpoint.
 
 #### Scenario: Update contact roles
 
