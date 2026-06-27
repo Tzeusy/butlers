@@ -481,7 +481,7 @@ The visibility surfaces are interconnected through contextual links that allow o
 
 #### Scenario: Session to trace navigation
 - **WHEN** a session detail drawer displays a `trace_id`
-- **THEN** it is a clickable link to `/traces/{trace_id}`
+- **THEN** it is a clickable link to `/ingestion?tab=timeline`
 
 #### Scenario: Notification to session navigation
 - **WHEN** a notification row has a `session_id`

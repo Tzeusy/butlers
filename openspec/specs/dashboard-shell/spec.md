@@ -141,8 +141,8 @@ The sidebar SHALL be a fixed 56px-wide icon rail providing primary navigation. I
 #### Scenario: Rail geometry
 
 - **WHEN** the desktop sidebar renders
-- **THEN** the `<aside>` element is exactly 56px wide (`w-14`), full viewport height, with a right border
-- **AND** the rail is not collapsible; there is no collapse toggle
+- **THEN** the `<aside>` element renders expanded at 240px (`md:w-60`) by default and collapses to a 56px icon rail (`md:w-14`), full viewport height, with a right border
+- **AND** a collapse toggle switches between the two widths, persisting the collapsed state to `localStorage` under `butlers.sidebar-collapsed`
 
 #### Scenario: Brand mark
 

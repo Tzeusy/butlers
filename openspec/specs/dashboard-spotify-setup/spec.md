@@ -35,7 +35,7 @@ The dashboard SHALL implement the Spotify OAuth 2.0 Authorization Code with PKCE
 
 #### Scenario: OAuth callback and token exchange
 
-- **WHEN** Spotify redirects back to `/butlers/api/spotify/oauth/callback` with an authorization code
+- **WHEN** Spotify redirects back to `/api/connectors/spotify/oauth/callback` with an authorization code
 - **THEN** the dashboard backend SHALL verify the `state` parameter matches the stored CSRF token
 - **AND** it SHALL exchange the authorization code for tokens via `POST https://accounts.spotify.com/api/token` with:
   - `grant_type` = `authorization_code`

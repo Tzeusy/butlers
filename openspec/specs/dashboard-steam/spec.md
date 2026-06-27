@@ -73,7 +73,7 @@ CREATE TABLE connectors.steam_play_history (
 ```
 
 Indexes:
-- `ix_steam_play_history_steam_id` on `(steam_id)` (supports per-account lookup)
+- `ix_steam_play_history_steam_account_id` on `(steam_account_id)` (supports per-account lookup)
 - `ix_steam_play_history_app_id` on `(app_id)` (supports per-game queries)
 
 #### Scenario: Connector writes daily playtime
