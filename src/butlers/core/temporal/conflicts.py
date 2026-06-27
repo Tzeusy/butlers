@@ -225,7 +225,18 @@ def _detect_back_to_back(
         chain: list[ConflictCandidate] = []
         running_end: datetime | None = None
         for c in day_events:
-            if chain and running_end is not None and (c.start_at - running_end) < gap:
+            # Keep this detector orthogonal to ``_detect_overlaps``: an event that
+            # starts *before* the running end overlaps a chain member, so it is an
+            # overlap (reported there) — not a back-to-back gap. Only a genuinely
+            # adjacent event (``start >= running_end``) with a sub-threshold gap
+            # extends the chain, so two overlapping meetings never also surface as
+            # a redundant back-to-back card.
+            if (
+                chain
+                and running_end is not None
+                and c.start_at >= running_end
+                and (c.start_at - running_end) < gap
+            ):
                 chain.append(c)
                 running_end = max(running_end, c.end_at)
             else:

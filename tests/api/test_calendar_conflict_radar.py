@@ -102,6 +102,29 @@ def test_back_to_back_info_vs_warning():
     assert len(b2b3[0].events) == 3
 
 
+def test_overlapping_events_are_not_also_back_to_back():
+    # Two overlapping meetings must surface ONLY as an overlap, never as a
+    # redundant back-to-back card (the detectors stay orthogonal).
+    a = _c(start=_DAY, minutes=60, entry_id="a")
+    b = _c(start=_DAY + timedelta(minutes=30), minutes=60, entry_id="b")
+    issues = detect_conflict_issues([a, b])
+    assert [i.kind for i in issues if i.kind == "overlap"] == ["overlap"]
+    assert [i for i in issues if i.kind == "back_to_back"] == []
+
+
+def test_overlap_then_adjacent_event_still_back_to_back():
+    # A overlaps B; C is genuinely adjacent to B (10-min gap) -> the chain forms
+    # from the non-overlapping pair (B, C) while A/B remain the overlap.
+    a = _c(start=_DAY, minutes=60, entry_id="a")  # 09:00-10:00
+    b = _c(start=_DAY + timedelta(minutes=30), minutes=60, entry_id="b")  # 09:30-10:30
+    c = _c(start=_DAY + timedelta(minutes=100), minutes=30, entry_id="c")  # 10:40-11:10
+    issues = detect_conflict_issues([a, b, c])
+    assert len([i for i in issues if i.kind == "overlap"]) >= 1
+    b2b = [i for i in issues if i.kind == "back_to_back"]
+    assert len(b2b) == 1
+    assert {e.entry_id for e in b2b[0].events} == {"b", "c"}
+
+
 def test_back_to_back_respects_gap_threshold():
     # 30-min gap with default 15-min threshold -> no back-to-back issue.
     a = _c(start=_DAY, minutes=30, entry_id="a")
