@@ -633,7 +633,16 @@ def _normalize_decomp_signal(sig: Any) -> dict[str, Any] | None:
         return None
     signal_type = str(sig.get("signal_type") or sig.get("type") or "").strip()
     tool_name = str(sig.get("tool_name") or "route.execute").strip()
-    tool_args = sig.get("tool_args") if isinstance(sig.get("tool_args"), dict) else {}
+    # The model sometimes stringifies nested objects; parse a JSON-string
+    # ``tool_args`` so valid arguments are not silently dropped.
+    tool_args = sig.get("tool_args")
+    if isinstance(tool_args, str):
+        try:
+            tool_args = json.loads(tool_args)
+        except (json.JSONDecodeError, ValueError):
+            tool_args = {}
+    if not isinstance(tool_args, dict):
+        tool_args = {}
     confidence_raw = str(sig.get("confidence") or "").strip().upper()
     confidence = confidence_raw if confidence_raw in _VALID_DECOMP_CONFIDENCE else "LOW"
     return {
@@ -647,11 +656,18 @@ def _normalize_decomp_signal(sig: Any) -> dict[str, Any] | None:
 
 
 def _normalize_decomp_signals(raw: Any) -> list[dict[str, Any]]:
-    """Normalize a parsed signal array into full-schema conceptual messages.
+    """Normalize a parsed signal payload into full-schema conceptual messages.
 
-    Drops entries with no routable target butler (see
-    :func:`_normalize_decomp_signal`).
+    Accepts the shapes LLMs commonly emit even when told to return a bare array:
+    a single signal object, or a wrapper object that nests the array under a key
+    (e.g. ``{"signals": [...]}``). Drops entries with no routable target butler
+    (see :func:`_normalize_decomp_signal`).
     """
+    if isinstance(raw, dict):
+        # Unwrap a wrapper object by taking its first list value; otherwise treat
+        # the dict as a single signal so one extracted signal is not dropped.
+        wrapped = next((v for v in raw.values() if isinstance(v, list)), None)
+        raw = wrapped if wrapped is not None else [raw]
     if not isinstance(raw, list):
         return []
     normalized: list[dict[str, Any]] = []
@@ -1983,14 +1999,25 @@ class MessagePipeline:
                                 "output_tokens": _output_tokens,
                             }
                     if _payload_type == "conversation_history" and cc_output.strip():
+                        # LLMs often wrap the JSON in a markdown fence even when
+                        # told not to; strip it so a cosmetic wrapper does not
+                        # silently drop every signal into decomposed_empty.
+                        _cleaned_output = cc_output.strip()
+                        if _cleaned_output.startswith("```"):
+                            _cleaned_output = re.sub(
+                                r"^```(?:json)?\s*|\s*```$",
+                                "",
+                                _cleaned_output,
+                                flags=re.IGNORECASE,
+                            ).strip()
                         try:
-                            _parsed = json.loads(cc_output)
-                            if isinstance(_parsed, list):
-                                # Enforce the full conceptual-message schema
-                                # (signal_type, target_butler, tool_name,
-                                # tool_args, excerpts, confidence). Entries
-                                # without a routable target are dropped.
-                                _decomp_signals = _normalize_decomp_signals(_parsed)
+                            _parsed = json.loads(_cleaned_output)
+                            # Enforce the full conceptual-message schema
+                            # (signal_type, target_butler, tool_name, tool_args,
+                            # excerpts, confidence). _normalize_decomp_signals
+                            # accepts list / single-object / wrapper-object shapes
+                            # and drops entries without a routable target.
+                            _decomp_signals = _normalize_decomp_signals(_parsed)
                         except (json.JSONDecodeError, ValueError):
                             pass
 

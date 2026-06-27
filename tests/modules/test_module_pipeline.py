@@ -370,6 +370,28 @@ class TestDecompositionSignalSchema:
             {"sender": None, "text": "hi", "timestamp": None, "message_id": None}
         ]
 
+    def test_normalize_signal_parses_stringified_tool_args(self):
+        # Models sometimes stringify the nested tool_args object.
+        norm = _normalize_decomp_signal({"target_butler": "finance", "tool_args": '{"amount": 42}'})
+        assert norm is not None
+        assert norm["tool_args"] == {"amount": 42}
+        # Unparseable string falls back to an empty object, not a dropped signal.
+        norm_bad = _normalize_decomp_signal({"target_butler": "finance", "tool_args": "not json"})
+        assert norm_bad is not None
+        assert norm_bad["tool_args"] == {}
+
+    def test_normalize_signals_wraps_single_object(self):
+        # A single signal object (not an array) must not be dropped.
+        out = _normalize_decomp_signals({"target_butler": "finance"})
+        assert [s["target_butler"] for s in out] == ["finance"]
+
+    def test_normalize_signals_unwraps_wrapper_object(self):
+        # `{"signals": [...]}` wrapper is unwrapped to its array.
+        out = _normalize_decomp_signals(
+            {"signals": [{"target_butler": "finance"}, {"target_butler": "health"}]}
+        )
+        assert [s["target_butler"] for s in out] == ["finance", "health"]
+
     @patch.object(
         MessagePipeline,
         "_load_decomp_conversation_history",
@@ -449,6 +471,63 @@ class TestDecompositionSignalSchema:
         assert conceptual["confidence"] == "HIGH"
         assert conceptual["excerpts"][0]["text"] == "Let's split the dinner bill"
         assert route_kwargs["args"]["amount"] == 42
+
+    @patch.object(
+        MessagePipeline,
+        "_load_decomp_conversation_history",
+        new_callable=AsyncMock,
+        return_value="## Recent Conversation History\n\n```text\nhello\n```",
+    )
+    @patch(
+        "butlers.tools.switchboard.routing.classify._load_available_butlers",
+        new_callable=AsyncMock,
+        return_value=_MOCK_BUTLERS,
+    )
+    @patch(
+        "butlers.tools.switchboard.routing.route.route",
+        new_callable=AsyncMock,
+        return_value={"status": "ok"},
+    )
+    async def test_decomposition_parses_markdown_fenced_output(
+        self, mock_route, mock_load, mock_history
+    ):
+        """A markdown-fenced array must still route, not fall back to decomposed_empty."""
+        signal = {
+            "signal_type": "finance",
+            "target_butler": "finance",
+            "tool_name": "expense_log",
+            "tool_args": {"amount": 42},
+            "excerpts": [],
+            "confidence": "HIGH",
+        }
+
+        async def mock_dispatch(**kwargs):
+            return FakeSpawnerResult(
+                output="```json\n" + json.dumps([signal]) + "\n```",
+                success=True,
+                tool_calls=[],
+                model="opencode/test",
+                input_tokens=20,
+                output_tokens=10,
+            )
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(), dispatch_fn=mock_dispatch, source_butler="switchboard"
+        )
+        pipeline._update_message_inbox_lifecycle = AsyncMock()  # type: ignore[method-assign]
+
+        result = await pipeline.process(
+            "conversation batch",
+            tool_args={
+                "source_channel": "telegram_user_client",
+                "request_context": {"payload_type": "conversation_history"},
+            },
+            message_inbox_id="00000000-0000-0000-0000-000000000003",
+        )
+
+        assert result.routed_targets == ["finance"]
+        update_kwargs = pipeline._update_message_inbox_lifecycle.await_args.kwargs
+        assert len(update_kwargs["decomposition_output"]["signals"]) == 1
 
 
 # ---------------------------------------------------------------------------
