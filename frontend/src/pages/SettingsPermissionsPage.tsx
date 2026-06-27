@@ -219,7 +219,12 @@ async function updateWebhook(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  if (!resp.ok) throw new Error(`PUT /api/webhooks/${id} failed: ${resp.status}`);
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(
+      body?.detail?.error ?? body?.detail ?? `PUT /api/webhooks/${id} failed: ${resp.status}`,
+    );
+  }
   const body = await resp.json();
   return body.data as WebhookWithSecret;
 }
@@ -735,8 +740,10 @@ function EditWebhookModal({ webhook, onClose, onSaved }: EditWebhookModalProps) 
         events: evtList,
         enabled,
         retry_policy: {
-          max_attempts: Number(maxAttempts) || 1,
-          backoff_seconds: Number(backoffSeconds) || 0,
+          // Backend expects positive integers; round + clamp the form strings so
+          // NaN/negative/decimal inputs never reach the API.
+          max_attempts: Math.max(1, Math.round(Number(maxAttempts)) || 1),
+          backoff_seconds: Math.max(0, Math.round(Number(backoffSeconds)) || 0),
         },
       });
       toast.success("Webhook updated");

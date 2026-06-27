@@ -502,6 +502,35 @@ describe("SettingsPermissionsPage — webhook edit modal [bu-9q1dx.7]", () => {
     });
   });
 
+  it("rounds and clamps retry policy to positive integers before PUT", async () => {
+    await act(async () => {
+      renderPage();
+    });
+
+    const editBtn = await screen.findByTestId(`webhook-edit-${WEBHOOK_ID}`);
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+    await screen.findByTestId("webhook-edit-endpoint");
+
+    // Decimal / negative inputs must be sanitized to valid integers.
+    fireEvent.change(screen.getByTestId("webhook-edit-max-attempts"), {
+      target: { value: "2.7" },
+    });
+    fireEvent.change(screen.getByTestId("webhook-edit-backoff"), {
+      target: { value: "-4" },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("webhook-edit-save"));
+    });
+
+    await waitFor(() => expect(putCalls).toHaveLength(1));
+    expect(putCalls[0].body).toMatchObject({
+      retry_policy: { max_attempts: 3, backoff_seconds: 0 },
+    });
+  });
+
   it("regenerate secret sends regenerate_secret and reveals the new secret once", async () => {
     // Override PUT to return a one-time secret on regenerate.
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
