@@ -1548,6 +1548,84 @@ class TestRouteExecuteTelegramApprovalGate:
         )
         send_spy.assert_awaited_once()
 
+    async def test_reply_fallback_send_to_non_owner_is_gated(self, tmp_path: Path) -> None:
+        """Telegram reply whose thread is invalid falls back to a SEND — gate the real target.
+
+        Regression for the gemini-flagged bypass (PR #2736): a telegram ``reply``
+        with a missing/invalid ``source_thread_identity`` falls back to a plain
+        send to ``delivery.recipient``.  The gate must validate THAT fallback
+        recipient, not ``source_sender_identity`` — otherwise an owner (or unset)
+        source sender would auto-approve/skip the gate while the fallback send
+        reaches an ungated non-owner recipient.
+        """
+        from butlers.core.utils import generate_uuid7_string
+
+        messenger_dir = _telegram_messenger_dir(tmp_path)
+        daemon, route_execute_fn = await _boot_messenger_with_route_execute(messenger_dir)
+        assert route_execute_fn is not None
+
+        request_id = generate_uuid7_string()
+        route_request_id = generate_uuid7_string()
+        envelope = {
+            "schema_version": "route.v1",
+            "request_context": {
+                "request_id": route_request_id,
+                "received_at": datetime.now(UTC).isoformat(),
+                "source_channel": "telegram_bot",
+                "source_endpoint_identity": "switchboard",
+                "source_sender_identity": "relationship",
+            },
+            "input": {
+                "prompt": "Deliver notification via telegram",
+                "context": {
+                    "notify_request": {
+                        "schema_version": "notify.v1",
+                        "origin_butler": "relationship",
+                        "delivery": {
+                            "intent": "reply",
+                            "channel": "telegram",
+                            "message": "Hello friend",
+                            # Fallback target: a non-owner chat.
+                            "recipient": KNOWN_NON_OWNER_TELEGRAM,
+                        },
+                        "request_context": {
+                            "request_id": request_id,
+                            "source_channel": "telegram_bot",
+                            "source_endpoint_identity": f"telegram:{OWNER_TELEGRAM}",
+                            # Owner sender would auto-approve the OLD gate target...
+                            "source_sender_identity": OWNER_TELEGRAM,
+                            # ...but the thread is invalid → delivery falls back to send.
+                            "source_thread_identity": "not-a-valid-thread",
+                        },
+                    },
+                },
+            },
+        }
+
+        send_spy = AsyncMock(return_value={"status": "sent"})
+
+        with (
+            patch(
+                "butlers.identity.resolve_contact_by_channel",
+                new=AsyncMock(return_value=_non_owner_contact()),
+            ),
+            patch(
+                "butlers.modules.approvals.rules.match_rules",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(TelegramModule, "_send_message", new=send_spy),
+        ):
+            result = await route_execute_fn(**envelope)
+
+        assert result.get("status") == "error", (
+            f"Fallback send to a non-owner recipient MUST be blocked even when the "
+            f"source sender is the owner, got: {result}"
+        )
+        error_obj = result.get("error", {})
+        error_message = error_obj.get("message", "") if isinstance(error_obj, dict) else ""
+        assert "blocked" in error_message.lower(), f"Error must describe the block: {result}"
+        send_spy.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # DBS Card Alert incident replay (2026-03-16)
