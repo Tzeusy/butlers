@@ -364,20 +364,24 @@ async def _mark_catalog_stale(
     *,
     source_schema: str,
     source_table: str,
-    source_id: uuid.UUID,
+    source_ids: list[uuid.UUID],
     invalid_at: datetime,
 ) -> None:
-    """Mark a ``public.memory_catalog`` row stale so it stops surfacing in search.
+    """Mark ``public.memory_catalog`` rows stale so they stop surfacing in search.
 
-    Used when a canonical memory is superseded (or otherwise invalidated): the
-    catalog is a discovery index, so a stale summary must not keep appearing in
+    Used when canonical memories are superseded (or otherwise invalidated): the
+    catalog is a discovery index, so stale summaries must not keep appearing in
     cross-butler search results.  Sets ``confidence = 0`` and records
     ``invalid_at`` (the search queries exclude rows with ``invalid_at`` set).
 
-    Best-effort, like ``_upsert_catalog``: callers wrap this so a catalog
-    failure never blocks the canonical write.  Updating a row that does not
-    exist (e.g. the superseded fact predates catalog write-behind) is a no-op.
+    Updates all matching rows in a single statement via ``ANY`` to avoid an
+    N+1 query pattern.  Best-effort, like ``_upsert_catalog``: callers wrap
+    this so a catalog failure never blocks the canonical write.  IDs without a
+    catalog row (e.g. superseded facts predating catalog write-behind) are a
+    no-op, and an empty ``source_ids`` short-circuits before touching the DB.
     """
+    if not source_ids:
+        return
     await pool.execute(
         """
         UPDATE public.memory_catalog
@@ -386,11 +390,11 @@ async def _mark_catalog_stale(
             updated_at = now()
         WHERE source_schema = $1
           AND source_table = $2
-          AND source_id = $3
+          AND source_id = ANY($3)
         """,
         source_schema,
         source_table,
-        source_id,
+        source_ids,
         invalid_at,
     )
 
@@ -1459,19 +1463,19 @@ async def store_fact(
 
         # Cascade supersession to the catalog: mark the superseded facts' catalog
         # entries stale so cross-butler search stops surfacing the old summaries.
-        for _superseded_id in superseded_ids:
+        if superseded_ids:
             try:
                 await _mark_catalog_stale(
                     pool,
                     source_schema=source_schema,
                     source_table="facts",
-                    source_id=_superseded_id,
+                    source_ids=superseded_ids,
                     invalid_at=now,
                 )
             except Exception:
                 logger.warning(
-                    "memory_catalog: failed to mark superseded fact %s stale (schema=%r)",
-                    _superseded_id,
+                    "memory_catalog: failed to mark superseded facts %s stale (schema=%r)",
+                    superseded_ids,
                     source_schema,
                     exc_info=True,
                 )
