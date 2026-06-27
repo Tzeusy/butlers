@@ -20,6 +20,7 @@ from fastmcp import FastMCP
 
 from butlers.core.telemetry import tool_span
 from butlers.core.tool_call_capture import capture_tool_call, fingerprint_tool_call_payload
+from butlers.exceptions import ChannelEgressOwnershipError, is_channel_egress_tool
 from butlers.module_state import ModuleRuntimeState
 
 logger = logging.getLogger(__name__)
@@ -110,10 +111,15 @@ class _SpanWrappingMCP:
         *,
         module_name: str | None = None,
         module_runtime_states: dict[str, ModuleRuntimeState] | None = None,
+        is_messenger: bool = False,
     ) -> None:
         self._mcp = mcp
         self._butler_name = butler_name
         self._module_name = module_name or "unknown"
+        # Only the messenger butler is permitted to register channel-egress
+        # (outbound send/reply) tools. Defaults to ``False`` so the guard fails
+        # closed: a butler must be explicitly marked messenger to own egress.
+        self._is_messenger = is_messenger
         self._registered_tool_names: set[str] = set()
         # Shared reference to the daemon's live runtime states dict.
         # Used for call-time module enabled/disabled gating.
@@ -135,6 +141,13 @@ class _SpanWrappingMCP:
 
         def wrapper(fn):  # noqa: ANN001, ANN202
             resolved_tool_name = declared_name or fn.__name__
+            # Fail closed: non-messenger butlers may not own channel egress.
+            if not self._is_messenger and is_channel_egress_tool(resolved_tool_name):
+                raise ChannelEgressOwnershipError(
+                    butler_name=self._butler_name,
+                    tool_name=resolved_tool_name,
+                    module_name=self._module_name,
+                )
             self._registered_tool_names.add(resolved_tool_name)
 
             module_name_for_gate = self._module_name
