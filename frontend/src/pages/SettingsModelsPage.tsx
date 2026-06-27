@@ -936,17 +936,26 @@ function UsageCell({
   };
 
   const handleSaveLimit = () => {
+    // Guard against double submission (e.g. Enter then onBlur) while a save is in flight.
+    if (setLimits.isPending) return;
+
     const trimmed = draft.trim();
     let parsed: number | null;
     if (trimmed === "" || trimmed === "-") {
       parsed = null;
     } else {
-      const n = parseInt(trimmed, 10);
-      if (Number.isNaN(n) || n < 0) {
+      const n = Math.round(Number(trimmed));
+      if (!Number.isFinite(n) || n < 0) {
         toast.error("Limit must be a non-negative integer (or blank for unlimited)");
         return;
       }
       parsed = n;
+    }
+
+    // No-op when the value is unchanged — avoids redundant network/database writes.
+    if (parsed === limit) {
+      setEditing(false);
+      return;
     }
 
     const body =
@@ -1003,8 +1012,8 @@ function UsageCell({
         </button>
       </div>
 
-      {/* Progress bar (only when a limit is configured) — wrapped in a tooltip */}
-      <TooltipProvider>
+      {/* Progress bar (only when a limit is configured) — wrapped in a tooltip.
+          The single TooltipProvider lives at the page root (SettingsModelsPage). */}
         <Tooltip open={tipOpen} onOpenChange={setTipOpen}>
           <TooltipTrigger asChild>
             <button
@@ -1035,7 +1044,6 @@ function UsageCell({
             </div>
           </TooltipContent>
         </Tooltip>
-      </TooltipProvider>
 
       {/* used / limit text — clicking the limit opens the inline editor */}
       <div className="flex items-center gap-1 font-mono text-[10px] tabular-nums">
@@ -1046,11 +1054,14 @@ function UsageCell({
         {editing ? (
           <Input
             autoFocus
+            disabled={setLimits.isPending}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={handleSaveLimit}
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleSaveLimit();
+              // Blur on Enter so the single onBlur handler performs the save —
+              // avoids a duplicate request from Enter + the subsequent blur.
+              if (e.key === "Enter") e.currentTarget.blur();
               if (e.key === "Escape") setEditing(false);
             }}
             placeholder="—"
@@ -1317,7 +1328,8 @@ export default function SettingsModelsPage() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen">
+    <TooltipProvider>
+      <div className="flex flex-col min-h-screen">
       {/* Breadcrumb */}
       <div className="px-7 py-3.5 border-b border-border flex items-baseline gap-3 font-mono text-[10px] text-muted-foreground uppercase tracking-[0.14em]">
         <span>butlers</span>
@@ -1458,6 +1470,7 @@ export default function SettingsModelsPage() {
           <ApiWireFooter />
         </div>
       </div>
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }
