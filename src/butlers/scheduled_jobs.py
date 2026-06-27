@@ -425,6 +425,22 @@ async def _run_education_compute_analytics_snapshots_job(
     return {"snapshots_computed": count}
 
 
+async def _run_education_mind_map_staleness_job(
+    pool: asyncpg.Pool,
+    job_args: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Abandon active mind maps inactive for 30+ days (deterministic weekly job).
+
+    Per the module-education-mind-map spec, an ``active`` map transitions to
+    ``abandoned`` once more than 30 days have elapsed since any node activity.
+    """
+    del job_args
+    from butlers.tools.education.mind_maps import mind_map_abandon_stale
+
+    abandoned_ids = await mind_map_abandon_stale(pool=pool)
+    return {"abandoned_count": len(abandoned_ids), "abandoned_ids": abandoned_ids}
+
+
 async def _run_health_briefing_contribution_job(
     pool: asyncpg.Pool,
     job_args: dict[str, Any] | None,
@@ -1184,6 +1200,7 @@ def _build_deterministic_schedule_job_registry() -> dict[
         },
         "education": {
             "compute_analytics_snapshots": _run_education_compute_analytics_snapshots_job,
+            "mind_map_staleness_abandonment": _run_education_mind_map_staleness_job,
             "daily_briefing_contribution": _run_education_briefing_contribution_job,
             "session_process_logs_prune": _run_session_process_logs_prune_job,
         },
