@@ -113,7 +113,7 @@ function setup(opts?: {
 
 describe("QaStafferCard", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
   afterEach(() => cleanup());
 

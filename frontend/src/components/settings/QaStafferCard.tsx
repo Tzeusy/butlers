@@ -211,6 +211,7 @@ export default function QaStafferCard() {
                 aria-label="QA repository URL"
                 placeholder="https://github.com/owner/repo"
                 value={repoUrlValue}
+                disabled={updateRepo.isPending}
                 onChange={(e) => {
                   setRepoDraft(e.target.value);
                   setRepoDirty(true);
@@ -317,6 +318,7 @@ export default function QaStafferCard() {
                 <div className="flex items-center gap-3 shrink-0">
                   <Switch
                     checked={r.enabled}
+                    disabled={patchRepo.isPending || deleteRepo.isPending}
                     onCheckedChange={(enabled) =>
                       patchRepo.mutate({ owner: r.owner, repo: r.repo, enabled })
                     }
@@ -324,8 +326,9 @@ export default function QaStafferCard() {
                   />
                   <button
                     type="button"
+                    disabled={deleteRepo.isPending || patchRepo.isPending}
                     onClick={() => deleteRepo.mutate({ owner: r.owner, repo: r.repo })}
-                    className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground underline underline-offset-2 hover:text-[var(--red)] transition-colors cursor-pointer"
+                    className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground underline underline-offset-2 hover:text-[var(--red)] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     aria-label={`Remove ${r.owner}/${r.repo}`}
                   >
                     Remove
