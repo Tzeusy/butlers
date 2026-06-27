@@ -151,7 +151,7 @@ When `entity_id` is provided but the entity has no `relationship.entity_facts` t
 #### Scenario: Entity missing Telegram identifier
 - **WHEN** a runtime instance calls `notify(channel='telegram', message='Reminder', entity_id='abc-123')`
 - **AND** entity `abc-123` has no `relationship.entity_facts` triple for the telegram channel
-- **THEN** the notify tool MUST create a `pending_action` with `tool_name='notify'`, `status='pending'`, and `agent_summary` explaining that the contact has no Telegram identifier on file
+- **THEN** the notify tool MUST create a `pending_action` with `tool_name='notify'`, `status='pending'`, and `agent_summary` explaining that the entity has no Telegram identifier on file
 - **AND** the tool MUST return `{"status": "pending_missing_identifier", "action_id": "...", "message": "Cannot deliver telegram notification -- no telegram identifier on file."}`
 
 #### Scenario: Owner notified of missing identifier
