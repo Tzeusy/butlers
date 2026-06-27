@@ -262,7 +262,7 @@ the use case before being treated as binding.
      tracking-tight` for all standard (non-editorial) pages. This ratifies
      the shipped shape and supersedes the earlier detail-page-audit choice of
      `text-2xl` (decision bu-23bgb): the heading weight stays `font-bold`
-     (700) for standard chrome — the Dispatch "Display weight is 500" rule
+     (700) for standard chrome: the Dispatch "Display weight is 500" rule
      below applies only to the Display/Editorial tier, not the standard H1.
    - **Editorial archetype gets a Display tier.** The Overview opens
      with a Display headline instead of the standard H1. The Display
@@ -278,7 +278,7 @@ the use case before being treated as binding.
      is an editorial-archetype page and the Display 44px headline
      carve-out above applies: it renders via `<Page archetype="editorial">`
      which renders the title as a Display 44px headline when breadcrumbs
-     or actions are supplied (bu-hm0oe: resolution b — additive, does not
+     or actions are supplied (bu-hm0oe: resolution b, additive, does not
      touch `archetype="detail"`). Workbench is a workspace-grade record
      page: it renders via `<Page archetype="overview">` (the `workspace`
      archetype gap is left to Phase 2 per entity-brief.md R3; `overview`
@@ -840,7 +840,7 @@ defeated when digits jitter as they update.
 weight would do; bold display reads as loud, which violates the calm
 contract. This governs the **Display/Editorial tier** (the 44px headline);
 it does not override the standard `<Page>` H1, which stays `text-3xl
-font-bold` (700) — see the `Page` primitive section (decision bu-23bgb).
+font-bold` (700). See the `Page` primitive section (decision bu-23bgb).
 
 **Eyebrows title sections in lieu of a heading.** They establish
 rhythm without adding shouting weight. They are not subtitles, they
@@ -898,7 +898,7 @@ state for the attention list is the Voice register doing its job:
 #### Attention-tint exception
 
 > Status: **single permitted exception** to the state-color-on-background
-> prohibition — approved by openspec/changes/redesign-settings-dispatch-console/.
+> prohibition, approved by openspec/changes/redesign-settings-dispatch-console/.
 
 Rows or panels that *demand human attention right now* may carry a
 **4–7% alpha background tint** in the state color, paired with a **2px left
@@ -916,7 +916,7 @@ Constraints:
 - The pattern applies **only** to "demands attention now" states. Routine
   status (healthy, idle, neutral) receives no tint, no rail.
 - A row already carrying a `Sev` glyph or any other affordance does
-  **not** also receive the tint — *one affordance per signal* still applies.
+  **not** also receive the tint: *one affordance per signal* still applies.
 - Two tones only: `red` (4–7% alpha) for critical states, `amber` (4–6%
   alpha) for warning states. No other hues enter the background.
 
@@ -933,7 +933,7 @@ mega-number that screams; the alignment is the design.
 
 ### Butler hue scope
 
-> Status: non-negotiable (with one documented exception — see
+> Status: non-negotiable (with one documented exception, see
 > [Attention-tint exception](#attention-tint-exception) above).
 
 Each butler has one hue from the categorical palette. The hue appears
