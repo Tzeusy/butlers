@@ -147,8 +147,9 @@ the `database-security` graceful-fallback policy for `dev`. Under `dev`,
 `src/butlers/db.py` retains fail-open behavior (logs "Could not verify role … SET
 ROLE enforcement disabled" or "Role … not found; SET ROLE enforcement disabled"
 and proceeds with the connecting user's privileges). Under the hardened posture,
-`DatabaseManager.strict_role_enforcement` is enabled (auto-detected from
-`is_hardened_posture()`) and the daemon fails closed rather than silently losing
+`Database.strict_role_enforcement` (the `Database` class in `src/butlers/db.py`)
+is enabled (auto-detected from `is_hardened_posture()`) and the daemon fails
+closed rather than silently losing
 schema isolation for an always-on deployment.
 
 #### Scenario: Missing role fails closed under hardened posture
