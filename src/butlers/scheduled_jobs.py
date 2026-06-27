@@ -433,11 +433,29 @@ async def _run_education_mind_map_staleness_job(
 
     Per the module-education-mind-map spec, an ``active`` map transitions to
     ``abandoned`` once more than 30 days have elapsed since any node activity.
+    The 30-day spec default may be overridden per-dispatch via
+    ``job_args.inactivity_days`` (mirrors the sibling memory-cleanup jobs).
     """
-    del job_args
+    inactivity_days = 30
+    if job_args is not None:
+        unknown_args = sorted(set(job_args) - {"inactivity_days"})
+        if unknown_args:
+            raise RuntimeError(
+                "mind_map_staleness_abandonment job only supports job_args.inactivity_days; "
+                f"received unsupported keys: {unknown_args}"
+            )
+        if "inactivity_days" in job_args:
+            raw_days = job_args["inactivity_days"]
+            if not isinstance(raw_days, int) or isinstance(raw_days, bool) or raw_days <= 0:
+                raise RuntimeError(
+                    "mind_map_staleness_abandonment job_args.inactivity_days "
+                    "must be a positive integer"
+                )
+            inactivity_days = raw_days
+
     from butlers.tools.education.mind_maps import mind_map_abandon_stale
 
-    abandoned_ids = await mind_map_abandon_stale(pool=pool)
+    abandoned_ids = await mind_map_abandon_stale(pool=pool, inactivity_days=inactivity_days)
     return {"abandoned_count": len(abandoned_ids), "abandoned_ids": abandoned_ids}
 
 
