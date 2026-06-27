@@ -358,9 +358,11 @@ class HomeAssistantModule(Module):
 
         # Persist a final snapshot so the last-known entity state survives the
         # restart window (the periodic task may not have run since the most
-        # recent state change).  Best-effort: never block teardown on it.
+        # recent state change).  Best-effort: never block teardown on it — bound
+        # the persist with a timeout so a hung/slow DB call cannot stall the
+        # whole shutdown/restart sequence.
         try:
-            await self._persist_entity_snapshot()
+            await asyncio.wait_for(self._persist_entity_snapshot(), timeout=5.0)
         except Exception as exc:  # pragma: no cover - best-effort on teardown
             logger.warning("HomeAssistantModule: final snapshot persist failed: %s", exc)
 
