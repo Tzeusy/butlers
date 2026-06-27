@@ -613,6 +613,10 @@ def _make_in_memory_provider() -> tuple[MeterProvider, InMemoryMetricReader]:
 def _collect_metrics(reader: InMemoryMetricReader) -> dict[str, Any]:
     result: dict[str, Any] = {}
     data = reader.get_metrics_data()
+    if data is None:
+        # No instruments recorded a measurement (e.g. non-empty decomposition
+        # never touches the counter), so the reader has nothing to collect.
+        return result
     for rm in data.resource_metrics:
         for sm in rm.scope_metrics:
             for metric in sm.metrics:
