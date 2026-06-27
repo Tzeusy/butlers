@@ -209,7 +209,7 @@ deployment and user data that cannot be observed from the repository.
 
 **Status: implemented (unproven in production)**
 
-EPIC C (proactive insight delivery, `bu-dl98i.3`) has fully landed. All three
+EPIC C (proactive insight delivery) has fully landed. All three
 phases of the RFC 0011 pipeline are wired end-to-end: butler-side insight
 generation, Switchboard brokering (dedup, budget, adaptive ratchet, anti-spam),
 and durable delivery via Messenger. The dashboard surfaces live delivery state.
@@ -218,9 +218,6 @@ A gen-1 spec-to-code reconciliation confirmed faithful implementation across
 
 | Evidence | Detail |
 |----------|--------|
-| EPIC C completion PRs | `#2420` — durable notify path wired into insight delivery cycle (`bu-dl98i.3.1`) |
-| | `#2427` — spec-coverage for five delivery paths (`bu-dl98i.3.2`) |
-| | `#2435` — dashboard insight-delivery state surface (`bu-dl98i.3.3`) |
 | Broker implementation | `roster/switchboard/tools/insight/broker.py` — `propose_insight_candidate()`, `expire_candidates()`, `filter_by_cooldown()`, `deduplicate_candidates()`, `compute_effective_budget()`, `check_and_update_engagement()`, `check_total_disengagement_auto_off()`, `delivery_cycle()` |
 | Scheduled delivery cron | `roster/switchboard/butler.toml` — `cron = "0 8 * * *"`, job `insight_delivery_cycle` |
 | API endpoint | `GET /api/system/insights/delivery-state` (`src/butlers/api/routers/system.py`) |
