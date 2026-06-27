@@ -46,21 +46,28 @@ def migrated_db_url(postgres_container) -> str:
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 async def pool(migrated_db_url: str):
-    """Return an asyncpg pool with education quiz tables cleared between tests."""
+    """Return a module-scoped asyncpg pool (event loop is session-scoped here)."""
     p = await asyncpg.create_pool(
         migrated_db_url,
         min_size=1,
         max_size=3,
         init=register_jsonb_codec,
     )
-    await p.execute(
+    try:
+        yield p
+    finally:
+        await p.close()
+
+
+@pytest.fixture(autouse=True)
+async def _clear_tables(pool: asyncpg.Pool):
+    """Truncate education quiz tables before each test (pool is module-scoped)."""
+    await pool.execute(
         "TRUNCATE TABLE education.quiz_responses, education.mind_map_edges, "
         "education.mind_map_nodes, education.mind_maps CASCADE"
     )
-    yield p
-    await p.close()
 
 
 async def _seed_map_and_node(pool: asyncpg.Pool) -> tuple[str, str]:
