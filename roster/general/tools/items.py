@@ -20,25 +20,22 @@ async def item_create(
     data: dict[str, Any],
     tags: list[str] | None = None,
 ) -> uuid.UUID:
-    """Create an item in a collection (by collection name).
-
-    Raises ValueError if collection not found.
-    """
-    collection_id = await pool.fetchval(
-        "SELECT id FROM collections WHERE name = $1", collection_name
-    )
-    if collection_id is None:
-        raise ValueError(
-            f"Collection '{collection_name}' not found. "
-            "Use collection_list() to see available collections."
-        )
-
+    """Create an item in a collection, creating the collection if needed."""
     tags_value = list(tags) if tags is not None else []
     item_id = await pool.fetchval(
-        """INSERT INTO collection_items (collection_id, data, tags)
-           VALUES ($1, $2, $3)
-           RETURNING id""",
-        collection_id,
+        """
+        WITH target_collection AS (
+            INSERT INTO collections (name)
+            VALUES ($1)
+            ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+            RETURNING id
+        )
+        INSERT INTO collection_items (collection_id, data, tags)
+        SELECT id, $2, $3
+        FROM target_collection
+        RETURNING id
+        """,
+        collection_name,
         data,
         tags_value,
     )
