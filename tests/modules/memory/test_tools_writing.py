@@ -110,6 +110,22 @@ class TestMemoryStoreEpisode:
             result = await memory_store_episode(pool, "some content", "butler")
         assert result == {"id": str(episode_id), "expires_at": expires_at.isoformat()}
 
+    async def test_invalid_session_id_raises_actionable_value_error(
+        self, pool: AsyncMock
+    ) -> None:
+        with patch.object(_helpers._storage, "store_episode", new_callable=AsyncMock) as store:
+            with pytest.raises(ValueError) as excinfo:
+                await memory_store_episode(
+                    pool,
+                    "some content",
+                    "butler",
+                    session_id="telegram:123:456",
+                )
+
+        assert "session_id must be a UUID string" in str(excinfo.value)
+        assert "Omit session_id" in str(excinfo.value)
+        store.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # memory_store_fact
