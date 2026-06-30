@@ -382,6 +382,61 @@ async def _lookup_merchant_category(pool: asyncpg.Pool, merchant: str) -> str | 
     return row["category"]
 
 
+async def _resolve_category_for_insert(
+    pool: asyncpg.Pool,
+    category: str | None,
+    metadata: dict[str, Any],
+) -> tuple[str, bool]:
+    """Return a category value that is valid for the current schema.
+
+    Older test and development schemas allow free-form ``transactions.category``
+    text. Migrated schemas enforce ``transactions.category -> categories.name``;
+    in those schemas an LLM-supplied free-form category should not leak a raw FK
+    violation from the tool layer. Unknown categories are preserved in metadata
+    and stored under the canonical ``uncategorized`` bucket.
+    """
+    candidate = str(category or "").strip() or "uncategorized"
+    if not await _has_table(pool, "categories"):
+        return candidate, False
+
+    row = await pool.fetchrow(
+        """
+        SELECT name FROM categories
+        WHERE lower(name) = lower($1)
+        LIMIT 1
+        """,
+        candidate,
+    )
+    if row is not None:
+        return row["name"], False
+
+    fallback = await pool.fetchrow(
+        """
+        SELECT name FROM categories
+        WHERE name = 'uncategorized'
+        LIMIT 1
+        """
+    )
+    if fallback is None:
+        return candidate, False
+
+    metadata.setdefault("original_category", candidate)
+    warning = {
+        "code": "unknown_category",
+        "field": "category",
+        "stored_as": fallback["name"],
+    }
+    existing_warnings = metadata.get("warnings")
+    if isinstance(existing_warnings, list):
+        existing_warnings.append(warning)
+    elif existing_warnings is None:
+        metadata["warnings"] = [warning]
+    else:
+        metadata["warnings"] = [existing_warnings, warning]
+
+    return fallback["name"], True
+
+
 async def _record_correction(
     pool_or_conn: Any,
     transaction_id: str,
@@ -540,6 +595,13 @@ async def record_transaction(
             category_source = "manual"
 
     meta_dict = dict(metadata or {})
+    effective_category, used_category_fallback = await _resolve_category_for_insert(
+        pool,
+        effective_category,
+        meta_dict,
+    )
+    if used_category_fallback:
+        category_source = "manual"
 
     # Check for optional new columns from finance_002 migration.
     has_category_source = await _has_column(pool, "transactions", "category_source")
