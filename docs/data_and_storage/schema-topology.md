@@ -119,6 +119,44 @@ The `Database` class exposes `fetch()`, `fetchrow()`, `fetchval()`, and `execute
 - Inter-butler communication is MCP-only through the Switchboard -- no direct cross-schema SQL.
 - The `public` schema is read-accessible by all butlers but write patterns are controlled by the core migration chain and identity resolution code.
 
+## Verification
+
+To confirm the schema topology described here matches the running system:
+
+```bash
+# 1. Per-butler schemas exist in the database
+psql -h localhost -U butlers -d butlers -c "\dn"
+# Expected: schemas listed include "public", "switchboard", "general",
+#           "relationship", "health" (plus any other configured butlers)
+
+# 2. Core tables exist in each butler's schema
+psql -h localhost -U butlers -d butlers -c \
+  "SELECT table_schema, table_name FROM information_schema.tables
+   WHERE table_schema = 'general'
+   ORDER BY table_name;"
+# Expected: state, scheduled_tasks, sessions, butler_secrets,
+#           plus module tables if modules are enabled
+
+# 3. Cross-butler tables are in public schema
+psql -h localhost -U butlers -d butlers -c \
+  "SELECT table_name FROM information_schema.tables
+   WHERE table_schema = 'public' ORDER BY table_name;"
+# Expected: entities, entity_info, google_accounts, model_catalog,
+#           token_usage_ledger, model_dispatch_attempts, etc.
+# Note: contacts and contact_info should NOT appear (dropped in core_115 / core_134)
+
+# 4. Search path resolves butler-schema tables first, then public
+# From a butler's connection context, unqualified references resolve correctly:
+psql -h localhost -U butlers -d butlers \
+  -c "SET search_path = general, public; SELECT COUNT(*) FROM state;"
+# Expected: count from general.state, not an error
+
+# 5. PostgreSQL extensions installed in public schema
+psql -h localhost -U butlers -d butlers -c \
+  "SELECT extname FROM pg_extension ORDER BY extname;"
+# Expected: pgcrypto, uuid-ossp, vector, pg_trgm
+```
+
 ## Related Pages
 
 - [Migration Patterns](migration-patterns.md) -- How schema-scoped migrations work
