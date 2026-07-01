@@ -197,6 +197,33 @@ function ExtraArgsEditor({
   const [rawText, setRawText] = useState("");
   const [rawError, setRawError] = useState("");
 
+  // Detect externally-driven value changes (e.g., a template applied from the parent)
+  // while the user is in raw-JSON mode and sync rawText accordingly.
+  // Pattern: track `prevValue` in state, compare on every render, and call setState
+  // inside the conditional to schedule an immediate re-render with the corrected text.
+  // See https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  const [prevValue, setPrevValue] = useState(value);
+  if (value !== prevValue) {
+    setPrevValue(value);
+    if (rawMode) {
+      // Guard: skip reset if rawText already encodes the new value — that means the
+      // change came from our own typing (handleRawChange → onChange → parent setState).
+      let alreadySynced = false;
+      try {
+        const parsed = JSON.parse(rawText);
+        if (Array.isArray(parsed) && JSON.stringify(parsed) === JSON.stringify(value)) {
+          alreadySynced = true;
+        }
+      } catch {
+        // rawText is invalid JSON — fall through to reset
+      }
+      if (!alreadySynced) {
+        setRawText(value.length > 0 ? JSON.stringify(value) : "");
+        setRawError("");
+      }
+    }
+  }
+
   // Enter raw mode: serialize current string[] to JSON text.
   const enterRawMode = () => {
     setRawText(value.length > 0 ? JSON.stringify(value) : "");
@@ -223,6 +250,9 @@ function ExtraArgsEditor({
       const parsed = JSON.parse(text);
       if (!Array.isArray(parsed)) {
         setRawError("Must be a JSON array");
+        onErrorChange?.(true);
+      } else if (!parsed.every((item) => typeof item === "string")) {
+        setRawError("All elements must be strings");
         onErrorChange?.(true);
       } else {
         setRawError("");

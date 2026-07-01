@@ -1279,6 +1279,38 @@ describe("SettingsModelsPage — ExtraArgsEditor (bu-6jxcw)", () => {
       expect.any(Object),
     );
   });
+
+  it("raw-JSON mode rejects arrays with non-string elements", async () => {
+    // Arrays like [1, 2] pass Array.isArray() but extra_args requires string[].
+    // The editor must show an error and NOT call mutate.
+    setHookState({ entries: [makeModel({ extra_args: [] })] });
+    const mutate = vi.fn();
+    vi.mocked(useUpdateModelCatalogEntry).mockReturnValue({ mutate, isPending: false } as AnyMock);
+
+    mountPage();
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Edit claude-sonnet"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Switch to raw JSON editor"));
+    });
+
+    // Type a JSON array with numeric elements — invalid for extra_args: string[]
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Args (JSON array)"), {
+        target: { value: "[1, 2]" },
+      });
+    });
+
+    // Error message must be visible
+    expect(screen.getByText(/all elements must be strings/i)).toBeTruthy();
+
+    // Attempting to save must be blocked — mutate must not be called
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    });
+    expect(mutate).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
