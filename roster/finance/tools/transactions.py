@@ -85,6 +85,10 @@ async def _resolve_account_id(pool: asyncpg.Pool, raw: str | None) -> str | None
 # weak references.
 _column_existence_cache: dict[int, dict[tuple[str, str], bool]] = {}
 
+# Module-level cache for _has_table results, mirroring _column_existence_cache.
+# Avoids an information_schema round-trip per insert (hot on bulk imports).
+_table_existence_cache: dict[int, dict[str, bool]] = {}
+
 
 async def _mirror_to_spo(
     pool: asyncpg.Pool,
@@ -347,7 +351,15 @@ async def _has_column(pool: asyncpg.Pool, table: str, column: str) -> bool:
 
 
 async def _has_table(pool: asyncpg.Pool, table: str) -> bool:
-    """Return True if the given table exists in the current schema."""
+    """Return True if the given table exists in the current schema.
+
+    Results are cached per pool for the lifetime of the process to avoid
+    repeated ``information_schema`` queries on every insert / dedup call
+    (hot during bulk imports).
+    """
+    per_pool = _table_existence_cache.setdefault(id(pool), {})
+    if table in per_pool:
+        return per_pool[table]
     count = await pool.fetchval(
         """
         SELECT COUNT(*) FROM information_schema.tables
@@ -355,7 +367,9 @@ async def _has_table(pool: asyncpg.Pool, table: str) -> bool:
         """,
         table,
     )
-    return bool(count)
+    result = bool(count)
+    per_pool[table] = result
+    return result
 
 
 async def _lookup_merchant_category(pool: asyncpg.Pool, merchant: str) -> str | None:
@@ -428,7 +442,9 @@ async def _resolve_category_for_insert(
     }
     existing_warnings = metadata.get("warnings")
     if isinstance(existing_warnings, list):
-        existing_warnings.append(warning)
+        # Assign a new list rather than appending in place: ``metadata`` is only
+        # a shallow copy of the caller's dict, so its list values may be shared.
+        metadata["warnings"] = [*existing_warnings, warning]
     elif existing_warnings is None:
         metadata["warnings"] = [warning]
     else:
