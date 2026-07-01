@@ -64,6 +64,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
+#: Strong reference set that keeps background dispatch tasks alive until they
+#: complete.  Without this, CPython's GC may collect a task before the event
+#: loop finishes executing it.
+_background_tasks: set[asyncio.Task] = set()
+
 _DEFAULT_RETRY_POLICY = {"max_attempts": 3, "backoff_seconds": 2}
 _TEST_TIMEOUT_SECONDS = 10
 
@@ -323,65 +328,70 @@ async def _dispatch_event_impl(
         return
 
     for row in rows:
-        evts = row["events"]
-        if isinstance(evts, str):
-            evts = json.loads(evts)
-        if not isinstance(evts, list):
-            evts = []
-        if not evts:
-            # Empty subscription list: opt-out by default.
-            continue
-        if event_name not in evts and "*" not in evts:
-            continue
-
-        rp_raw = row["retry_policy"]
-        if isinstance(rp_raw, str):
-            rp_raw = json.loads(rp_raw)
-        retry_policy = RetryPolicy(
-            max_attempts=rp_raw.get("max_attempts", 3),
-            backoff_seconds=rp_raw.get("backoff_seconds", 2),
-        )
-
-        wh_id = row["id"]
-        delivery_payload = {"event": event_name, "webhook_id": str(wh_id), **payload}
-
         try:
-            result = await _dispatch_webhook(
-                endpoint=row["endpoint"],
-                payload=delivery_payload,
-                secret_encrypted=row["secret_encrypted"],
-                retry_policy=retry_policy,
+            evts = row["events"]
+            if isinstance(evts, str):
+                evts = json.loads(evts)
+            if not isinstance(evts, list):
+                evts = []
+            if not evts:
+                # Empty subscription list: opt-out by default.
+                continue
+            if event_name not in evts and "*" not in evts:
+                continue
+
+            rp_raw = row["retry_policy"]
+            if isinstance(rp_raw, str):
+                rp_raw = json.loads(rp_raw)
+            if not isinstance(rp_raw, dict):
+                rp_raw = {}
+            retry_policy = RetryPolicy(
+                max_attempts=rp_raw.get("max_attempts", 3),
+                backoff_seconds=rp_raw.get("backoff_seconds", 2),
             )
-        except Exception as exc:
-            logger.warning(
-                "dispatch_event: unhandled error delivering %s to %s: %s",
-                event_name,
-                wh_id,
-                exc,
-            )
-            ok = False
-        else:
-            ok = result.ok
-            if not ok:
-                logger.warning(
-                    "dispatch_event: webhook %s exhausted retries for event %s: %s",
-                    wh_id,
-                    event_name,
-                    result.error,
+
+            wh_id = row["id"]
+            delivery_payload = {"event": event_name, "webhook_id": str(wh_id), **payload}
+
+            try:
+                result = await _dispatch_webhook(
+                    endpoint=row["endpoint"],
+                    payload=delivery_payload,
+                    secret_encrypted=row["secret_encrypted"],
+                    retry_policy=retry_policy,
                 )
+            except Exception as exc:
+                logger.warning(
+                    "dispatch_event: unhandled error delivering %s to %s: %s",
+                    event_name,
+                    wh_id,
+                    exc,
+                )
+                ok = False
+            else:
+                ok = result.ok
+                if not ok:
+                    logger.warning(
+                        "dispatch_event: webhook %s exhausted retries for event %s: %s",
+                        wh_id,
+                        event_name,
+                        result.error,
+                    )
 
-        try:
-            await pool.execute(
-                "UPDATE public.webhooks "
-                "SET last_delivery_at = now(), last_delivery_ok = $1 "
-                "WHERE id = $2::uuid",
-                ok,
-                str(wh_id),
-            )
+            try:
+                await pool.execute(
+                    "UPDATE public.webhooks "
+                    "SET last_delivery_at = now(), last_delivery_ok = $1 "
+                    "WHERE id = $2::uuid",
+                    ok,
+                    str(wh_id),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "dispatch_event: failed to record delivery outcome for %s: %s", wh_id, exc
+                )
         except Exception as exc:
-            logger.warning(
-                "dispatch_event: failed to record delivery outcome for %s: %s", wh_id, exc
-            )
+            logger.warning("dispatch_event: failed to process webhook row: %s", exc)
 
 
 def dispatch_event(
@@ -412,7 +422,10 @@ def dispatch_event(
         The background task.  Callers in production code should not await it;
         tests may await it to drive the delivery synchronously.
     """
-    return asyncio.ensure_future(_dispatch_event_impl(pool, event_name, payload or {}))
+    task = asyncio.create_task(_dispatch_event_impl(pool, event_name, payload or {}))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 # ---------------------------------------------------------------------------
