@@ -471,7 +471,7 @@ async def check_misroute_preconditions(
     *,
     target_session_id: uuid.UUID,
     correct_butler: str,
-    registered_butlers: list[str],
+    registered_butlers: list[str] | None,
     schema: str | None = None,
 ) -> str | None:
     """Validate preconditions for a misroute correction.
@@ -494,7 +494,7 @@ async def check_misroute_preconditions(
             id=str(target_session_id), source=trigger_source
         )
 
-    if correct_butler not in registered_butlers:
+    if registered_butlers is not None and correct_butler not in registered_butlers:
         return FAILURE_MESSAGES["butler_not_registered"].format(
             name=correct_butler,
             comma_separated_list=", ".join(sorted(registered_butlers)),
@@ -660,6 +660,7 @@ async def handle_data_correction(
     # Cross-schema validation: if target_butler is given but no target_pool, validate
     # that the butler exists in the registered list before proceeding.
     if target_butler is not None:
+        _validate_identifier(target_butler)
         effective_pool = target_pool if target_pool is not None else pool
         if registered_butlers is not None and target_butler not in registered_butlers:
             err = FAILURE_MESSAGES["butler_not_registered"].format(
@@ -830,6 +831,7 @@ async def handle_memory_deletion(
 
     # Cross-schema validation: if target_butler is given, validate it exists.
     if target_butler is not None:
+        _validate_identifier(target_butler)
         effective_pool = target_pool if target_pool is not None else pool
         if registered_butlers is not None and target_butler not in registered_butlers:
             err = FAILURE_MESSAGES["butler_not_registered"].format(
@@ -942,7 +944,7 @@ async def handle_misroute(
     correcting_session_id: uuid.UUID,
     description: str,
     correct_butler: str,
-    registered_butlers: list[str],
+    registered_butlers: list[str] | None = None,
     switchboard_client: Any,
     original_butler: str | None = None,
     target_butler: str | None = None,
@@ -997,8 +999,9 @@ async def handle_misroute(
 
     # Cross-schema validation: if target_butler is given, validate it exists.
     if target_butler is not None:
+        _validate_identifier(target_butler)
         effective_pool = target_pool if target_pool is not None else pool
-        if target_butler not in registered_butlers:
+        if registered_butlers is not None and target_butler not in registered_butlers:
             err = FAILURE_MESSAGES["butler_not_registered"].format(
                 name=target_butler,
                 comma_separated_list=", ".join(sorted(registered_butlers)),
@@ -1228,6 +1231,7 @@ async def handle_action_reversal(
 
     # Cross-schema validation: if target_butler is given, validate it exists.
     if target_butler is not None:
+        _validate_identifier(target_butler)
         effective_pool = target_pool if target_pool is not None else pool
         if registered_butlers is not None and target_butler not in registered_butlers:
             err = FAILURE_MESSAGES["butler_not_registered"].format(

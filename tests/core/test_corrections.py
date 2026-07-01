@@ -543,6 +543,100 @@ async def test_handle_action_reversal_cross_schema_uses_target_pool():
     assert result["correction_details"].get("target_butler") == "finance"
 
 
+# ---------------------------------------------------------------------------
+# SQL injection guard: _validate_identifier on target_butler
+# ---------------------------------------------------------------------------
+
+
+@corrections_required
+async def test_handle_memory_deletion_rejects_unsafe_target_butler():
+    """handle_memory_deletion raises ValueError for an unsafe target_butler identifier."""
+    pool = _make_pool(session_row={"id": uuid.uuid4()})
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="Unsafe SQL identifier"):
+        await handle_memory_deletion(
+            pool,
+            target_session_id=uuid.uuid4(),
+            correcting_session_id=uuid.uuid4(),
+            description="Injection attempt",
+            memory_type="fact",
+            memory_id=uuid.uuid4(),
+            target_butler="'; DROP TABLE facts; --",
+            registered_butlers=None,
+        )
+
+
+@corrections_required
+async def test_handle_misroute_rejects_unsafe_target_butler():
+    """handle_misroute raises ValueError for an unsafe target_butler identifier."""
+    pool = _make_pool(session_row={"id": uuid.uuid4()})
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="Unsafe SQL identifier"):
+        await handle_misroute(
+            pool,
+            target_session_id=uuid.uuid4(),
+            correcting_session_id=uuid.uuid4(),
+            description="Injection attempt",
+            correct_butler="finance",
+            registered_butlers=None,
+            switchboard_client=AsyncMock(),
+            target_butler="evil'; DROP TABLE--",
+        )
+
+
+@corrections_required
+async def test_handle_action_reversal_rejects_unsafe_target_butler():
+    """handle_action_reversal raises ValueError for an unsafe target_butler identifier."""
+    pool = _make_pool(session_row={"id": uuid.uuid4()})
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="Unsafe SQL identifier"):
+        await handle_action_reversal(
+            pool,
+            target_session_id=uuid.uuid4(),
+            correcting_session_id=uuid.uuid4(),
+            description="Injection attempt",
+            action_description="Undo",
+            target_butler="1; TRUNCATE corrections;",
+            registered_butlers=None,
+        )
+
+
+@corrections_required
+async def test_handle_misroute_registered_butlers_none_bypasses_butler_check():
+    """handle_misroute with registered_butlers=None skips the butler validation check."""
+    session_id = uuid.uuid4()
+    ingestion_id = uuid.uuid4()
+    target_pool = _make_pool(
+        session_row={
+            "id": session_id,
+            "trigger_source": "ingestion",
+            "ingestion_event_id": ingestion_id,
+        },
+    )
+    local_pool = _make_pool()
+    mock_client = AsyncMock()
+    mock_client.call_tool = AsyncMock(
+        return_value={"status": "ok", "new_session_id": str(uuid.uuid4())}
+    )
+
+    # registered_butlers=None should not cause a TypeError or "butler_not_registered" failure
+    result = await handle_misroute(
+        local_pool,
+        target_session_id=session_id,
+        correcting_session_id=uuid.uuid4(),
+        description="Misroute with no registered list",
+        correct_butler="finance",
+        registered_butlers=None,
+        switchboard_client=mock_client,
+        target_butler="general",
+        target_pool=target_pool,
+    )
+    assert result["status"] != "failed" or "not_registered" not in result.get("summary", "")
+
+
 @corrections_required
 async def test_handle_action_reversal_target_butler_no_pool_fallback():
     """handle_action_reversal falls back to pool when target_pool is None."""

@@ -223,7 +223,7 @@ def register_infra_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> No
                 correcting_session_id=correcting_sid,
                 description=description,
                 correct_butler=correct_butler,
-                registered_butlers=[],
+                registered_butlers=None,
                 switchboard_client=client,
                 original_butler=butler_name,
                 target_butler=target_butler,
