@@ -382,7 +382,7 @@ All visibility surfaces use TanStack Query (React Query) for data fetching with 
 
 #### Scenario: Dashboard overview refresh
 - **WHEN** the dashboard is active
-- **THEN** the briefing, butler list, cost summary, issues, heartbeats, notification stats, QA summary, and timeline data each refresh at their respective default TanStack Query refetch intervals
+- **THEN** the briefing, butler list, cost summary, issues, heartbeats, notification stats, QA summary, approval metrics, top sessions, and timeline data each refresh at their respective default TanStack Query refetch intervals
 
 ### Requirement: Pagination Consistency
 Offset-paginated surfaces share the same offset-based pattern using backend `PaginationMeta` responses. The cross-butler Sessions list (`GET /api/sessions`) is the one exception: it uses keyset (cursor) pagination, to avoid the cross-butler count fan-out.
