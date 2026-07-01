@@ -225,9 +225,6 @@ class _NullEmbeddingEngine:
     def embed(self, text: str) -> list[float]:  # noqa: ARG002
         return []
 
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return [[] for _ in texts]
-
 
 class _NoOpEmbeddingEngine:
     """Minimal embedding engine stub for deterministic jobs.
