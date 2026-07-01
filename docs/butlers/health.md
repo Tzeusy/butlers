@@ -99,7 +99,7 @@ psql -h localhost -U butlers -d butlers -c \
 # 3. Confirm compound JSONB measurement values are stored correctly (e.g. blood pressure)
 psql -h localhost -U butlers -d butlers -c \
   "SELECT metric, value, recorded_at FROM health.measurements
-   WHERE value @> '{\"systolic\": null}'
+   WHERE value ? 'systolic'
    ORDER BY recorded_at DESC LIMIT 3;"
 # Expected: rows with JSON objects like {"systolic": 120, "diastolic": 80} -- not flat numeric values
 
