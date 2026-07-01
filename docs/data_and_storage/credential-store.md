@@ -144,12 +144,10 @@ psql -h localhost -U butlers -d butlers -c \
 # Expected: rows like "cli-auth/claude", "cli-auth/codex" after OAuth flow completes
 
 # 3. DB-first resolution: DB value takes precedence over environment variable
-# Set a conflicting env var and call store.resolve() in Python:
-#   BUTLER_TEST_KEY="from_env" uv run python3 -c "
-#   import asyncio
+# In Python (with a running pool and CredentialStore instance), call:
 #   from butlers.core.credential_store import CredentialStore
-#   # store.resolve('BUTLER_TEST_KEY') with env_fallback=False returns DB value (or None)
-#   "
+#   value = await store.resolve('BUTLER_TEST_KEY', env_fallback=False)
+#   # Returns the DB value (or None) — env var is NOT consulted unless env_fallback=True
 
 # 4. Sensitive secrets are masked in dashboard API list responses
 curl -s http://localhost:41200/api/butlers/general/secrets | python3 -m json.tool | grep -i "value"

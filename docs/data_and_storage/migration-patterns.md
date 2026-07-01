@@ -143,7 +143,6 @@ butlers db migrate --only general 2>&1
 # 4. Discovered module chains match source directories
 python3 -c "
 from butlers.migrations import get_all_chains
-import asyncio
 chains = get_all_chains()
 print(chains)
 "

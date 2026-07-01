@@ -134,8 +134,9 @@ butlers list
 
 # 2. Butler's MCP status tool responds
 # (requires an MCP client; using curl as a quick sanity check on the SSE port)
-curl -s --max-time 2 http://localhost:41101/ | head -5
-# Expected: SSE stream headers or an HTTP response (not ECONNREFUSED)
+response=$(curl -s --max-time 2 -N http://localhost:41101/sse 2>&1)
+echo "$response" | head -5
+# Expected: "data: ..." SSE stream lines (not ECONNREFUSED)
 
 # 3. After triggering, session appears in the dashboard
 curl -s http://localhost:41200/api/butlers/general/sessions | python3 -m json.tool
