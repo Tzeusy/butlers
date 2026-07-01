@@ -475,6 +475,15 @@ class TestRenderChartSvg:
         result = _render_chart_svg(spec)
         assert b"rect" in result  # bars are rects
 
+    def test_negative_value_produces_valid_svg(self) -> None:
+        """Negative bar values must not emit a negative SVG height attribute."""
+        spec = {
+            "type": "bar",
+            "data": [{"label": "A", "value": 10}, {"label": "B", "value": -5}],
+        }
+        result = _render_chart_svg(spec)
+        assert b'height="-' not in result  # no negative height attrs
+
     def test_svg_includes_title(self) -> None:
         spec = {"type": "bar", "title": "My Title", "data": [{"label": "x", "value": 3}]}
         result = _render_chart_svg(spec)

@@ -191,7 +191,7 @@ def _render_bar_svg(data: list[dict], title: str, x_label: str, y_label: str) ->
     # Bars
     slot_w = plot_w // max(n, 1)
     for i, (val, lbl) in enumerate(zip(values, labels)):
-        bh = int(plot_h * (val / max_val)) if max_val > 0 else 0
+        bh = max(0, int(plot_h * (val / max_val))) if max_val > 0 else 0
         bx = x0 + i * slot_w + (slot_w - bar_w) // 2
         by = y1 - bh
         colour = _SVG_BAR_COLOURS[i % len(_SVG_BAR_COLOURS)]
@@ -384,9 +384,10 @@ def _render_chart_png(spec: dict) -> bytes:
         draw.line([(plot_x0 - 5, ty), (plot_x0, ty)], fill=(80, 80, 80), width=1)
         draw.text((plot_x0 - 8, ty), f"{tick_val:.0f}", fill=(60, 60, 60), anchor="rm")
 
-    # Y-axis label (drawn rotated -- Pillow doesn't natively rotate text, so skip for simplicity)
+    # Y-axis label -- Pillow doesn't natively rotate text; draw horizontally above the Y-axis
+    # to avoid left-edge clipping that occurs when anchoring near x=0.
     if y_label:
-        draw.text((10, plot_y0 + plot_h // 2), y_label, fill=(60, 60, 60), anchor="mm")
+        draw.text((plot_x0, plot_y0 - 15), y_label, fill=(60, 60, 60), anchor="lb")
 
     # X-axis label
     if x_label:
@@ -414,7 +415,7 @@ def _render_chart_png(spec: dict) -> bytes:
             bar_w = max(6, plot_w // max(n, 1) - 8)
             slot_w = plot_w // max(n, 1)
             for i, (val, lbl) in enumerate(zip(values, labels)):
-                bh = int(plot_h * (val / max_val)) if max_val > 0 else 0
+                bh = max(0, int(plot_h * (val / max_val))) if max_val > 0 else 0
                 bx = plot_x0 + i * slot_w + (slot_w - bar_w) // 2
                 by = plot_y1 - bh
                 colour = _PILLOW_COLOURS[i % len(_PILLOW_COLOURS)]
