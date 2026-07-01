@@ -232,6 +232,7 @@ def test_null_embedding_engine():
     eng = _NullEmbeddingEngine()
     assert eng.model_name == "deterministic-null"
     assert eng.embed("hello") == [] and eng.embed("") == []
+    assert eng.embed_batch(["hello", "world"]) == [[], []]
     assert not inspect.iscoroutinefunction(eng.embed)
 
 
