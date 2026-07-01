@@ -1767,7 +1767,8 @@ class SteamConnector:
                 self._max_tracked_games = val
 
         # Update effective poll intervals used for new account pollers.
-        pi: dict = settings.get("poll_intervals", {})
+        pi_val = settings.get("poll_intervals")
+        pi: dict = pi_val if isinstance(pi_val, dict) else {}
         if pi:
             for dt_key in list(_DEFAULT_INTERVALS):
                 if dt_key in pi and isinstance(pi[dt_key], int) and pi[dt_key] > 0:

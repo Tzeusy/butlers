@@ -173,7 +173,7 @@ async def save_connector_settings(
     merged = row["settings"]
     if isinstance(merged, str):
         merged = _json.loads(merged)
-    return dict(merged)
+    return merged
 
 
 async def create_cursor_pool(

@@ -834,7 +834,8 @@ def _settings_to_config_response(settings: dict | None) -> SteamConnectorConfigR
     Effective values = dashboard setting when present, compiled-in default otherwise.
     """
     s: dict = settings or {}
-    pi: dict = s.get("poll_intervals", {})
+    pi_val = s.get("poll_intervals")
+    pi: dict = pi_val if isinstance(pi_val, dict) else {}
 
     has_overrides = bool(s)
 
@@ -938,7 +939,8 @@ async def update_steam_connector_config(
                 pool, "steam", _STEAM_CONFIG_ENDPOINT_IDENTITY
             )
             if existing_settings:
-                existing_pi = existing_settings.get("poll_intervals", {})
+                raw_pi = existing_settings.get("poll_intervals")
+                existing_pi = raw_pi if isinstance(raw_pi, dict) else {}
         except Exception:  # noqa: BLE001
             pass
 
@@ -1027,9 +1029,10 @@ async def get_steam_account_config(
 
             metadata = _json.loads(raw)
         else:
-            metadata = dict(raw)
+            metadata = raw
 
-    pi_raw: dict = metadata.get("poll_intervals", {})
+    pi_raw = metadata.get("poll_intervals")
+    pi_raw = pi_raw if isinstance(pi_raw, dict) else {}
     overrides = SteamAccountConfigOverrides(
         poll_intervals=SteamPollIntervals(**pi_raw) if pi_raw else None,
         max_tracked_games=metadata.get("max_tracked_games"),
