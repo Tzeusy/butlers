@@ -152,9 +152,10 @@ To confirm the OpenTelemetry integration described here is working correctly:
 
 ```bash
 # 1. Traces reach Grafana Tempo when OTLP endpoint is configured
-# After triggering a butler session, search for butler traces in Tempo
-curl -s "http://localhost:3100/loki/api/v1/query?query={service_name=\"butlers\"}" | head -20
-# Expected: trace spans appear within ~15 seconds of session completion
+# After triggering a butler session, search for butler traces in Tempo (port 3200)
+curl -s "http://localhost:3200/api/search?service.name=butlers&limit=5" | python3 -m json.tool | head -20
+# Expected: trace results appear within ~15 seconds of session completion;
+#           each result has a traceID and rootServiceName "butlers"
 
 # 2. OTLP no-op mode: butler still runs without errors when endpoint is unset
 OTEL_EXPORTER_OTLP_ENDPOINT="" butlers run --config roster/general &

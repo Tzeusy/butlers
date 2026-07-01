@@ -97,9 +97,11 @@ To confirm the inter-butler isolation model is correctly enforced:
 # 1. No cross-butler schema access is possible from a butler's own connection
 # Attempt to query another butler's tables from the general butler's connection context
 psql -h localhost -U butlers -d butlers \
-  -c "SET search_path TO general,public; SELECT COUNT(*) FROM relationship.entity_facts;" 2>&1
-# Expected: ERROR: relation "relationship.entity_facts" does not exist
-#           (or permission denied — cross-schema access is blocked)
+  -c "SET search_path TO general,public; SELECT COUNT(*) FROM entity_facts;" 2>&1
+# Expected: ERROR: relation "entity_facts" does not exist
+#           (using an unqualified name tests search_path scoping; a fully-qualified
+#           name like relationship.entity_facts would bypass the search_path and
+#           succeed even when isolation is correctly enforced)
 
 # 2. routing_log records all inter-butler hops through the Switchboard
 psql -h localhost -U butlers -d butlers -c \

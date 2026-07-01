@@ -147,9 +147,10 @@ psql -h localhost -U butlers -d butlers -c \
 # Expected: rows return without error; value_type is a valid JSONB type (object, string, etc.)
 
 # 5. Alembic migration chains are at head for all active butlers
-# Run alembic heads check (no upgrade needed means schema is current)
-uv run alembic -c alembic.ini heads
-# Expected: output lists heads for core, module, and butler-specific chains
+# Run alembic current to see the database's applied revision vs. head
+uv run alembic -c alembic.ini current
+# Expected: output lists the current applied revisions marked with "(head)"
+#           for each active chain; any chain not at "(head)" has pending migrations
 ```
 
 ## Related Pages

@@ -122,7 +122,7 @@ async def check_names():
     async with Client("http://localhost:41101/sse") as client:
         tools = await client.list_tools()
         bad = [t.name for t in tools if not re.match(r'^[a-z]+_[a-z_]+$', t.name)
-               and t.name not in ('status','trigger','tick')]
+               and t.name not in ('status', 'trigger', 'tick', 'notify', 'remind', 'route.execute')]
         print("Non-convention tools:", bad or "none")
 
 asyncio.run(check_names())
