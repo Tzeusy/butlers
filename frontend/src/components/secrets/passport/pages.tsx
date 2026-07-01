@@ -515,13 +515,17 @@ function GoogleAccountRow({
           <div className="flex gap-2">
             <PillBtn
               variant="danger"
-              onClick={() => { revokeHealthMutation.mutate(); setRevokeHealthOpen(false); }}
+              onClick={() => {
+                revokeHealthMutation.mutate(undefined, {
+                  onSuccess: () => setRevokeHealthOpen(false),
+                });
+              }}
               disabled={revokeHealthMutation.isPending}
             >
               {revokeHealthMutation.isPending ? "revoking…" : "yes, revoke"}
             </PillBtn>
             <PillBtn
-              onClick={() => setRevokeHealthOpen(false)}
+              onClick={() => { revokeHealthMutation.reset(); setRevokeHealthOpen(false); }}
               disabled={revokeHealthMutation.isPending}
             >
               cancel
@@ -584,11 +588,6 @@ function ScopeSetPicker({
       accountHint: primaryAccountEmail,
     });
     window.location.assign(url);
-  }
-
-  function handleRevokeHealth() {
-    if (disconnectHealthMutation.isPending) return;
-    disconnectHealthMutation.mutate();
   }
 
   return (
@@ -677,13 +676,17 @@ function ScopeSetPicker({
           <div className="flex gap-2">
             <PillBtn
               variant="danger"
-              onClick={() => { handleRevokeHealth(); setRevokeHealthOpen(false); }}
+              onClick={() => {
+                disconnectHealthMutation.mutate(undefined, {
+                  onSuccess: () => setRevokeHealthOpen(false),
+                });
+              }}
               disabled={disconnectHealthMutation.isPending}
             >
               {disconnectHealthMutation.isPending ? "revoking…" : "yes, revoke"}
             </PillBtn>
             <PillBtn
-              onClick={() => setRevokeHealthOpen(false)}
+              onClick={() => { disconnectHealthMutation.reset(); setRevokeHealthOpen(false); }}
               disabled={disconnectHealthMutation.isPending}
             >
               cancel
