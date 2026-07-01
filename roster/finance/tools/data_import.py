@@ -625,7 +625,7 @@ async def _resolve_currency(
     """Resolve the effective currency and an optional warning string.
 
     Priority:
-        1. ``requested`` -- explicit caller-provided value (non-None)
+        1. ``requested`` -- explicit caller-provided value (any non-empty string)
         2. ``accounts.currency`` for the linked account (when ``account_id`` is set)
         3. USD fallback (emits a warning added to the response)
 
@@ -634,7 +634,7 @@ async def _resolve_currency(
     tuple[str, str | None]
         ``(currency_code, warning_or_None)``
     """
-    if requested is not None:
+    if requested:
         return requested.upper(), None
 
     if account_id is not None:

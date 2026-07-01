@@ -1259,6 +1259,23 @@ class TestCurrencyInference:
         assert "currency_warning" in result
         assert "USD" in result["currency_warning"]
 
+    async def test_empty_string_currency_falls_through_to_account(self):
+        """Empty-string requested currency is treated as not-specified (falsy fallback)."""
+        from butlers.tools.finance.data_import import _resolve_currency
+
+        pool = MagicMock()
+        pool.fetchrow = AsyncMock(return_value={"currency": "SGD"})
+
+        # "" should NOT short-circuit to "" — it must fall through to account lookup.
+        currency, warning = await _resolve_currency(
+            pool, account_id="some-account-id", requested=""
+        )
+
+        assert currency == "SGD"
+        assert warning is None
+        # Account lookup must have been called since requested was falsy.
+        pool.fetchrow.assert_called_once()
+
     async def test_account_lookup_not_called_when_currency_explicit(self):
         """_lookup_account_currency is bypassed when currency is explicitly specified."""
         from butlers.tools.finance.data_import import _resolve_currency
