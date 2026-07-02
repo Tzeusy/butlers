@@ -294,6 +294,48 @@ async def test_message_burst_projects_social_episode() -> None:
 
 
 @pytest.mark.asyncio
+async def test_source_ref_disambiguates_concurrent_senders_same_channel_same_second() -> None:
+    """Two different senders starting a burst at the same second on the same
+    channel must not collide on ``source_ref`` (would silently overwrite one
+    episode with the other via the ``ON CONFLICT (source_name, source_ref)``
+    upsert)."""
+    rows = [
+        _event_row(received_at=_NOW, source_sender_identity="alice"),
+        _event_row(received_at=_NOW, source_sender_identity="bob"),
+    ]
+    pool = _pool_returning(events=rows)
+    cp, conn = _chronicler_pool()
+
+    upserted_episodes: list[Episode] = []
+
+    async def _fake_upsert_ep(conn: object, episode: Episode) -> Episode:
+        upserted_episodes.append(episode)
+        return episode
+
+    async def _fake_upsert_pe(conn: object, event: PointEvent) -> PointEvent:
+        event.id = uuid4()
+        return event
+
+    with (
+        patch(
+            "butlers.chronicler.adapters.comms.upsert_point_event",
+            side_effect=_fake_upsert_pe,
+        ),
+        patch(
+            "butlers.chronicler.adapters.comms.upsert_episode",
+            side_effect=_fake_upsert_ep,
+        ),
+    ):
+        result = await CommsSocialAdapter().project(pool, chronicler_pool=cp, since=None)
+
+    assert result.episodes_closed == 2
+    assert len(upserted_episodes) == 2
+    source_refs = {ep.source_ref for ep in upserted_episodes}
+    assert len(source_refs) == 2, "distinct senders must not share a source_ref"
+    assert all("alice" in ref or "bob" in ref for ref in source_refs)
+
+
+@pytest.mark.asyncio
 async def test_resolved_participant_yields_high_confidence_and_participant_row() -> None:
     entity_id = uuid4()
     rows = [_event_row(received_at=_NOW, source_channel="discord", source_sender_identity="u1")]

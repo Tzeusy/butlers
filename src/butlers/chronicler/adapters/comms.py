@@ -483,7 +483,9 @@ class CommsSocialAdapter(ProjectionAdapter):
                     title = f"Messages via {channel_label}"
 
                 start_ts = int(start_at.timestamp())
-                source_ref = f"public.ingestion_events:social:{key.channel}:{start_ts}"
+                source_ref = (
+                    f"public.ingestion_events:social:{key.channel}:{key.sender_identity}:{start_ts}"
+                )
 
                 payload = {
                     "channel": key.channel,
