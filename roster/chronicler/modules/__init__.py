@@ -356,6 +356,7 @@ def _register_tools(mcp: Any, module: ChroniclerModule) -> None:
         from zoneinfo import ZoneInfo
 
         from butlers.chronicler.bundle_assembler import BundleConfig, assemble_day_close_bundle
+        from butlers.chronicler.reconciliation import reconcile_day
         from butlers.chronicler.storage import list_episodes, list_point_events
 
         # Parse date_label to a local calendar-day window, then query UTC instants.
@@ -390,6 +391,29 @@ def _register_tools(mcp: Any, module: ChroniclerModule) -> None:
         episode_dicts = [asdict(ep) for ep in episodes]
         event_dicts = [asdict(ev) for ev in events]
 
+        # Deterministic reconciliation core (tasks.md §7): merge duplicate
+        # same-lane activity candidates and drop calendar intents contradicted
+        # by activity evidence, BEFORE the LLM ever sees this bundle. Aggregate
+        # correctness (what counts, what's dropped) is decided entirely here;
+        # the day-close LLM only narrates over the result.
+        reconciled = reconcile_day(episode_dicts)
+        reconciled_episodes = [
+            *reconciled.activities,
+            *reconciled.kept_intents,
+            *reconciled.passthrough,
+        ]
+        dropped_intents_payload = [
+            {
+                "title": dropped.intent.get("canonical_title") or dropped.intent.get("title"),
+                "start_at": dropped.intent.get("canonical_start_at")
+                or dropped.intent.get("start_at"),
+                "end_at": dropped.intent.get("canonical_end_at") or dropped.intent.get("end_at"),
+                "reason": dropped.reason,
+                "overlap_fraction": round(dropped.overlap_fraction, 2),
+            }
+            for dropped in reconciled.dropped_intents
+        ]
+
         cfg = BundleConfig(
             max_episodes=max_episodes,
             max_events=max_events,
@@ -398,10 +422,11 @@ def _register_tools(mcp: Any, module: ChroniclerModule) -> None:
         )
         bundle_input = assemble_day_close_bundle(
             date_label=date_label,
-            episodes=episode_dicts,
+            episodes=reconciled_episodes,
             events=event_dicts,
             timezone=timezone,
             config=cfg,
+            dropped_intents=dropped_intents_payload,
         )
 
         return {
