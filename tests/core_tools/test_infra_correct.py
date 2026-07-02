@@ -216,6 +216,46 @@ async def test_unregistered_target_butler_does_not_create_pool(
     assert _FakeTargetDatabase.instances == []
 
 
+async def test_registered_butler_names_cached_across_calls(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """``list_butlers()`` does synchronous disk I/O + TOML parsing; the tool
+    must call it at most once per daemon lifetime, not once per correction."""
+    correct, _own_pool = _register_and_grab_correct(monkeypatch, butler_name="general")
+
+    call_count = 0
+
+    def _counting_list_butlers():
+        nonlocal call_count
+        call_count += 1
+        return [_FakeButlerConfig(name) for name in ("finance", "general")]
+
+    monkeypatch.setattr("butlers.config.list_butlers", _counting_list_butlers)
+
+    fake_handler = AsyncMock(
+        return_value={
+            "status": "applied",
+            "correction_id": "id",
+            "summary": "ok",
+            "original_data_snapshot": None,
+            "correction_details": None,
+        }
+    )
+    monkeypatch.setattr("butlers.core_tools._infra.handle_data_correction", fake_handler)
+
+    for _ in range(3):
+        await correct(
+            correction_type="data_correction",
+            target_session_id=str(uuid.uuid4()),
+            description="fix it",
+            target_butler="finance",
+            state_key="some_key",
+            corrected_value="new_value",
+        )
+
+    assert call_count == 1
+
+
 async def test_cross_schema_target_pool_is_cached_across_calls(
     monkeypatch: pytest.MonkeyPatch,
 ):
