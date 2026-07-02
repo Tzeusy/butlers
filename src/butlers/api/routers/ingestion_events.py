@@ -298,11 +298,13 @@ async def _enrich_list_summaries(
         logger.debug("_enrich_list_summaries: session fan-out failed (non-fatal)", exc_info=True)
         enrichment = {}
 
-    channel_pairs: list[tuple[str, str]] = [
-        (s.source_channel, s.source_sender_identity)
-        for s in summaries
-        if s.source_channel and s.source_sender_identity
-    ]
+    channel_pairs: list[tuple[str, str]] = list(
+        {
+            (s.source_channel, s.source_sender_identity)
+            for s in summaries
+            if s.source_channel and s.source_sender_identity
+        }
+    )
     sender_map: dict[tuple[str, str], ResolvedContact | None] = {}
     if channel_pairs:
         try:

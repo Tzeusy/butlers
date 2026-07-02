@@ -889,6 +889,56 @@ def test_ingestion_events_list_enrichment_aggregates_and_caps_sessions() -> None
     assert req2["sessions"] == []
 
 
+def test_ingestion_events_list_enrichment_unknown_cost_matches_drawer_parity() -> None:
+    """Unknown per-session cost sums as 0.0, matching ingestion_event_rollup's
+    drawer-side total — NOT None — so a list row and the drawer agree on the
+    same event's cost. (Only "no sessions at all" yields None; see the other
+    aggregation test above.)
+    """
+    from butlers.core.ingestion_events import ingestion_events_list_enrichment
+
+    sessions_by_id = {
+        "req-1": [
+            {
+                "butler_name": "butler-a",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cost_usd": None,
+                "success": True,
+                "started_at": datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),
+                "completed_at": datetime(2026, 1, 1, 12, 0, 1, tzinfo=UTC),
+            }
+        ],
+        "req-2": [
+            {
+                "butler_name": "butler-b",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cost_usd": None,
+                "success": True,
+                "started_at": datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),
+                "completed_at": datetime(2026, 1, 1, 12, 0, 1, tzinfo=UTC),
+            },
+            {
+                "butler_name": "butler-c",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cost_usd": 0.02,
+                "success": True,
+                "started_at": datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),
+                "completed_at": datetime(2026, 1, 1, 12, 0, 1, tzinfo=UTC),
+            },
+        ],
+    }
+
+    enrichment = ingestion_events_list_enrichment(sessions_by_id)
+
+    # All sessions unknown-cost → 0.0 (matches the drawer rollup's fallback).
+    assert enrichment["req-1"]["session_cost_usd"] == 0.0
+    # Mixed known/unknown → unknown contributes 0.0 to the sum.
+    assert abs(enrichment["req-2"]["session_cost_usd"] - 0.02) < 1e-9
+
+
 def test_ingestion_events_list_enrichment_duration_none_when_incomplete() -> None:
     """A session missing completed_at yields duration_ms=None rather than raising."""
     from butlers.core.ingestion_events import ingestion_events_list_enrichment

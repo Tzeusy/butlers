@@ -904,9 +904,12 @@ def ingestion_events_list_enrichment(
     Consumes the output of :func:`ingestion_events_sessions_for_ids`. For each
     event id, returns:
     - ``tokens_in`` / ``tokens_out`` — summed across all of the event's sessions.
-    - ``session_cost_usd`` — summed session cost, or ``None`` when the event has
-      no sessions (distinct from ``0.0``, so callers can fall back to the
-      denormalized ``cost_usd`` column only when there is truly nothing to sum).
+    - ``session_cost_usd`` — summed session cost (unknown per-session cost
+      treated as ``0.0``, matching :func:`ingestion_event_rollup`'s drawer-side
+      total so list rows and the drawer agree on the same event), or ``None``
+      when the event has no sessions (distinct from ``0.0``, so callers can
+      fall back to the denormalized ``cost_usd`` column only when there is
+      truly nothing to sum).
     - ``session_count`` — total session count (not capped).
     - ``sessions`` — compact per-session dicts (``butler_name``, ``duration_ms``,
       ``cost_usd``, ``success``), capped at :data:`_MAX_LIST_SESSIONS_PER_EVENT`.

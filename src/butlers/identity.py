@@ -466,8 +466,7 @@ async def resolve_contacts_by_channel_bulk(
     if not wanted_pairs:
         return result
 
-    predicates = [p for p, _ in wanted_pairs]
-    objects = [o for _, o in wanted_pairs]
+    predicates, objects = map(list, zip(*wanted_pairs))
 
     try:
         rows = await pool.fetch(
