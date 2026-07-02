@@ -23,6 +23,60 @@ from butlers.core_tools._base import ToolContext
 logger = logging.getLogger(__name__)
 
 
+def _registered_butler_names() -> list[str]:
+    """Return the names of all butlers known to the roster.
+
+    Used to validate ``target_butler``/``correct_butler`` params on the
+    ``correct`` tool against real, configured butlers.
+    """
+    from butlers.config import list_butlers
+
+    return [b.name for b in list_butlers()]
+
+
+async def _get_target_pool(ctx: ToolContext, target_butler: str | None) -> Any | None:
+    """Return a DB pool scoped to *target_butler*'s schema for cross-schema corrections.
+
+    Corrections must read and write the TARGET butler's own tables (state,
+    sessions, memories, actions) — not the current butler's schema. Without
+    this, a cross-schema correction silently ran the current butler's pool
+    against another schema's data.
+
+    Returns ``None`` when there is no cross-schema target (``target_butler``
+    is unset or equal to the current butler), so callers fall back to using
+    the current butler's own pool. Pools are created lazily and cached on the
+    ``ToolContext`` for the daemon's lifetime, mirroring the pattern used by
+    ``MemoryModule._get_or_create_chronicler_pool``.
+    """
+    if target_butler is None or target_butler == ctx.butler_name:
+        return None
+    source_db = getattr(ctx.daemon, "db", None)
+    if source_db is None:
+        return None
+
+    cache: dict[str, Any] = ctx.extra.setdefault("_correction_target_pools", {})
+    cached = cache.get(target_butler)
+    if cached is not None:
+        return cached
+
+    from butlers.db import Database
+
+    target_db = Database(
+        db_name=source_db.db_name,
+        schema=target_butler,
+        host=source_db.host,
+        port=source_db.port,
+        user=source_db.user,
+        password=source_db.password,
+        ssl=source_db.ssl,
+        min_pool_size=1,
+        max_pool_size=source_db.max_pool_size,
+    )
+    await target_db.connect()
+    cache[target_butler] = target_db.pool
+    return target_db.pool
+
+
 def register_infra_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> None:
     """Register infra group tools: status, trigger, tick, correct."""
     daemon = ctx.daemon
@@ -153,6 +207,14 @@ def register_infra_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> No
         except (ValueError, AttributeError) as exc:
             return {"status": "error", "error": f"Invalid UUID: {exc}"}
 
+        # Resolve the real butler registry and, for cross-schema corrections,
+        # the target butler's own DB pool — so the correction runs against
+        # the target butler's schema instead of the current butler's pool.
+        registered_butlers = _registered_butler_names()
+        target_pool: Any | None = None
+        if target_butler is not None and target_butler in registered_butlers:
+            target_pool = await _get_target_pool(ctx, target_butler)
+
         if correction_type == CorrectionType.DATA_CORRECTION:
             if state_key is None:
                 from butlers.core.corrections import FAILURE_MESSAGES
@@ -172,7 +234,8 @@ def register_infra_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> No
                 state_key=state_key,
                 corrected_value=corrected_value,
                 target_butler=target_butler,
-                registered_butlers=None,
+                registered_butlers=registered_butlers,
+                target_pool=target_pool,
             )
         elif correction_type == CorrectionType.MEMORY_DELETION:
             if memory_type is None or memory_id is None:
@@ -198,7 +261,8 @@ def register_infra_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> No
                 memory_type=memory_type,
                 memory_id=mem_id,
                 target_butler=target_butler,
-                registered_butlers=None,
+                registered_butlers=registered_butlers,
+                target_pool=target_pool,
             )
         elif correction_type == CorrectionType.MISROUTE:
             if correct_butler is None:
@@ -223,10 +287,11 @@ def register_infra_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> No
                 correcting_session_id=correcting_sid,
                 description=description,
                 correct_butler=correct_butler,
-                registered_butlers=None,
+                registered_butlers=registered_butlers,
                 switchboard_client=client,
                 original_butler=butler_name,
                 target_butler=target_butler,
+                target_pool=target_pool,
             )
         elif correction_type == CorrectionType.ACTION_REVERSAL:
             if action_description is None:
@@ -246,7 +311,8 @@ def register_infra_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> No
                 description=description,
                 action_description=action_description,
                 target_butler=target_butler,
-                registered_butlers=None,
+                registered_butlers=registered_butlers,
+                target_pool=target_pool,
             )
         else:
             from butlers.core.corrections import FAILURE_MESSAGES
