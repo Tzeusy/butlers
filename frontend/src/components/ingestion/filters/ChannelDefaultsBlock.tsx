@@ -119,16 +119,20 @@ function ChannelDefaultEditor({
   const [maxAgeDays, setMaxAgeDays] = useState<string>(
     initial.max_age_days !== undefined ? String(initial.max_age_days) : '',
   )
+  const [localError, setLocalError] = useState<string | null>(null)
 
   const isEmail = channel === 'email'
 
   function handleSave() {
+    setLocalError(null)
     const policy: ChannelDefaultPolicy = { priority_action: priorityAction }
     if (isEmail && maxAgeDays.trim() !== '') {
       const parsed = Number(maxAgeDays)
-      if (Number.isFinite(parsed) && parsed > 0) {
-        policy.max_age_days = parsed
+      if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+        setLocalError('Max age must be a positive integer.')
+        return
       }
+      policy.max_age_days = parsed
     }
     onSave(policy)
   }
@@ -228,6 +232,14 @@ function ChannelDefaultEditor({
           </button>
         </div>
       </div>
+      {localError && (
+        <p
+          className="mt-2 font-mono text-[10.5px] text-[var(--red)]"
+          data-testid={`channel-default-editor-local-error-${channel}`}
+        >
+          {localError}
+        </p>
+      )}
     </div>
   )
 }

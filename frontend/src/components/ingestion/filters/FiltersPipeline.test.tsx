@@ -1289,7 +1289,7 @@ describe('bu-4utdw.9: RuleRow delete requires inline confirmation', () => {
 
   beforeEach(() => {
     ;({ container, root } = makeRoot())
-    mockDeleteMutate.mockClear()
+    mockDeleteMutate.mockReset()
   })
   afterEach(() => cleanup(root, container))
 
@@ -1409,7 +1409,7 @@ describe('bu-4utdw.9: restore round-trips via PATCH {enabled: true}', () => {
 
   beforeEach(() => {
     ;({ container, root } = makeRoot())
-    mockUpdateMutate.mockClear()
+    mockUpdateMutate.mockReset()
   })
   afterEach(() => cleanup(root, container))
 
@@ -1456,8 +1456,8 @@ describe('bu-4utdw.9: channel defaults inline editor', () => {
 
   beforeEach(() => {
     ;({ container, root } = makeRoot())
-    mockUpdateChannelDefaultMutate.mockClear()
-    mockUseChannelDefault.mockClear()
+    mockUpdateChannelDefaultMutate.mockReset()
+    mockUseChannelDefault.mockReset()
   })
   afterEach(() => cleanup(root, container))
 
@@ -1576,6 +1576,43 @@ describe('bu-4utdw.9: channel defaults inline editor', () => {
     expect(arg.channel).toBe('email')
     expect(arg.body.default_policy_json.priority_action).toBe('metadata_only')
     expect(arg.body.default_policy_json.max_age_days).toBe(45)
+  })
+
+  it('rejects a non-positive-integer max_age_days without saving', async () => {
+    setupDefaultMocks({}, [channelRule()])
+    mockUseChannelDefault.mockReturnValue({
+      data: {
+        channel: 'email',
+        default_policy_json: { priority_action: 'pass_through' },
+        updated_at: '2026-01-01T00:00:00Z',
+        updated_by: 'dashboard',
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    })
+
+    renderComponent(container, root, <FiltersPipeline />)
+
+    act(() => {
+      ;(container.querySelector('[data-testid="channel-default-edit-email"]') as HTMLButtonElement).click()
+    })
+
+    const maxAge = container.querySelector(
+      '[data-testid="channel-default-editor-max-age-email"]',
+    ) as HTMLInputElement
+    act(() => { setInputValue(maxAge, '-5') })
+
+    await act(async () => {
+      ;(
+        container.querySelector('[data-testid="channel-default-editor-save-email"]') as HTMLButtonElement
+      ).click()
+    })
+
+    expect(mockUpdateChannelDefaultMutate).not.toHaveBeenCalled()
+    const errorEl = container.querySelector('[data-testid="channel-default-editor-local-error-email"]')
+    expect(errorEl, 'validation error should be rendered').not.toBeNull()
+    expect(errorEl?.textContent).toMatch(/positive integer/i)
   })
 
   it('does not show a max_age_days field for non-email channels', () => {

@@ -26,7 +26,10 @@ export function FiltersHeaderAside() {
   if (!stats) return null
 
   const total = stats.ingested + stats.filtered
-  const dispatched = Object.values(stats.routed_by_butler).reduce((a, b) => a + b, 0)
+  const dispatched =
+    stats.routed_by_butler != null
+      ? Object.values(stats.routed_by_butler).reduce((a, b) => a + b, 0)
+      : 0
   const available = stats.aggregates_available
 
   return (

@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getChannelDefault, updateChannelDefault } from "@/api/index.ts";
 import type { ChannelDefaultUpdate } from "@/api/index.ts";
+import { ingestionRuleKeys } from "@/hooks/use-ingestion-rules";
 
 // ---------------------------------------------------------------------------
 // Query key factory
@@ -51,6 +52,7 @@ export function useUpdateChannelDefault() {
       updateChannelDefault(channel, body),
     onSuccess: (_data, { channel }) => {
       queryClient.invalidateQueries({ queryKey: channelDefaultKeys.detail(channel) });
+      queryClient.invalidateQueries({ queryKey: ingestionRuleKeys.all });
     },
   });
 }
