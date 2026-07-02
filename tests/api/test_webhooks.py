@@ -348,6 +348,41 @@ async def test_put_without_regenerate_keeps_secret(app):
     assert update_args[5] == "keep12…"  # $5 = secret_prefix unchanged
 
 
+async def test_put_concurrent_delete_returns_404(app):
+    """PUT returns 404 (not a 500 TypeError) when the row is deleted between
+    the existence check and the UPDATE — the UPDATE...RETURNING then yields no
+    row, which must be handled explicitly instead of reaching _row_to_model(None).
+    """
+    existing = _make_webhook_record()
+
+    calls: list = []
+
+    def _fetchrow(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            # First call: SELECT existing row.
+            return _make_record(existing)
+        # Second call: UPDATE ... RETURNING — simulate a concurrent delete.
+        return None
+
+    pool = _make_pool()
+    pool.fetchrow = AsyncMock(side_effect=_fetchrow)
+    db = _make_db(pool)
+    app.dependency_overrides[_get_db_manager] = lambda: db
+
+    with patch("butlers.api.routers.webhooks.audit.append", new_callable=AsyncMock) as mock_audit:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.put(
+                f"/api/webhooks/{_WH_ID}",
+                json={"endpoint": "https://new.example.com/hook"},
+            )
+
+    assert resp.status_code == 404
+    assert len(calls) == 2
+    # The audit append must not fire when the UPDATE found nothing to update.
+    mock_audit.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # DELETE /api/webhooks/{id}
 # ---------------------------------------------------------------------------

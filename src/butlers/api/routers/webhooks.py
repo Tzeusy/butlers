@@ -610,6 +610,12 @@ async def update_webhook(
             str(webhook_id),
         )
 
+        if row is None:
+            # Concurrently deleted between the existence check above and this
+            # UPDATE — abort cleanly with 404 instead of letting
+            # _row_to_model(None) raise a TypeError below.
+            raise HTTPException(status_code=404, detail=f"Webhook {webhook_id} not found")
+
         await audit.append(conn, "owner", "webhook.update", target=str(webhook_id))
 
     dispatch_event(pool, "webhook.update", {"target": str(webhook_id)})
