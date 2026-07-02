@@ -557,7 +557,7 @@ function BulkActionBar({
       data-testid="bulk-action-bar"
     >
       <span className="font-mono text-[11px] text-muted-foreground">{selectedCount} selected</span>
-      {visibleEligibleIds.length > selectedCount && (
+      {visibleEligibleIds.some((id) => !selectedIds.includes(id)) && (
         <Button
           variant="ghost"
           size="sm"

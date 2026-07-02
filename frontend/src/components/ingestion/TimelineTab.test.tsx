@@ -2037,4 +2037,54 @@ describe("TimelineTab — BulkActionBar select-all-visible", () => {
 
     expect(container.querySelector("[data-testid='bulk-action-bar']")!.textContent).toContain("2 selected");
   });
+
+  it("still shows select-all-visible when a selected id falls outside the current view", () => {
+    // Regression for a visibility bug: the button used to be gated on
+    // `visibleEligibleIds.length > selectedCount`, so a stale selection made
+    // under a previous filter (an id no longer in the current view) could
+    // make `selectedCount` >= the visible count even though a visible,
+    // unselected, eligible row still exists — incorrectly hiding the button.
+    vi.mocked(useIngestionEvents).mockReturnValue(
+      makeInfiniteEventsResult([makeEvent({ id: EVENT_ID_1, status: "ingested" })]) as unknown as ReturnType<
+        typeof useIngestionEvents
+      >,
+    );
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter>
+            <TimelineTab isActive={true} defaultStatuses={["ingested", "error"]} />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+
+    act(() => {
+      (container.querySelector("[data-testid='row-checkbox']") as HTMLElement).click();
+    });
+
+    // Simulate a filter change: the previously-selected event scrolls out of
+    // view and a different, unselected eligible event takes its place.
+    vi.mocked(useIngestionEvents).mockReturnValue(
+      makeInfiniteEventsResult([makeEvent({ id: EVENT_ID_2, status: "ingested" })]) as unknown as ReturnType<
+        typeof useIngestionEvents
+      >,
+    );
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter>
+            <TimelineTab isActive={true} defaultStatuses={["ingested", "error"]} />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+
+    const selectAllBtn = container.querySelector(
+      "[data-testid='bulk-select-all-visible-button']",
+    ) as HTMLButtonElement | null;
+    expect(selectAllBtn).not.toBeNull();
+  });
 });
