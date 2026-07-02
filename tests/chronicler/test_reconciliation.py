@@ -374,6 +374,49 @@ def test_evidence_layer_rows_pass_through_untouched() -> None:
     assert result.kept_intents == []
 
 
+def test_activity_missing_start_time_passes_through_without_crashing() -> None:
+    """An activity row with no start time can't be sorted/diffed -- must not
+    raise, and must not silently join a merge cluster."""
+    starless = _episode(
+        layer="activity",
+        source_name="some_new_connector",
+        episode_type="mystery_episode",
+        source_ref="some_new_connector:x-1",
+        start_at=None,  # type: ignore[arg-type]
+        end_at=None,
+    )
+    workout = _workout(
+        source_ref="google_health.measurements:w-1", start_at=_DAY, end_at=_DAY + timedelta(hours=1)
+    )
+
+    result = reconcile_day([starless, workout])
+
+    assert starless in result.passthrough
+    assert len(result.activities) == 1
+
+
+def test_intent_missing_start_time_passes_through_without_crashing() -> None:
+    """A calendar intent with no start time can't compute a duration to check
+    for contradiction -- must not raise, and must not be silently dropped or
+    kept as if reconciled."""
+    starless_intent = _episode(
+        layer="intent",
+        source_name="google_calendar.completed",
+        episode_type="scheduled_block",
+        source_ref="google_calendar.completed:ev-starless",
+        start_at=None,  # type: ignore[arg-type]
+        end_at=None,
+        title="Mystery Block",
+    )
+    home = _home_presence(start_at=_DAY, end_at=_DAY + timedelta(hours=2))
+
+    result = reconcile_day([starless_intent, home])
+
+    assert starless_intent in result.passthrough
+    assert result.dropped_intents == []
+    assert result.kept_intents == []
+
+
 # ---------------------------------------------------------------------------
 # Structural / result-shape sanity
 # ---------------------------------------------------------------------------

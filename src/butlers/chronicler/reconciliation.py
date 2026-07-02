@@ -279,7 +279,14 @@ def reconcile_day(
 
     for ep in episodes:
         layer = _str_value(ep.get("layer", "evidence"))
-        if layer == "activity":
+        start = ep.get("canonical_start_at") or ep.get("start_at")
+        if layer in ("activity", "intent") and (start is None or start == ""):
+            # No usable window to sort/subtract on — comparing None against a
+            # datetime crashes _merge_same_lane's sort and _find_contradiction's
+            # duration math. Nothing to reconcile without a start time, so
+            # pass the row through untouched rather than risk a TypeError.
+            passthrough.append(dict(ep))
+        elif layer == "activity":
             activities_by_lane.setdefault(_lane(ep), []).append(dict(ep))
         elif layer == "intent":
             intents.append(dict(ep))

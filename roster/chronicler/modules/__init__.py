@@ -23,6 +23,37 @@ from butlers.modules.base import Module
 logger = logging.getLogger(__name__)
 
 
+def _serialise_dropped_intents(dropped_intents: Any) -> list[dict[str, Any]]:
+    """Convert ``reconcile_day``'s ``DroppedIntent`` objects into a JSON-safe
+    summary for the day-close bundle payload.
+
+    ``dropped.intent`` is the raw reconciled episode dict, which still carries
+    ``datetime`` objects for its window fields (unlike ``episodes``/``events``,
+    which go through ``bundle_assembler._serialise_items``'s ISO-8601
+    conversion). Convert here so the MCP tool never returns a raw ``datetime``
+    that the framework's JSON serialization of the tool result would reject.
+    """
+    from datetime import datetime
+
+    def _to_iso(val: Any) -> Any:
+        return val.isoformat() if isinstance(val, datetime) else val
+
+    return [
+        {
+            "title": dropped.intent.get("canonical_title") or dropped.intent.get("title"),
+            "start_at": _to_iso(
+                dropped.intent.get("canonical_start_at") or dropped.intent.get("start_at")
+            ),
+            "end_at": _to_iso(
+                dropped.intent.get("canonical_end_at") or dropped.intent.get("end_at")
+            ),
+            "reason": dropped.reason,
+            "overlap_fraction": round(dropped.overlap_fraction, 2),
+        }
+        for dropped in dropped_intents
+    ]
+
+
 class ChroniclerModuleConfig(BaseModel):
     """Configuration for the Chronicler read/bundle tools module."""
 
@@ -402,17 +433,7 @@ def _register_tools(mcp: Any, module: ChroniclerModule) -> None:
             *reconciled.kept_intents,
             *reconciled.passthrough,
         ]
-        dropped_intents_payload = [
-            {
-                "title": dropped.intent.get("canonical_title") or dropped.intent.get("title"),
-                "start_at": dropped.intent.get("canonical_start_at")
-                or dropped.intent.get("start_at"),
-                "end_at": dropped.intent.get("canonical_end_at") or dropped.intent.get("end_at"),
-                "reason": dropped.reason,
-                "overlap_fraction": round(dropped.overlap_fraction, 2),
-            }
-            for dropped in reconciled.dropped_intents
-        ]
+        dropped_intents_payload = _serialise_dropped_intents(reconciled.dropped_intents)
 
         cfg = BundleConfig(
             max_episodes=max_episodes,
