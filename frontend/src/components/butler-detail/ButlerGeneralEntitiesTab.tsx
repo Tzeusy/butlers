@@ -70,7 +70,7 @@ export default function ButlerGeneralEntitiesTab() {
   const availableTags = useMemo(() => {
     const tags = new Set<string>();
     for (const entity of tagSourceResp?.data ?? []) {
-      for (const tag of entity.tags) tags.add(tag);
+      for (const tag of entity.tags ?? []) tags.add(tag);
     }
     return Array.from(tags).sort();
   }, [tagSourceResp]);

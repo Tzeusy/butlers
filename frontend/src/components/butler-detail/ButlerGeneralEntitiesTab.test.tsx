@@ -122,7 +122,7 @@ function setupWithData() {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 afterEach(() => {
