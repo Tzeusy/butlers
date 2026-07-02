@@ -158,7 +158,7 @@ async def lifespan(app: FastAPI):
     # unset/empty value here is treated as the default-on state below;
     # explicit falsy values ("0", "false", "no", "off") disable it.
     _ingestion_flag_raw = os.environ.get("INGESTION_DISPATCH_CONSOLE", "")
-    _ingestion_flag_enabled = _ingestion_flag_raw.lower() not in (
+    _ingestion_flag_enabled = _ingestion_flag_raw.strip().lower() not in (
         "0",
         "false",
         "no",
