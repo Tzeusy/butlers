@@ -204,6 +204,7 @@ export function healthTextColor(health: DerivedHealth): string {
 export function healthVerdictWord(c: ConnectorSummary, info: ConnectorDispatchInfo): string {
   if (info.health === 'error') return c.liveness === 'offline' ? 'offline' : 'error'
   if (info.health === 'degraded') return c.liveness === 'stale' ? 'stale' : 'degraded'
+  if (info.health === 'off') return 'offline'
   return 'online'
 }
 
