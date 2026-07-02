@@ -43,7 +43,7 @@ function makeWrapper() {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mockGetIngestionEventsHistogram.mockResolvedValue({ buckets: [], bucket: "1m" });
 });
 

@@ -616,7 +616,7 @@ async def ingestion_events_histogram(
     if channels:
         args.append(channels)
         where_parts.append(f"source_channel = ANY(${len(args)}::text[])")
-    if q is not None:
+    if q is not None and q.strip():
         q_pattern = f"%{q}%"
         args.append(q_pattern)
         n = len(args)
