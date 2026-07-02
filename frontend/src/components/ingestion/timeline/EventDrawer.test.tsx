@@ -15,6 +15,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { ApiError } from "@/api/index.ts";
 import type { IngestionEventSummary, IngestionEventSession } from "@/api/index.ts";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -154,6 +155,7 @@ describe("EventDrawer — per-session cost column", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
+    sessionStorage.clear();
   });
 
   function renderDrawer(event = makeEvent()) {
@@ -273,5 +275,144 @@ describe("EventDrawer — per-session cost column", () => {
     });
     renderDrawer();
     expect(container.querySelector("[data-testid='sessions-tab-loading']")).not.toBeNull();
+  });
+
+  it("renders honest empty states for error and filtered events", () => {
+    mockSessions([]);
+
+    renderDrawer(makeEvent({ status: "error", error_detail: "connector timeout" }));
+    let empty = container.querySelector("[data-testid='sessions-tab-empty']");
+    expect(empty).not.toBeNull();
+    expect(empty!.textContent).toContain("Dispatch failed");
+    expect(empty!.textContent).toContain("connector timeout");
+
+    act(() => root.unmount());
+    container.remove();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    renderDrawer(makeEvent({ status: "filtered", filter_reason: "duplicate" }));
+    empty = container.querySelector("[data-testid='sessions-tab-empty']");
+    expect(empty).not.toBeNull();
+    expect(empty!.textContent).toContain("Filtered before dispatch");
+    expect(empty!.textContent).toContain("duplicate");
+  });
+});
+
+describe("EventDrawer — raw tab", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    queryClient = makeQueryClient();
+
+    vi.mocked(useIngestionEventLineage).mockReturnValue({
+      sessions: {
+        data: { data: [] },
+        isLoading: false,
+        isError: false,
+      } as unknown as ReturnType<typeof useIngestionEventSessions>,
+      rollup: {
+        data: undefined,
+        isLoading: false,
+        isError: false,
+      } as unknown as ReturnType<typeof useIngestionEventRollup>,
+    });
+
+    vi.mocked(useIngestionEventReplays).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useIngestionEventReplays>);
+
+    vi.mocked(useIngestionEventDetail).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useIngestionEventDetail>);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    sessionStorage.clear();
+  });
+
+  function renderDrawer(event = makeEvent()) {
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter>
+            <EventDrawer
+              event={event}
+              onClose={vi.fn()}
+              onOptimisticUpdate={vi.fn()}
+            />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+  }
+
+  it("auto-loads the payload when landing on a remembered raw tab (no dead end)", () => {
+    sessionStorage.setItem("ingestion-drawer-tab", "raw");
+    vi.mocked(useIngestionEventPayload).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+    } as unknown as ReturnType<typeof useIngestionEventPayload>);
+
+    renderDrawer();
+
+    // The remembered tab is active...
+    expect(
+      container.querySelector("[data-testid='drawer-tab-raw']")?.className,
+    ).toContain("border-foreground");
+    // ...and it must not be stuck on the "not loaded, nothing to click" trap:
+    // the audited fetch is auto-triggered, so we see the loading state, not
+    // the inert "not loaded" message.
+    expect(container.textContent).not.toContain("Raw payload not loaded.");
+    expect(container.querySelector("[data-testid='raw-tab-loading']")).not.toBeNull();
+  });
+
+  it("still fetches on-demand when the user clicks into the raw tab", () => {
+    vi.mocked(useIngestionEventPayload).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+    } as unknown as ReturnType<typeof useIngestionEventPayload>);
+
+    renderDrawer();
+
+    const tabButton = container.querySelector(
+      "[data-testid='drawer-tab-raw']",
+    ) as HTMLButtonElement;
+    act(() => tabButton.click());
+
+    expect(container.querySelector("[data-testid='raw-tab-loading']")).not.toBeNull();
+  });
+
+  it("shows single-owner-truthful copy on a 403, with no multi-tenant 'administrator' framing", () => {
+    sessionStorage.setItem("ingestion-drawer-tab", "raw");
+    vi.mocked(useIngestionEventPayload).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError("forbidden", "Forbidden", 403),
+    } as unknown as ReturnType<typeof useIngestionEventPayload>);
+
+    renderDrawer();
+
+    const gated = container.querySelector("[data-testid='raw-tab-gated']");
+    expect(gated).not.toBeNull();
+    expect(gated!.textContent).not.toContain("administrator");
+    expect(gated!.textContent).toContain("disabled for this session");
+    expect(gated!.textContent).toContain("audit log");
   });
 });
