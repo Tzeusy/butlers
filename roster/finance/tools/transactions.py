@@ -1117,10 +1117,22 @@ async def update_transaction(
         if metadata is not None:
             category_meta_target = dict(metadata)
         else:
+            # Defensive: some pool configurations return JSONB columns as raw
+            # JSON strings rather than pre-decoded dicts. Parse defensively so a
+            # string metadata value doesn't collapse to {} and silently drop the
+            # transaction's existing metadata when the fallback below writes it
+            # back. Mirrors split_transaction's handling of the same column.
             current_metadata = current.get("metadata")
-            category_meta_target = (
-                dict(current_metadata) if isinstance(current_metadata, dict) else {}
-            )
+            if isinstance(current_metadata, str):
+                try:
+                    parsed_metadata = json.loads(current_metadata) if current_metadata else {}
+                except (json.JSONDecodeError, ValueError):
+                    parsed_metadata = {}
+                category_meta_target = parsed_metadata if isinstance(parsed_metadata, dict) else {}
+            else:
+                category_meta_target = (
+                    dict(current_metadata) if isinstance(current_metadata, dict) else {}
+                )
         resolved_category, used_category_fallback = await _resolve_category_for_insert(
             pool, category, category_meta_target
         )

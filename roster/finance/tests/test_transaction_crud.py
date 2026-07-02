@@ -1233,6 +1233,47 @@ class TestUpdateTransactionEnhanced:
         assert result["metadata"]["receipt_url"] == "https://example.com/r"
         assert result["metadata"]["original_category"] == "not-a-real-category"
 
+    async def test_unknown_category_fallback_preserves_metadata_when_read_as_string(self, pool_v2):
+        """Regression test: some connections decode JSONB columns as raw JSON
+        strings on read (asyncpg's default) rather than pre-decoded dicts, even
+        though writes still accept a dict. update_transaction must not collapse
+        `current_metadata` to {} in that case — doing so would silently drop
+        all pre-existing metadata keys when the fallback warning is persisted.
+        """
+        from butlers.db import _jsonb_encoder
+        from butlers.tools.finance.transactions import update_transaction
+
+        await _install_category_fk(pool_v2)
+        txn = await _insert_txn_v2(
+            pool_v2, category="uncategorized", metadata={"receipt_url": "https://example.com/r"}
+        )
+
+        def _passthrough_decoder(data: bytes) -> str:
+            # Mirrors register_jsonb_codec's wire-format handling but skips the
+            # json.loads() step, so JSONB columns come back as raw text instead
+            # of pre-decoded dicts -- reproducing the shape described in the
+            # review thread for this fix without disturbing the write path.
+            return data[1:].decode()
+
+        async with pool_v2.acquire() as conn:
+            await conn.set_type_codec(
+                "jsonb",
+                encoder=_jsonb_encoder,
+                decoder=_passthrough_decoder,
+                schema="pg_catalog",
+                format="binary",
+            )
+
+            result = await update_transaction(
+                pool=conn,
+                transaction_id=txn["id"],
+                category="not-a-real-category",
+            )
+
+        assert result["category"] == "uncategorized"
+        assert result["metadata"]["receipt_url"] == "https://example.com/r"
+        assert result["metadata"]["original_category"] == "not-a-real-category"
+
 
 # ---------------------------------------------------------------------------
 # delete_transaction: version increment
