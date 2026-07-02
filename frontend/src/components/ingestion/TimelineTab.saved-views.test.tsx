@@ -217,7 +217,7 @@ describe("TimelineTab — §2.8 custom saved views list", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     localStorage.clear();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     setupDefaultMocks();
   });
 
@@ -355,7 +355,7 @@ describe("TimelineTab — §2.8 save current view", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     localStorage.clear();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     setupDefaultMocks();
   });
 
@@ -482,7 +482,7 @@ describe("TimelineTab — §2.8 apply custom view restores filter_spec", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     localStorage.clear();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     setupDefaultMocks();
   });
 
@@ -544,7 +544,7 @@ describe("TimelineTab — bu-4utdw.5 view-modified state", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     localStorage.clear();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     setupDefaultMocks();
   });
 
@@ -656,7 +656,7 @@ describe("TimelineTab — bu-4utdw.5 channel adder", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     localStorage.clear();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     setupDefaultMocks();
     vi.mocked(useConnectorSummaries).mockReturnValue({
       data: {
@@ -759,7 +759,7 @@ describe("TimelineTab — §2.8 delete custom view", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     localStorage.clear();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     setupDefaultMocks();
   });
 

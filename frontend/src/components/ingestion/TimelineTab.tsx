@@ -397,30 +397,52 @@ function Toolbar({
             const active = activeViewId === view.id;
             const modified = active && isViewModified;
             return (
-              <div key={view.id} className="relative flex items-center gap-1 group">
-                <button
-                  type="button"
-                  onClick={() => onViewSelect(view.id)}
-                  className={[
-                    "relative rounded px-2.5 py-1 font-mono text-[11px] transition-colors pr-6",
-                    active
-                      ? "bg-foreground/10 text-foreground border border-border"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  ].join(" ")}
-                  data-view={view.id}
-                  data-testid={`custom-view-${view.id}`}
-                  aria-pressed={active}
-                  title={modified ? `Filters differ from "${view.name}" — click to re-apply it` : view.name}
-                >
-                  {view.name}
-                  {modified && (
-                    <span
-                      className="absolute top-1 right-2 size-1.5 rounded-full bg-amber-500"
-                      data-testid={`view-modified-dot-${view.id}`}
-                      aria-label="Filters differ from this saved view"
-                    />
-                  )}
-                </button>
+              <div key={view.id} className="flex items-center gap-1">
+                <div className="relative flex items-center group">
+                  <button
+                    type="button"
+                    onClick={() => onViewSelect(view.id)}
+                    className={[
+                      "relative rounded px-2.5 py-1 font-mono text-[11px] transition-colors pr-6",
+                      active
+                        ? "bg-foreground/10 text-foreground border border-border"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    ].join(" ")}
+                    data-view={view.id}
+                    data-testid={`custom-view-${view.id}`}
+                    aria-pressed={active}
+                    title={modified ? `Filters differ from "${view.name}" — click to re-apply it` : view.name}
+                  >
+                    {view.name}
+                    {modified && (
+                      <span
+                        className="absolute top-1 right-2 size-1.5 rounded-full bg-amber-500"
+                        data-testid={`view-modified-dot-${view.id}`}
+                        aria-label="Filters differ from this saved view"
+                      />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteCustomView(view.id);
+                    }}
+                    className={[
+                      "absolute right-0.5 p-0.5 rounded transition-colors",
+                      "text-muted-foreground/60 hover:text-destructive",
+                      // Visible (not opacity-0) by default so touch users — who
+                      // never get a hover state — can still discover and tap
+                      // this; hover/focus just brightens it further.
+                      "opacity-60 group-hover:opacity-100 focus:opacity-100 focus-visible:opacity-100",
+                    ].join(" ")}
+                    aria-label={`Delete saved view: ${view.name}`}
+                    data-testid={`custom-view-delete-${view.id}`}
+                    title={`Delete "${view.name}"`}
+                  >
+                    <Trash2 className="size-2.5" aria-hidden />
+                  </button>
+                </div>
                 {modified && (
                   <button
                     type="button"
@@ -438,26 +460,6 @@ function Toolbar({
                     update view
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteCustomView(view.id);
-                  }}
-                  className={[
-                    "absolute right-0.5 p-0.5 rounded transition-colors",
-                    "text-muted-foreground/60 hover:text-destructive",
-                    // Visible (not opacity-0) by default so touch users — who
-                    // never get a hover state — can still discover and tap
-                    // this; hover/focus just brightens it further.
-                    "opacity-60 group-hover:opacity-100 focus:opacity-100 focus-visible:opacity-100",
-                  ].join(" ")}
-                  aria-label={`Delete saved view: ${view.name}`}
-                  data-testid={`custom-view-delete-${view.id}`}
-                  title={`Delete "${view.name}"`}
-                >
-                  <Trash2 className="size-2.5" aria-hidden />
-                </button>
               </div>
             );
           })}
@@ -1399,16 +1401,20 @@ export function TimelineTab({
     (channel: string) => {
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
-        const isActive = activeChannels.includes(channel);
+        const prevChannels = (prev.get("channels") ?? "")
+          .split(",")
+          .map((c) => c.trim())
+          .filter(Boolean);
+        const isActive = prevChannels.includes(channel);
         const updated = isActive
-          ? activeChannels.filter((c) => c !== channel)
-          : [...activeChannels, channel];
+          ? prevChannels.filter((c) => c !== channel)
+          : [...prevChannels, channel];
         if (updated.length > 0) next.set("channels", updated.join(","));
         else next.delete("channels");
         return next;
       });
     },
-    [activeChannels, setSearchParams],
+    [setSearchParams],
   );
 
   // Row channel-cell click-to-filter: idempotent add (never removes) so
@@ -1416,14 +1422,18 @@ export function TimelineTab({
   // harmless no-op instead of surprising the owner by clearing the filter.
   const handleChannelAdd = useCallback(
     (channel: string) => {
-      if (activeChannels.includes(channel)) return;
       setSearchParams((prev) => {
+        const prevChannels = (prev.get("channels") ?? "")
+          .split(",")
+          .map((c) => c.trim())
+          .filter(Boolean);
+        if (prevChannels.includes(channel)) return prev;
         const next = new URLSearchParams(prev);
-        next.set("channels", [...activeChannels, channel].join(","));
+        next.set("channels", [...prevChannels, channel].join(","));
         return next;
       });
     },
-    [activeChannels, setSearchParams],
+    [setSearchParams],
   );
 
   // ---------------------------------------------------------------------------
