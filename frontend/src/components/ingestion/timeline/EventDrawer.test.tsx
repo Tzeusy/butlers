@@ -360,7 +360,11 @@ describe("EventDrawer — raw tab", () => {
     });
   }
 
-  it("auto-loads the payload when landing on a remembered raw tab (no dead end)", () => {
+  it("does not auto-fetch on a remembered raw tab, but offers an explicit audited-load affordance (no dead end)", () => {
+    // Simulates landing on THIS event's drawer with 'raw' remembered from a
+    // previously viewed event's tab choice (bu-10sw5 fix for the
+    // gemini-code-assist audit-gate finding on PR #2854): the remembered
+    // preference alone must never trigger the audited payload_read.
     sessionStorage.setItem("ingestion-drawer-tab", "raw");
     vi.mocked(useIngestionEventPayload).mockReturnValue({
       data: undefined,
@@ -374,10 +378,22 @@ describe("EventDrawer — raw tab", () => {
     expect(
       container.querySelector("[data-testid='drawer-tab-raw']")?.className,
     ).toContain("border-foreground");
-    // ...and it must not be stuck on the "not loaded, nothing to click" trap:
-    // the audited fetch is auto-triggered, so we see the loading state, not
-    // the inert "not loaded" message.
-    expect(container.textContent).not.toContain("Raw payload not loaded.");
+    // ...but the fetch must NOT have been auto-triggered from the remembered
+    // preference alone: no loading state, and no dead end either — an
+    // explicit "Load payload (audited)" button is present instead.
+    expect(container.querySelector("[data-testid='raw-tab-loading']")).toBeNull();
+    const loadButton = container.querySelector(
+      "[data-testid='raw-tab-load-button']",
+    ) as HTMLButtonElement;
+    expect(loadButton).not.toBeNull();
+    expect(vi.mocked(useIngestionEventPayload)).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ enabled: false }),
+    );
+
+    // Clicking the explicit affordance is the deliberate, per-event action
+    // that triggers the audited read.
+    act(() => loadButton.click());
     expect(container.querySelector("[data-testid='raw-tab-loading']")).not.toBeNull();
   });
 
@@ -398,6 +414,60 @@ describe("EventDrawer — raw tab", () => {
     expect(container.querySelector("[data-testid='raw-tab-loading']")).not.toBeNull();
   });
 
+  it("does not carry an audited fetch over to a different event via the remembered tab (bu-10sw5)", () => {
+    // Regression test for the gemini-code-assist finding on PR #2854: viewing
+    // the raw tab for one event must not silently audit-log the payload read
+    // for the NEXT event the user opens, even though 'raw' stays remembered
+    // in sessionStorage and the tab itself stays visually selected.
+    vi.mocked(useIngestionEventPayload).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+    } as unknown as ReturnType<typeof useIngestionEventPayload>);
+
+    const eventA = makeEvent({ id: "event-a-0000-0000-0000-000000000001" });
+    renderDrawer(eventA);
+    const tabButtonA = container.querySelector(
+      "[data-testid='drawer-tab-raw']",
+    ) as HTMLButtonElement;
+    act(() => tabButtonA.click());
+    expect(container.querySelector("[data-testid='raw-tab-loading']")).not.toBeNull();
+    expect(vi.mocked(useIngestionEventPayload)).toHaveBeenCalledWith(
+      eventA.id,
+      expect.objectContaining({ enabled: true }),
+    );
+
+    // User closes the drawer (unmount) and opens a DIFFERENT event — this is
+    // exactly how TimelineTab mounts a fresh EventDrawer per selected row.
+    act(() => root.unmount());
+    vi.mocked(useIngestionEventPayload).mockClear();
+
+    root = createRoot(container);
+    const eventB = makeEvent({ id: "event-b-0000-0000-0000-000000000002" });
+    renderDrawer(eventB);
+
+    // 'raw' is still the remembered/active tab for event B...
+    expect(
+      container.querySelector("[data-testid='drawer-tab-raw']")?.className,
+    ).toContain("border-foreground");
+    // ...but event B's payload must NOT have been fetched automatically.
+    expect(container.querySelector("[data-testid='raw-tab-loading']")).toBeNull();
+    expect(vi.mocked(useIngestionEventPayload)).not.toHaveBeenCalledWith(
+      eventB.id,
+      expect.objectContaining({ enabled: true }),
+    );
+
+    const loadButtonB = container.querySelector(
+      "[data-testid='raw-tab-load-button']",
+    ) as HTMLButtonElement;
+    expect(loadButtonB).not.toBeNull();
+    act(() => loadButtonB.click());
+    expect(vi.mocked(useIngestionEventPayload)).toHaveBeenCalledWith(
+      eventB.id,
+      expect.objectContaining({ enabled: true }),
+    );
+  });
+
   it("shows single-owner-truthful copy on a 403, with no multi-tenant 'administrator' framing", () => {
     sessionStorage.setItem("ingestion-drawer-tab", "raw");
     vi.mocked(useIngestionEventPayload).mockReturnValue({
@@ -408,6 +478,11 @@ describe("EventDrawer — raw tab", () => {
     } as unknown as ReturnType<typeof useIngestionEventPayload>);
 
     renderDrawer();
+
+    const loadButton = container.querySelector(
+      "[data-testid='raw-tab-load-button']",
+    ) as HTMLButtonElement;
+    act(() => loadButton.click());
 
     const gated = container.querySelector("[data-testid='raw-tab-gated']");
     expect(gated).not.toBeNull();

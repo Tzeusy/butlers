@@ -340,14 +340,37 @@ function DrawerSessionsTab({
 // Raw payload tab
 // ---------------------------------------------------------------------------
 
-function DrawerRawTab({ requestId, enabled }: { requestId: string; enabled: boolean }) {
+function DrawerRawTab({
+  requestId,
+  enabled,
+  onLoad,
+}: {
+  requestId: string
+  enabled: boolean
+  onLoad: () => void
+}) {
   const { data, isLoading, isError, error } = useIngestionEventPayload(requestId, { enabled })
 
+  // Not yet enabled for THIS event — this is the state when the tab
+  // selection was restored from a remembered preference rather than an
+  // explicit click during this drawer's lifetime (see handleTabChange).
+  // Requires one explicit, audited action per event; never auto-fetches
+  // from a preference set on a previously viewed event.
   if (!enabled) {
     return (
-      <p className="p-4 font-serif text-[15px] leading-[1.55] text-muted-foreground italic">
-        Raw payload not loaded.
-      </p>
+      <div className="p-4 space-y-3">
+        <p className="font-serif text-[15px] leading-[1.55] text-muted-foreground italic">
+          Raw payload not loaded.
+        </p>
+        <button
+          type="button"
+          onClick={onLoad}
+          className="rounded border px-3 py-1.5 font-mono text-[11px] tracking-[0.01em] hover:bg-muted transition-colors"
+          data-testid="raw-tab-load-button"
+        >
+          Load payload (audited)
+        </button>
+      </div>
     )
   }
 
@@ -548,25 +571,23 @@ export function EventDrawer({ event, onClose, onOptimisticUpdate }: EventDrawerP
   // active and its content has rendered. Replaces the fragile setTimeout approach.
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null)
 
+  // Explicitly clicking the raw tab is a deliberate, in-the-moment request
+  // for THIS event's payload, so it's safe to auto-fetch (the fetch itself
+  // IS the audited read: writes ingestion.event.payload_read to
+  // public.audit_log). A tab selection merely *restored* from a remembered
+  // preference (sessionStorage, set by a previously viewed event) is not
+  // such a request — auto-fetching there would silently audit-log reads
+  // for events the user never chose to inspect. See DrawerRawTab's explicit
+  // "Load payload (audited)" affordance for that remembered-tab case.
   function handleTabChange(tab: DrawerTab) {
     setActiveTab(tab)
+    if (tab === 'raw') setRawEnabled(true)
     try {
       sessionStorage.setItem('ingestion-drawer-tab', tab)
     } catch {
       // sessionStorage unavailable
     }
   }
-
-  // Auto-trigger the (audited) payload fetch whenever the raw tab is or
-  // becomes active — including on mount, when a previous drawer instance
-  // left 'raw' remembered in sessionStorage. The fetch itself IS the
-  // audited read (writes ingestion.event.payload_read to public.audit_log);
-  // choosing the tab is the user's request, so auto-fetching here preserves
-  // audit-gate semantics instead of stranding the remembered tab on a
-  // "not loaded, nothing to click" dead end.
-  useEffect(() => {
-    if (activeTab === 'raw') setRawEnabled(true)
-  }, [activeTab])
 
   const { data: detailData } = useIngestionEventDetail(event.id, { enabled: true })
   const detail = detailData?.data ?? null
@@ -672,7 +693,11 @@ export function EventDrawer({ event, onClose, onOptimisticUpdate }: EventDrawerP
               />
             )}
             {activeTab === 'raw' && (
-              <DrawerRawTab requestId={event.id} enabled={rawEnabled} />
+              <DrawerRawTab
+                requestId={event.id}
+                enabled={rawEnabled}
+                onLoad={() => setRawEnabled(true)}
+              />
             )}
             {activeTab === 'replays' && (
               <DrawerReplaysTab requestId={event.id} enabled={true} />
