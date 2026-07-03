@@ -153,6 +153,17 @@ class TestHaloArcs:
         resp = await _get(app, "/api/relationship/plex/halo?per_type=0")
         assert resp.status_code == 422
 
+    async def test_per_type_above_upper_bound_rejected(self):
+        # le=60 caps how many satellites a single arc can pull; 61 is over.
+        app, _ = _app_with_pool()
+        resp = await _get(app, "/api/relationship/plex/halo?per_type=61")
+        assert resp.status_code == 422
+
+    async def test_per_type_at_upper_bound_accepted(self):
+        app, _ = _app_with_pool()
+        resp = await _get(app, "/api/relationship/plex/halo?per_type=60")
+        assert resp.status_code == 200
+
 
 class TestHaloEdges:
     async def test_person_edges_attach_in_both_directions(self):

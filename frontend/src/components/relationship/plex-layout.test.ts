@@ -454,6 +454,23 @@ describe("layoutNeighbourPlex", () => {
     }
   });
 
+  it("threads entity_type onto each node, defaulting a null type to person", () => {
+    const layout = layoutNeighbourPlex(
+      neighboursResponse({
+        "works-at": [
+          neighbourEntry({ entity_id: "org", entity_type: "organization" }),
+          // Registry miss: entity_type is null and must fall back to person so
+          // EntityMark draws initials instead of an empty type glyph.
+          neighbourEntry({ entity_id: "unknown", entity_type: null }),
+        ],
+      }),
+    );
+    const org = layout.nodes.find((n) => n.entityId === "org")!;
+    const unknown = layout.nodes.find((n) => n.entityId === "unknown")!;
+    expect(org.entityType).toBe("organization");
+    expect(unknown.entityType).toBe("person");
+  });
+
   it("ranks nodes by weight descending within a sector, null weight last", () => {
     const layout = layoutNeighbourPlex(
       neighboursResponse({
@@ -610,6 +627,20 @@ describe("layoutHalo", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("places a lone satellite as a single mark inside its arc span", () => {
+    // Boundary: leftCount = ceil(1/2) = 1, so the right segment holds zero
+    // marks and its (segEnd - segStart) / 0 division must never run. Regression
+    // guard against the single-satellite arc dropping or NaN-positioning a mark.
+    const layout = layoutHalo(haloResponse({ organization: 1 }));
+    expect(layout.arcs).toHaveLength(1);
+    const arc = layout.arcs[0];
+    expect(arc.marks).toHaveLength(1);
+    const mark = arc.marks[0];
+    expect(Number.isNaN(mark.angle)).toBe(false);
+    expect(mark.angle).toBeGreaterThan(arc.startAngle);
+    expect(mark.angle).toBeLessThan(arc.endAngle);
   });
 
   it("covers HALO_ARC_ORDER exactly once each in a full response", () => {

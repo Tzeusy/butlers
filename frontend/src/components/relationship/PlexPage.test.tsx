@@ -684,4 +684,31 @@ describe("PlexPage — find-as-you-type", () => {
     typeQuery("a0");
     expect(findBar()?.textContent).toContain("a0");
   });
+
+  it("Enter with a zero-match query in owner mode neither navigates nor clears the query", () => {
+    renderPage("/entities");
+    typeQuery("zzz"); // matches nothing in the default ranking
+    expect(findBar()?.textContent).toContain("0 matches");
+    pressKey("Enter");
+    // No best match → Enter is a no-op: still owner mode, query survives.
+    expect(currentSearch().get("center")).toBeNull();
+    expect(findBar()?.textContent).toContain("zzz");
+  });
+
+  it("in neighbour mode, Escape clears the query first and only pops the trail on a second press", () => {
+    renderPage("/entities?center=ent-cal&trail=ent-ana,ent-bea");
+    typeQuery("an");
+    expect(findBar()?.textContent).toContain("an");
+
+    // First Escape: the active find owns it — query clears, trail untouched.
+    pressKey("Escape");
+    expect(findBar()).toBeNull();
+    expect(currentSearch().get("center")).toBe("ent-cal");
+    expect(currentSearch().get("trail")).toBe("ent-ana,ent-bea");
+
+    // Second Escape: no query now, so it pops one hop off the trail.
+    pressKey("Escape");
+    expect(currentSearch().get("center")).toBe("ent-bea");
+    expect(currentSearch().get("trail")).toBe("ent-ana");
+  });
 });

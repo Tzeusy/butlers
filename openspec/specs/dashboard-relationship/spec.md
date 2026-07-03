@@ -670,7 +670,10 @@ SubpageTabs strip marking Plex active.
 
 1. Non-owner contacts from `GET /api/relationship/dunbar/ranking` render on concentric
    Dunbar tier rings (5/15/50/150/500); tier 1500 MUST NOT render as nodes — it renders
-   as a dashed periphery ring carrying only its count.
+   as a dashed periphery ring carrying only its count. The ranking endpoint MUST rank
+   only living person entities: a ranked row whose entity is not a currently-active
+   `person` in `public.entities` (a merged, reclassified, or archived ghost carried by
+   the memory-module dunbar facts) MUST be dropped, never rendered as "Unknown".
 2. Each ring carries an honest capacity label (`<count>/<tier>`); over-capacity renders
    amber. A right-flank overlay repeats the per-tier capacity meters; a left-flank
    "Worth attention" overlay lists at most 5 contacts past their per-tier reach-out
@@ -720,6 +723,13 @@ SubpageTabs strip marking Plex active.
 10. Hovering a mark opens a micro-dossier card (type, tier, days since contact, 90-day
    sparkline, open/unpin actions); in owner mode hover also spotlights the hovered
    person's edges to other visible contacts while unconnected marks recede.
+11. **Find-as-you-type.** Typing printable characters on the focused canvas builds a
+   client-side query over every mark on the current canvas (owner rings + halo, or
+   neighbour fan); matching marks stay lit with labels while non-matches recede, and a
+   status line reports the match count. Backspace edits the query, Esc clears it (and
+   only once cleared does Esc fall through to popping a hop), and Enter re-centres on the
+   best match (earliest substring, then shortest name). The query MUST reset on any hop.
+   The find dimming overrides the hover spotlight so the two never fight.
 
 **Retired-route redirects:** `/entities/hop?center=<id>&trail=<csv>` MUST redirect to
 `/entities` preserving both params; `/entities/columns?path=a,...,z` MUST redirect to
@@ -747,6 +757,19 @@ SubpageTabs strip marking Plex active.
 - **THEN** edge opacity MUST vary with `conf`
 - **AND** node desaturation MUST vary with the staleness band
 - **AND** neither axis MUST reuse the other's visual channel
+
+#### Scenario: Find-as-you-type lights matches and jumps on Enter
+- **WHEN** the canvas is focused and the user types a substring of a visible mark's name
+- **THEN** marks whose name contains the query MUST stay lit with labels while the rest recede
+- **AND** a status line MUST report the match count
+- **AND** Enter MUST re-centre on the best match (earliest substring, then shortest name)
+- **AND** Esc MUST clear the query before it pops a hop, and a hop MUST reset the query
+
+#### Scenario: Dunbar ranking drops non-person ghosts
+- **WHEN** the dunbar ranking carries a ranked row for an entity that has been merged,
+  reclassified to a non-`person` type, or archived out of `public.entities`
+- **THEN** that row MUST NOT render as a plex node
+- **AND** it MUST NOT appear as an "Unknown" mark on any ring
 
 ### Requirement: Entity Concentration view (`/entities/concentration`)
 

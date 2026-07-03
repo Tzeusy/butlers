@@ -1,9 +1,8 @@
 /**
  * PlexPage — /entities landing: the owner ego-graph ("plex").
  *
- * PROTOTYPE (proto/entities-plex). Reimagines the /entities landing per the
- * 2026-07-02 critique: exploration-first instead of curation-first. Replaces
- * the retired Social map tab.
+ * The canonical entity-graph landing surface: an exploration-first radial
+ * canvas that supersedes the retired Hop, Columns, and Social-map views.
  *
  * Layout: full-bleed radial canvas; the horizontal flanks carry overlays.
  *   - Owner mode (default): contacts on concentric Dunbar tier rings around
