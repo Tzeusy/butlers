@@ -41,13 +41,16 @@ import type { IngestionEventListSessionSummary } from "@/api/index.ts";
 const TICK_BUDGET_PX = 84;
 const TICK_GAP_PX = 2;
 const MIN_TICK_WIDTH_PX = 3;
+/** Server caps `sessions` at 8 (bu-4utdw.3); slice defensively so the width math in
+ * computeTickWidths keeps holding even if that upstream cap ever changes. */
+const MAX_RENDERED_TICKS = 8;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatDurationMs(ms: number | null): string {
-  if (ms === null || ms < 0) return "—";
+function formatDurationMs(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || ms < 0) return "—";
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   return `${(ms / 60_000).toFixed(1)}m`;
@@ -124,7 +127,8 @@ export function DispatchTicksCell({ sessions, sessionCount, onOpenDrawer }: Disp
     );
   }
 
-  const widths = computeTickWidths(sessions);
+  const renderedSessions = sessions.slice(0, MAX_RENDERED_TICKS);
+  const widths = computeTickWidths(renderedSessions);
 
   return (
     <button
@@ -134,11 +138,11 @@ export function DispatchTicksCell({ sessions, sessionCount, onOpenDrawer }: Disp
         onOpenDrawer();
       }}
       className="flex items-center gap-1 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
-      aria-label={buildAriaLabel(sessions, sessionCount)}
+      aria-label={buildAriaLabel(renderedSessions, sessionCount)}
       data-testid="dispatch-ticks-cell"
     >
       <span className="flex items-end gap-[2px] h-2 shrink-0">
-        {sessions.map((s, i) => (
+        {renderedSessions.map((s, i) => (
           <span
             key={`${s.butler_name}-${i}`}
             className={[
