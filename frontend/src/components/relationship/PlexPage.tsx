@@ -7,8 +7,11 @@
  *
  * Layout: full-bleed radial canvas; the horizontal flanks carry overlays.
  *   - Owner mode (default): contacts on concentric Dunbar tier rings around
- *     the owner; tier 1500 summarized as a periphery count, not drawn. Left
- *     flank: Worth attention. Right flank: capacity meters.
+ *     the owner; tier 1500 summarized as a periphery count, not drawn. Past
+ *     the periphery, the dimension halo: non-person entities (organizations /
+ *     places / things) as arc-grouped satellites ranked by recency, linked to
+ *     the rings by the connection spotlight in both directions. Left flank:
+ *     Worth attention. Right flank: capacity meters.
  *   - Neighbour mode (?center=<id>): the centered entity's neighbours fanned
  *     into predicate sectors; edge opacity carries confidence, node
  *     desaturation carries staleness (two separate manifesto axes). Right
@@ -58,13 +61,16 @@ import {
   useEntityCoreDates,
   useEntityFacts,
   useEntityNeighbours,
+  usePlexHalo,
   useRelationshipEntitiesByIds,
   useUpdateEntityDunbarTier,
 } from "@/hooks/use-entities";
 import {
   daysSince,
+  layoutHalo,
   layoutNeighbourPlex,
   layoutOwnerPlex,
+  PLEX_HALO_FRACTION,
   PLEX_NODE_TIERS,
   PLEX_PERIPHERY_FRACTION,
   PLEX_RING_FRACTIONS,
@@ -72,6 +78,8 @@ import {
   prettyPredicate,
   TIER_RING_COLORS,
   TIERS,
+  type HaloLayout,
+  type HaloMarkLayout,
   type NeighbourPlexNode,
   type OwnerPlexNode,
   type PlexNodeTier,
@@ -197,6 +205,8 @@ interface PlexNodeProps {
   y: number;
   size: number;
   entityType?: string;
+  /** Test id override (halo marks report as their own kind). */
+  testId?: string;
   showLabel: boolean;
   attention?: boolean;
   pinned?: boolean;
@@ -224,6 +234,7 @@ function PlexNode({
   y,
   size,
   entityType = "person",
+  testId = "plex-node",
   showLabel,
   attention = false,
   pinned = false,
@@ -284,7 +295,7 @@ function PlexNode({
   return (
     <button
       type="button"
-      data-testid="plex-node"
+      data-testid={testId}
       aria-label={`Center plex on ${name}`}
       title={name}
       onClick={() => {
@@ -328,10 +339,27 @@ function PlexNode({
 // Owner-mode canvas
 // ---------------------------------------------------------------------------
 
+/** Human words for the halo arc labels; entity types are system vocabulary. */
+const HALO_TYPE_LABELS: Record<string, string> = {
+  organization: "organizations",
+  place: "places",
+  other: "things",
+};
+
+/** SVG path for a circular arc (angle 0 = up, clockwise — matches polar()). */
+function arcPath(cx: number, cy: number, r: number, a0: number, a1: number): string {
+  const p0 = polar(cx, cy, r, r, a0);
+  const p1 = polar(cx, cy, r, r, a1);
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  return `M ${p0.x} ${p0.y} A ${r} ${r} 0 ${large} 1 ${p1.x} ${p1.y}`;
+}
+
 function OwnerPlexCanvas({
   nodes,
   tierCounts,
   ownerName,
+  halo,
+  satsByPerson,
   width,
   height,
   zoom,
@@ -347,6 +375,10 @@ function OwnerPlexCanvas({
   nodes: OwnerPlexNode[];
   tierCounts: Record<Tier, number>;
   ownerName: string;
+  /** Dimension halo layout; null while loading or when there are no satellites. */
+  halo: HaloLayout | null;
+  /** Person id → satellite ids, from the halo edges (instant spotlight). */
+  satsByPerson: Map<string, Set<string>> | null;
   width: number;
   height: number;
   zoom: number;
@@ -362,7 +394,11 @@ function OwnerPlexCanvas({
 }) {
   const cx = width / 2;
   const cy = height / 2;
-  const r = Math.min(width, height) / 2 - 32;
+  const half = Math.min(width, height) / 2;
+  // With a halo, the tier rings concede a sliver of radius so the band and
+  // its labels stay inside the stage.
+  const r = halo ? Math.min(half - 32, (half - 18) / PLEX_HALO_FRACTION) : half - 32;
+  const haloR = r * PLEX_HALO_FRACTION;
 
   // Drag-to-retier: the dragged node follows the pointer; the nearest ring
   // lights up as the drop target.
@@ -412,6 +448,35 @@ function OwnerPlexCanvas({
     ? nodes.find((n) => n.entityId === hoveredId)
     : undefined;
 
+  // Halo spotlight, both directions. Satellite edges ship with the halo
+  // payload, so this lights up instantly — no per-hover fetch.
+  const haloMarks = useMemo(
+    () => halo?.arcs.flatMap((a) => a.marks) ?? [],
+    [halo],
+  );
+  const hoveredSat: HaloMarkLayout | null =
+    hoveredId !== null
+      ? (haloMarks.find((m) => m.entityId === hoveredId) ?? null)
+      : null;
+  const hoveredSatPersonIds = hoveredSat ? new Set(hoveredSat.personIds) : null;
+  // Satellites lit while a person is hovered: halo edges plus anything the
+  // neighbours fetch already resolved.
+  const litSatIds: Set<string> | null =
+    hoveredId !== null && !hoveredSat && (satsByPerson?.has(hoveredId) || spotlight)
+      ? new Set([
+          ...(satsByPerson?.get(hoveredId) ?? []),
+          ...haloMarks
+            .map((m) => m.entityId)
+            .filter((id) => connectedIds?.has(id) ?? false),
+        ])
+      : null;
+  const hoveredPersonNode =
+    hoveredId !== null && !hoveredSat
+      ? nodes.find((n) => n.entityId === hoveredId)
+      : undefined;
+
+  const satPos = (mark: HaloMarkLayout) => polar(cx, cy, haloR, haloR, mark.angle);
+
   return (
     <>
       <svg
@@ -420,6 +485,16 @@ function OwnerPlexCanvas({
         height={height}
         aria-hidden="true"
       >
+        {/* Dimension halo arcs: one band segment per non-person entity type. */}
+        {halo?.arcs.map((arc) => (
+          <path
+            key={`halo-arc-${arc.entityType}`}
+            d={arcPath(cx, cy, haloR, arc.startAngle, arc.endAngle)}
+            fill="none"
+            stroke="var(--border-strong, currentColor)"
+            strokeOpacity={0.45}
+          />
+        ))}
         {PLEX_NODE_TIERS.map((tier) => (
           <circle
             key={tier}
@@ -459,6 +534,48 @@ function OwnerPlexCanvas({
                   y2={b.y}
                   stroke="var(--fg, currentColor)"
                   strokeOpacity={0.35}
+                />
+              );
+            })}
+        {/* Halo spotlight edges: hovered person out to their satellites. */}
+        {hoveredPersonNode &&
+          litSatIds &&
+          haloMarks
+            .filter((m) => litSatIds.has(m.entityId))
+            .map((m) => {
+              const a = nodePos(hoveredPersonNode);
+              const b = satPos(m);
+              return (
+                <line
+                  key={`halo-spot-${m.entityId}`}
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  stroke="var(--fg, currentColor)"
+                  strokeOpacity={0.3}
+                  strokeDasharray="2 4"
+                />
+              );
+            })}
+        {/* Halo spotlight edges: hovered satellite in to its people. */}
+        {hoveredSat &&
+          hoveredSatPersonIds &&
+          nodes
+            .filter((n) => hoveredSatPersonIds.has(n.entityId))
+            .map((n) => {
+              const a = satPos(hoveredSat);
+              const b = nodePos(n);
+              return (
+                <line
+                  key={`halo-in-${n.entityId}`}
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  stroke="var(--fg, currentColor)"
+                  strokeOpacity={0.3}
+                  strokeDasharray="2 4"
                 />
               );
             })}
@@ -511,6 +628,75 @@ function OwnerPlexCanvas({
         );
       })()}
 
+      {/* Halo arc labels: each names its dimension and opens the index
+          filtered to that type. A truncated arc owns up to its cap. */}
+      {halo?.arcs.map((arc) => {
+        const p = polar(cx, cy, haloR, haloR, arc.midAngle);
+        const shown = arc.marks.length;
+        return (
+          <Link
+            key={`halo-label-${arc.entityType}`}
+            to={`/entities/index?type=${encodeURIComponent(arc.entityType)}`}
+            data-testid="plex-halo-arc-label"
+            className="absolute left-0 top-0 bg-background px-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--mfg)] hover:text-foreground"
+            style={{
+              transform: `translate(${p.x}px, ${p.y}px) translate(-50%, -50%)`,
+            }}
+            title={
+              shown < arc.total
+                ? `Showing the ${shown} most recently active of ${arc.total}`
+                : undefined
+            }
+          >
+            {HALO_TYPE_LABELS[arc.entityType] ?? arc.entityType}
+            {" · "}
+            <span className="tabular-nums">
+              {shown < arc.total ? `${shown}/${arc.total}` : arc.total}
+            </span>
+          </Link>
+        );
+      })}
+
+      {/* Halo satellite marks */}
+      {haloMarks.map((mark) => {
+        const p = satPos(mark);
+        const isHovered = mark.entityId === hoveredId;
+        const lit = litSatIds?.has(mark.entityId) ?? false;
+        return (
+          <PlexNode
+            key={`halo-${mark.entityId}`}
+            entityId={mark.entityId}
+            name={mark.name}
+            x={p.x}
+            y={p.y}
+            size={18}
+            entityType={mark.entityType}
+            testId="plex-halo-mark"
+            showLabel={zoom >= ZOOM_LABEL_THRESHOLD || lit || isHovered}
+            dimmed={
+              hoveredSat
+                ? !isHovered
+                : (spotlight || litSatIds !== null) && !lit
+            }
+            staleness={mark.staleness}
+            onCenter={onCenter}
+            onHoverStart={() =>
+              onHover({
+                entityId: mark.entityId,
+                name: mark.name,
+                entityType: mark.entityType,
+                tier: null,
+                pinned: false,
+                staleDays: mark.staleDays,
+                x: p.x,
+                y: p.y,
+              })
+            }
+            onHoverEnd={onHoverEnd}
+          />
+        );
+      })}
+
       {/* Contact nodes */}
       {nodes.map((node) => {
         const p = nodePos(node);
@@ -527,7 +713,11 @@ function OwnerPlexCanvas({
             attention={attentionIds.has(node.entityId)}
             pinned={node.pinned}
             dimmed={
-              spotlight && !isHovered && !(connectedIds?.has(node.entityId) ?? false)
+              hoveredSat
+                ? !(hoveredSatPersonIds?.has(node.entityId) ?? false)
+                : spotlight &&
+                  !isHovered &&
+                  !(connectedIds?.has(node.entityId) ?? false)
             }
             staleness={node.staleness}
             dragging={drag?.id === node.entityId}
@@ -686,6 +876,7 @@ function NeighbourPlexCanvas({
             x={p.x}
             y={p.y}
             size={node.size}
+            entityType={node.entityType}
             showLabel
             staleness={node.staleness}
             conf={node.conf}
@@ -694,7 +885,7 @@ function NeighbourPlexCanvas({
               onHover({
                 entityId: node.entityId,
                 name: node.name,
-                entityType: "person",
+                entityType: node.entityType,
                 tier: null,
                 pinned: false,
                 staleDays: node.staleDays,
@@ -1206,6 +1397,32 @@ export default function PlexPage() {
     [ranking, ownerEntityId],
   );
 
+  // Dimension halo: non-person entities banded around the rings (owner mode).
+  const { data: haloData } = usePlexHalo(isOwnerMode);
+  const haloLayout: HaloLayout | null = useMemo(() => {
+    if (!haloData) return null;
+    const layout = layoutHalo(haloData);
+    return layout.arcs.length > 0 ? layout : null;
+  }, [haloData]);
+  // Person → satellites, inverted from the halo edges (instant spotlight).
+  const satsByPerson = useMemo(() => {
+    if (!haloData) return null;
+    const map = new Map<string, Set<string>>();
+    for (const satellites of Object.values(haloData.arcs)) {
+      for (const sat of satellites) {
+        for (const edge of sat.edges) {
+          let set = map.get(edge.person_id);
+          if (!set) {
+            set = new Set();
+            map.set(edge.person_id, set);
+          }
+          set.add(sat.entity_id);
+        }
+      }
+    }
+    return map;
+  }, [haloData]);
+
   // Neighbour-mode data + layout.
   const {
     data: neighbours,
@@ -1276,9 +1493,13 @@ export default function PlexPage() {
       const fromNeighbours = neighbourLayout?.nodes.find(
         (n) => n.entityId === id,
       )?.name;
-      return fromNeighbours ?? "linked entity";
+      if (fromNeighbours) return fromNeighbours;
+      const fromHalo = haloLayout?.arcs
+        .flatMap((a) => a.marks)
+        .find((m) => m.entityId === id)?.name;
+      return fromHalo ?? "linked entity";
     },
-    [entriesById, neighbourLayout],
+    [entriesById, neighbourLayout, haloLayout],
   );
 
   // -------------------------------------------------------------------------
@@ -1660,6 +1881,8 @@ export default function PlexPage() {
                     nodes={ownerLayout.nodes}
                     tierCounts={ownerLayout.tierCounts}
                     ownerName={ownerName}
+                    halo={haloLayout}
+                    satsByPerson={satsByPerson}
                     width={stageSize.width}
                     height={stageSize.height}
                     zoom={view.zoom}

@@ -32,6 +32,7 @@ vi.mock("@/hooks/use-memory", () => ({
 
 vi.mock("@/hooks/use-entities", () => ({
   useEntityNeighbours: vi.fn(),
+  usePlexHalo: vi.fn(),
   useRelationshipEntitiesByIds: vi.fn(),
   useEntityFacts: vi.fn(),
   useEntityCoreDates: vi.fn(),
@@ -54,6 +55,7 @@ vi.mock("@/components/relationship/LatestInteractionsBlock", () => ({
 import type {
   DunbarEntry,
   DunbarRankingResponse,
+  HaloResponse,
   NeighbourEntry,
   NeighboursResponse,
 } from "@/api/types";
@@ -61,6 +63,7 @@ import {
   useEntityCoreDates,
   useEntityFacts,
   useEntityNeighbours,
+  usePlexHalo,
   useRelationshipEntitiesByIds,
   useUpdateEntityDunbarTier,
 } from "@/hooks/use-entities";
@@ -92,6 +95,7 @@ function neighbour(
   overrides: Partial<NeighbourEntry> & { entity_id: string; canonical_name: string },
 ): NeighbourEntry {
   return {
+    entity_type: null,
     direction: "forward",
     src: "relationship",
     conf: 1,
@@ -124,6 +128,35 @@ const NEIGHBOURS: NeighboursResponse = {
     works_with: [neighbour({ entity_id: "ent-cal", canonical_name: "Cal", weight: 2 })],
   },
   remainders: { "family-of": 2 },
+};
+
+/** Two org satellites (one linked to Ana), one place; org arc truncated. */
+const HALO: HaloResponse = {
+  arcs: {
+    organization: [
+      {
+        entity_id: "sat-acme",
+        canonical_name: "Acme Corp",
+        last_seen: daysAgo(4),
+        edges: [{ person_id: "ent-ana", predicate: "works-at" }],
+      },
+      {
+        entity_id: "sat-guild",
+        canonical_name: "The Guild",
+        last_seen: null,
+        edges: [],
+      },
+    ],
+    place: [
+      {
+        entity_id: "sat-cafe",
+        canonical_name: "Corner Cafe",
+        last_seen: daysAgo(10),
+        edges: [],
+      },
+    ],
+  },
+  totals: { organization: 171, place: 1 },
 };
 
 function loaded<T>(data: T) {
@@ -222,6 +255,10 @@ beforeEach(() => {
             }
           : undefined,
       ) as ReturnType<typeof useRelationshipEntitiesByIds>,
+  );
+  // Halo defaults to "not yet loaded" — tests that want the band opt in.
+  vi.mocked(usePlexHalo).mockReturnValue(
+    loaded(undefined) as ReturnType<typeof usePlexHalo>,
   );
   vi.mocked(useEntityFacts).mockReturnValue(
     loaded({ items: [] }) as ReturnType<typeof useEntityFacts>,
@@ -473,5 +510,106 @@ describe("PlexPage — Escape on the canvas", () => {
     const search = currentSearch();
     expect(search.get("center")).toBeNull();
     expect(search.get("trail")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dimension halo (owner mode)
+// ---------------------------------------------------------------------------
+
+describe("PlexPage — dimension halo", () => {
+  it("renders no halo band while the halo has not loaded", () => {
+    renderPage("/entities");
+    expect(container.querySelectorAll("[data-testid='plex-halo-mark']").length).toBe(0);
+    expect(
+      container.querySelectorAll("[data-testid='plex-halo-arc-label']").length,
+    ).toBe(0);
+  });
+
+  it("renders one mark per satellite and one label per arc", () => {
+    vi.mocked(usePlexHalo).mockReturnValue(
+      loaded(HALO) as ReturnType<typeof usePlexHalo>,
+    );
+    renderPage("/entities");
+    const marks = container.querySelectorAll("[data-testid='plex-halo-mark']");
+    expect(marks.length).toBe(3);
+    expect(
+      container.querySelector("[data-testid='plex-halo-mark'][title='Acme Corp']"),
+    ).toBeTruthy();
+    const labels = [
+      ...container.querySelectorAll("[data-testid='plex-halo-arc-label']"),
+    ];
+    expect(labels.length).toBe(2);
+    // A truncated arc owns up to its cap; a complete arc shows the plain total.
+    const texts = labels.map((l) => l.textContent);
+    expect(texts).toContain("organizations · 2/171");
+    expect(texts).toContain("places · 1");
+  });
+
+  it("arc labels link to the index filtered to that entity type", () => {
+    vi.mocked(usePlexHalo).mockReturnValue(
+      loaded(HALO) as ReturnType<typeof usePlexHalo>,
+    );
+    renderPage("/entities");
+    const hrefs = [
+      ...container.querySelectorAll("[data-testid='plex-halo-arc-label']"),
+    ].map((l) => l.getAttribute("href"));
+    expect(hrefs).toContain("/entities/index?type=organization");
+    expect(hrefs).toContain("/entities/index?type=place");
+  });
+
+  it("clicking a satellite re-centers the plex on it", async () => {
+    vi.mocked(usePlexHalo).mockReturnValue(
+      loaded(HALO) as ReturnType<typeof usePlexHalo>,
+    );
+    renderPage("/entities");
+    const mark = container.querySelector<HTMLButtonElement>(
+      "[data-testid='plex-halo-mark'][title='Acme Corp']",
+    );
+    expect(mark).toBeTruthy();
+    await act(async () => {
+      mark?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(currentSearch().get("center")).toBe("sat-acme");
+  });
+
+  it("does not request the halo in neighbour mode", () => {
+    vi.mocked(usePlexHalo).mockReturnValue(
+      loaded(undefined) as ReturnType<typeof usePlexHalo>,
+    );
+    renderPage("/entities?center=ent-bea");
+    expect(vi.mocked(usePlexHalo)).toHaveBeenCalledWith(false);
+    expect(container.querySelectorAll("[data-testid='plex-halo-mark']").length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Neighbour mode: entity type marks
+// ---------------------------------------------------------------------------
+
+describe("PlexPage — neighbour entity types", () => {
+  it("renders a non-person neighbour with its type mark, not initials", () => {
+    vi.mocked(useEntityNeighbours).mockImplementation(
+      (entityId) =>
+        (entityId
+          ? loaded({
+              neighbours: {
+                "works-at": [
+                  neighbour({
+                    entity_id: "sat-acme",
+                    canonical_name: "Acme Corp",
+                    entity_type: "organization",
+                  }),
+                ],
+              },
+              remainders: {},
+            } satisfies NeighboursResponse)
+          : loaded(undefined)) as ReturnType<typeof useEntityNeighbours>,
+    );
+    renderPage("/entities?center=ent-bea");
+    const node = container.querySelector("[data-testid='plex-node'][title='Acme Corp']");
+    expect(node).toBeTruthy();
+    // EntityMark renders non-person entities as `${type} entity` images.
+    expect(node?.querySelector("[aria-label='organization entity']")).toBeTruthy();
   });
 });
