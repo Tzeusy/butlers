@@ -45,12 +45,20 @@ export interface PaletteCommand {
 }
 
 interface CommandRegistryContextValue {
-  commands: PaletteCommand[];
   register: (scopeId: string, commands: PaletteCommand[]) => void;
   unregister: (scopeId: string) => void;
 }
 
+// Split into two contexts (PR #2870 review — gemini-code-assist) so that
+// callers of `useRegisterCommands` only ever subscribe to the *stable*
+// register/unregister pair, not the aggregated `commands` array. Bundling
+// both in one context value meant every registrar re-rendered whenever ANY
+// other scope's commands changed (a new aggregated array => a new context
+// value => every consumer of that context re-renders), even though
+// registrars only need the stable callbacks. The aggregated array is now its
+// own context, read only by the command menu via `useCommandMenuActions`.
 const CommandRegistryContext = createContext<CommandRegistryContextValue | null>(null);
+const CommandMenuActionsContext = createContext<PaletteCommand[]>([]);
 
 export function CommandRegistryProvider({ children }: { children: ReactNode }) {
   const [scopes, setScopes] = useState<Map<string, PaletteCommand[]>>(new Map());
@@ -74,13 +82,14 @@ export function CommandRegistryProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const commands = useMemo(() => Array.from(scopes.values()).flat(), [scopes]);
-  const value = useMemo(
-    () => ({ commands, register, unregister }),
-    [commands, register, unregister],
-  );
+  const registryValue = useMemo(() => ({ register, unregister }), [register, unregister]);
 
   return (
-    <CommandRegistryContext.Provider value={value}>{children}</CommandRegistryContext.Provider>
+    <CommandRegistryContext.Provider value={registryValue}>
+      <CommandMenuActionsContext.Provider value={commands}>
+        {children}
+      </CommandMenuActionsContext.Provider>
+    </CommandRegistryContext.Provider>
   );
 }
 
@@ -97,15 +106,10 @@ export function useRegisterCommands(commands: PaletteCommand[]): void {
   const scopeIdRef = useRef<string | null>(null);
   if (scopeIdRef.current === null) scopeIdRef.current = `scope-${++scopeCounter}`;
 
-  // Depend on `register`/`unregister` themselves (stable across the
-  // provider's lifetime — see the empty useCallback deps above), NOT on the
-  // whole `ctx` object. `ctx` is a new object every time ANY scope's commands
-  // change (its `commands` field is derived from all scopes combined), so
-  // depending on `ctx` here would re-run this effect whenever an unrelated
-  // component registered/unregistered — re-registering this scope with
-  // identical content, which recreates `ctx` again, which re-fires every
-  // registered scope's effect again: an infinite render loop across any two
-  // simultaneously-mounted callers of this hook.
+  // `ctx` (register/unregister) is stable across the provider's lifetime, so
+  // depending on it here never re-fires this effect when an unrelated scope's
+  // commands change — only the aggregated-array context (read exclusively by
+  // useCommandMenuActions) changes on that path.
   const register = ctx?.register;
   const unregister = ctx?.unregister;
 
@@ -119,6 +123,5 @@ export function useRegisterCommands(commands: PaletteCommand[]): void {
 
 /** Read the currently-registered Actions (used by the command menu itself). */
 export function useCommandMenuActions(): PaletteCommand[] {
-  const ctx = useContext(CommandRegistryContext);
-  return ctx?.commands ?? [];
+  return useContext(CommandMenuActionsContext);
 }
