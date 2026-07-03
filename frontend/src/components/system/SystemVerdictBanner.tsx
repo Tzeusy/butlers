@@ -39,7 +39,9 @@ function formatUptime(seconds: number): string {
 
 function formatBackupRecency(lastBackupAt: string | null): string {
   if (!lastBackupAt) return "never backed up";
-  const ageMs = Date.now() - new Date(lastBackupAt).getTime();
+  const backupTime = new Date(lastBackupAt).getTime();
+  if (Number.isNaN(backupTime)) return "backup time unknown";
+  const ageMs = Date.now() - backupTime;
   const hours = Math.floor(ageMs / (3600 * 1000));
   if (hours < 1) return "backed up <1h ago";
   if (hours < 48) return `backed up ${hours}h ago`;

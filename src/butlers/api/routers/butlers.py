@@ -528,22 +528,28 @@ async def _fetch_board_max_concurrent(pool: object) -> int | None:
 
 
 async def _fetch_board_cost_today(pool: object, pricing: PricingConfig) -> float | None:
-    """Return today's estimated cost for one butler, or None on any failure."""
+    """Return today's estimated cost for one butler, or None on any failure.
+
+    The whole body (not just the query) is inside the try/except: a
+    malformed/unexpected ``sessions_summary`` shape must degrade this one
+    butler's cost to None (surfaced via cost_source_error), never crash the
+    entire board endpoint for every other butler.
+    """
     try:
         data = await asyncio.wait_for(sessions_summary(pool, "today"), timeout=_STATUS_TIMEOUT_S)
+        total_cost = 0.0
+        for model_id, stats in data.get("by_model", {}).items():
+            total_cost += estimate_session_cost(
+                pricing,
+                model_id,
+                stats.get("input_tokens", 0),
+                stats.get("output_tokens", 0),
+                cached_input_tokens=stats.get("cached_input_tokens", 0),
+                context_tokens=stats.get("context_tokens"),
+            )
+        return total_cost
     except Exception:
         return None
-    total_cost = 0.0
-    for model_id, stats in data.get("by_model", {}).items():
-        total_cost += estimate_session_cost(
-            pricing,
-            model_id,
-            stats.get("input_tokens", 0),
-            stats.get("output_tokens", 0),
-            cached_input_tokens=stats.get("cached_input_tokens", 0),
-            context_tokens=stats.get("context_tokens"),
-        )
-    return total_cost
 
 
 def _derive_board_activity(
