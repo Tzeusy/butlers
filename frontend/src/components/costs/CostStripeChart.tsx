@@ -65,7 +65,7 @@ function CostStripeTooltip({ active, label, payload }: CostStripeTooltipProps) {
   if (!active || !payload || payload.length === 0 || !label) return null
 
   const entry = payload[0]
-  if (!entry || entry.value <= 0) return null
+  if (!entry || entry.value == null || entry.value === 0) return null
 
   return (
     <div className="rounded-md border bg-popover p-3 text-sm shadow-md">

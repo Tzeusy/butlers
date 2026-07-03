@@ -14,12 +14,15 @@
  * Format a USD amount for display.
  *
  * - Exactly zero renders as "$0.00".
- * - A nonzero amount below one cent renders as "<$0.01" (never "$0.00" —
- *   that would misrepresent real spend as no spend at all).
- * - Everything else renders to 2 decimal places.
+ * - A nonzero magnitude below one cent renders as "<$0.01" (never "$0.00" —
+ *   that would misrepresent real spend as no spend at all), with a leading
+ *   "-" preserved for negative amounts (e.g. refunds/credits).
+ * - Everything else renders to 2 decimal places, sign preserved.
  */
 export function formatCostUsd(amount: number): string {
   if (!Number.isFinite(amount) || amount === 0) return "$0.00";
-  if (amount < 0.01) return "<$0.01";
-  return `$${amount.toFixed(2)}`;
+  const sign = amount < 0 ? "-" : "";
+  const magnitude = Math.abs(amount);
+  if (magnitude < 0.01) return `${sign}<$0.01`;
+  return `${sign}$${magnitude.toFixed(2)}`;
 }
