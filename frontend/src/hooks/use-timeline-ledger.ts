@@ -112,6 +112,9 @@ export function useTimelineLedger(filters: TimelineLedgerFilters): UseTimelineLe
         setCommitted([...baseline, ...page.data]);
         setCommittedCursor(page.meta.has_more ? (page.meta.cursor ?? undefined) : undefined);
       })
+      .catch((err) => {
+        console.error("Failed to load older timeline events:", err);
+      })
       .finally(() => setIsLoadingMore(false));
     // filters is a fresh object each render; filtersKey is the stable dep.
     // eslint-disable-next-line react-hooks/exhaustive-deps

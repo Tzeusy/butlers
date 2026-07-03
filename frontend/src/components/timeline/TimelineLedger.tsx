@@ -19,7 +19,7 @@
  * Spec: docs/redesigns/2026-07-03-jarvis-audit.md §"7. One Timeline"
  */
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router";
 
 import { EmptyState as EmptyStateUI } from "@/components/ui/empty-state";
@@ -169,7 +169,7 @@ function EventRow({
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.target !== e.currentTarget) return;
-    if (e.key === "Enter") {
+    if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       onToggle();
     }
@@ -276,18 +276,15 @@ function HeartbeatGroupRow({ events }: { events: TimelineEvent[] }) {
 function HourGroupSection({
   group,
   drawerEventId,
-  events,
   onOpenDrawer,
   onCloseDrawer,
 }: {
   group: HourGroup;
   drawerEventId: string | null;
-  events: TimelineEvent[];
   onOpenDrawer: (id: string) => void;
   onCloseDrawer: () => void;
 }) {
   const hourStart = group.hourKey !== "unknown" ? `${group.hourKey}:00:00Z` : "";
-  const eventsById = useMemo(() => new Map(events.map((e) => [e.id, e])), [events]);
 
   return (
     <div data-testid="hour-group" data-hour-key={group.hourKey}>
@@ -310,9 +307,7 @@ function HourGroupSection({
               isOpen={isOpen}
               onToggle={() => (isOpen ? onCloseDrawer() : onOpenDrawer(event.id))}
             />
-            {isOpen && eventsById.get(event.id) && (
-              <TimelineEventDrawer event={eventsById.get(event.id)!} onClose={onCloseDrawer} />
-            )}
+            {isOpen && <TimelineEventDrawer event={event} onClose={onCloseDrawer} />}
           </div>
         );
       })}
@@ -402,7 +397,6 @@ export function TimelineLedger({
           key={group.hourKey}
           group={group}
           drawerEventId={drawerEventId}
-          events={events}
           onOpenDrawer={openDrawer}
           onCloseDrawer={closeDrawer}
         />

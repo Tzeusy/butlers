@@ -131,15 +131,19 @@ export default function TimelinePage() {
   }
 
   async function handleSaveView() {
-    if (!saveViewName.trim()) return;
+    if (!saveViewName.trim() || createSavedView.isPending) return;
     const filter_spec: TimelineSavedViewFilterSpec = {
       event_type: selectedTypes,
       butler: selectedButlers,
     };
-    const created = await createSavedView.mutateAsync({ name: saveViewName.trim(), filter_spec });
-    setActiveViewId(created.id);
-    setSaveViewName("");
-    setSaveDialogOpen(false);
+    try {
+      const created = await createSavedView.mutateAsync({ name: saveViewName.trim(), filter_spec });
+      setActiveViewId(created.id);
+      setSaveViewName("");
+      setSaveDialogOpen(false);
+    } catch (err) {
+      console.error("Failed to save view:", err);
+    }
   }
 
   // Toggle a single source facet — diverges from whatever view is active
