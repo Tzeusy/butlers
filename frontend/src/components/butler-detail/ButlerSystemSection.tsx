@@ -59,13 +59,18 @@ export default function ButlerSystemSection({ butlerName }: ButlerSystemSectionP
   const activeSection: SystemSection = isSystemSection(sectionParam) ? sectionParam : "config"
 
   function handleSectionChange(value: string) {
-    const next = new URLSearchParams(searchParams)
-    if (value === "config") {
-      next.delete("section")
-    } else {
-      next.set("section", value)
-    }
-    setSearchParams(next, { replace: true })
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (value === "config") {
+          next.delete("section")
+        } else {
+          next.set("section", value)
+        }
+        return next
+      },
+      { replace: true },
+    )
   }
 
   return (

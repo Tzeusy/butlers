@@ -56,22 +56,32 @@ export default function ButlerActivitySection({ butlerName }: ButlerActivitySect
   const until = searchParams.get("until") ?? undefined
 
   function handleSectionChange(value: string) {
-    const next = new URLSearchParams(searchParams)
-    if (value === "analytics") {
-      next.delete("section")
-      next.delete("since")
-      next.delete("until")
-    } else {
-      next.set("section", value)
-    }
-    setSearchParams(next, { replace: true })
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (value === "analytics") {
+          next.delete("section")
+          next.delete("since")
+          next.delete("until")
+        } else {
+          next.set("section", value)
+        }
+        return next
+      },
+      { replace: true },
+    )
   }
 
   function handleClearTimeFilter() {
-    const next = new URLSearchParams(searchParams)
-    next.delete("since")
-    next.delete("until")
-    setSearchParams(next, { replace: true })
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete("since")
+        next.delete("until")
+        return next
+      },
+      { replace: true },
+    )
   }
 
   return (
