@@ -19,6 +19,12 @@ export interface AttentionListItem {
   title: string;
   detail?: string | null;
   href?: string | null;
+  /**
+   * True when this row represents a failed upstream data source rather than
+   * a real operational signal. Rendered with role="alert" so a degraded
+   * source announces itself instead of blending into the ordinary list.
+   */
+  isSourceError?: boolean;
 }
 
 interface AttentionListProps {
@@ -67,7 +73,7 @@ export function AttentionList({ items }: AttentionListProps) {
         return (
           <div
             key={item.id}
-            role="listitem"
+            role={item.isSourceError ? "alert" : "listitem"}
             style={{
               display: "grid",
               gridTemplateColumns: "24px 1fr auto",

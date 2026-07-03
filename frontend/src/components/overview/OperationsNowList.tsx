@@ -128,9 +128,14 @@ function NowRow({ row, isFirst }: NowRowProps) {
     </div>
   );
 
+  // Source-degraded rows (kind === "error") are alerts, not ordinary list
+  // items -- they must announce themselves rather than blend into the
+  // normal operational signal list (bu-86c4c.2, JARVIS audit move 1b).
+  const rowRole = row.kind === "error" ? "alert" : "listitem";
+
   if (row.href) {
     return (
-      <div role="listitem">
+      <div role={rowRole}>
         <Link
           to={row.href}
           style={{
@@ -145,5 +150,5 @@ function NowRow({ row, isFirst }: NowRowProps) {
     );
   }
 
-  return <div role="listitem">{inner}</div>;
+  return <div role={rowRole}>{inner}</div>;
 }
