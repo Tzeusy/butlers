@@ -247,16 +247,18 @@ export default function HealthOverviewPage() {
   const sources = sourcesData ?? [];
 
   // --- Insight candidates (no refetchInterval — manual refresh via pill) ---
-  const { data: insights, isError: insightsError } = useInsights(INSIGHT_PARAMS);
+  const { data: insights, isError: insightsError, refetch: refetchInsights } =
+    useInsights(INSIGHT_PARAMS);
   const attentionItems: AttentionListItem[] = insightsError
     ? [
         {
           id: "health:insights:source-error",
           severity: "high",
           title: "Health signals unavailable",
-          detail: "Could not load the attention index -- retry.",
+          detail: "Could not load the attention index.",
           href: null,
           isSourceError: true,
+          onRetry: () => void refetchInsights(),
         },
       ]
     : toAttentionItems(insights ?? []);

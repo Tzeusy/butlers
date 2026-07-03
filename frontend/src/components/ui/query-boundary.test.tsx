@@ -83,6 +83,22 @@ describe("QueryBoundary -- state priority", () => {
     expect(html).toContain("Real content");
   });
 
+  it("extracts a message from a plain object error (e.g. a FastAPI detail payload)", () => {
+    const html = renderToStaticMarkup(
+      <QueryBoundary
+        isLoading={false}
+        isError
+        error={{ detail: "Service unavailable." }}
+        isEmpty
+        loadingFallback={<div>Loading</div>}
+        emptyFallback={<div>Empty</div>}
+      >
+        <div>Content</div>
+      </QueryBoundary>,
+    );
+    expect(html).toContain("Service unavailable.");
+  });
+
   it("uses sourceLabel and errorMessage to compose the default error copy", () => {
     const html = renderToStaticMarkup(
       <QueryBoundary

@@ -63,8 +63,15 @@ interface NowRowProps {
 }
 
 function NowRow({ row, isFirst }: NowRowProps) {
+  // Source-degraded rows (kind === "error") get role="alert" on the inner
+  // content so they announce themselves to assistive tech -- the outer row
+  // always keeps role="listitem" so the ARIA list contract (every direct
+  // child of role="list" is a listitem) stays intact (bu-86c4c.2, JARVIS
+  // audit move 1b).
+  const isSourceError = row.kind === "error";
   const inner = (
     <div
+      role={isSourceError ? "alert" : undefined}
       style={{
         display: "grid",
         gridTemplateColumns: "auto 1fr auto",
@@ -128,14 +135,9 @@ function NowRow({ row, isFirst }: NowRowProps) {
     </div>
   );
 
-  // Source-degraded rows (kind === "error") are alerts, not ordinary list
-  // items -- they must announce themselves rather than blend into the
-  // normal operational signal list (bu-86c4c.2, JARVIS audit move 1b).
-  const rowRole = row.kind === "error" ? "alert" : "listitem";
-
   if (row.href) {
     return (
-      <div role={rowRole}>
+      <div role="listitem">
         <Link
           to={row.href}
           style={{
@@ -150,5 +152,5 @@ function NowRow({ row, isFirst }: NowRowProps) {
     );
   }
 
-  return <div role={rowRole}>{inner}</div>;
+  return <div role="listitem">{inner}</div>;
 }

@@ -41,6 +41,16 @@ export interface QueryBoundaryProps {
 function extractErrorMessage(error: unknown): string | null {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === "string" && error) return error;
+  // FastAPI-style error payloads sometimes surface as a plain object rather
+  // than an Error instance. Check the common message-bearing shapes before
+  // giving up on a detail message.
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    for (const key of ["message", "detail", "error"]) {
+      const value = record[key];
+      if (typeof value === "string" && value) return value;
+    }
+  }
   return null;
 }
 
