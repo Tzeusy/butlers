@@ -1533,7 +1533,7 @@ export function TimelineTab({
   // The hour strip itself keeps showing the full picker range regardless —
   // only the ledger query and footer rollup narrow.
   const scopedMinute = searchParams.get("scopedMinute");
-  const scopedBucketMinutes = Number(searchParams.get("scopedBucketMinutes") ?? "1") || 1;
+  const scopedBucketMinutes = Math.max(1, Number(searchParams.get("scopedBucketMinutes") ?? "1") || 1);
 
   const handleScopeToMinute = useCallback(
     (minuteIso: string, bucketMinutesArg: number) => {
