@@ -795,6 +795,33 @@ async def test_daily_staffer_uses_db_when_session_tool_absent(app):
     mgr.get_client.assert_not_called()
 
 
+async def test_daily_unknown_butler_returns_empty_200(app):
+    """?butler=nonexistent on /daily returns an empty list 200."""
+    configs = [ButlerConnectionInfo(name="sw", port=41100)]
+    sw_daily = {
+        "days": [
+            {
+                "date": "2026-05-03",
+                "sessions": 1,
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "by_model": {},
+            }
+        ]
+    }
+    mgr = _mock_mgr({"sw": _make_tool_result(sw_daily)})
+    _wire(app, mgr, configs, _flat_pricing())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/spend/daily",
+            params={"from": "2026-05-03", "to": "2026-05-03", "butler": "nonexistent"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["data"] == []
+
+
 # ---------------------------------------------------------------------------
 # GET /api/spend/top-sessions — ?butler= filter [bu-lryu6]
 # ---------------------------------------------------------------------------
@@ -841,6 +868,62 @@ async def test_top_sessions_butler_filter_returns_only_that_butler(app):
     data = resp.json()["data"]
     assert all(s["butler"] == "sw" for s in data)
     assert not any(s["butler"] == "gen" for s in data)
+
+
+async def test_top_sessions_no_butler_filter_aggregates_all(app):
+    """Omitting ?butler on /top-sessions returns sessions from all butlers."""
+    configs = [
+        ButlerConnectionInfo(name="sw", port=41100),
+        ButlerConnectionInfo(name="gen", port=41101),
+    ]
+    session_data = {
+        "sessions": [
+            {
+                "session_id": "session-x",
+                "model": "claude-sonnet-4-20250514",
+                "input_tokens": 1000,
+                "output_tokens": 500,
+                "cached_input_tokens": 0,
+                "started_at": "2026-05-01T08:00:00Z",
+            }
+        ]
+    }
+    mgr = _mock_mgr({"sw": _make_tool_result(session_data), "gen": _make_tool_result(session_data)})
+    _wire(app, mgr, configs, _flat_pricing())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/spend/top-sessions")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    butlers_returned = {s["butler"] for s in data}
+    assert "sw" in butlers_returned
+    assert "gen" in butlers_returned
+
+
+async def test_top_sessions_unknown_butler_returns_empty_200(app):
+    """?butler=nonexistent on /top-sessions returns an empty list 200."""
+    configs = [ButlerConnectionInfo(name="sw", port=41100)]
+    sw_sessions = {
+        "sessions": [
+            {
+                "session_id": "sw-s1",
+                "model": "claude-sonnet-4-20250514",
+                "input_tokens": 1000,
+                "output_tokens": 500,
+                "cached_input_tokens": 0,
+                "started_at": "2026-05-01T08:00:00Z",
+            }
+        ]
+    }
+    mgr = _mock_mgr({"sw": _make_tool_result(sw_sessions)})
+    _wire(app, mgr, configs, _flat_pricing())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/spend/top-sessions", params={"butler": "nonexistent"})
+    assert resp.status_code == 200
+    assert resp.json()["data"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -890,6 +973,64 @@ async def test_by_schedule_butler_filter_returns_only_that_butler(app):
     data = resp.json()["data"]
     assert all(s["butler"] == "sw" for s in data)
     assert not any(s["schedule_name"] == "gen-hourly" for s in data)
+
+
+async def test_by_schedule_no_butler_filter_aggregates_all(app):
+    """Omitting ?butler on /by-schedule returns schedules from all butlers."""
+    configs = [
+        ButlerConnectionInfo(name="sw", port=41100),
+        ButlerConnectionInfo(name="gen", port=41101),
+    ]
+    sched = {
+        "schedules": [
+            {
+                "name": "daily",
+                "cron": "0 8 * * *",
+                "model": "claude-sonnet-4-20250514",
+                "total_runs": 5,
+                "total_input_tokens": 5000,
+                "total_output_tokens": 2500,
+                "runs_per_day": 1.0,
+            }
+        ]
+    }
+    mgr = _mock_mgr({"sw": _make_tool_result(sched), "gen": _make_tool_result(sched)})
+    _wire(app, mgr, configs, _flat_pricing())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/spend/by-schedule")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    butlers_returned = {s["butler"] for s in data}
+    assert "sw" in butlers_returned
+    assert "gen" in butlers_returned
+
+
+async def test_by_schedule_unknown_butler_returns_empty_200(app):
+    """?butler=nonexistent on /by-schedule returns an empty list 200."""
+    configs = [ButlerConnectionInfo(name="sw", port=41100)]
+    sw_sched = {
+        "schedules": [
+            {
+                "name": "daily",
+                "cron": "0 8 * * *",
+                "model": "claude-sonnet-4-20250514",
+                "total_runs": 5,
+                "total_input_tokens": 5000,
+                "total_output_tokens": 2500,
+                "runs_per_day": 1.0,
+            }
+        ]
+    }
+    mgr = _mock_mgr({"sw": _make_tool_result(sw_sched)})
+    _wire(app, mgr, configs, _flat_pricing())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/spend/by-schedule", params={"butler": "nonexistent"})
+    assert resp.status_code == 200
+    assert resp.json()["data"] == []
 
 
 # ---------------------------------------------------------------------------

@@ -166,11 +166,6 @@ const COMPLEXITY_TIERS: ComplexityTier[] = [
 // Formatting helpers
 // ---------------------------------------------------------------------------
 
-function fmtUsd(n: number): string {
-  if (n < 0.01) return "$0.00"
-  return `$${n.toFixed(2)}`
-}
-
 function fmtUsdPrecise(n: number): string {
   return `$${n.toFixed(4)}`
 }
@@ -230,20 +225,20 @@ function KpiStrip({ forecast }: { forecast: ForecastData }) {
       <KpiCell
         testId="kpi-mtd"
         label="MTD Spend"
-        value={fmtUsd(forecast.mtd_usd)}
+        value={formatCostUsd(forecast.mtd_usd)}
         sub={`${forecast.days_elapsed} day${forecast.days_elapsed === 1 ? "" : "s"} elapsed`}
       />
       <KpiCell
         testId="kpi-projected-eom"
         label="Projected EOM"
-        value={fmtUsd(forecast.projected_eom_usd)}
+        value={formatCostUsd(forecast.projected_eom_usd)}
         tone={overCeiling ? "red" : "fg"}
         sub={`${daysRemaining} day${daysRemaining === 1 ? "" : "s"} remaining`}
       />
       <KpiCell
         testId="kpi-ceiling"
         label="Monthly Ceiling"
-        value={forecast.ceiling_usd != null ? fmtUsd(forecast.ceiling_usd) : "—"}
+        value={forecast.ceiling_usd != null ? formatCostUsd(forecast.ceiling_usd) : "—"}
         sub={pct != null ? `${pct}% used` : undefined}
       />
       <KpiCell
@@ -337,7 +332,7 @@ function ForecastChart({ days, ceiling_usd }: ForecastChartProps) {
               fill="currentColor"
               fillOpacity={0.5}
             >
-              {fmtUsd(v)}
+              {formatCostUsd(v)}
             </text>
           </g>
         )
@@ -428,7 +423,7 @@ function CeilingEdit({ currentCeiling }: { currentCeiling: number | null }) {
   if (!editing) {
     return (
       <Button variant="outline" size="sm" className="text-xs h-7" onClick={() => setEditing(true)}>
-        {currentCeiling != null ? `Edit ceiling (${fmtUsd(currentCeiling)})` : "Set ceiling"}
+        {currentCeiling != null ? `Edit ceiling (${formatCostUsd(currentCeiling)})` : "Set ceiling"}
       </Button>
     )
   }
@@ -1331,10 +1326,10 @@ export default function SpendPage() {
             <p className="text-sm">
               Projected end-of-month spend{" "}
               <span className="tabular-nums font-medium">
-                {fmtUsd(liveForecast.projected_eom_usd)}
+                {formatCostUsd(liveForecast.projected_eom_usd)}
               </span>{" "}
               exceeds the monthly ceiling of{" "}
-              <span className="tabular-nums font-medium">{fmtUsd(liveForecast.ceiling_usd!)}</span>.
+              <span className="tabular-nums font-medium">{formatCostUsd(liveForecast.ceiling_usd!)}</span>.
             </p>
           </div>
         )}
