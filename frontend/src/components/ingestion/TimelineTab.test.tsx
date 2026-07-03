@@ -2274,4 +2274,33 @@ describe("TimelineTab — ?trace= drill-down spine filter", () => {
     renderWithTrace("trace-abc-123");
     expect(container.querySelector("[data-event-id='aabbccdd-0000-0000-0000-0000000000f1']")).not.toBeNull();
   });
+
+  it("reverts to the default view's narrower statuses after the trace is cleared", () => {
+    // Regression: the built-in-view-baseline effect used to mark
+    // appliedBuiltInViewRef as "applied" during the trace-scoped mount even
+    // though it skipped the actual setEnabledStatuses call (guarded by
+    // `if (urlTrace) return`) — so when the trace was later cleared, the
+    // effect's ref-equality check short-circuited and enabledStatuses stayed
+    // stuck on ALL_STATUSES forever, silently un-hiding "filtered"/"skipped"
+    // rows even after the owner left the trace-scoped view.
+    renderWithTrace("trace-abc-123");
+
+    // While trace-scoped: no `statuses` param (ALL_STATUSES == no filter).
+    let calls = vi.mocked(useIngestionEvents).mock.calls;
+    expect(calls[calls.length - 1][0]).not.toHaveProperty("statuses");
+
+    act(() => {
+      (
+        container.querySelector("[data-testid='trace-scope-clear']") as HTMLButtonElement
+      ).click();
+    });
+
+    // After clearing: reverts to the default view's statuses, which excludes
+    // "filtered" and "skipped".
+    calls = vi.mocked(useIngestionEvents).mock.calls;
+    const lastFilters = calls[calls.length - 1][0] as { statuses?: string };
+    expect(lastFilters.statuses).toBeDefined();
+    expect(lastFilters.statuses).not.toContain("filtered");
+    expect(lastFilters.statuses).not.toContain("skipped");
+  });
 });

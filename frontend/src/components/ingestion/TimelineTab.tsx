@@ -1421,12 +1421,15 @@ export function TimelineTab({
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!isBuiltInViewId(activeViewId)) return;
+    // Skip while trace-scoped — see the ALL_STATUSES initializer above; this
+    // effect would otherwise immediately stomp it back to the "all" preset's
+    // narrower status set. Checked BEFORE updating appliedBuiltInViewRef: if
+    // the ref were marked "applied" during the trace-scoped mount, clearing
+    // the trace later would short-circuit on the ref check below and never
+    // revert enabledStatuses back to the view's defaults.
+    if (urlTrace) return;
     if (appliedBuiltInViewRef.current === activeViewId) return;
     appliedBuiltInViewRef.current = activeViewId;
-    // Skip on the initial trace-scoped mount — see the ALL_STATUSES
-    // initializer above; this effect would otherwise immediately stomp it
-    // back to the "all" preset's narrower status set.
-    if (urlTrace) return;
     setEnabledStatuses(viewStatuses);
   }, [activeViewId, viewStatuses, urlTrace]);
   /* eslint-enable react-hooks/set-state-in-effect */
