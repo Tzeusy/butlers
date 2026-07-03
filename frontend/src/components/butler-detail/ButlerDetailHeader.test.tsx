@@ -355,6 +355,7 @@ describe("Scenario F: header facts replace port/uptime trivia", () => {
         }),
       ],
       aggregates: makeAggregates({ total: 1 }),
+      needsYou: [],
     })
 
     renderHeader("relationship")
