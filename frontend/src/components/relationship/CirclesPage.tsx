@@ -302,11 +302,18 @@ function CircleDetail({ groupId }: { groupId: string }) {
 function CircleRow({ group, expanded, onToggle }: { group: Group; expanded: boolean; onToggle: () => void }) {
   return (
     <div className="border-b border-border last:border-b-0">
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-3 py-3 text-left hover:bg-accent/40 transition-colors"
+        className="flex w-full items-center gap-3 py-3 text-left hover:bg-accent/40 transition-colors cursor-pointer"
       >
         {expanded ? (
           <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -320,7 +327,7 @@ function CircleRow({ group, expanded, onToggle }: { group: Group; expanded: bool
         <span className="shrink-0">
           <GroupLabelCell groupId={group.id} labels={group.labels} />
         </span>
-      </button>
+      </div>
       {expanded && (
         <div className="pl-7 pb-2">
           <CircleDetail groupId={group.id} />

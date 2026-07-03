@@ -371,13 +371,21 @@ export default function QaOverviewPage() {
   }
 
   function handleToggleButler(name: string) {
-    const next = new Set(selectedButlers);
-    if (next.has(name)) {
-      next.delete(name);
-    } else {
-      next.add(name);
-    }
-    setFilterParam("butler", next.size > 0 ? Array.from(next).sort().join(",") : null);
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      const currentButlers = new Set((next.get("butler") ?? "").split(",").filter(Boolean));
+      if (currentButlers.has(name)) {
+        currentButlers.delete(name);
+      } else {
+        currentButlers.add(name);
+      }
+      if (currentButlers.size > 0) {
+        next.set("butler", Array.from(currentButlers).sort().join(","));
+      } else {
+        next.delete("butler");
+      }
+      return next;
+    });
   }
 
   function handleForcePatrol() {
