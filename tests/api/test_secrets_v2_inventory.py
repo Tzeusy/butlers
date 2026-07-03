@@ -53,7 +53,6 @@ from butlers.api.routers.secrets_v2 import (
     _get_db_manager,
     _infer_provider_from_type,
     _needs_hand_count,
-    _normalize_provider_token,
     _row_to_test_result,
 )
 
@@ -1994,9 +1993,20 @@ def test_infer_provider_from_type_exact_and_prefix_and_alias():
     assert _infer_provider_from_type("mystery_thing") == "mystery"
 
 
-def test_normalize_provider_token_bridges_underscore_spelling():
-    assert _normalize_provider_token("home_assistant") == _normalize_provider_token("homeassistant")
-    assert _normalize_provider_token("google") == "google"
+def test_infer_provider_from_type_bridges_catalogue_alias_spellings():
+    """_infer_provider_from_type resolves catalogue-raw provider spellings too.
+
+    _fetch_user_secrets keys the scopes-required union by running the
+    catalogue's raw `provider` column back through this same function (not a
+    blind underscore-strip), so both the catalogue side and the credential
+    side must resolve to the identical PROVIDER_CATALOG slug. 'home_assistant'
+    collapses onto 'homeassistant' by simple underscore removal, but
+    'telegram' only reaches 'telegram_bot' via the alias table — a plain
+    underscore/case normalisation would leave them mismatched.
+    """
+    assert _infer_provider_from_type("home_assistant") == "homeassistant"
+    assert _infer_provider_from_type("telegram") == "telegram_bot"
+    assert _infer_provider_from_type("google") == "google"
 
 
 async def test_fetch_scopes_required_by_provider_unions_across_features():
@@ -2188,6 +2198,55 @@ async def test_fetch_user_secrets_includes_real_issued_scopes_and_audit():
     assert secret.scopes_granted == ["https://www.googleapis.com/auth/calendar"]
     assert len(secret.audit) == 1
     assert secret.audit[0]["action"] == "verified"
+
+
+async def test_fetch_user_secrets_scopes_required_matches_across_catalogue_alias_spelling():
+    """scopes_required matching bridges catalogue vs display-slug spelling differences.
+
+    provider_feature_catalogue seeds this row under provider='telegram', but
+    entity_info.type='telegram_user_session' resolves (via
+    _infer_provider_from_type) to the display slug 'telegram_bot'. Both sides
+    must resolve through the same alias table so the union isn't silently
+    dropped for providers whose catalogue spelling differs by more than an
+    underscore (regression: a naive underscore-strip normalisation matches
+    'home_assistant'/'homeassistant' but NOT 'telegram'/'telegram_bot').
+    """
+    eid = str(uuid4())
+    telegram_row = _make_row(
+        id=uuid4(),
+        entity_id=eid,
+        type="telegram_user_session",
+        value="tok",
+        label=None,
+        created_at=_NOW,
+        last_verified=None,
+        last_test_ok=True,
+        last_test_code=None,
+        last_test_message=None,
+    )
+    catalogue_row = _make_row(provider="telegram", required_scopes=["telegram:bot-token"])
+
+    pool = AsyncMock()
+
+    async def _fetch(sql, *args):
+        if "secret_probe_log" in sql:
+            return []
+        if "audit_log" in sql:
+            return []
+        if "provider_feature_catalogue" in sql:
+            return [catalogue_row]
+        if "granted_scopes" in sql:
+            return []
+        if "entity_info" in sql:
+            return [telegram_row]
+        return []
+
+    pool.fetch = AsyncMock(side_effect=_fetch)
+
+    results = await _fetch_user_secrets(pool, identity=UUID(eid))
+
+    assert len(results) == 1
+    assert results[0].scopes_required == ["telegram:bot-token"]
 
 
 async def test_fetch_user_secrets_non_google_provider_has_honestly_empty_scopes_granted():

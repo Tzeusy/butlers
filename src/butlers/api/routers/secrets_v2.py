@@ -760,28 +760,17 @@ def _infer_provider_from_type(entity_type: str) -> str:
     return entity_type[:idx] if idx > 0 else entity_type
 
 
-def _normalize_provider_token(value: str) -> str:
-    """Collapse underscores/case so 'home_assistant' and 'homeassistant' compare equal.
-
-    public.provider_feature_catalogue seeded its `provider` column from raw
-    entity_info.type prefixes (e.g. 'home_assistant'), while the display
-    provider catalog (secrets_provider_catalog.PROVIDER_CATALOG) uses the
-    no-underscore form ('homeassistant'). Both name the same provider; this
-    normalisation lets scopes-required matching bridge the two vocabularies
-    without fabricating data.
-    """
-    return value.replace("_", "").lower()
-
-
 async def _fetch_scopes_required_by_provider(pool: Any) -> dict[str, list[str]]:
     """Union public.provider_feature_catalogue.required_scopes per provider.
 
     Returns a dict keyed by the catalogue's own `provider` column value (raw,
     not normalised) mapping to the sorted union of every required_scopes
     array seeded for that provider across all butlers/features. Callers
-    should match via `_normalize_provider_token` since the catalogue and the
-    display provider catalog use slightly different spellings for the same
-    provider (see `_normalize_provider_token`).
+    should resolve both sides through `_infer_provider_from_type` before
+    matching — the catalogue and the display provider catalog use different
+    spellings/aliases for the same provider (e.g. catalogue 'telegram' vs
+    display 'telegram_bot'), and `_infer_provider_from_type` is the single
+    source of truth for that alias resolution (see its docstring).
 
     Returns an empty dict when the catalogue table does not exist yet.
     """
@@ -1092,8 +1081,15 @@ async def _fetch_user_secrets(
     audit_map = await _fetch_audit_bulk(pool, audit_targets)
 
     scopes_required_map = await _fetch_scopes_required_by_provider(pool)
-    scopes_required_by_normalized = {
-        _normalize_provider_token(provider): scopes
+    # Key by the same PROVIDER_CATALOG-resolved slug that `providers_by_row`
+    # uses (via _infer_provider_from_type), not a blind underscore-strip.
+    # The catalogue's raw provider spelling doesn't always collapse onto the
+    # display slug by stripping underscores alone — e.g. catalogue 'telegram'
+    # vs display 'telegram_bot' need the alias table, exactly like
+    # 'home_assistant' vs 'homeassistant' needs the underscore collapse.
+    # _infer_provider_from_type already encodes both cases correctly.
+    scopes_required_by_provider = {
+        _infer_provider_from_type(provider): scopes
         for provider, scopes in scopes_required_map.items()
     }
 
@@ -1130,9 +1126,7 @@ async def _fetch_user_secrets(
                 last_test_code=row["last_test_code"],
                 last_test_message=row["last_test_message"],
                 test=probe_map.get(row["type"]),
-                scopes_required=scopes_required_by_normalized.get(
-                    _normalize_provider_token(provider), []
-                ),
+                scopes_required=scopes_required_by_provider.get(provider, []),
                 scopes_granted=google_scopes_map.get(entity_id, []) if provider == "google" else [],
                 audit=audit_map.get(normalize_credential_key("user", provider), []),
             )
