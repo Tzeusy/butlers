@@ -752,9 +752,11 @@ Reference pages: `ButlersPage` (header + body grid + footer),
   layout (`ButlersPage`'s CSS grid of `<StatusBoardCell>`; `ButlerDetailPage`'s
   `<Tabs>`).
 - `loading` renders a dedicated `StatusBoardSkeleton` (header bar + 2x4 cell
-  grid + footer band, `page.tsx:241-256`) inside the `header`/`footer` slots,
+  grid + footer band, `page.tsx:241-256`) in the body region (`children` of
+  `ArchetypeWrapper`), framed by -- not inside -- the `header`/`footer` slots;
   not the standard per-archetype skeleton used by A-E.
-- `error` (with no cached rows) renders a simple error `<Card>` inside the
+- `error` (with no cached rows) renders a simple error `<Card>` in the body
+  region (`children` of `ArchetypeWrapper`), framed by -- not inside -- the
   `header`/`footer` slots (`page.tsx:419-437`), matching the editorial
   archetype's error treatment rather than the `HeadingBlock` + error card
   used by A-E.
