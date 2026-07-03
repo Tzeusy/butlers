@@ -43,14 +43,14 @@ export default defineConfig([
       'no-restricted-syntax': [
         'error',
         {
-          selector: 'Literal[value=/hsl\\(\\s*var\\(/]',
+          selector: 'Literal[value=/hsla?\\(\\s*var\\(/i]',
           message:
             'hsl(var(--x)) is invalid CSS for this theme (tokens are oklch(...) literals, ' +
             'not HSL components). Use var(--x) directly, or chartColor()/chartColorAlpha() ' +
             'from src/lib/chart-colors.ts for chart series colors.',
         },
         {
-          selector: 'TemplateElement[value.raw=/hsl\\(\\s*var\\(/]',
+          selector: 'TemplateElement[value.raw=/hsla?\\(\\s*var\\(/i]',
           message:
             'hsl(var(--x)) is invalid CSS for this theme (tokens are oklch(...) literals, ' +
             'not HSL components). Use var(--x) directly, or chartColor()/chartColorAlpha() ' +
