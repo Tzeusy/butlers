@@ -445,9 +445,17 @@ def _estimate_token_expiry(
     (production-verified), Google does not enforce a fixed refresh-token
     lifetime, so no estimate can be derived and this returns ``None``. Also
     returns ``None`` when ``last_token_refresh_at`` itself is unknown.
+
+    ``last_token_refresh_at`` is normalized to UTC when naive — the primary
+    DB path always yields timezone-aware datetimes, but defensive parsing
+    elsewhere in this module (``datetime.fromisoformat`` on a raw string)
+    can hand back a naive value, and a naive result here would serialize
+    without a UTC offset and be misread as local time downstream.
     """
     if not test_mode or last_token_refresh_at is None:
         return None
+    if last_token_refresh_at.tzinfo is None:
+        last_token_refresh_at = last_token_refresh_at.replace(tzinfo=UTC)
     return last_token_refresh_at + _TEST_MODE_TOKEN_LIFETIME
 
 

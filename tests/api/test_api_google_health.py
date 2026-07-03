@@ -198,6 +198,14 @@ def test_estimate_token_expiry_none_when_refresh_at_unknown():
     assert _estimate_token_expiry(test_mode=True, last_token_refresh_at=None) is None
 
 
+def test_estimate_token_expiry_normalizes_naive_datetime_to_utc():
+    aware = datetime(2026, 1, 1, tzinfo=UTC)
+    naive = datetime(2026, 1, 1)  # noqa: DTZ001 - intentionally naive input
+    assert _estimate_token_expiry(
+        test_mode=True, last_token_refresh_at=naive
+    ) == _estimate_token_expiry(test_mode=True, last_token_refresh_at=aware)
+
+
 @pytest.mark.parametrize(
     "account,granted,heartbeat,exp_state,exp_connected",
     [
