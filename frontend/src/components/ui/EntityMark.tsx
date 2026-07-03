@@ -2,7 +2,7 @@
 // EntityMark — canonical entity type-mark primitive (bu-ec2wb)
 //
 // Renders a compact squircle mark for an entity. Person entities show up to
-// two initials; all other types show a type glyph (O, L, X, @, E, G).
+// two initials; all other types show a type glyph (O, L, X, @, E, G, T).
 // Two tones: fill (active/selected) and neutral (default, hairline border).
 //
 // Brief §2: "Build new EntityMark with tone (fill/neutral), size, person
@@ -46,7 +46,9 @@ const TYPE_GLYPHS: Record<string, string> = {
   email: "@", // alias of "account" — legacy entity type
   event: "E",
   group: "G",
-  other: "?",
+  // "T" for thing — the catch-all bucket is real data, not an unknown; the
+  // "?" glyph stays reserved for genuinely unrecognized types.
+  other: "T",
 } as const
 
 /**

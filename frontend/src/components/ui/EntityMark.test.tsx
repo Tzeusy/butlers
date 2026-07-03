@@ -111,7 +111,7 @@ describe("EntityMark: non-person type glyphs", () => {
     { type: "account", glyph: "@" },
     { type: "event", glyph: "E" },
     { type: "group", glyph: "G" },
-    { type: "other", glyph: "?" },
+    { type: "other", glyph: "T" },
   ] as const
 
   for (const { type, glyph } of GLYPH_CASES) {

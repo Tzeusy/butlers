@@ -32,9 +32,12 @@
  *   ?trail=<id,id,...>   hop trail (breadcrumb), oldest first
  *
  * Keyboard (scoped to the canvas container, never window-global):
- *   Esc     pop one hop off the trail
- *   Enter   open the centered entity's record
- *   0       reset zoom and pan
+ *   typing  find-as-you-type: matching marks stay lit with labels while the
+ *           rest recede; Backspace edits, Esc clears, Enter jumps to the
+ *           best match
+ *   Esc     clear the find query, else pop one hop off the trail
+ *   Enter   jump to the best find match, else open the centered record
+ *   0       reset zoom and pan (only while no find query is active)
  */
 
 import {
@@ -186,6 +189,8 @@ interface HoverInfo {
   tier: number | null;
   pinned: boolean;
   staleDays: number | null;
+  /** Linked-people count for halo satellites; undefined for person marks. */
+  personCount?: number;
   /** Node position in canvas coordinates (pre-camera). */
   x: number;
   y: number;
@@ -366,6 +371,7 @@ function OwnerPlexCanvas({
   attentionIds,
   hoveredId,
   connectedIds,
+  searchIds,
   toCanvas,
   onCenter,
   onHover,
@@ -386,6 +392,9 @@ function OwnerPlexCanvas({
   hoveredId: string | null;
   /** Neighbour ids of the hovered node; null until the fetch resolves. */
   connectedIds: Set<string> | null;
+  /** Find-as-you-type matches; null while no query is active. Search dimming
+      overrides the hover spotlight so the two never fight. */
+  searchIds: Set<string> | null;
   toCanvas: (clientX: number, clientY: number) => { x: number; y: number };
   onCenter: (id: string) => void;
   onHover: (info: HoverInfo) => void;
@@ -672,11 +681,18 @@ function OwnerPlexCanvas({
             size={18}
             entityType={mark.entityType}
             testId="plex-halo-mark"
-            showLabel={zoom >= ZOOM_LABEL_THRESHOLD || lit || isHovered}
+            showLabel={
+              zoom >= ZOOM_LABEL_THRESHOLD ||
+              lit ||
+              isHovered ||
+              (searchIds?.has(mark.entityId) ?? false)
+            }
             dimmed={
-              hoveredSat
-                ? !isHovered
-                : (spotlight || litSatIds !== null) && !lit
+              searchIds
+                ? !searchIds.has(mark.entityId)
+                : hoveredSat
+                  ? !isHovered
+                  : (spotlight || litSatIds !== null) && !lit
             }
             staleness={mark.staleness}
             onCenter={onCenter}
@@ -688,6 +704,7 @@ function OwnerPlexCanvas({
                 tier: null,
                 pinned: false,
                 staleDays: mark.staleDays,
+                personCount: mark.personIds.length,
                 x: p.x,
                 y: p.y,
               })
@@ -709,15 +726,21 @@ function OwnerPlexCanvas({
             x={p.x}
             y={p.y}
             size={node.size}
-            showLabel={node.tier <= 50 || zoom >= ZOOM_LABEL_THRESHOLD}
+            showLabel={
+              node.tier <= 50 ||
+              zoom >= ZOOM_LABEL_THRESHOLD ||
+              (searchIds?.has(node.entityId) ?? false)
+            }
             attention={attentionIds.has(node.entityId)}
             pinned={node.pinned}
             dimmed={
-              hoveredSat
-                ? !(hoveredSatPersonIds?.has(node.entityId) ?? false)
-                : spotlight &&
-                  !isHovered &&
-                  !(connectedIds?.has(node.entityId) ?? false)
+              searchIds
+                ? !searchIds.has(node.entityId)
+                : hoveredSat
+                  ? !(hoveredSatPersonIds?.has(node.entityId) ?? false)
+                  : spotlight &&
+                    !isHovered &&
+                    !(connectedIds?.has(node.entityId) ?? false)
             }
             staleness={node.staleness}
             dragging={drag?.id === node.entityId}
@@ -780,6 +803,7 @@ function NeighbourPlexCanvas({
   centerType,
   width,
   height,
+  searchIds,
   onCenter,
   onHover,
   onHoverEnd,
@@ -791,6 +815,8 @@ function NeighbourPlexCanvas({
   centerType: string;
   width: number;
   height: number;
+  /** Find-as-you-type matches; null while no query is active. */
+  searchIds: Set<string> | null;
   onCenter: (id: string) => void;
   onHover: (info: HoverInfo) => void;
   onHoverEnd: () => void;
@@ -878,6 +904,7 @@ function NeighbourPlexCanvas({
             size={node.size}
             entityType={node.entityType}
             showLabel
+            dimmed={searchIds ? !searchIds.has(node.entityId) : false}
             staleness={node.staleness}
             conf={node.conf}
             onCenter={onCenter}
@@ -1020,6 +1047,16 @@ function PlexHoverCard({
         ) : (
           " · no contact recorded"
         )}
+        {info.personCount !== undefined &&
+          (info.personCount === 0 ? (
+            " · no people linked"
+          ) : (
+            <>
+              {" · "}
+              <span className="tabular-nums">{info.personCount}</span>
+              {info.personCount === 1 ? " person" : " people"}
+            </>
+          ))}
       </p>
       <ActivitySparkline entityId={info.entityId} />
       <div className="flex items-center gap-3 pt-0.5">
@@ -1648,6 +1685,59 @@ export default function PlexPage() {
     setHover(null);
   }, [clearTimers]);
 
+  // -------------------------------------------------------------------------
+  // Find-as-you-type: printable keys on the focused canvas build a query;
+  // matching marks stay lit (labels shown) while everything else recedes.
+  // -------------------------------------------------------------------------
+
+  const [query, setQuery] = useState("");
+
+  // A hop is a context switch; a stale query would silently dim the new view.
+  // Render-phase reset (the react.dev "adjust state when a prop changes"
+  // pattern) so the old query never paints once.
+  const [prevCenter, setPrevCenter] = useState(centerParam);
+  if (prevCenter !== centerParam) {
+    setPrevCenter(centerParam);
+    if (query) setQuery("");
+  }
+
+  /** Every mark on the current canvas, by id — the find search space. */
+  const searchSpace = useMemo(() => {
+    const space: { id: string; name: string }[] = [];
+    if (isOwnerMode) {
+      for (const n of ownerLayout.nodes) space.push({ id: n.entityId, name: n.name });
+      for (const arc of haloLayout?.arcs ?? [])
+        for (const m of arc.marks) space.push({ id: m.entityId, name: m.name });
+    } else {
+      for (const n of neighbourLayout?.nodes ?? [])
+        space.push({ id: n.entityId, name: n.name });
+    }
+    return space;
+  }, [isOwnerMode, ownerLayout, haloLayout, neighbourLayout]);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const searchIds = useMemo(() => {
+    if (!normalizedQuery) return null;
+    return new Set(
+      searchSpace
+        .filter((e) => e.name.toLowerCase().includes(normalizedQuery))
+        .map((e) => e.id),
+    );
+  }, [normalizedQuery, searchSpace]);
+
+  /** Best match: earliest occurrence wins, then the shortest name. */
+  const bestMatchId = useMemo(() => {
+    if (!normalizedQuery) return null;
+    const ranked = searchSpace
+      .filter((e) => e.name.toLowerCase().includes(normalizedQuery))
+      .sort((a, b) => {
+        const ai = a.name.toLowerCase().indexOf(normalizedQuery);
+        const bi = b.name.toLowerCase().indexOf(normalizedQuery);
+        return ai - bi || a.name.length - b.name.length || a.name.localeCompare(b.name);
+      });
+    return ranked[0]?.id ?? null;
+  }, [normalizedQuery, searchSpace]);
+
   // Connection spotlight: fetch the hovered person's neighbours (owner mode).
   const { data: hoverNeighbours } = useEntityNeighbours(
     isOwnerMode && hover ? hover.entityId : undefined,
@@ -1764,18 +1854,43 @@ export default function PlexPage() {
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === "Escape") {
         e.preventDefault();
-        handlePop();
-      } else if (e.key === "Enter" && !isOwnerMode && centerParam) {
+        // An active find owns Escape; the trail gets it back once cleared.
+        if (query) setQuery("");
+        else handlePop();
+      } else if (e.key === "Backspace" && query) {
         e.preventDefault();
-        void navigate(`/entities/${centerParam}`);
-      } else if (e.key === "0" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        setQuery((q) => q.slice(0, -1));
+      } else if (e.key === "Enter") {
+        if (query && bestMatchId) {
+          e.preventDefault();
+          handleCenter(bestMatchId);
+        } else if (!isOwnerMode && centerParam) {
+          e.preventDefault();
+          void navigate(`/entities/${centerParam}`);
+        }
+      } else if (e.key === "0" && !query) {
         e.preventDefault();
         resetView();
+      } else if (e.key.length === 1) {
+        // Printable characters build the find query (space included — names
+        // have spaces); preventDefault stops space from scrolling/clicking.
+        e.preventDefault();
+        setQuery((q) => q + e.key);
       }
     },
-    [handlePop, isOwnerMode, centerParam, navigate, resetView],
+    [
+      query,
+      bestMatchId,
+      handleCenter,
+      handlePop,
+      isOwnerMode,
+      centerParam,
+      navigate,
+      resetView,
+    ],
   );
 
   const isLoading = isOwnerMode ? rankingLoading : neighboursLoading;
@@ -1889,6 +2004,7 @@ export default function PlexPage() {
                     attentionIds={attentionEntityIds}
                     hoveredId={hover?.entityId ?? null}
                     connectedIds={connectedIds}
+                    searchIds={searchIds}
                     toCanvas={toCanvas}
                     onCenter={handleCenter}
                     onHover={scheduleHover}
@@ -1906,6 +2022,7 @@ export default function PlexPage() {
                       centerType={centerType}
                       width={stageSize.width}
                       height={stageSize.height}
+                      searchIds={searchIds}
                       onCenter={handleCenter}
                       onHover={scheduleHover}
                       onHoverEnd={scheduleHide}
@@ -1938,6 +2055,25 @@ export default function PlexPage() {
             />
           </div>
 
+          {/* Find bar: appears only while a query is active. */}
+          {query && (
+            <p
+              data-testid="plex-find"
+              className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2 bg-background/95 p-1 font-mono text-[11px] tracking-[0.04em]"
+              aria-live="polite"
+            >
+              <span className="uppercase text-[var(--dim)]">find </span>
+              <span className="text-foreground">{query}</span>
+              <span className="text-[var(--dim)]">
+                {" · "}
+                <span className="tabular-nums">{searchIds?.size ?? 0}</span>
+                {(searchIds?.size ?? 0) === 1 ? " match" : " matches"}
+                {(searchIds?.size ?? 0) > 0 && " · enter jumps"}
+                {" · esc clears"}
+              </span>
+            </p>
+          )}
+
           {/* Reset-view affordance: only while the camera is moved. */}
           {!isIdentity(view) && (
             <button
@@ -1952,7 +2088,8 @@ export default function PlexPage() {
 
           {/* Key legend: bottom-right, one quiet line. */}
           <p className="pointer-events-none absolute bottom-0 right-0 z-10 p-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[var(--dim)]">
-            esc back · enter open · 0 reset · drag a person to pin a tier
+            type to find · esc back · enter open · 0 reset · drag a person to
+            pin a tier
           </p>
 
           {/* Owner mode: attention + capacity flanks. */}

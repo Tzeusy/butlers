@@ -3730,10 +3730,11 @@ async def get_plex_halo(
         return err
 
     totals_rows = await pool.fetch(
-        """
+        f"""
         SELECT entity_type, COUNT(*)::int AS n
-        FROM public.entities
+        FROM public.entities e
         WHERE entity_type <> 'person'
+          AND {_active_entity_condition("e")}
         GROUP BY entity_type
         """
     )
@@ -3744,7 +3745,7 @@ async def get_plex_halo(
     # object of their triples (person works-at org), so a subject-only max
     # would miss most of their activity.
     sat_rows = await pool.fetch(
-        """
+        f"""
         SELECT id, canonical_name, entity_type, last_seen
         FROM (
             SELECT id, canonical_name, entity_type, last_seen,
@@ -3765,6 +3766,7 @@ async def get_plex_halo(
                        ) AS last_seen
                 FROM public.entities e
                 WHERE e.entity_type <> 'person'
+                  AND {_active_entity_condition("e")}
             ) scored
         ) ranked
         WHERE rn <= $1
@@ -5273,11 +5275,13 @@ async def get_dunbar_ranking(
     contact_ids = [r["contact_id"] for r in ranked if r["entity_id"] is not None]
     entity_name_rows, owner_row, interaction_30d_rows = await asyncio.gather(
         pool.fetch(
-            """
+            f"""
             SELECT e.id, e.canonical_name, e.aliases,
                    e.metadata->'profile'->>'avatar_url' AS avatar_url
             FROM public.entities e
             WHERE e.id = ANY($1::uuid[])
+              AND e.entity_type = 'person'
+              AND {_active_entity_condition("e")}
             """,
             entity_ids,
         ),
@@ -5320,6 +5324,13 @@ async def get_dunbar_ranking(
     entries: list[DunbarEntry] = []
     for r in ranked:
         if r["entity_id"] is None:
+            continue
+        # The scoring engine ranks over memory-module dunbar facts, which
+        # outlive merges and reclassifications. Only living person entities
+        # belong on the Dunbar rings — anything absent from the (person +
+        # active) name fetch is a ghost and is dropped, not rendered as
+        # "Unknown".
+        if r["entity_id"] not in entity_names:
             continue
         cid = r["contact_id"]
         tier = r["dunbar_tier"]

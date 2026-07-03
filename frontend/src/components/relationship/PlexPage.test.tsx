@@ -613,3 +613,75 @@ describe("PlexPage — neighbour entity types", () => {
     expect(node?.querySelector("[aria-label='organization entity']")).toBeTruthy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Find-as-you-type
+// ---------------------------------------------------------------------------
+
+describe("PlexPage — find-as-you-type", () => {
+  function pressKey(key: string) {
+    const canvas = container.querySelector("[data-testid='plex-canvas']");
+    expect(canvas).toBeTruthy();
+    act(() => {
+      canvas?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+  }
+
+  function typeQuery(text: string) {
+    for (const ch of text) pressKey(ch);
+  }
+
+  function findBar(): HTMLElement | null {
+    return container.querySelector("[data-testid='plex-find']");
+  }
+
+  it("typing builds a query, shows the find bar, and dims non-matches", () => {
+    renderPage("/entities");
+    expect(findBar()).toBeNull();
+    typeQuery("an");
+    expect(findBar()?.textContent).toContain("an");
+    expect(findBar()?.textContent).toContain("1 match");
+    // Ana matches and keeps full opacity; Bea recedes.
+    expect(nodeByName("Ana")?.style.opacity).not.toBe("0.2");
+    expect(nodeByName("Bea")?.style.opacity).toBe("0.2");
+  });
+
+  it("matches halo satellites too", () => {
+    vi.mocked(usePlexHalo).mockReturnValue(
+      loaded(HALO) as ReturnType<typeof usePlexHalo>,
+    );
+    renderPage("/entities");
+    typeQuery("acme");
+    expect(findBar()?.textContent).toContain("1 match");
+    const acme = container.querySelector<HTMLButtonElement>(
+      "[data-testid='plex-halo-mark'][title='Acme Corp']",
+    );
+    expect(acme?.style.opacity).not.toBe("0.2");
+    expect(nodeByName("Ana")?.style.opacity).toBe("0.2");
+  });
+
+  it("Backspace edits and Escape clears the query before popping the trail", () => {
+    renderPage("/entities");
+    typeQuery("ana");
+    pressKey("Backspace");
+    expect(findBar()?.textContent).toContain("an");
+    pressKey("Escape");
+    expect(findBar()).toBeNull();
+    // Escape consumed by the query — still in owner mode, nothing popped.
+    expect(currentSearch().get("center")).toBeNull();
+  });
+
+  it("Enter jumps to the best match and the query resets on the hop", () => {
+    renderPage("/entities");
+    typeQuery("bea");
+    pressKey("Enter");
+    expect(currentSearch().get("center")).toBe("ent-bea");
+    expect(findBar()).toBeNull();
+  });
+
+  it("'0' with an active query types into the query instead of resetting the view", () => {
+    renderPage("/entities");
+    typeQuery("a0");
+    expect(findBar()?.textContent).toContain("a0");
+  });
+});
