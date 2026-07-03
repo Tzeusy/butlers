@@ -2101,7 +2101,7 @@ def _worst_credential_status(
     encountered with that severity, so results are deterministic for a given
     account ordering.
     """
-    return max(statuses, key=lambda s: _STATE_SEVERITY[s.state])
+    return max(statuses, key=lambda s: _STATE_SEVERITY.get(s.state, len(_STATE_SEVERITY)))
 
 
 async def _check_google_credential_status(db_manager: Any = None) -> OAuthCredentialStatus:
@@ -2164,9 +2164,24 @@ async def _check_credential_status_for_account(
             detail="Shared credential store unavailable.",
         )
 
-    app_creds = await load_app_credentials(
-        cred_store, pool=_get_shared_pool(db_manager), account=account_id
-    )
+    try:
+        app_creds = await load_app_credentials(
+            cred_store, pool=_get_shared_pool(db_manager), account=account_id
+        )
+    except Exception as exc:  # noqa: BLE001
+        # A single account's credential lookup failing (e.g. a transient DB error)
+        # must not crash the whole /status fan-out (see oauth_status, which gathers
+        # this coroutine across every account). Report it as this account's status.
+        logger.warning(
+            "OAuth status probe: failed to load credentials for account=%r: %s",
+            account_id,
+            exc,
+        )
+        return OAuthCredentialStatus(
+            state=OAuthCredentialState.unknown_error,
+            remediation="Unable to read stored credentials. Check server logs and retry.",
+            detail=f"Credential lookup failed: {exc}",
+        )
     client_id = app_creds.client_id if app_creds is not None else ""
     client_secret = app_creds.client_secret if app_creds is not None else ""
     refresh_token = app_creds.refresh_token if app_creds is not None else None

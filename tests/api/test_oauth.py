@@ -670,6 +670,67 @@ async def test_oauth_status_single_account_matches_that_accounts_state(app):
     assert body["google"]["state"] == OAuthCredentialState.missing_scope
 
 
+async def test_oauth_status_one_account_probe_failure_does_not_500_the_response(app):
+    """A single account's credential lookup raising must not crash the whole
+    gather-based fan-out (oauth_status gathers one coroutine per account)."""
+    _make_app(app)
+
+    healthy_id = uuid.uuid4()
+    broken_id = uuid.uuid4()
+    now = datetime.now(UTC)
+
+    accounts = [
+        GoogleAccount(
+            id=healthy_id,
+            entity_id=uuid.uuid4(),
+            email="healthy@example.com",
+            display_name="Healthy",
+            is_primary=True,
+            granted_scopes=[],
+            status="active",
+            connected_at=now,
+            last_token_refresh_at=now,
+        ),
+        GoogleAccount(
+            id=broken_id,
+            entity_id=uuid.uuid4(),
+            email="broken@example.com",
+            display_name="Broken",
+            is_primary=False,
+            granted_scopes=[],
+            status="active",
+            connected_at=now,
+            last_token_refresh_at=now,
+        ),
+    ]
+
+    async def _fake_load_app_credentials(store, *, pool=None, account=None):
+        if account == broken_id:
+            raise RuntimeError("transient DB error")
+        return GoogleAppCredentials(
+            client_id="cid", client_secret="secret", refresh_token="healthy-token"
+        )
+
+    async def _fake_probe(*, client_id, client_secret, refresh_token):
+        return OAuthCredentialStatus(state=OAuthCredentialState.connected)
+
+    with (
+        patch.object(oauth_module, "list_google_accounts", AsyncMock(return_value=accounts)),
+        patch.object(oauth_module, "load_app_credentials", _fake_load_app_credentials),
+        patch.object(oauth_module, "_probe_google_token", _fake_probe),
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/oauth/status")
+
+    # The failing account's status is downgraded to unknown_error, not a 500.
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["google"]["state"] == OAuthCredentialState.unknown_error
+    assert len(body["accounts"]) == 2
+
+
 # ---------------------------------------------------------------------------
 # Health test-mode helpers (parametrized)
 # ---------------------------------------------------------------------------
