@@ -498,7 +498,7 @@ not literals.
 
 | Concern | Where it shows up | Note |
 |---|---|---|
-| H1 size varies | `text-2xl` (CostsPage) vs `text-3xl` (ButlersPage:124) | `<Page>` enforces `text-3xl` for overview/list/detail/workspace/editor archetypes; the editorial archetype (`ChroniclesPage`, `DashboardPage`) uses a 44px Display headline instead; remaining `text-2xl` pages pre-date migration |
+| H1 size varies | `text-2xl` (e.g. pre-migration pages) vs `text-3xl` (ButlersPage:124) | `<Page>` enforces `text-3xl` for overview/list/detail/workspace/editor archetypes; the editorial archetype (`ChroniclesPage`, `DashboardPage`) uses a 44px Display headline instead; remaining `text-2xl` pages pre-date migration |
 | `StatsCard` reimplemented | CostsPage:20, QaOverviewPage:149 | `DashboardPage` migrated to `StatItem` (no-Card strip). Remaining pages are candidates for the same pattern |
 | Date formatters disagree | `toLocaleString` (EpisodeDetailPage:140), `toISOString().slice(0,10)` (EntitiesPage:196), `format(...)` from date-fns (GroupsPage:155) | `<Time>` primitive shipped; `DashboardPage` already uses `<Time mode="relative">` |
 | Hex literals | EntitiesPage:102-113, EntityDetailPage:313/316, SymptomsPage, GroupsPage:121 | Need named tokens |
@@ -511,8 +511,8 @@ not literals.
 Stability of the design language overall: **Maturing**. Every part
 works, several parts disagree, none of the disagreements are
 load-bearing yet. The right time to consolidate is *before* the next
-major surface (e.g. another butler with workspace-grade UI like
-CostsPage, or a second editorial-grade page like Chronicles) arrives.
+major surface (e.g. another workspace-grade UI like CostsPage, or a
+second editorial-grade page like Chronicles) arrives.
 
 ---
 
@@ -539,7 +539,7 @@ This document covers the dashboard's surface. It is the map an
 
 Every page today re-invents its heading region, loading skeleton, empty state,
 and error region by hand. The result is documented in the "Inconsistencies
-Worth Tracking" table above: H1 sizes vary (`text-2xl` in `CostsPage` vs
+Worth Tracking" table above: H1 sizes vary (on pre-migration pages vs
 `text-3xl` in `EntitiesPage:657`, `SymptomsPage:108`),
 action placement varies, and the shared `EmptyState` component is used
 inconsistently. A single `<Page>` wrapper makes these decisions once.
