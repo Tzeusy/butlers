@@ -605,7 +605,7 @@ interface PageProps {
 
 #### A. Overview (`archetype="overview"`)
 
-Reference page: `SystemPage`, `SettingsSpendPage`. (`DashboardPage`
+Reference pages: `SystemPage`, `SettingsSpendPage`. (`DashboardPage`
 migrated to the editorial archetype — see "Editorial archetype layout"
 below; `QaOverviewPage` predates the `<Page>` primitive and does not
 use this archetype.)
