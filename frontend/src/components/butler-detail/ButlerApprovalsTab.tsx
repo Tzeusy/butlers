@@ -3,7 +3,8 @@
  *
  * Full-width scroll panel listing the butler's pending approval actions.
  * Each row contains a severity dot, title (tool_name), sub-line with age,
- * and an action link navigating to the global /approvals page.
+ * and an action link deep-linking straight into that action's dossier at
+ * /approvals/:id (bu-86c4c.12 — every approval has a URL).
  *
  * Severity is derived from how soon the action expires:
  *   high   -- expires within 1 hour (or already expired)
@@ -107,9 +108,9 @@ function ApprovalRow({ action }: ApprovalRowProps) {
         </div>
       </div>
 
-      {/* Action link -- navigate to the global approvals page */}
+      {/* Action link -- deep-link straight into this action's dossier */}
       <Link
-        to="/approvals"
+        to={`/approvals/${action.id}`}
         className="shrink-0 text-xs text-primary hover:underline"
         data-testid="approval-action-link"
         aria-label={`Review approval for ${action.tool_name}`}
