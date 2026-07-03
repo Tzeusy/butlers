@@ -15,7 +15,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import ApprovalsPage from "@/pages/ApprovalsPage";
@@ -1692,5 +1692,97 @@ describe("ApprovalsPage — keyboard triage (bu-86c4c.14)", () => {
     });
 
     expect(approveApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it("navigating away and back to /approvals mid-undo-window does not double-fire the scheduled decision", async () => {
+    vi.mocked(getApprovalsFlat).mockReturnValue(
+      makeApiResponse([makeSummary("a1")]) as AnyMock,
+    );
+    vi.mocked(denyApproval).mockReturnValue(
+      makeApiResponse({
+        id: "a1",
+        butler: "general",
+        tool_name: "send_email",
+        tool_args: {},
+        status: "rejected",
+        requested_at: "2026-05-17T10:00:00Z",
+      }) as AnyMock,
+    );
+
+    // A harness with real <Link>-driven navigation (not a raw MemoryRouter
+    // re-render, which would just re-seed initialEntries rather than
+    // simulating an in-app route change) so ApprovalsPage genuinely unmounts
+    // when leaving /approvals and remounts fresh on return -- the exact
+    // "triage then navigate away" scenario this guards against.
+    function Nav() {
+      const navigate = useNavigate();
+      return (
+        <div>
+          <button data-testid="go-dashboard" onClick={() => navigate("/dashboard")}>
+            dashboard
+          </button>
+          <button data-testid="go-approvals-a1" onClick={() => navigate("/approvals/a1")}>
+            approvals
+          </button>
+        </div>
+      );
+    }
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/approvals/a1"]}>
+          <QueryClientProvider client={qc}>
+            <Nav />
+            <Routes>
+              <Route path="/approvals" element={<ApprovalsPage />} />
+              <Route path="/approvals/:id" element={<ApprovalsPage />} />
+              <Route path="/dashboard" element={<div>dashboard-marker</div>} />
+            </Routes>
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+    });
+    await flushUntilFake(
+      () =>
+        container.querySelectorAll('[data-testid="rail-item"]').length === 1 &&
+        vi.mocked(getApprovalDetail).mock.calls.length > 0,
+    );
+
+    // Schedule a deny via keyboard -- not fired yet.
+    await pressKey("d");
+    expect(denyApproval).not.toHaveBeenCalled();
+
+    // Navigate entirely away from /approvals (unmounts ApprovalsPage) while
+    // 5s undo window is still ticking.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="go-dashboard"]')?.click();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(container.textContent).toContain("dashboard-marker");
+
+    // Navigate back to /approvals/a1 -- ApprovalsPage remounts as a fresh
+    // component instance. The remounted instance must see the decision as
+    // already scheduled (module-scoped store), not schedule a second one.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="go-approvals-a1"]')?.click();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await flushFake();
+
+    // The remounted rail correctly shows the item as still pending/dimmed.
+    expect(
+      container.querySelector('[data-testid="rail-item"][data-pending-verb="deny"]'),
+    ).not.toBeNull();
+
+    // Pressing 'd' again on the same item in the fresh instance must be a
+    // no-op (already scheduled) rather than scheduling a second timer.
+    await pressKey("d");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(denyApproval).toHaveBeenCalledTimes(1);
+    expect(denyApproval).toHaveBeenCalledWith("a1", undefined);
   });
 });

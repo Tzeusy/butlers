@@ -30,7 +30,7 @@
  * bu-86c4c.12 — One Trust Console: Autonomy panel, /approvals/:id, ranking
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -76,6 +76,55 @@ const UNDO_WINDOW_MS = 5_000;
 // Keyboard defer has no UI to pick an hour count -- match the dossier's own
 // default (see Dossier's deferHours state below).
 const KEYBOARD_DEFER_HOURS = 24;
+
+interface ScheduledDecision {
+  verb: DecisionVerb;
+  timeoutId: number;
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled-decision store -- MODULE SCOPE, not component state.
+//
+// A decision scheduled via a/d/x must survive ApprovalsPage unmounting mid
+// undo-window: navigating away from /approvals and back within 5s is a
+// normal part of fast triage, not an edge case. If this lived in a `useState`
+// on the page component, a remount would start from an empty map -- the
+// original `window.setTimeout` from the unmounted instance keeps ticking
+// unseen, and the fresh instance would happily schedule a SECOND, independent
+// decision for the same id. Both timers eventually fire and the mutation
+// double-submits (confirmed: denyApproval called twice for one id). Keeping
+// the map here, outside any component instance, makes "is this id already
+// scheduled" and "cancel this id's timer" globally consistent regardless of
+// how many times the page mounts while the window is open.
+// ---------------------------------------------------------------------------
+let scheduledDecisionsSnapshot: ReadonlyMap<string, ScheduledDecision> = new Map();
+const scheduledDecisionsListeners = new Set<() => void>();
+
+function setScheduledDecisionsSnapshot(next: Map<string, ScheduledDecision>) {
+  scheduledDecisionsSnapshot = next;
+  for (const listener of scheduledDecisionsListeners) listener();
+}
+
+function subscribeScheduledDecisions(onStoreChange: () => void) {
+  scheduledDecisionsListeners.add(onStoreChange);
+  return () => {
+    scheduledDecisionsListeners.delete(onStoreChange);
+  };
+}
+
+function getScheduledDecisionsSnapshot() {
+  return scheduledDecisionsSnapshot;
+}
+
+/** Cancel and clear an id's scheduled decision, if one exists. */
+function cancelScheduledDecision(id: string) {
+  const entry = scheduledDecisionsSnapshot.get(id);
+  if (!entry) return;
+  window.clearTimeout(entry.timeoutId);
+  const next = new Map(scheduledDecisionsSnapshot);
+  next.delete(id);
+  setScheduledDecisionsSnapshot(next);
+}
 
 // ---------------------------------------------------------------------------
 // Query keys
@@ -1185,9 +1234,14 @@ export default function ApprovalsPage() {
   // pending state -- in the rail/dossier until the window elapses or the
   // owner hits undo. Dossier mouse clicks below bypass this map entirely and
   // fire instantly (bu-approvals-fast-deny's one-click design).
-  const [scheduledDecisions, setScheduledDecisions] = useState<
-    Map<string, { verb: DecisionVerb; timeoutId: number }>
-  >(new Map());
+  //
+  // Backed by the module-scoped store above (not useState) so a remount
+  // mid-window picks up the already-scheduled state instead of double
+  // scheduling -- see the store's doc comment.
+  const scheduledDecisions = useSyncExternalStore(
+    subscribeScheduledDecisions,
+    getScheduledDecisionsSnapshot,
+  );
 
   // The implicit default selection (no :id in the URL) must skip scheduled
   // items -- otherwise triaging the top-ranked item via keyboard would keep
@@ -1242,30 +1296,22 @@ export default function ApprovalsPage() {
     return summary ? summary.tool_name.replace(/_/g, " ") : "approval";
   }
 
-  function cancelDecision(id: string) {
-    setScheduledDecisions((prev) => {
-      const entry = prev.get(id);
-      if (!entry) return prev;
-      window.clearTimeout(entry.timeoutId);
-      const next = new Map(prev);
-      next.delete(id);
-      return next;
-    });
-  }
+  // Thin wrapper kept local so JSX callbacks read naturally as "cancel the
+  // decision for this page's selection" -- the actual bookkeeping lives in
+  // the module-scoped store (see cancelScheduledDecision above).
+  const cancelDecision = cancelScheduledDecision;
 
   function scheduleDecision(id: string, verb: DecisionVerb, run: () => void) {
     if (scheduledDecisions.has(id)) return; // already scheduled -- ignore repeat verbs
 
     const timeoutId = window.setTimeout(() => {
-      setScheduledDecisions((prev) => {
-        const next = new Map(prev);
-        next.delete(id);
-        return next;
-      });
+      const next = new Map(scheduledDecisionsSnapshot);
+      next.delete(id);
+      setScheduledDecisionsSnapshot(next);
       run();
     }, UNDO_WINDOW_MS);
 
-    setScheduledDecisions((prev) => new Map(prev).set(id, { verb, timeoutId }));
+    setScheduledDecisionsSnapshot(new Map(scheduledDecisions).set(id, { verb, timeoutId }));
     advanceSelectionPast(id, new Set(scheduledDecisions.keys()));
 
     toast(`${pendingVerbLabel(verb)} ${summaryLabel(id)}`, {
