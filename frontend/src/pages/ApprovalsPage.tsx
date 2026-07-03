@@ -153,7 +153,9 @@ function blastRadius(toolName: string): number {
 
 function expiryUrgency(expiresAt: string | null | undefined): number {
   if (!expiresAt) return 0;
-  const msLeft = new Date(expiresAt).getTime() - Date.now();
+  const expiresDate = new Date(expiresAt);
+  if (Number.isNaN(expiresDate.getTime())) return 0;
+  const msLeft = expiresDate.getTime() - Date.now();
   if (msLeft <= 0) return 4; // already past expiry — most urgent
   if (msLeft <= HOUR_MS) return 3;
   if (msLeft <= 6 * HOUR_MS) return 2;
@@ -172,7 +174,9 @@ function expiryCountdown(
   expiresAt: string | null | undefined,
 ): { text: string; warn: boolean } | null {
   if (!expiresAt) return null;
-  const msLeft = new Date(expiresAt).getTime() - Date.now();
+  const expiresDate = new Date(expiresAt);
+  if (Number.isNaN(expiresDate.getTime())) return null;
+  const msLeft = expiresDate.getTime() - Date.now();
   const warn = msLeft <= HOUR_MS;
   if (msLeft <= 0) return { text: "expired", warn: true };
   const mins = Math.round(msLeft / 60_000);
