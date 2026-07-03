@@ -383,6 +383,79 @@ async def test_daily_costs_sorts_by_date(app):
     assert [d["date"] for d in data] == ["2026-02-08", "2026-02-10"]
 
 
+async def test_daily_costs_preserves_per_butler_identity(app):
+    """/api/spend/daily must NOT smear multi-butler days into a single total —
+    each day's by_butler dict should attribute cost to the butler that spent it
+    (bu-86c4c.11, subsumes bu-0as2o; extends _get_butler_daily_stats fan-out
+    instead of discarding butler identity at the merge step)."""
+    configs = [
+        ButlerConnectionInfo(name="sw", port=41100),
+        ButlerConnectionInfo(name="gen", port=41101),
+    ]
+    sw_daily = {
+        "days": [
+            {
+                "date": "2026-02-08",
+                "sessions": 1,
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "by_model": {
+                    "claude-sonnet-4-20250514": {"input_tokens": 100, "output_tokens": 50}
+                },
+            },
+        ]
+    }
+    gen_daily = {
+        "days": [
+            {
+                "date": "2026-02-08",
+                "sessions": 2,
+                "input_tokens": 200,
+                "output_tokens": 100,
+                "by_model": {
+                    "claude-haiku-35-20241022": {"input_tokens": 200, "output_tokens": 100}
+                },
+            },
+            {
+                "date": "2026-02-09",
+                "sessions": 1,
+                "input_tokens": 50,
+                "output_tokens": 25,
+                "by_model": {"claude-haiku-35-20241022": {"input_tokens": 50, "output_tokens": 25}},
+            },
+        ]
+    }
+    mgr = _mock_mgr(
+        {
+            "sw": _make_tool_result(sw_daily),
+            "gen": _make_tool_result(gen_daily),
+        }
+    )
+    _wire(app, mgr, configs, _flat_pricing())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/spend/daily", params={"from": "2026-02-08", "to": "2026-02-09"}
+        )
+    data = resp.json()["data"]
+    by_date = {d["date"]: d for d in data}
+
+    # 2026-02-08: both butlers spent — by_butler must carry each contribution
+    # separately, not a single smeared total.
+    day1 = by_date["2026-02-08"]
+    assert set(day1["by_butler"].keys()) == {"sw", "gen"}
+    assert day1["by_butler"]["sw"] > 0
+    assert day1["by_butler"]["gen"] > 0
+    assert day1["cost_usd"] == pytest.approx(
+        day1["by_butler"]["sw"] + day1["by_butler"]["gen"], abs=1e-6
+    )
+
+    # 2026-02-09: only "gen" spent — "sw" must not appear with a fabricated 0.
+    day2 = by_date["2026-02-09"]
+    assert set(day2["by_butler"].keys()) == {"gen"}
+
+
 # ---------------------------------------------------------------------------
 # GET /api/spend — date-range params (from/to)
 # ---------------------------------------------------------------------------
@@ -716,6 +789,7 @@ async def test_daily_staffer_uses_db_when_session_tool_absent(app):
             "sessions": 2,
             "input_tokens": 10000,
             "output_tokens": 5000,
+            "by_butler": {"switchboard": pytest.approx(0.105, abs=1e-4)},
         }
     ]
     mgr.get_client.assert_not_called()
