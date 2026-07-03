@@ -279,4 +279,47 @@ describe("useOptimisticListMutation", () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["notifications"] });
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["butler-notifications"] });
   });
+
+  it("snapshots every prefix before mutating any of them, even when prefixes overlap", async () => {
+    // A single cached query ["things", "urgent"] matches BOTH declared
+    // prefixes below (["things"] is a strict prefix of it). A naive
+    // snapshot-then-update-per-prefix loop would process ["things"] first —
+    // mutating the shared entry — then snapshot ["things", "urgent"] against
+    // the ALREADY-mutated data, silently corrupting rollback. Model the cache
+    // as real (mutable, shared) state so the ordering bug would actually show.
+    const cache = new Map<string, unknown>([
+      [JSON.stringify(["things", "urgent"]), { data: [{ id: "1", label: "one" }] }],
+    ]);
+    const isPrefixOf = (prefix: unknown[], key: unknown[]) =>
+      JSON.stringify(key.slice(0, prefix.length)) === JSON.stringify(prefix);
+
+    mockGetQueriesData.mockImplementation(({ queryKey: prefix }: { queryKey: unknown[] }) =>
+      [...cache.entries()]
+        .filter(([key]) => isPrefixOf(prefix, JSON.parse(key)))
+        .map(([key, value]) => [JSON.parse(key), value]),
+    );
+    mockSetQueriesData.mockImplementation(
+      ({ queryKey: prefix }: { queryKey: unknown[] }, updater: (old: unknown) => unknown) => {
+        for (const key of cache.keys()) {
+          if (isPrefixOf(prefix, JSON.parse(key))) cache.set(key, updater(cache.get(key)));
+        }
+      },
+    );
+
+    useOptimisticListMutation<unknown, string, Item>({
+      mutationFn: (id: string) => Promise.resolve(id),
+      listKeyPrefix: [["things"], ["things", "urgent"]],
+      updateItems: (items, id) => items.filter((item) => item.id !== id),
+    });
+
+    const context = await lastOptions<unknown, string, { snapshot: [unknown, unknown][] }>().onMutate(
+      "1",
+    );
+
+    // Every snapshotted entry — including the one captured while processing
+    // the second, narrower prefix — must reflect the PRE-mutation data.
+    for (const [, value] of context.snapshot) {
+      expect((value as { data: Item[] }).data).toHaveLength(1);
+    }
+  });
 });

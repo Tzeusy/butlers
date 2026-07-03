@@ -133,20 +133,19 @@ function isListEnvelope<TItem>(value: unknown): value is ListEnvelope<TItem> {
 export type ListSnapshot = [QueryKeyLike, unknown][];
 
 /**
- * Snapshot every cached query whose key starts with `keyPrefix` (matching
+ * Rewrite every cached query whose key starts with `keyPrefix` (matching
  * across every param variant — e.g. every distinct filter/cursor combination
- * of a list), then rewrite each one's `data` array via `updateItems`. Mirrors
- * ApprovalsPage's `dropFromPending`/`rollback` pair, generalized to any list
- * envelope shape and any per-item transform (filter OR patch).
- *
- * Returns the pre-update snapshot for {@link rollbackLists}.
+ * of a list) via `updateItems`. Mirrors ApprovalsPage's `dropFromPending`
+ * pair, generalized to any list envelope shape and any per-item transform
+ * (filter OR patch). Does not snapshot — callers that need rollback should
+ * snapshot via `getQueriesData({ queryKey: keyPrefix })` first (see
+ * {@link snapshotAndUpdateLists} for the single-prefix case).
  */
-export function snapshotAndUpdateLists<TItem>(
+function applyListUpdate<TItem>(
   queryClient: QueryClient,
   keyPrefix: QueryKeyLike,
   updateItems: (items: TItem[]) => TItem[],
-): ListSnapshot {
-  const snapshot = queryClient.getQueriesData({ queryKey: keyPrefix });
+): void {
   queryClient.setQueriesData({ queryKey: keyPrefix }, (old: unknown) => {
     // Most list endpoints cache an envelope (`{ data: T[], meta }`), but a
     // few (e.g. getPendingContacts) cache the bare array directly — support
@@ -155,6 +154,20 @@ export function snapshotAndUpdateLists<TItem>(
     if (!isListEnvelope<TItem>(old)) return old;
     return { ...old, data: updateItems(old.data) };
   });
+}
+
+/**
+ * Snapshot every cached query whose key starts with `keyPrefix`, then rewrite
+ * each one's `data` array via `updateItems`. Returns the pre-update snapshot
+ * for {@link rollbackLists}.
+ */
+export function snapshotAndUpdateLists<TItem>(
+  queryClient: QueryClient,
+  keyPrefix: QueryKeyLike,
+  updateItems: (items: TItem[]) => TItem[],
+): ListSnapshot {
+  const snapshot = queryClient.getQueriesData({ queryKey: keyPrefix });
+  applyListUpdate(queryClient, keyPrefix, updateItems);
   return snapshot;
 }
 
@@ -207,10 +220,20 @@ export function useOptimisticListMutation<TData, TVariables, TItem>(
   return useOptimisticMutation<TData, TVariables, ListSnapshot>({
     ...rest,
     cancelQueryKeys: prefixes,
-    applyOptimisticUpdate: (variables, queryClient) =>
-      prefixes.flatMap((prefix) =>
-        snapshotAndUpdateLists<TItem>(queryClient, prefix, (items) => updateItems(items, variables)),
-      ),
+    applyOptimisticUpdate: (variables, queryClient) => {
+      // Snapshot EVERY prefix before mutating ANY of them. If two prefixes
+      // in `prefixes` overlap (e.g. one is a strict prefix of another, so
+      // the same cached query matches both), updating the first before
+      // snapshotting the second would capture already-mutated data as the
+      // "original" — corrupting rollback silently on error. Two phases
+      // (snapshot-all, then apply-all) keeps every snapshot pre-mutation
+      // regardless of prefix overlap.
+      const snapshots = prefixes.map((prefix) => queryClient.getQueriesData({ queryKey: prefix }));
+      prefixes.forEach((prefix) =>
+        applyListUpdate<TItem>(queryClient, prefix, (items) => updateItems(items, variables)),
+      );
+      return snapshots.flat();
+    },
     rollback: (snapshot, queryClient) => rollbackLists(queryClient, snapshot),
     invalidateQueryKeys: invalidateQueryKeys ?? prefixes,
   });
