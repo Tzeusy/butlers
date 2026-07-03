@@ -55,6 +55,24 @@ describe("DispatchTicksCell", () => {
     container.remove();
   });
 
+  it("renders the empty state rather than throwing when sessions/sessionCount are undefined", () => {
+    // Regression guard: events sourced from fixtures or callers that predate
+    // bu-4utdw.3's rollup enrichment can omit these fields at runtime even
+    // though the TS props allow it explicitly (caught e2e — `sessions.length`
+    // on `undefined` crashed the whole ledger row before this guard existed).
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    renderCell(container, root, { sessions: undefined, sessionCount: undefined, onOpenDrawer: vi.fn() });
+
+    expect(container.querySelector("[data-testid='dispatch-ticks-empty']")?.textContent).toBe("—");
+    expect(container.querySelector("button")).toBeNull();
+
+    act(() => root.unmount());
+    container.remove();
+  });
+
   it("renders one tick per session", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

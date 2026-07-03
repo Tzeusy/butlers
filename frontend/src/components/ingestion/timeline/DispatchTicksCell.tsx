@@ -101,10 +101,15 @@ function buildAriaLabel(sessions: IngestionEventListSessionSummary[], sessionCou
 // ---------------------------------------------------------------------------
 
 export interface DispatchTicksCellProps {
-  /** Compact per-session summaries for this event, capped at 8 by the API. */
-  sessions: IngestionEventListSessionSummary[];
+  /**
+   * Compact per-session summaries for this event, capped at 8 by the API.
+   * Typed as required, but events from older fixtures/callers that predate
+   * bu-4utdw.3's rollup enrichment can omit it at runtime — default to empty
+   * rather than crash the row.
+   */
+  sessions: IngestionEventListSessionSummary[] | null | undefined;
   /** Total session count for this event (may exceed sessions.length if capped upstream). */
-  sessionCount: number;
+  sessionCount: number | null | undefined;
   /** Opens (or, if already open, closes) the row's drawer — defaults to the sessions tab. */
   onOpenDrawer: () => void;
 }
@@ -115,7 +120,14 @@ export interface DispatchTicksCellProps {
  * when more than one session fired. Rows with no sessions render a muted
  * em-dash instead of an interactive cell.
  */
-export function DispatchTicksCell({ sessions, sessionCount, onOpenDrawer }: DispatchTicksCellProps) {
+export function DispatchTicksCell({
+  sessions: sessionsProp,
+  sessionCount: sessionCountProp,
+  onOpenDrawer,
+}: DispatchTicksCellProps) {
+  const sessions = sessionsProp ?? [];
+  const sessionCount = sessionCountProp ?? sessions.length;
+
   if (sessions.length === 0) {
     return (
       <span
