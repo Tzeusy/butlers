@@ -22,5 +22,5 @@
 
 ## 5. Quality gates
 
-- [ ] 5.1 `ruff check` / `ruff format --check` on touched files.
-- [ ] 5.2 Targeted `pytest` for `roster/switchboard/tests/test_triage_ingest_integration.py` and any new pinned-target tests.
+- [x] 5.1 `ruff check` / `ruff format --check` on touched files.
+- [x] 5.2 Targeted `pytest` for `roster/switchboard/tests/test_triage_ingest_integration.py` and any new pinned-target tests.
