@@ -805,7 +805,7 @@ async def get_daily_costs(
         for v in sorted(merged.values(), key=lambda x: x["date"])
     ]
 
-    meta = ApiMeta(unavailable_butlers=tracker.names) if tracker.failed else ApiMeta()
+    meta = ApiMeta(unavailable_butlers=sorted(tracker.names)) if tracker.failed else ApiMeta()
     return ApiResponse[list[DailySpend]](data=daily, meta=meta)
 
 
@@ -925,7 +925,7 @@ async def get_top_sessions(
         all_sessions.extend(sessions)
 
     all_sessions.sort(key=lambda s: s.cost_usd, reverse=True)
-    meta = ApiMeta(unavailable_butlers=tracker.names) if tracker.failed else ApiMeta()
+    meta = ApiMeta(unavailable_butlers=sorted(tracker.names)) if tracker.failed else ApiMeta()
     return ApiResponse[list[TopSession]](data=all_sessions[:limit], meta=meta)
 
 

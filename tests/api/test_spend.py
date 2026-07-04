@@ -552,6 +552,54 @@ async def test_daily_costs_all_reachable_reports_no_unavailable_butlers(app):
     assert "unavailable_butlers" not in resp.json()["meta"]
 
 
+async def test_daily_costs_db_fallback_failure_reports_unavailable_butlers(app):
+    """/daily's DB-primary-then-MCP-fallback branch must also mark the tracker:
+    a butler with no DB pool (KeyError -> None, triggering the MCP fallback)
+    whose fallback *also* fails must be named in meta.unavailable_butlers."""
+    configs = [ButlerConnectionInfo(name="broken", port=41101)]
+    db = _mock_db({})  # no pool registered -> KeyError -> falls back to MCP
+    mgr = _mock_mgr({"broken": ButlerUnreachableError("broken")})
+    _wire_db(_wire(app, mgr, configs, _flat_pricing()), db)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/spend/daily", params={"from": "2026-02-08", "to": "2026-02-08"}
+        )
+    body = resp.json()
+    assert body["meta"]["unavailable_butlers"] == ["broken"]
+
+
+async def test_daily_costs_db_fallback_recovery_reports_no_unavailable_butlers(app):
+    """When the DB primary path misses (KeyError -> None) but the MCP fallback
+    recovers real data, the butler must NOT be marked degraded -- the request
+    was served honestly, just via the fallback path."""
+    configs = [ButlerConnectionInfo(name="recovered", port=41101)]
+    recovered_daily = {
+        "days": [
+            {
+                "date": "2026-02-08",
+                "sessions": 1,
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "by_model": {},
+            },
+        ]
+    }
+    db = _mock_db({})  # no pool registered -> KeyError -> falls back to MCP
+    mgr = _mock_mgr({"recovered": _make_tool_result(recovered_daily)})
+    _wire_db(_wire(app, mgr, configs, _flat_pricing()), db)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/spend/daily", params={"from": "2026-02-08", "to": "2026-02-08"}
+        )
+    body = resp.json()
+    assert "unavailable_butlers" not in body["meta"]
+    assert body["data"][0]["sessions"] == 1
+
+
 # ---------------------------------------------------------------------------
 # GET /api/spend — date-range params (from/to)
 # ---------------------------------------------------------------------------
