@@ -889,6 +889,47 @@ class TestDashboardConversationEnvelope:
             with pytest.raises(ValueError, match="switchboard"):
                 await ingest_v1(pool, envelope)
 
+    async def test_invalid_pinned_target_is_validated_before_duplicate_return(
+        self, pool: asyncpg.Pool
+    ) -> None:
+        """A duplicate-looking submission cannot bypass pinned_target validation."""
+        conversation_id = uuid.uuid4()
+        message_id = uuid.uuid4()
+        first_envelope = build_dashboard_envelope(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            message_text="Alice's birthday is March 3rd",
+            pinned_target="relationship",
+        )
+
+        with patch(
+            "butlers.tools.switchboard.routing.classify._load_available_butlers",
+            new=AsyncMock(return_value=[{"name": "relationship"}]),
+        ):
+            first_result = await ingest_v1(pool, first_envelope)
+        assert first_result.duplicate is False
+
+        invalid_retry_envelope = build_dashboard_envelope(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            message_text="Alice's birthday is March 3rd",
+            pinned_target="ghost",
+        )
+
+        with patch(
+            "butlers.tools.switchboard.routing.classify._load_available_butlers",
+            new=AsyncMock(return_value=[{"name": "relationship"}]),
+        ):
+            with pytest.raises(ValueError, match="ghost"):
+                await ingest_v1(pool, invalid_retry_envelope)
+
+        row_count = await pool.fetchval(
+            "SELECT count(*) FROM message_inbox WHERE request_context ->> "
+            "'source_endpoint_identity' = $1",
+            f"dashboard:web:{conversation_id}",
+        )
+        assert row_count == 1
+
     async def test_retry_resubmission_with_new_message_id_is_idempotent(
         self, pool: asyncpg.Pool
     ) -> None:
