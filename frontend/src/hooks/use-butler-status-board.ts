@@ -177,7 +177,14 @@ function mapRow(row: BoardRow): StatusBoardRow {
   }
 }
 
-const NEEDS_YOU_ACTIVITIES: ReadonlySet<ActivityVerb> = new Set(["offline", "quarantined", "overdue"])
+// "unknown" (heartbeat_unavailable) belongs here too -- an unknowable
+// liveness must never be folded into a calm "All N healthy" line (bu-qvnce.1).
+const NEEDS_YOU_ACTIVITIES: ReadonlySet<ActivityVerb> = new Set([
+  "offline",
+  "quarantined",
+  "overdue",
+  "unknown",
+])
 
 // ---------------------------------------------------------------------------
 // Main hook

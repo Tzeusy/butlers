@@ -223,7 +223,7 @@ describe("row mapping (snake_case wire -> camelCase UI contract)", () => {
 // ---------------------------------------------------------------------------
 
 describe("needsYou", () => {
-  it("includes offline, quarantined, and overdue rows, excludes running/idle/unknown", () => {
+  it("includes offline, quarantined, overdue, and unknown rows, excludes running/idle", () => {
     mockQuerySuccess(
       makeBoardResponse([
         makeRow({ name: "healthy-idle", activity: "idle" }),
@@ -231,12 +231,14 @@ describe("needsYou", () => {
         makeRow({ name: "down", activity: "offline" }),
         makeRow({ name: "banned", activity: "quarantined" }),
         makeRow({ name: "late", activity: "overdue" }),
+        // "unknown" liveness must surface here too -- a heartbeat-unavailable
+        // butler is never confidently healthy (bu-qvnce.1).
         makeRow({ name: "degraded", activity: "unknown" }),
       ]),
     )
 
     const { needsYou } = useButlerStatusBoard()
-    expect(needsYou.map((r) => r.name).sort()).toEqual(["banned", "down", "late"])
+    expect(needsYou.map((r) => r.name).sort()).toEqual(["banned", "degraded", "down", "late"])
   })
 
   it("is empty when the fleet is fully healthy", () => {
