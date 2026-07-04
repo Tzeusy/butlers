@@ -451,12 +451,12 @@ merged in PR #2897 (bu-557bb), which multiplies `raw_score` by
 This RFC originally shipped before the reciprocity gate existed, so D6's
 "Backward Compatibility" section and the "Deployment Impact" section's "no
 data migration required" paragraph read as though directionless facts score
-identically to directioned facts in every respect. That is still true for the
-`raw_score` multiplier/divisor terms, but it is no longer true for final tier
-placement: directionless (and `incoming`-only) facts do not count toward
-`engagement_days`, so a contact with no reciprocal engagement now scores
-`0.0` and sits at tier 1500 regardless of how much raw signal they
-accumulate.
+identically to explicitly-`incoming` facts in every respect. That is still
+true for the `raw_score` multiplier/divisor terms, but it is no longer true
+for final tier placement: directionless (and `incoming`-only) facts do not
+count toward `engagement_days`, so a contact with no reciprocal engagement
+now scores `0.0` and sits at tier 1500 regardless of how much raw signal
+they accumulate.
 
 This amendment corrects D6 and Deployment Impact inline (see above) and adds
 D7 to describe the gate's design and rationale. No code or spec changes
