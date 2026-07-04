@@ -170,6 +170,72 @@ describe("ChatContent — resume / New-conversation lifecycle (bu-5gp95)", () =>
     expect(screen.getAllByText("Existing thread")).toHaveLength(1);
     expect(screen.getByText("New conversation")).toBeDefined();
   });
+
+  it("re-resumes the new butler's conversation after a butlerName switch with no unmount in between", () => {
+    // ChatPanel gates ChatContent on `{open && <ChatContent />}`, so it only
+    // unmounts on Sheet close — NOT on a butler switch that leaves the Sheet
+    // open (e.g. jumping butlers via the EntityFinder Cmd+K palette while
+    // chatting; the header slot hosting ChatPanel survives Page's
+    // loading/loaded transitions, see ui/page.tsx status-board archetype).
+    // Simulate that here via `rerender` with a new `butlerName` prop on the
+    // SAME ChatContent instance (no intervening unmount) and assert the
+    // one-shot resume guard re-arms for the newly-viewed butler instead of
+    // staying latched from the first butler.
+    vi.mocked(useConversations).mockImplementation(
+      (butlerName: string) =>
+        ({
+          data: {
+            data: [
+              {
+                id: `conv-${butlerName}`,
+                butler_name: butlerName,
+                title: `${butlerName} thread`,
+                status: "active",
+                created_at: "2026-07-03T12:00:00.000Z",
+                updated_at: "2026-07-04T12:00:00.000Z",
+                message_count: 1,
+                total_input_tokens: 5,
+                total_output_tokens: 5,
+                total_duration_ms: 200,
+                routed_butler: null,
+              },
+            ],
+            meta: {},
+          },
+          isLoading: false,
+        }) as unknown as ReturnType<typeof useConversations>,
+    );
+    vi.mocked(useConversationMessages).mockReturnValue({
+      data: { data: [], meta: {} },
+      isLoading: false,
+    } as unknown as ReturnType<typeof useConversationMessages>);
+    vi.mocked(useConversationSearch).mockReturnValue({
+      data: { data: [], meta: {} },
+      isLoading: false,
+    } as unknown as ReturnType<typeof useConversationSearch>);
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <ChatContent butlerName="finance" />
+      </QueryClientProvider>,
+    );
+
+    // Auto-resumed to finance's thread (sidebar entry + header title).
+    expect(screen.getAllByText("finance thread")).toHaveLength(2);
+
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <ChatContent butlerName="calendar" />
+      </QueryClientProvider>,
+    );
+
+    // Must re-resume to calendar's own thread (sidebar + header), not get
+    // stuck on "New conversation" because the guard from the finance mount
+    // never reset.
+    expect(screen.getAllByText("calendar thread")).toHaveLength(2);
+    expect(screen.queryByText("New conversation")).toBeNull();
+  });
 });
 
 describe("ChatContent — conversation_created SSE handling", () => {

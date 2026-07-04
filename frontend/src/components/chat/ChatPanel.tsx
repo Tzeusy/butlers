@@ -144,6 +144,28 @@ export function ChatContent({ butlerName }: ChatContentProps) {
     }
   }, [conversations, activeConversationId]);
 
+  // Reset per-butler session state when `butlerName` changes while
+  // ChatContent stays mounted. The `{open && <ChatContent />}` gate in
+  // ChatPanel below only unmounts ChatContent when the Sheet closes — it
+  // does NOT unmount/remount on a butler switch that leaves the Sheet open
+  // (e.g. jumping to a different butler's detail page via the EntityFinder
+  // Cmd+K palette; the header slot hosting ChatPanel survives Page's
+  // loading/loaded transitions for the status-board archetype, see
+  // ui/page.tsx). Without this reset, hasResumedRef above would stay
+  // latched from the previous butler and silently never auto-resume the
+  // newly-viewed butler's most recent conversation.
+  const previousButlerNameRef = useRef(butlerName);
+  useEffect(() => {
+    if (previousButlerNameRef.current === butlerName) return;
+    previousButlerNameRef.current = butlerName;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    hasResumedRef.current = false;
+    setActiveConversationId(null);
+    setLocalMessages([]);
+    setStreaming(null);
+  }, [butlerName]);
+
   const activeConversation = conversations.find((c) => c.id === activeConversationId) ?? null;
   const isStreaming = streaming !== null;
 
