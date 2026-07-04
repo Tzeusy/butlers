@@ -353,6 +353,18 @@ export interface NotificationStats {
   failed: number;
   by_channel: Record<string, number>;
   by_butler: Record<string, number>;
+  /** False when the Switchboard notifications source was unreachable -- all counts above are zeros in that case. */
+  source_available?: boolean;
+}
+
+/**
+ * Paginated notification list, plus a source-availability flag.
+ * `source_available === false` means the Switchboard notifications source
+ * was unreachable -- an empty/short page in that case is NOT a truthful
+ * "no notifications match" result.
+ */
+export interface NotificationListResponse extends PaginatedResponse<NotificationSummary> {
+  source_available?: boolean;
 }
 
 /** Query parameters for notification list endpoints. */
