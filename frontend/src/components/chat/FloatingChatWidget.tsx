@@ -200,11 +200,16 @@ function WidgetPanel({ onClose }: WidgetPanelProps) {
   const [pricingMap, setPricingMap] = useState<PricingMap | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+  const interruptedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
       abortRef.current = null;
+      if (interruptedTimeoutRef.current !== null) {
+        clearTimeout(interruptedTimeoutRef.current);
+        interruptedTimeoutRef.current = null;
+      }
     };
   }, []);
 
@@ -233,7 +238,15 @@ function WidgetPanel({ onClose }: WidgetPanelProps) {
 
   useEffect(() => {
     if (streaming) return;
-    setLocalMessages(messagesData?.data ?? []);
+    // Guard against the transient `messagesData === undefined` window that
+    // TanStack Query passes through while refetching after switching
+    // `activeConversationId` (staleTime: 0 means every switch refetches).
+    // Without this guard, the query-loading gap briefly clears
+    // `localMessages` to `[]`, flashing an empty thread before the real
+    // messages land.
+    if (messagesData?.data) {
+      setLocalMessages(messagesData.data);
+    }
   }, [messagesData, streaming]);
 
   // Resume the most recent open conversation ONCE per mount (== once per
@@ -358,7 +371,10 @@ function WidgetPanel({ onClose }: WidgetPanelProps) {
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           setStreaming((prev) => (prev ? { ...prev, interrupted: true, pending: false } : null));
-          setTimeout(() => setStreaming(null), 1500);
+          interruptedTimeoutRef.current = setTimeout(() => {
+            interruptedTimeoutRef.current = null;
+            setStreaming(null);
+          }, 1500);
         } else {
           setStreaming(null);
           setSendError({
