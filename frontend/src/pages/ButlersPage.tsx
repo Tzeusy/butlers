@@ -14,8 +14,19 @@
 //   - Full-page error (no cached data) via Page primitive's `error` prop.
 //   - Loading state delegated to the Page primitive skeleton.
 //   - onRestore wired to useSetEligibility mutation.
+//
+// Restore-with-reason-and-undo (JARVIS audit move 6, bu-86c4c.15): the
+// StatusBoardCell chip already surfaces the quarantine_reason as its title
+// (bu-86c4c.3) and IS the "Restore" button — what was missing was the undo
+// half. Restoring a quarantined butler is a real, consequential action (it
+// starts running again), so a click doesn't fire the mutation instantly; it
+// schedules it RESTORE_UNDO_WINDOW_MS out and offers an "Undo" toast action,
+// mirroring the scheduled-decision pattern ApprovalsPage established for its
+// a/d/x keyboard verbs (bu-86c4c.14). Nothing reaches the backend unless the
+// window elapses without an undo.
 // ---------------------------------------------------------------------------
 
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -33,6 +44,12 @@ import { useSetEligibility } from "@/hooks/use-general";
 
 /** Polling interval forwarded to BoardHeader's refresh caption. */
 const REFRESH_INTERVAL_MS = 30_000;
+
+/**
+ * How long an owner has to undo a restore before it actually fires
+ * (matches ApprovalsPage's UNDO_WINDOW_MS convention, bu-86c4c.14).
+ */
+const RESTORE_UNDO_WINDOW_MS = 5_000;
 
 // ---------------------------------------------------------------------------
 // ButlersPage
@@ -54,9 +71,25 @@ export default function ButlersPage() {
   // survive from cache the error object is still populated but isError is false.
   const showStaleBanner = error != null && hasRows;
 
-  const pendingRestoreName = setEligibility.isPending ? setEligibility.variables?.name : undefined;
+  // Butler names with a restore scheduled but not yet fired, each mapped to
+  // its pending setTimeout id so an Undo click can cancel it.
+  const [scheduledRestores, setScheduledRestores] = useState<Map<string, number>>(new Map());
 
-  function handleRestore(name: string) {
+  // Guards the setTimeout callback's own setState: the restore itself must
+  // still fire on schedule even if the owner has navigated away in the
+  // meantime (an undo window is a chance to CANCEL, not a reason to silently
+  // drop an already-committed restore), but React state on an unmounted
+  // component would just warn -- skip that part once unmounted.
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const networkPendingName = setEligibility.isPending ? setEligibility.variables?.name : undefined;
+
+  function fireRestore(name: string) {
     setEligibility.mutate(
       { name, state: "active" },
       {
@@ -67,6 +100,39 @@ export default function ButlersPage() {
           }),
       },
     );
+  }
+
+  function cancelScheduledRestore(name: string) {
+    setScheduledRestores((prev) => {
+      const timeoutId = prev.get(name);
+      if (timeoutId === undefined) return prev;
+      window.clearTimeout(timeoutId);
+      const next = new Map(prev);
+      next.delete(name);
+      return next;
+    });
+  }
+
+  function handleRestore(name: string) {
+    if (scheduledRestores.has(name)) return; // already scheduled -- ignore repeat clicks
+
+    const timeoutId = window.setTimeout(() => {
+      if (isMountedRef.current) {
+        setScheduledRestores((prev) => {
+          const next = new Map(prev);
+          next.delete(name);
+          return next;
+        });
+      }
+      fireRestore(name);
+    }, RESTORE_UNDO_WINDOW_MS);
+
+    setScheduledRestores((prev) => new Map(prev).set(name, timeoutId));
+
+    toast(`Restoring ${name}`, {
+      action: { label: "Undo", onClick: () => cancelScheduledRestore(name) },
+      duration: RESTORE_UNDO_WINDOW_MS,
+    });
   }
 
   return (
@@ -114,7 +180,7 @@ export default function ButlersPage() {
               key={row.name}
               row={row}
               onRestore={handleRestore}
-              isRestorePending={pendingRestoreName === row.name}
+              isRestorePending={scheduledRestores.has(row.name) || networkPendingName === row.name}
             />
           ))}
         </div>
