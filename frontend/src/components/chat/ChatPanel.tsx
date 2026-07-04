@@ -127,9 +127,19 @@ export function ChatContent({ butlerName }: ChatContentProps) {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [conversations, activeConversationId]);
 
-  // Auto-select first conversation on initial load
+  // Resume the most recent conversation ONCE per mount (== once per Sheet
+  // open, since ChatContent unmounts entirely when the Sheet closes via the
+  // `{open && <ChatContent />}` gate in ChatPanel below) — gated by
+  // hasResumedRef so a later "New conversation" click (which also sets
+  // activeConversationId to null) does not get immediately overridden back
+  // to the existing thread by this same effect. Mirrors FloatingChatWidget's
+  // identical guard.
+  const hasResumedRef = useRef(false);
   useEffect(() => {
-    if (activeConversationId == null && conversations.length > 0) {
+    if (hasResumedRef.current) return;
+    if (conversations.length === 0) return;
+    hasResumedRef.current = true;
+    if (activeConversationId == null) {
       setActiveConversationId(conversations[0].id);
     }
   }, [conversations, activeConversationId]);
