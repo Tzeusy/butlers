@@ -498,6 +498,8 @@ export interface SpendSummary {
   total_output_tokens: number;
   by_butler: Record<string, number>;
   by_model: Record<string, number>;
+  /** Butlers whose cost data could not be fetched -- totals above are a partial sum, never a confident fleet-wide total when non-empty. */
+  unavailable_butlers?: string[];
 }
 
 /** Spend data for a single day. */
