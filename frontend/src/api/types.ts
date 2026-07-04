@@ -117,6 +117,8 @@ export interface BoardRow {
   schema_unreachable: boolean;
   hourly_stripe: number[];
   hourly_total: number;
+  /** True when this row's hourly-activity query failed -- hourly_stripe/hourly_total are a fabricated zero-fill in that case. */
+  stripe_source_error?: boolean;
   cadence_seconds: number | null;
   cadence_label: "hourly" | "daily" | "weekly" | "custom" | null;
   silence_seconds: number | null;
@@ -138,6 +140,8 @@ export interface BoardAggregates {
   heartbeat_source_error: boolean;
   registry_source_error: boolean;
   cost_source_error: boolean;
+  /** True when any row's hourly-activity query failed -- total_sessions_24h is a partial sum in that case. */
+  sessions_source_error?: boolean;
   has_per_entry_errors: boolean;
   sources_partially_degraded: boolean;
 }
