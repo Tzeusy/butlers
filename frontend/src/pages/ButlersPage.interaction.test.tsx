@@ -181,6 +181,16 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // ButlersPage's scheduled-restore store is module-scoped (bu-86c4c.15,
+  // mirroring ApprovalsPage's scheduledDecisions), so any restore left
+  // scheduled by a test (e.g. one that only asserts the immediate toast and
+  // never advances past the undo window) would otherwise leak into the next
+  // test in this file and make its "already scheduled" guard block a fresh
+  // click. Flush it here, before tearing down fake timers, so every test
+  // starts from an empty store.
+  act(() => {
+    vi.advanceTimersByTime(RESTORE_UNDO_WINDOW_MS);
+  });
   cleanup();
   vi.useRealTimers();
   vi.resetAllMocks();
@@ -395,6 +405,40 @@ describe("ButlersPage — restore undo action", () => {
 
     expect(mockMutate).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: /restoring/i })).toBeDefined();
+  });
+
+  it("does not double-fire the restore when the page unmounts and remounts mid-window", () => {
+    // Regression test: an earlier version tracked the scheduled restore in a
+    // plain `useState` on the page component. Unmounting (e.g. navigating
+    // away) mid-window discarded that state without cancelling the pending
+    // `window.setTimeout`, so a remount within the window saw an empty map,
+    // let the chip be clicked again, and scheduled a SECOND independent
+    // restore -- both timers eventually fired and setEligibility.mutate was
+    // called twice for the same butler. The module-scoped store fixes this
+    // by surviving the unmount.
+    const rows = [
+      makeRow({ name: "quarant", activity: "quarantined", eligibility: "quarantined", cellTone: "red" }),
+    ];
+    setHookState(rows, makeAggregates({ total: 1, butlerCount: 1, quarantined: 1 }));
+
+    const { unmount } = renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /quarantined/i }));
+    expect(mockMutate).not.toHaveBeenCalled();
+
+    // Navigate away, then back, before the undo window elapses.
+    unmount();
+    renderPage();
+
+    // The remounted page must see the restore as already scheduled -- its
+    // chip should read "Restoring…", not the clickable quarantined chip, so
+    // a second click cannot even be attempted.
+    expect(screen.getByRole("button", { name: /restoring/i })).toBeDefined();
+
+    act(() => {
+      vi.advanceTimersByTime(RESTORE_UNDO_WINDOW_MS);
+    });
+
+    expect(mockMutate).toHaveBeenCalledOnce();
   });
 });
 
