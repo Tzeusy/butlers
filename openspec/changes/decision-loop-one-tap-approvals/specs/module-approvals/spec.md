@@ -11,9 +11,10 @@ a required human-readable `why`, an optional `blast_radius` in
 `reversible | compensable | irreversible`, and `evidence` as a list of typed
 references `{"type": "fact" | "entity" | "url" | "text", "ref": string,
 "note": string}`. `blast_radius` and `reversibility` are stored as nullable
-CHECK-constrained columns on `pending_actions`; legacy rows and legacy
-plain-string evidence entries MUST remain readable (strings coerce to
-`{"type": "text"}`).
+CHECK-constrained columns on `pending_actions`; legacy plain-string evidence
+entries MUST be migrated to typed `text` entries by the approvals-chain
+migration. New gate/API inputs MUST be strictly validated at the boundary and
+MUST NOT use runtime coercion for invalid or legacy-shaped evidence.
 
 #### Scenario: Gated call without why is rejected retryably
 
@@ -43,6 +44,16 @@ plain-string evidence entries MUST remain readable (strings coerce to
   defined enums
 - **THEN** the gate returns a structured validation error naming the field and
   allowed values, and does not create a pending action
+
+#### Scenario: Legacy string evidence is migrated, not coerced at runtime
+
+- **WHEN** the approvals-chain migration encounters an existing pending action
+  whose `evidence` array contains a plain string
+- **THEN** the row is rewritten to a typed evidence entry with `type = "text"`
+  before the structured dossier contract is enforced
+- **AND** after the migration, any new input containing plain-string evidence
+  is rejected with a structured validation error and does not create or update
+  a pending action
 
 ### Requirement: Approval-Request Push on Park
 

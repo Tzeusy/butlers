@@ -42,10 +42,11 @@ previously sent message's text and removing its inline keyboard
 The module SHALL support sending an approval-request message with an inline
 keyboard so the owner can approve or reject a pending action directly from the
 notification. Buttons carry single-purpose signed callback tokens bound to the
-pending action (format `apr1:<action_id>:<verb>:<hmac>`); button presses resolve
-to the corresponding pending-action verb in the approvals system via the bot
-connector's callback ingestion. An "Open" button deep-links the dashboard action
-detail for edit-then-approve.
+pending action (format `apr1:<action_id>:<verb_char>:<hmac>` using
+single-character verb codes such as `a` for approve and `r` for reject); button
+presses resolve to the corresponding pending-action verb in the approvals system
+via the bot connector's callback ingestion. An "Open" button deep-links the
+dashboard action detail for edit-then-approve.
 
 #### Scenario: Approval message carries inline buttons
 

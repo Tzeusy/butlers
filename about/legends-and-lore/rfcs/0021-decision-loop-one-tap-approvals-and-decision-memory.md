@@ -95,9 +95,11 @@ An approval-request message carries buttons: **Approve**, **Reject**, and
 `edits`-aware approve endpoint already exists).
 
 `callback_data` is an opaque signed token bound to the action:
-`apr1:<action_id>:<verb>:<hmac_16hex>` (fits Telegram's 64-byte limit), where
-the HMAC is keyed by a daemon-internal secret over `(action_id, verb,
-requested_at)`. Tokens are single-purpose and die with the action.
+`apr1:<action_id>:<verb_char>:<hmac_16hex>` (fits Telegram's 64-byte limit:
+5+36+1+1+1+16 = 60 bytes), where `verb_char` is a single-character decision
+code (`a` = approve, `r` = reject). The HMAC is keyed by a daemon-internal
+secret over `(action_id, verb_char, requested_at)`. Tokens are single-purpose
+and die with the action.
 
 The Telegram bot connector, which today drops `callback_query` updates, gains a
 narrow handler:
@@ -138,7 +140,8 @@ tapper → ignored and logged (RFC 0017 owner-routing safety applies).
 - `reversibility TEXT` — enum `reversible | compensable | irreversible`.
 - `evidence` upgrades from free strings to typed references:
   `[{"type": "fact|entity|url|text", "ref": "<id-or-url>", "note": "<string>"}]`
-  (legacy string entries remain readable as `{"type":"text"}`).
+  (legacy string entries are migrated once into typed `text` entries; new
+  runtime inputs are strictly validated and are not silently coerced).
 - `why` becomes **required at the gate** for non-owner-target gated calls: a
   gated invocation missing `_why` receives a structured retryable error naming
   the missing field, instead of parking an unexplained action. (Owner-role

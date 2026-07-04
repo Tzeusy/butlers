@@ -27,11 +27,13 @@ The connector SHALL process a defined subset of Telegram update types.
 ### Requirement: Approval Callback Ingestion
 
 The connector SHALL handle `callback_query` updates carrying approval callback
-tokens (`apr1:<action_id>:<verb>:<hmac>`) as deterministic control-plane
+tokens (`apr1:<action_id>:<verb_char>:<hmac>`, with single-character verb codes
+such as `a` for approve and `r` for reject) as deterministic control-plane
 events, not as `ingest.v1` messages: it MUST (1) verify the tapping user's chat
 resolves to a verified owner channel via identity resolution, (2) validate the
-token's HMAC signature, (3) answer the callback query promptly, and (4) deliver
-the decision to the approvals decision surface with actor identity
+token's HMAC signature and map the verb code to the pending-action decision,
+(3) answer the callback query promptly, and (4) deliver the decision to the
+approvals decision surface with actor identity
 `human:owner@telegram`, which performs the status transition, audit logging,
 and dispatch via the standard executor. No LLM session is involved at any step.
 Failed verification MUST NOT mutate any state.

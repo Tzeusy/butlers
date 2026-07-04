@@ -45,12 +45,14 @@ decision routes with actor `human:owner@telegram`.
 
 ### D2 — Callback token format
 
-`apr1:<action_id>:<verb>:<hmac_16hex>`, HMAC-SHA256 (truncated 16 hex) keyed by
-a daemon-internal secret over `(action_id, verb, requested_at)`. Fits Telegram's
-64-byte `callback_data` limit (5+36+1+1+1+16 = 60). Owner-channel verification
-is the primary control; the HMAC is defense-in-depth (forged/stale payloads,
-cross-instance replay). Tokens die with the action (expired/decided → toast
-"already handled", keyboard removed).
+`apr1:<action_id>:<verb_char>:<hmac_16hex>`, HMAC-SHA256 (truncated 16 hex)
+keyed by a daemon-internal secret over `(action_id, verb_char, requested_at)`.
+`verb_char` is a single-character decision code (`a` = approve, `r` = reject),
+so the token fits Telegram's 64-byte `callback_data` limit
+(5+36+1+1+1+16 = 60). Owner-channel verification is the primary control; the
+HMAC is defense-in-depth (forged/stale payloads, cross-instance replay). Tokens
+die with the action (expired/decided → toast "already handled", keyboard
+removed).
 
 ### D3 — Push is deterministic daemon infrastructure
 
