@@ -31,8 +31,15 @@ from pathlib import Path
 
 import asyncpg
 import pytest
+from sqlalchemy import create_engine, text
 
-from butlers.testing.migration import create_migrated_test_db, migration_db_name
+from alembic import command
+from butlers.migrations import _build_alembic_config
+from butlers.testing.migration import (
+    create_migrated_test_db,
+    create_migration_db,
+    migration_db_name,
+)
 
 docker_available = shutil.which("docker") is not None
 pytestmark = [
@@ -249,3 +256,61 @@ async def test_downgrade_removes_toml_aliases(fresh_core_db_url: str) -> None:
         assert sentinel_count == 1
     finally:
         await pool.close()
+
+
+@pytest.mark.integration
+def test_downgrade_and_reupgrade_real_alembic_roundtrip(postgres_container) -> None:
+    """Drive the actual ``upgrade()``/``downgrade()`` functions through real Alembic.
+
+    The tests above replay the migration's INSERT/DELETE logic by hand via a raw
+    asyncpg pool (see the comment on ``test_reseed_upgrade_is_idempotent``) because
+    ``op.get_bind()`` only resolves inside a live Alembic migration context. That
+    leaves the module's own ``upgrade()``/``downgrade()`` code paths — including
+    the ``sa.text(...)``/``:name``-style bind params they actually use — completely
+    unexercised. This test closes that gap using the same
+    ``alembic.command.upgrade``/``downgrade`` pattern already established by
+    ``tests/migrations/test_calendar_search_trgm_migration.py``, against its own
+    dedicated database so it cannot disturb the module-scoped fixture the async
+    tests above share.
+    """
+    db_name = migration_db_name()
+    db_url = create_migration_db(postgres_container, db_name)
+    core = _build_alembic_config(db_url, chains=["core"])
+
+    command.upgrade(core, "core@head")
+
+    mod = _load_migration()
+    aliases = [entry["alias"] for entry in mod._load_seed_entries()]
+    assert aliases, "toml must have canonical-vocab entries for this test to mean anything"
+
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            seeded = conn.execute(
+                text("SELECT COUNT(*) FROM public.model_catalog WHERE alias = ANY(:aliases)"),
+                {"aliases": aliases},
+            ).scalar()
+        assert seeded == len(aliases), "upgrade() should have seeded every toml alias"
+
+        # Real downgrade(): must delete exactly the toml-derived aliases via op.get_bind().
+        command.downgrade(core, "core_157")
+        with engine.connect() as conn:
+            after_downgrade = conn.execute(
+                text("SELECT COUNT(*) FROM public.model_catalog WHERE alias = ANY(:aliases)"),
+                {"aliases": aliases},
+            ).scalar()
+        assert after_downgrade == 0, "downgrade() must remove every toml-derived alias"
+
+        # Real upgrade() again: proves the ON CONFLICT DO NOTHING INSERT path
+        # works standalone through op.get_bind(), not just via hand-reproduced SQL.
+        # Target "core@head" (not a hardcoded revision id) so this test survives
+        # this migration being renumbered again by a parallel lane.
+        command.upgrade(core, "core@head")
+        with engine.connect() as conn:
+            after_reupgrade = conn.execute(
+                text("SELECT COUNT(*) FROM public.model_catalog WHERE alias = ANY(:aliases)"),
+                {"aliases": aliases},
+            ).scalar()
+        assert after_reupgrade == len(aliases), "re-running upgrade() must reseed every alias"
+    finally:
+        engine.dispose()
