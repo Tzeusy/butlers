@@ -225,13 +225,29 @@ async def run_project_owntracks_place_cluster(
     of ``{"label", "lat", "lon", "radius_m"?}`` objects, mirroring the
     ``HA_WELLNESS_RULES_EXTRA`` owner-extensibility pattern. Unset/empty means
     every recurring cluster surfaces honestly as ``place_unknown``.
+
+    Unlike ``HA_WELLNESS_RULES_EXTRA`` (validated once at daemon startup, so a
+    fail-fast raise is immediately visible to the operator), this env var is
+    re-read on every ``*/30`` scheduled tick. A malformed value must not wedge
+    the job on every run until an operator notices and fixes it — so parsing
+    degrades gracefully here: log and fall back to no reference points (every
+    cluster then honestly surfaces as ``place_unknown``, never crashes).
     """
     options = _parse_job_args(
         "chronicler_project_owntracks_place_cluster",
         job_args,
         supported_fields=("batch_limit", "min_dwell_minutes", "max_gap_minutes"),
     )
-    reference_points = parse_place_references(os.environ.get("OWNTRACKS_PLACE_REFERENCES", ""))
+    raw_references = os.environ.get("OWNTRACKS_PLACE_REFERENCES", "")
+    try:
+        reference_points = parse_place_references(raw_references)
+    except ValueError:
+        logger.warning(
+            "Malformed OWNTRACKS_PLACE_REFERENCES; falling back to no reference points "
+            "(every cluster will surface as place_unknown)",
+            exc_info=True,
+        )
+        reference_points = ()
     adapter = OwnTracksPlaceClusterAdapter(reference_points=reference_points, **options)
     return await _run_adapter(db_pool=db_pool, adapter=adapter)
 
