@@ -417,6 +417,7 @@ describe("EntityFinder", () => {
   // -------------------------------------------------------------------------
 
   it("surfaces the error state instead of masking it behind stale results", async () => {
+    const refetch = vi.fn();
     vi.mocked(useEntityFinderSearch).mockReturnValue({
       data: {
         results: [
@@ -435,7 +436,8 @@ describe("EntityFinder", () => {
       isLoading: false,
       isFetching: false,
       isError: true,
-    } as UseEntityFinderSearchResult);
+      refetch,
+    } as unknown as UseEntityFinderSearchResult);
 
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -474,6 +476,16 @@ describe("EntityFinder", () => {
     );
     expect(degraded).toBeTruthy();
     expect(degraded?.textContent).toContain("search failed");
+
+    // The degraded note's Retry action must be wired to the query's own
+    // refetch, so a transient failure is recoverable without retyping.
+    const retryButton = degraded?.querySelector("button");
+    expect(retryButton).toBeTruthy();
+    await act(async () => {
+      retryButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flush();
+    });
+    expect(refetch).toHaveBeenCalledTimes(1);
 
     // The full-blanking "Search failed. Try again in a moment." banner must
     // NOT render here — the stale rows are still useful and other sources

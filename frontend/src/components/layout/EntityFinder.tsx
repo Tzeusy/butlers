@@ -266,6 +266,7 @@ export default function EntityFinder() {
     isLoading,
     isFetching: entityFetching,
     isError,
+    refetch: refetchEntitySearch,
   } = useEntityFinderSearch(query, {
     limit: 8,
   });
@@ -664,6 +665,7 @@ export default function EntityFinder() {
                       label="Entities"
                       detail="search failed — showing previous results"
                       className="mb-1"
+                      onRetry={() => refetchEntitySearch()}
                     />
                   </div>
                 )}
