@@ -13,10 +13,11 @@
  * 5. KPI footer band (total connectors, healthy, auth-needed, events/24h)
  * 6. "add connector" action
  *
- * Data: uses existing useConnectorSummaries and useAvailableConnectors hooks.
- * Spark data comes from usePipelineStats — the 24h spark is available globally;
- * per-connector hourly timeseries is not exposed at list level, so sparklines
- * use the pipeline spark divided proportionally or fall back to zeros.
+ * Data: uses useConnectorSummariesWithAggregates and useAvailableConnectors
+ * hooks. Per-connector `hourly_events` (ingested) and `hourly_filtered_events`
+ * (skip-routed, bu-scyro) both come from GET /api/ingestion/connectors/summaries
+ * — sourced from the DB, not Prometheus, so sparklines are always populated
+ * regardless of `aggregates_available`.
  *
  * NOTE: useConnectorDetail MUST NOT be mounted from this roster (spec §6.2).
  * Only summary-level data is shown here.
@@ -178,6 +179,7 @@ export function ConnectorsRoster() {
               key={`${c.connector_type}:${c.endpoint_identity}`}
               connector={c}
               spark24h={c.hourly_events}
+              spark24hFiltered={c.hourly_filtered_events}
               catalogChannel={catalogChannelByType.get(c.connector_type)}
               rosterSparkMax={rosterSparkMax}
             />
