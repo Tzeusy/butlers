@@ -198,11 +198,21 @@ async def list_connector_summaries_with_aggregates(
     # exists specifically for connector_types where connector_registry cannot
     # yet distinguish devices -- one shared row for several senders (bu-e16to).
     # Once a connector_type is fixed to register one row per device (bu-86zll,
-    # e.g. OwnTracks), it has >1 registry row and no longer needs the badge:
-    # each row's own state/last_heartbeat_at is already device-accurate, and
-    # attaching the same ingestion_events-derived `devices` list to every one
-    # of those rows would double up and could disagree with each row's own
-    # (now-authoritative) liveness. See registry_row_counts gate below.
+    # e.g. OwnTracks), each row's own state/last_heartbeat_at is device-accurate,
+    # and attaching the same ingestion_events-derived `devices` list to every
+    # one of those rows would double up and could disagree with each row's own
+    # (now-authoritative) liveness.
+    #
+    # The gate below (registry_row_counts vs. len(device_map[...])) intentionally
+    # requires the registry to have caught up to *every* device the fallback
+    # already knows about, not merely ">1". A connector_type mid-migration --
+    # some devices already registering their own row, one sibling device still
+    # dead/not-yet-posted since the fix deployed and so still without ANY
+    # registry row -- would otherwise have its badge suppressed by an early
+    # partial row count while that dead sibling has no row of its own to show
+    # its staleness either, making it invisible via *both* signals (exactly the
+    # bu-e16to failure mode this badge exists to prevent). Suppressing only
+    # once registry_row_counts >= known device count avoids that window.
     registry_row_counts: dict[str, int] = {}
     for r in rows:
         registry_row_counts[r["connector_type"]] = (
@@ -336,15 +346,17 @@ async def list_connector_summaries_with_aggregates(
                     "messages_failed": r["counter_messages_failed"] or 0,
                 },
                 "hourly_events": hourly,
-                # Only surface the ingestion_events-derived `devices` badge list
-                # for connector_types still sharing one registry row across
-                # multiple senders. Once a connector_type registers one row per
-                # device (registry_row_counts > 1), each row already carries its
-                # own accurate liveness, so omit `devices` to avoid attaching
-                # the same badge list to every one of those rows.
+                # Only suppress the ingestion_events-derived `devices` badge
+                # list once connector_registry has a row for *every* device the
+                # fallback knows about for this connector_type (registry_row_counts
+                # >= known device count) -- not merely more than one row. A
+                # partially-migrated connector_type (some devices already have
+                # their own row; a sibling still doesn't) must keep the badge so
+                # that still-unregistered/dead sibling stays visible somewhere.
                 "devices": (
                     device_map.get(r["connector_type"])
-                    if registry_row_counts.get(r["connector_type"], 0) <= 1
+                    if registry_row_counts.get(r["connector_type"], 0)
+                    < len(device_map.get(r["connector_type"], []))
                     else None
                 ),
             }
