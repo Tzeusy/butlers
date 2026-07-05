@@ -437,6 +437,13 @@ function Embeddings() {
   // is a deliberate two-click arm/confirm pill-morph (see handleReembedClick
   // above), which doesn't translate to a single palette perform() without
   // losing that confirm step, so it's left off this sweep.
+  //
+  // defaultButler must be a dep, not just isPending/pending/total: it's
+  // resolved from a separate query (useButlers) that can settle after this
+  // memo first runs, and handleDryRun closes over it directly. Omitting it
+  // would freeze the palette command on whichever defaultButler (possibly
+  // undefined) was live at the last recompute, sending the dry-run request
+  // with the wrong -- or no -- butler (gemini-code-assist, PR #2958).
   const embeddingsCommands = useMemo<PaletteCommand[]>(() => {
     if (isPending || !pending || total === 0) return [];
     return [
@@ -447,8 +454,8 @@ function Embeddings() {
         perform: handleDryRun,
       },
     ];
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleDryRun is recreated every render and closes over isPending/pending directly; the listed values are what actually gate availability.
-  }, [isPending, pending, total]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleDryRun is recreated every render and closes over isPending/pending/defaultButler directly; the listed values are what actually gate availability and vary the resulting command.
+  }, [isPending, pending, total, defaultButler]);
   useRegisterCommands(embeddingsCommands);
 
   return (

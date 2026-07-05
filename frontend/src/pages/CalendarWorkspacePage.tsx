@@ -4119,6 +4119,28 @@ export default function CalendarWorkspacePage() {
   // already-wired actions had a keyboard path or a command-menu entry.
   // ---------------------------------------------------------------------
   const canCreateEvent = view === "butler" || canCreateUserEvents;
+
+  // openButlerCreateDialog/openUserCreateDialog/updateQuery are recreated
+  // every render and close over dynamic state directly (anchor, searchParams,
+  // availableButlers, submittableCalendars, ...). calendarCommands/
+  // calendarShortcuts below only recompute when canCreateEvent/view change,
+  // so capturing those functions straight in the memo deps would freeze
+  // whichever closure was live at the last recompute -- e.g. pressing "c"
+  // after navigating to a different day would reopen the create dialog
+  // prefilled for the day shown when the memo last ran, not today's anchor
+  // (gemini-code-assist, PR #2958). Route every invocation through a ref so
+  // it always calls the latest closure regardless of memo identity.
+  const calendarActionsRef = useRef({
+    openButlerCreateDialog,
+    openUserCreateDialog,
+    updateQuery,
+  });
+  calendarActionsRef.current = {
+    openButlerCreateDialog,
+    openUserCreateDialog,
+    updateQuery,
+  };
+
   const calendarCommands = useMemo<PaletteCommand[]>(() => {
     const commands: PaletteCommand[] = [];
     if (canCreateEvent) {
@@ -4127,7 +4149,9 @@ export default function CalendarWorkspacePage() {
         label: view === "butler" ? "Create butler event" : "Create event",
         keywords: ["new", "event", "create"],
         perform: () =>
-          view === "butler" ? openButlerCreateDialog() : openUserCreateDialog(),
+          view === "butler"
+            ? calendarActionsRef.current.openButlerCreateDialog()
+            : calendarActionsRef.current.openUserCreateDialog(),
         binding: ["c"],
       });
     }
@@ -4136,7 +4160,7 @@ export default function CalendarWorkspacePage() {
         id: "calendar-jump-today",
         label: "Jump to today",
         keywords: ["today", "anchor"],
-        perform: () => updateQuery({ anchor: new Date() }),
+        perform: () => calendarActionsRef.current.updateQuery({ anchor: new Date() }),
         binding: ["t"],
       },
       {
@@ -4147,7 +4171,6 @@ export default function CalendarWorkspacePage() {
       },
     );
     return commands;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- openButlerCreateDialog/openUserCreateDialog/updateQuery are recreated every render and closed over directly; the listed values are what actually vary the resulting command set.
   }, [canCreateEvent, view]);
   useRegisterCommands(calendarCommands);
 
@@ -4157,7 +4180,7 @@ export default function CalendarWorkspacePage() {
         key: "t",
         display: ["t"],
         description: "Jump to today",
-        handler: () => updateQuery({ anchor: new Date() }),
+        handler: () => calendarActionsRef.current.updateQuery({ anchor: new Date() }),
       },
     ];
     if (canCreateEvent) {
@@ -4166,11 +4189,12 @@ export default function CalendarWorkspacePage() {
         display: ["c"],
         description: view === "butler" ? "Create butler event" : "Create event",
         handler: () =>
-          view === "butler" ? openButlerCreateDialog() : openUserCreateDialog(),
+          view === "butler"
+            ? calendarActionsRef.current.openButlerCreateDialog()
+            : calendarActionsRef.current.openUserCreateDialog(),
       });
     }
     return bindings;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- same closures as calendarCommands above.
   }, [canCreateEvent, view]);
   useRegisterShortcut(calendarShortcuts);
 
