@@ -105,12 +105,18 @@ export default function AuditLogPage() {
   const currentPage = page + 1;
 
   function handleFilterChange(key: keyof FilterState, value: string) {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (value) next.set(key, value);
-      else next.delete(key);
-      return next;
-    });
+    // replace: true — actor/action are free-text inputs; without this, every
+    // keystroke pushes a new history entry, so Back would have to be clicked
+    // once per character typed instead of once to leave the page.
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value) next.set(key, value);
+        else next.delete(key);
+        return next;
+      },
+      { replace: true },
+    );
     setPage(0);
   }
 

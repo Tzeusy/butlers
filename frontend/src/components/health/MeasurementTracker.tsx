@@ -223,12 +223,18 @@ export default function MeasurementTracker() {
   };
 
   function setUrlFilter(key: "type" | "since" | "until", value: string) {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (value) next.set(key, value);
-      else next.delete(key);
-      return next;
-    });
+    // replace: true — since/until are native date inputs that can fire
+    // onChange per typed segment (day/month/year), so without this a single
+    // date entry could push several history entries.
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value) next.set(key, value);
+        else next.delete(key);
+        return next;
+      },
+      { replace: true },
+    );
     setPage(0);
   }
 

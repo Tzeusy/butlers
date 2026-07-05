@@ -144,12 +144,18 @@ export default function NotificationsPage() {
   const rangeEnd = Math.min((page + 1) * PAGE_SIZE, total);
 
   function handleFilterChange(key: keyof FilterState, value: string) {
-    setSearchParams((prev) => {
-      const sp = new URLSearchParams(prev);
-      applyFilters(sp, { ...parseFilters(prev), [key]: value });
-      sp.delete("page"); // Reset to first page when filters change
-      return sp;
-    });
+    // replace: true — the butler filter is a free-text input; without this,
+    // every keystroke pushes a new history entry, so Back would have to be
+    // clicked once per character typed instead of once to leave the page.
+    setSearchParams(
+      (prev) => {
+        const sp = new URLSearchParams(prev);
+        applyFilters(sp, { ...parseFilters(prev), [key]: value });
+        sp.delete("page"); // Reset to first page when filters change
+        return sp;
+      },
+      { replace: true },
+    );
   }
 
   function handleClearFilters() {
