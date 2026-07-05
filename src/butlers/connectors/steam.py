@@ -793,6 +793,33 @@ def _make_ingestion_envelope_for_filter(
     )
 
 
+def _to_wire_envelope(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of *envelope* safe to submit over MCP ``ingest``.
+
+    The ``build_*_envelope`` functions above all set ``event.type`` (e.g.
+    "play_session", "status_change") so that local consumers —
+    ``_maybe_submit`` (metrics labeling) and
+    ``_make_ingestion_envelope_for_filter`` (ingestion-policy raw_key) — can
+    read the event type without re-deriving it. That field is internal to
+    this connector: the ``ingest.v1`` wire contract (``IngestEventV1`` in
+    ``routing/contracts.py``, ``extra="forbid"``) only defines
+    ``external_event_id``, ``external_thread_id``, and ``observed_at`` on
+    ``event``. Submitting ``event.type`` verbatim causes the Switchboard to
+    reject the envelope with a Pydantic ``extra_forbidden`` error on every
+    single call — the root cause of bu-a38da (zero Steam events ever
+    ingested despite the connector reporting healthy submissions).
+
+    This is the single choke point ``_submit_envelope`` calls before every
+    ``call_tool("ingest", ...)``, so any future envelope builder is covered
+    without needing to remember to strip the field at each call site.
+    """
+    event_section = envelope.get("event")
+    if isinstance(event_section, dict) and "type" in event_section:
+        sanitized_event = {k: v for k, v in event_section.items() if k != "type"}
+        return {**envelope, "event": sanitized_event}
+    return envelope
+
+
 # ---------------------------------------------------------------------------
 # Per-account poller
 # ---------------------------------------------------------------------------
@@ -961,14 +988,20 @@ class SteamAccountPoller:
                         errors,
                     )
 
-                    # Record in filtered_events
+                    # Record in filtered_events. This is a failure to poll the
+                    # upstream Steam Web API (rate limit exhausted, HTTP error,
+                    # etc.) — not a Switchboard ingest submission failure — so
+                    # it is labeled distinctly from reason_submission_error()
+                    # (bu-a38da: the two were previously conflated, which made
+                    # a run of Steam-side 502s look like an internal ingest
+                    # outage during triage).
                     buf = self._filtered_bufs[data_type]
                     buf.record(
                         external_message_id=f"error:{self._state.steam_id}:{data_type}:{_now_iso()}",
                         source_channel=_CONNECTOR_CHANNEL,
                         sender_identity=f"steam:{self._state.steam_id}",
                         subject_or_preview=None,
-                        filter_reason=FilteredEventBuffer.reason_submission_error(),
+                        filter_reason=FilteredEventBuffer.reason_source_poll_error(),
                         full_payload=FilteredEventBuffer.full_payload(
                             channel=_CONNECTOR_CHANNEL,
                             provider=_CONNECTOR_PROVIDER,
@@ -987,17 +1020,67 @@ class SteamAccountPoller:
                         error_detail=f"HTTP {exc.status_code}: {exc.body[:200]}",
                     )
                     await buf.flush(self._db_pool)
-                except Exception:
+                except Exception as exc:
                     logger.exception(
                         "Unexpected error in Steam poller: endpoint=%s data_type=%s",
                         self._state.endpoint_identity,
                         data_type,
                     )
+
+                    # Health-honesty (bu-a38da): this branch is reached by any
+                    # unexpected failure that is not a SteamAPIError/RateLimit
+                    # error — in practice, almost always a failed Switchboard
+                    # ingest submission (_submit_envelope raising ConnectionError
+                    # or RuntimeError). Previously this branch only bumped a
+                    # metric counter and left health/consecutive_errors
+                    # untouched, so a connector whose every submission failed
+                    # kept reporting "healthy" indefinitely. Mirror the
+                    # SteamAPIError branch's degradation so persistent
+                    # submission failure is visible in get_health_report()/the
+                    # heartbeat, and back off instead of hot-looping.
+                    errors = self._state.consecutive_errors.get(data_type, 0) + 1
+                    self._state.consecutive_errors[data_type] = errors
+                    if errors >= _TRANSIENT_CONSECUTIVE_ERROR_THRESHOLD:
+                        self._state.health[data_type] = "error"
+                    else:
+                        self._state.health[data_type] = "degraded"
+
+                    backoff = min(
+                        _TRANSIENT_BACKOFF_INITIAL_S * (2 ** min(errors - 1, 10)),
+                        _TRANSIENT_BACKOFF_MAX_S,
+                    )
+                    self._state.backoff_until[data_type] = time.monotonic() + backoff
+
                     steam_polls_total.labels(
                         data_type=data_type,
                         endpoint_identity=self._state.endpoint_identity,
                         status="error",
                     ).inc()
+
+                    buf = self._filtered_bufs[data_type]
+                    buf.record(
+                        external_message_id=f"error:{self._state.steam_id}:{data_type}:{_now_iso()}",
+                        source_channel=_CONNECTOR_CHANNEL,
+                        sender_identity=f"steam:{self._state.steam_id}",
+                        subject_or_preview=None,
+                        filter_reason=FilteredEventBuffer.reason_submission_error(),
+                        full_payload=FilteredEventBuffer.full_payload(
+                            channel=_CONNECTOR_CHANNEL,
+                            provider=_CONNECTOR_PROVIDER,
+                            endpoint_identity=self._state.endpoint_identity,
+                            external_event_id=f"error:{self._state.steam_id}:{data_type}:{_now_iso()}",
+                            external_thread_id=None,
+                            observed_at=_now_iso(),
+                            sender_identity=f"steam:{self._state.steam_id}",
+                            raw={
+                                "data_type": data_type,
+                                "error": str(exc),
+                            },
+                        ),
+                        status="error",
+                        error_detail=str(exc)[:500],
+                    )
+                    await buf.flush(self._db_pool)
 
                 # Post-poll: drain replay queue
                 try:
@@ -1494,9 +1577,33 @@ class SteamAccountPoller:
         ).inc()
 
     async def _submit_envelope(self, envelope: dict[str, Any]) -> None:
-        """Submit an ingest.v1 envelope to the Switchboard via MCP."""
+        """Submit an ingest.v1 envelope to the Switchboard via MCP.
+
+        Two bugs made every Steam ingest submission fail invisibly (bu-a38da):
+
+        1. ``envelope["event"]["type"]`` (e.g. "play_session") is an
+           internal-only field used locally by ``_maybe_submit`` /
+           ``_make_ingestion_envelope_for_filter`` for metrics labeling and
+           ingestion-policy raw_key construction. The ``ingest.v1`` wire
+           contract (``IngestEventV1``, ``extra="forbid"``) does not define
+           this field, so every Steam envelope was rejected server-side with
+           ``event.type: Extra inputs are not permitted``. ``_to_wire_envelope``
+           strips it before transmission.
+        2. The Switchboard's ``ingest`` MCP tool catches that validation
+           ``ValueError`` and returns a normal (non-erroring)
+           ``{"status": "error", "error": ...}`` response rather than raising
+           an MCP-level error — the same convention every other connector
+           (e.g. ``telegram_bot._submit_to_ingest``) checks for. This
+           connector never checked it, so ``call_tool`` returning without
+           raising was treated as success even though nothing was persisted
+           to ``public.ingestion_events``. Checked explicitly below.
+        """
+        wire_envelope = _to_wire_envelope(envelope)
         try:
-            await self._mcp_client.call_tool("ingest", envelope)
+            result = await self._mcp_client.call_tool("ingest", wire_envelope)
+            if isinstance(result, dict) and result.get("status") == "error":
+                error_msg = result.get("error", "Unknown ingest error")
+                raise RuntimeError(f"Ingest tool error: {error_msg}")
             self._metrics.record_ingest_submission(status="success")
             self._metrics.record_source_api_call(api_method="ingest", status="success")
         except Exception as exc:
