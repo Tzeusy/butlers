@@ -14,12 +14,14 @@ Verifies:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from butlers.connectors.whatsapp_user_client import (
+    _SSE_PAIRING_IDLE_INTERVAL_S,
     WhatsAppUserClientConnector,
     WhatsAppUserClientConnectorConfig,
     _derive_wa_chat_type,
@@ -937,3 +939,58 @@ async def test_build_bridge_config_allows_degraded_for_recovery() -> None:
     connector = _connector_with_mocks()
     cfg = connector._build_bridge_config(startup_allow_degraded=True)
     assert cfg.startup_allow_degraded is True
+
+
+# ---------------------------------------------------------------------------
+# _sse_event_loop must idle (not tear down) while awaiting QR pairing (bu-7sh43)
+# ---------------------------------------------------------------------------
+
+
+async def test_sse_event_loop_idles_without_stopping_while_awaiting_pairing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bridge sitting in pair_required is a legitimate waiting state, not a
+    failure: the SSE loop must idle-and-recheck instead of breaking (which
+    would trigger connector.start()'s finally-block teardown of the bridge
+    the user is mid-scan against — the exact symptom bu-7sh43 reports)."""
+    connector = _connector_with_mocks()
+    bridge_manager = SimpleNamespace(
+        is_degraded=True, is_awaiting_pairing=True, degraded_reason="pair_required"
+    )
+    connector._bridge_manager = bridge_manager
+    connector._running = True
+
+    sleep_calls: list[float] = []
+
+    async def _fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        # Simulate pairing completing right after the first idle wakeup, and
+        # stop the connector so the loop exits deterministically.
+        bridge_manager.is_degraded = False
+        connector._running = False
+
+    monkeypatch.setattr("butlers.connectors.whatsapp_user_client.asyncio.sleep", _fake_sleep)
+
+    await connector._sse_event_loop()  # must return without raising or hanging
+
+    assert sleep_calls == [_SSE_PAIRING_IDLE_INTERVAL_S]
+
+
+async def test_sse_event_loop_stops_for_genuinely_degraded_non_pairing_state() -> None:
+    """Non-pairing degraded states (pairing-timeout exit, session invalidated,
+    an unreachable bridge) must still stop the SSE loop promptly — only
+    pair_required is exempt (bu-7sh43)."""
+    connector = _connector_with_mocks()
+    bridge_manager = SimpleNamespace(
+        is_degraded=True,
+        is_awaiting_pairing=False,
+        degraded_reason="Session invalidated — re-pair required",
+    )
+    connector._bridge_manager = bridge_manager
+    connector._running = True
+
+    await connector._sse_event_loop()  # must return promptly via break, not idle
+
+    # _sse_event_loop itself only breaks; it does not flip _running (that's
+    # connector.stop()'s job, invoked by the caller's finally block).
+    assert connector._running is True
