@@ -17,7 +17,10 @@
  * hooks. Per-connector `hourly_events` (ingested) and `hourly_filtered_events`
  * (skip-routed, bu-scyro) both come from GET /api/ingestion/connectors/summaries
  * — sourced from the DB, not Prometheus, so sparklines are always populated
- * regardless of `aggregates_available`.
+ * regardless of `aggregates_available`. When the response's top-level
+ * `hourly_events_available` is `false` (the combined hourly query itself
+ * failed), a `SourceDegradedNote` names the degraded source instead of letting
+ * the all-zero fallback arrays render as an honest "quiet 24h".
  *
  * NOTE: useConnectorDetail MUST NOT be mounted from this roster (spec §6.2).
  * Only summary-level data is shown here.
@@ -32,6 +35,7 @@ import {
   useAvailableConnectors,
 } from '@/hooks/use-ingestion'
 import type { ConnectorSummary } from '@/api/types'
+import { SourceDegradedNote } from '@/components/ui/query-boundary'
 import { AttentionStrip } from './AttentionStrip'
 import { ConnectorRosterRow } from './ConnectorRosterRow'
 import { DormantList } from './DormantList'
@@ -106,6 +110,14 @@ export function ConnectorsRoster() {
   // The new endpoint returns { connectors: [...], aggregates_available: bool }
   const allConnectors: ConnectorSummary[] = connectorsResp?.data?.connectors ?? []
   const sorted = sortConnectors(allConnectors)
+
+  // hourly_events_available (bu-scyro) is false only when the backend's combined
+  // ingested+filtered hourly query itself raised — in that case every connector's
+  // hourly_events/hourly_filtered_events fall back to all-zero arrays and
+  // today.messages_ingested (summed from hourly_events) reads as 0. Absent field
+  // (older cached response) must NOT be treated as false. Never let that render as
+  // an honest "quiet 24h" — surface the degraded source inline instead.
+  const hourlyEventsAvailable = connectorsResp?.data?.hourly_events_available !== false
 
   // Available dormant profiles (catalog entries not yet registered)
   const catalogProfiles = availableResp?.data ?? []
@@ -212,6 +224,16 @@ export function ConnectorsRoster() {
           </div>
         ))}
       </div>
+
+      {/* Hourly events source degraded note -- never let a failed hourly query hide
+          behind a quiet "events · 24h" total or empty-looking sparklines (bu-scyro). */}
+      {!hourlyEventsAvailable && (
+        <SourceDegradedNote
+          label="24h activity"
+          detail="hourly event source unavailable, sparklines and events · 24h above are incomplete"
+          className="mt-4"
+        />
+      )}
 
       {/* Actions */}
       <div className="mt-8 flex gap-2.5">
