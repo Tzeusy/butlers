@@ -81,6 +81,16 @@ minutes of each other (one flaky-CI burst). Raw "N-consecutive-agree" would
 promote off single-incident noise; requiring real elapsed time between the
 oldest and newest evidence event is a cheap structural guard.
 
+**[flagged, not silently decided]** A bare `decided_at::date` difference
+(unpinned timezone) has a midnight-boundary gaming hole: two verdicts 2
+minutes apart straddling a day boundary would satisfy ">=2 distinct calendar
+days" on the exact single-burst shape this gate is meant to reject. Bead 3
+must either (a) pin the day boundary to UTC and add a minimum-elapsed-time
+floor (e.g. `last_evidence_at - first_evidence_at >= interval '20 hours'`),
+or (b) replace calendar-day counting with a pure elapsed-time floor. See the
+design doc's Promotion Trigger section for the full callout; this doc does
+not prescribe which of the two.
+
 **D6 — Demotion via 1-in-K shadow LLM check, not passive drift detection.**
 Once a rule bypasses the LLM, nothing observes it again by default. Rather than
 waiting for a downstream failure signal (which doesn't exist for a

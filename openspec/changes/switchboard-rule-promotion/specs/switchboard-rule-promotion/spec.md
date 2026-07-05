@@ -70,6 +70,17 @@ near-simultaneous, superficially-repeated verdicts (e.g. several near-identical
 automated notifications arriving within minutes of each other) as insufficient
 evidence for a standing rule.
 
+"Distinct calendar days" MUST be computed against a pinned timezone anchor
+(UTC, matching `decided_at`'s `TIMESTAMPTZ` storage) and MUST NOT be
+implementable as a bare date-difference check with no minimum-elapsed-time
+floor — a naive `decided_at::date` comparison lets a burst straddling a
+day boundary (e.g. two verdicts 2 minutes apart at 23:59 and 00:01) satisfy
+the "2 distinct days" count on the exact single-burst evidence shape this
+gate exists to reject. The implementation MUST additionally enforce a
+minimum elapsed-time floor between `first_evidence_at` and
+`last_evidence_at` (see design.md D5) so a midnight-adjacent burst cannot
+qualify.
+
 #### Scenario: Promotion-eligible pattern creates a suggestion
 
 - **WHEN** a sender has 3 `routing_verdict_log` rows with
@@ -87,6 +98,17 @@ evidence for a standing rule.
   10-minute window on a single calendar day
 - **THEN** no suggestion MUST be created, regardless of the count meeting the
   numeric threshold
+
+#### Scenario: Midnight-boundary burst does not trigger promotion
+
+- **WHEN** a sender has 3 `routing_verdict_log` rows with matching
+  `verdict_source='llm'` verdicts, all within a 10-minute span that happens to
+  straddle a UTC calendar-day boundary (e.g. 23:59 and 00:01 the next day)
+- **THEN** no suggestion MUST be created — a naive count of distinct
+  `decided_at::date` values crossing midnight MUST NOT be treated as
+  satisfying the evidence-quality gate; the minimum-elapsed-time floor
+  applies regardless of how many calendar dates the timestamps nominally fall
+  on
 
 #### Scenario: Existing rule suppresses re-proposal
 

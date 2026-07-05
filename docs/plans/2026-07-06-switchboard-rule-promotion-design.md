@@ -210,6 +210,22 @@ within about two minutes of each other (a single flaky-CI burst). A raw
 same-day burst into a standing rule on noisy, single-incident evidence. Requiring
 the evidence to span real elapsed time is a cheap, high-value guard against that.
 
+**[flagged, not silently decided]** "Calendar day" needs a pinned timezone
+anchor, and naive date-difference counting has a real gaming hole at the
+boundary: two verdicts 2 minutes apart — e.g. 23:59 and 00:01 — cross a
+UTC calendar-day boundary and would satisfy ">=2 distinct calendar days"
+under a `decided_at::date` (UTC, matching the column's `TIMESTAMPTZ` storage)
+grouping, on the *exact same kind of single-burst evidence* this gate exists
+to reject. Bead 3 should not implement this as a bare date-difference check.
+Two ways to close the hole, either is acceptable and this doc does not
+prescribe which: (a) keep the calendar-day framing but pin it to UTC *and*
+add a minimum-elapsed-time floor (e.g. also require
+`last_evidence_at - first_evidence_at >= interval '20 hours'`) so a
+midnight-adjacent burst still fails; or (b) drop calendar-day counting
+entirely in favor of a pure elapsed-time floor, which sidesteps timezone
+anchoring altogether at the cost of losing the "2 distinct days" framing's
+intuitive read. Owner/implementer should pick one before Bead 3 ships.
+
 5. On trigger, upsert `switchboard.rule_promotion_suggestions`:
 
 ```sql
