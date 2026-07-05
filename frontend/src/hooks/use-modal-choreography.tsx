@@ -36,7 +36,7 @@
  * leave), pass `trapFocus: false` and drop `aria-modal`/`role="dialog"`.
  */
 
-import { useEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, type KeyboardEvent, type RefObject } from "react";
 
 export interface UseModalChoreographyOptions {
   /** Called when Escape is pressed. */
@@ -178,20 +178,4 @@ export function useModalChoreography<TFocus extends HTMLElement = HTMLElement>({
     initialFocusRef: focusRoot ? (rootRef as unknown as RefObject<TFocus>) : ownFocusRef,
     onKeyDown,
   };
-}
-
-/**
- * ModalStatusRegion — the sr-only `aria-live="polite"` status span every
- * migrated overlay renders once, sharing the exact markup EventDrawer used
- * to hand-roll per instance. Content is caller-supplied (it's usually a
- * computed string that changes once data resolves, e.g. "Event detail open —
- * 3 sessions"), so this is a thin, purely presentational wrapper rather than
- * something that owns the announcement text itself.
- */
-export function ModalStatusRegion({ children }: { children: ReactNode }) {
-  return (
-    <span role="status" aria-live="polite" className="sr-only">
-      {children}
-    </span>
-  );
 }

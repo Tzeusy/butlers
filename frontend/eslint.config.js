@@ -240,17 +240,6 @@ export default defineConfig([
       'react-refresh/only-export-components': 'off',
     },
   },
-  {
-    // Same tradeoff again: useModalChoreography and its companion
-    // ModalStatusRegion (the sr-only status span every migrated overlay
-    // renders) are one tightly-coupled unit (bu-qvnce.10) — splitting the
-    // trivial presentational component into its own file just to satisfy
-    // fast-refresh would hurt readability for no real benefit.
-    files: ['src/hooks/use-modal-choreography.tsx'],
-    rules: {
-      'react-refresh/only-export-components': 'off',
-    },
-  },
   // ---------------------------------------------------------------------------
   // Chart color plumbing guard (bu-86c4c.5) + one-visual-language guards
   // (bu-86c4c.6). Split into three non-overlapping file-sets — see the
