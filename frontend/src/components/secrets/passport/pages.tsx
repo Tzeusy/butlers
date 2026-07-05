@@ -2002,11 +2002,11 @@ export function PageSystem({
                 <ActionArrow href={`/audit-log?key=s:${credential.key}`}>
                   /audit?key={credential.key}
                 </ActionArrow>
-                {credential.usedBy.length > 0 && credential.usedBy[0] !== "*" && (
-                  <ActionArrow href={`/butlers/${credential.usedBy[0]}`}>
-                    /butlers/{credential.usedBy[0]}
-                  </ActionArrow>
-                )}
+                {/* No "/butlers/{slug}" cross-ref here (bu-xzaxm): usedBy for
+                    system credentials names a module/subsystem consumer
+                    (e.g. "email", "oauth", "blob_storage"), never a butler
+                    slug — see _SYSTEM_KEY_USED_BY's docstring. Linking to
+                    /butlers/{usedBy[0]} would 404 for every real entry. */}
               </>
             ),
           },
