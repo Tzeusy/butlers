@@ -250,7 +250,9 @@ describe("PageUser: disconnect button (confirm panel)", () => {
 
     fireEvent.click(getBtn("disconnect"))
 
-    expect(screen.getByText("Remove this credential? This cannot be undone.")).toBeTruthy()
+    expect(
+      screen.getByText("Remove this credential? The credential will be deleted and cannot be recovered."),
+    ).toBeTruthy()
     expect(getBtn("yes, disconnect")).toBeTruthy()
   })
 

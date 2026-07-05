@@ -368,7 +368,9 @@ describe("PageSystem: delete button", () => {
 
     fireEvent.click(getBtn("delete"))
 
-    expect(screen.getByText("Remove this shared credential? This cannot be undone.")).toBeTruthy()
+    expect(
+      screen.getByText("Remove this shared credential? The credential will be deleted and cannot be recovered."),
+    ).toBeTruthy()
     expect(getBtn("yes, delete")).toBeTruthy()
   })
 
@@ -405,7 +407,9 @@ describe("PageSystem: delete button", () => {
 
     fireEvent.click(getBtn("delete"))
 
-    expect(screen.getByText(/Remove per-butler override for calendar/)).toBeTruthy()
+    expect(
+      screen.getByText(/Remove per-butler override for calendar\? The override will be deleted/),
+    ).toBeTruthy()
   })
 
   it("shows 'deleting…' while the delete mutation is pending", async () => {

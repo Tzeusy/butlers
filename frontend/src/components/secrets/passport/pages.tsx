@@ -36,7 +36,7 @@ import {
   toneColor,
   IdentityChip,
 } from "./atoms.tsx";
-import { WhatBreaks } from "./WhatBreaks.tsx";
+import { WhatBreaks, ConfirmImpact } from "./WhatBreaks.tsx";
 import type { Identity } from "./types.ts";
 import { reauthorizeUserCredential, ApiError } from "@/api/client.ts";
 import {
@@ -486,8 +486,16 @@ function GoogleAccountRow({
           data-google-disconnect-confirm={account.id}
         >
           <Mono size={11} color="var(--red)">
-            Disconnect {email}? Removes saved tokens.
+            Disconnect {email}? Every butler feature connected to this account
+            loses access and cannot be recovered.
           </Mono>
+          <ConfirmImpact provider="google" />
+          {healthGranted && (
+            <Mono size={10} color="var(--dim)">
+              Only want to stop Google Health? Use the health "revoke" control
+              above instead of disconnecting the whole account.
+            </Mono>
+          )}
           {/* Hard-delete toggle */}
           <label className="flex items-center gap-2 cursor-pointer">
             <input
@@ -1532,8 +1540,16 @@ export function PageUser({
           data-disconnect-confirm="true"
         >
           <Mono size={11} color="var(--red)">
-            Remove this credential? This cannot be undone.
+            Remove this credential? The credential will be deleted and cannot
+            be recovered.
           </Mono>
+          <ConfirmImpact provider={credential.provider} capabilities={credential.capabilities} />
+          {provider.id === "google" && hasHealthScopes(credential.scopesGranted) && (
+            <Mono size={10} color="var(--dim)">
+              Only want to stop Google Health? Use the scope-selective health
+              revoke above instead of disconnecting the whole account.
+            </Mono>
+          )}
           {disconnectMutation.error && (
             <Mono size={11} color="var(--red)">
               {disconnectMutation.error instanceof Error
@@ -2116,9 +2132,10 @@ export function PageSystem({
         >
           <Mono size={11} color="var(--red)">
             {isLocal
-              ? `Remove per-butler override for ${deleteTarget}? This cannot be undone.`
-              : "Remove this shared credential? This cannot be undone."}
+              ? `Remove per-butler override for ${deleteTarget}? The override will be deleted and cannot be recovered.`
+              : "Remove this shared credential? The credential will be deleted and cannot be recovered."}
           </Mono>
+          <ConfirmImpact provider={credential.category} />
           {deleteMutation.error && (
             <Mono size={11} color="var(--red)">
               {deleteMutation.error instanceof Error
@@ -2807,6 +2824,7 @@ export function PageCli({
           <Mono size={11} color="var(--red)">
             Revoke this CLI token? The credential will be deleted and cannot be recovered.
           </Mono>
+          <ConfirmImpact provider={providerName} />
           {revokeMutation.error && (
             <Mono size={11} color="var(--red)">
               {revokeMutation.error instanceof Error

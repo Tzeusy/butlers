@@ -98,7 +98,7 @@ interface WhatBreaksRowProps {
   capabilities?: CapabilityStatus[]
 }
 
-function WhatBreaksRow({ entry, capabilities }: WhatBreaksRowProps) {
+export function WhatBreaksRow({ entry, capabilities }: WhatBreaksRowProps) {
   const capabilityStatus = entry.capability
     ? capabilities?.find((c) => c.capability === entry.capability)
     : undefined
@@ -185,6 +185,90 @@ export function WhatBreaks({ provider, capabilities, className, ...props }: What
 
   return (
     <div className={cn("flex flex-col", className)} {...props}>
+      {entries.map((entry, idx) => (
+        <WhatBreaksRow
+          key={`${entry.butler}:${entry.feature}:${idx}`}
+          entry={entry}
+          capabilities={capabilities}
+        />
+      ))}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ConfirmImpact — dependent-feature list for destructive confirm panels
+// (bu-cyyi3)
+//
+// Rendered INSIDE the delete (system) / revoke (CLI) / disconnect (user OAuth)
+// two-pill confirm panels, reusing WhatBreaksRow's exact vocabulary (severity
+// pip + butler letter-mark + feature name) so a destructive confirm is
+// informed, not just a generic "yes/cancel" pair.
+//
+// Honesty rule (same as bu-xzaxm): the provider_feature_catalogue only covers
+// a fixed set of known providers — an empty result here means "we have no
+// record of what depends on this," never "nothing depends on this." A confirm
+// surface must NEVER let that ambiguity read as an all-clear, so the empty
+// case says "impact not tracked" rather than reusing WhatBreaks' browsing-page
+// "Nothing depends on this credential." wording (which is fine on the
+// browsing page, but would imply a verified zero-impact guarantee here).
+// A catalogue-unreachable fetch failure is called out separately as
+// "unavailable" so it is never confused with a genuine (if untracked) result.
+// ---------------------------------------------------------------------------
+
+export interface ConfirmImpactProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Provider (or category) slug to look up in the breaks catalogue — the
+   *  same value already passed to <WhatBreaks provider={...} /> elsewhere on
+   *  the page, so this reuses the cached query result instead of refetching. */
+  provider: string
+  /** Optional live capability-probe state, forwarded to WhatBreaksRow. */
+  capabilities?: CapabilityStatus[]
+}
+
+/**
+ * ConfirmImpact — impact-aware dependent list for destructive confirms.
+ *
+ * @example
+ *   <ConfirmImpact provider="google" />
+ */
+export function ConfirmImpact({ provider, capabilities, className, ...props }: ConfirmImpactProps) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["secrets", "breaks-catalogue", provider],
+    queryFn: () => getBreaksCatalogue({ provider }),
+  })
+
+  if (isLoading) {
+    return (
+      <div className={cn("py-1", className)} {...props} data-confirm-impact-state="loading">
+        <Mono muted>checking impact…</Mono>
+      </div>
+    )
+  }
+
+  const catalogueAvailable = data?.meta?.catalogue_available !== false
+
+  if (isError || !data || !catalogueAvailable) {
+    return (
+      <div className={cn("py-1", className)} {...props} data-confirm-impact-state="unavailable">
+        <Mono style={{ color: "var(--amber,oklch(0.7_0.15_80))" }}>
+          impact unavailable — could not reach the dependency catalogue.
+        </Mono>
+      </div>
+    )
+  }
+
+  const entries = sortBySeverityDesc(data.data ?? [])
+
+  if (entries.length === 0) {
+    return (
+      <div className={cn("py-1", className)} {...props} data-confirm-impact-state="not-tracked">
+        <Mono muted>impact not tracked for this credential.</Mono>
+      </div>
+    )
+  }
+
+  return (
+    <div className={cn("flex flex-col", className)} {...props} data-confirm-impact-state="tracked">
       {entries.map((entry, idx) => (
         <WhatBreaksRow
           key={`${entry.butler}:${entry.feature}:${idx}`}
