@@ -216,6 +216,10 @@ export function WhatBreaks({ provider, capabilities, className, ...props }: What
 // "unavailable" so it is never confused with a genuine (if untracked) result.
 // ---------------------------------------------------------------------------
 
+/** ConfirmImpact's four render states — also mirrored on the
+ *  `data-confirm-impact-state` DOM attribute for tests. */
+export type ConfirmImpactState = "loading" | "unavailable" | "not-tracked" | "tracked"
+
 export interface ConfirmImpactProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Provider (or category) slug to look up in the breaks catalogue — the
    *  same value already passed to <WhatBreaks provider={...} /> elsewhere on
@@ -223,6 +227,14 @@ export interface ConfirmImpactProps extends React.HTMLAttributes<HTMLDivElement>
   provider: string
   /** Optional live capability-probe state, forwarded to WhatBreaksRow. */
   capabilities?: CapabilityStatus[]
+  /**
+   * Called whenever the impact-fetch state changes (including on mount).
+   * The enclosing destructive-confirm panel uses this to keep its "yes, …"
+   * button disabled while impact is still `"loading"` — an uninformed
+   * confirm (fired before the owner has seen what depends on this
+   * credential) would defeat the whole point of this component.
+   */
+  onStateChange?: (state: ConfirmImpactState) => void
 }
 
 /**
@@ -231,13 +243,35 @@ export interface ConfirmImpactProps extends React.HTMLAttributes<HTMLDivElement>
  * @example
  *   <ConfirmImpact provider="google" />
  */
-export function ConfirmImpact({ provider, capabilities, className, ...props }: ConfirmImpactProps) {
+export function ConfirmImpact({
+  provider,
+  capabilities,
+  className,
+  onStateChange,
+  ...props
+}: ConfirmImpactProps) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["secrets", "breaks-catalogue", provider],
     queryFn: () => getBreaksCatalogue({ provider }),
   })
 
-  if (isLoading) {
+  const catalogueAvailable = data?.meta?.catalogue_available !== false
+  const entries = data ? sortBySeverityDesc(data.data ?? []) : []
+
+  const state: ConfirmImpactState = isLoading
+    ? "loading"
+    : isError || !data || !catalogueAvailable
+      ? "unavailable"
+      : entries.length === 0
+        ? "not-tracked"
+        : "tracked"
+
+  React.useEffect(() => {
+    onStateChange?.(state)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onStateChange is expected to be a stable setter (e.g. useState's dispatch); only re-fire when the derived state itself changes, not on every caller re-render.
+  }, [state])
+
+  if (state === "loading") {
     return (
       <div className={cn("py-1", className)} {...props} data-confirm-impact-state="loading">
         <Mono muted>checking impact…</Mono>
@@ -245,9 +279,7 @@ export function ConfirmImpact({ provider, capabilities, className, ...props }: C
     )
   }
 
-  const catalogueAvailable = data?.meta?.catalogue_available !== false
-
-  if (isError || !data || !catalogueAvailable) {
+  if (state === "unavailable") {
     return (
       <div className={cn("py-1", className)} {...props} data-confirm-impact-state="unavailable">
         <Mono style={{ color: "var(--amber,oklch(0.7_0.15_80))" }}>
@@ -257,9 +289,7 @@ export function ConfirmImpact({ provider, capabilities, className, ...props }: C
     )
   }
 
-  const entries = sortBySeverityDesc(data.data ?? [])
-
-  if (entries.length === 0) {
+  if (state === "not-tracked") {
     return (
       <div className={cn("py-1", className)} {...props} data-confirm-impact-state="not-tracked">
         <Mono muted>impact not tracked for this credential.</Mono>

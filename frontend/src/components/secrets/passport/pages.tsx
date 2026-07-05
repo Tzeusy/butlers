@@ -36,7 +36,7 @@ import {
   toneColor,
   IdentityChip,
 } from "./atoms.tsx";
-import { WhatBreaks, ConfirmImpact } from "./WhatBreaks.tsx";
+import { WhatBreaks, ConfirmImpact, type ConfirmImpactState } from "./WhatBreaks.tsx";
 import type { Identity } from "./types.ts";
 import { reauthorizeUserCredential, ApiError } from "@/api/client.ts";
 import {
@@ -341,6 +341,10 @@ function GoogleAccountRow({
   const [disconnectOpen, setDisconnectOpen] = React.useState(false);
   const [hardDelete, setHardDelete] = React.useState(false);
   const [revokeHealthOpen, setRevokeHealthOpen] = React.useState(false);
+  // Impact-fetch state for the disconnect confirm below — gates "yes,
+  // disconnect" so an uninformed confirm can't fire while ConfirmImpact is
+  // still loading (bu-cyyi3 review follow-up).
+  const [disconnectImpactState, setDisconnectImpactState] = React.useState<ConfirmImpactState>("loading");
 
   // Re-authorize this account: uses account_hint (pre-selects the email in
   // Google's account chooser) + forceConsent (always shows the consent screen
@@ -470,7 +474,7 @@ function GoogleAccountRow({
         {!isOnlyAccount && (
           <PillBtn
             variant="danger"
-            onClick={() => { setDisconnectOpen(true); setHardDelete(false); }}
+            onClick={() => { setDisconnectOpen(true); setHardDelete(false); setDisconnectImpactState("loading"); }}
             disabled={disconnectOpen}
           >
             disconnect
@@ -489,7 +493,7 @@ function GoogleAccountRow({
             Disconnect {email}? Every butler feature connected to this account
             loses access and cannot be recovered.
           </Mono>
-          <ConfirmImpact provider="google" />
+          <ConfirmImpact provider="google" onStateChange={setDisconnectImpactState} />
           {healthGranted && (
             <Mono size={10} color="var(--dim)">
               Only want to stop Google Health? Use the health "revoke" control
@@ -518,7 +522,7 @@ function GoogleAccountRow({
             <PillBtn
               variant="danger"
               onClick={handleDisconnectConfirm}
-              disabled={disconnectMutation.isPending}
+              disabled={disconnectMutation.isPending || disconnectImpactState === "loading"}
             >
               {disconnectMutation.isPending ? "disconnecting…" : "yes, disconnect"}
             </PillBtn>
@@ -1205,6 +1209,10 @@ export function PageUser({
   // ── Disconnect ─────────────────────────────────────────────────────────────
   const [disconnectConfirm, setDisconnectConfirm] = React.useState(false);
   const disconnectMutation = useDisconnectUserSecret();
+  // Impact-fetch state for the disconnect confirm below — gates "yes,
+  // disconnect" so an uninformed confirm can't fire while ConfirmImpact is
+  // still loading (bu-cyyi3 review follow-up).
+  const [disconnectImpactState, setDisconnectImpactState] = React.useState<ConfirmImpactState>("loading");
 
   function handleDisconnectConfirm() {
     if (disconnectMutation.isPending) return;
@@ -1543,7 +1551,11 @@ export function PageUser({
             Remove this credential? The credential will be deleted and cannot
             be recovered.
           </Mono>
-          <ConfirmImpact provider={credential.provider} capabilities={credential.capabilities} />
+          <ConfirmImpact
+            provider={credential.provider}
+            capabilities={credential.capabilities}
+            onStateChange={setDisconnectImpactState}
+          />
           {provider.id === "google" && hasHealthScopes(credential.scopesGranted) && (
             <Mono size={10} color="var(--dim)">
               Only want to stop Google Health? Use the scope-selective health
@@ -1561,7 +1573,7 @@ export function PageUser({
             <PillBtn
               variant="danger"
               onClick={handleDisconnectConfirm}
-              disabled={disconnectMutation.isPending}
+              disabled={disconnectMutation.isPending || disconnectImpactState === "loading"}
             >
               {disconnectMutation.isPending ? "removing…" : "yes, disconnect"}
             </PillBtn>
@@ -1640,7 +1652,7 @@ export function PageUser({
             {!isMissing && (
               <PillBtn
                 variant="danger"
-                onClick={() => { setDisconnectConfirm(true); setRotateOpen(false); }}
+                onClick={() => { setDisconnectConfirm(true); setRotateOpen(false); setDisconnectImpactState("loading"); }}
                 disabled={disconnectConfirm}
               >
                 disconnect
@@ -1824,6 +1836,10 @@ export function PageSystem({
   // Passes the correct ?target= depending on whether this is a shared or local row.
   const [deleteConfirm, setDeleteConfirm] = React.useState(false);
   const deleteMutation = useDeleteSystemSecret();
+  // Impact-fetch state for the delete confirm below — gates "yes, delete" so
+  // an uninformed confirm can't fire while ConfirmImpact is still loading
+  // (bu-cyyi3 review follow-up).
+  const [deleteImpactState, setDeleteImpactState] = React.useState<ConfirmImpactState>("loading");
 
   // The delete target routes to the correct schema:
   // - local overrides: credential.target holds the butler name
@@ -1835,6 +1851,7 @@ export function PageSystem({
     setDeleteConfirm(true);
     setSetValueOpen(false);
     setOverrideOpen(false);
+    setDeleteImpactState("loading");
   }
 
   function handleDeleteConfirm() {
@@ -2135,7 +2152,7 @@ export function PageSystem({
               ? `Remove per-butler override for ${deleteTarget}? The override will be deleted and cannot be recovered.`
               : "Remove this shared credential? The credential will be deleted and cannot be recovered."}
           </Mono>
-          <ConfirmImpact provider={credential.category} />
+          <ConfirmImpact provider={credential.category} onStateChange={setDeleteImpactState} />
           {deleteMutation.error && (
             <Mono size={11} color="var(--red)">
               {deleteMutation.error instanceof Error
@@ -2147,7 +2164,7 @@ export function PageSystem({
             <PillBtn
               variant="danger"
               onClick={handleDeleteConfirm}
-              disabled={deleteMutation.isPending}
+              disabled={deleteMutation.isPending || deleteImpactState === "loading"}
             >
               {deleteMutation.isPending ? "deleting…" : isLocal ? "yes, remove override" : "yes, delete"}
             </PillBtn>
@@ -2477,6 +2494,10 @@ export function PageCli({
   // ── Revoke ────────────────────────────────────────────────────────────────
   const revokeMutation = useRevokeCliRuntime();
   const [revokeConfirm, setRevokeConfirm] = React.useState(false);
+  // Impact-fetch state for the revoke confirm below — gates "yes, revoke" so
+  // an uninformed confirm can't fire while ConfirmImpact is still loading
+  // (bu-cyyi3 review follow-up).
+  const [revokeImpactState, setRevokeImpactState] = React.useState<ConfirmImpactState>("loading");
 
   function handleRevokeConfirm() {
     if (revokeMutation.isPending) return;
@@ -2824,7 +2845,7 @@ export function PageCli({
           <Mono size={11} color="var(--red)">
             Revoke this CLI token? The credential will be deleted and cannot be recovered.
           </Mono>
-          <ConfirmImpact provider={providerName} />
+          <ConfirmImpact provider={providerName} onStateChange={setRevokeImpactState} />
           {revokeMutation.error && (
             <Mono size={11} color="var(--red)">
               {revokeMutation.error instanceof Error
@@ -2836,7 +2857,7 @@ export function PageCli({
             <PillBtn
               variant="danger"
               onClick={handleRevokeConfirm}
-              disabled={revokeMutation.isPending}
+              disabled={revokeMutation.isPending || revokeImpactState === "loading"}
             >
               {revokeMutation.isPending ? "revoking…" : "yes, revoke"}
             </PillBtn>
@@ -2945,7 +2966,7 @@ export function PageCli({
             {!isMissing && !isApiKeyMode && (
               <PillBtn
                 variant="danger"
-                onClick={() => { setRevokeConfirm(true); setSetTokenOpen(false); setGenerateConfirm(false); }}
+                onClick={() => { setRevokeConfirm(true); setSetTokenOpen(false); setGenerateConfirm(false); setRevokeImpactState("loading"); }}
                 disabled={revokeConfirm}
               >
                 revoke

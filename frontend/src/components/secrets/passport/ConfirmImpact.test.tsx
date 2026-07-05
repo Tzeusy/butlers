@@ -135,3 +135,42 @@ describe("ConfirmImpact: tracked entries", () => {
     })
   })
 })
+
+describe("ConfirmImpact: onStateChange callback", () => {
+  // The enclosing destructive-confirm panel (PageSystem/PageUser/PageCli/
+  // GoogleAccountRow) relies on this callback to keep "yes, …" disabled
+  // while impact is still loading — an uninformed confirm would defeat the
+  // whole point of this component. This locks down the callback contract
+  // independent of any one call site.
+  it("reports 'loading' first, then the resolved state, and never fires 'loading' again", async () => {
+    mockGetBreaksCatalogue.mockResolvedValue(makeApiResponse([]))
+    const states: string[] = []
+    renderWithQuery(<ConfirmImpact provider="email" onStateChange={(s) => states.push(s)} />)
+
+    expect(states[0]).toBe("loading")
+    await waitFor(() => {
+      expect(states[states.length - 1]).toBe("not-tracked")
+    })
+    expect(states.filter((s) => s === "loading")).toHaveLength(1)
+  })
+
+  it("reports 'unavailable' on fetch error", async () => {
+    mockGetBreaksCatalogue.mockRejectedValue(new Error("network error"))
+    const states: string[] = []
+    renderWithQuery(<ConfirmImpact provider="google" onStateChange={(s) => states.push(s)} />)
+
+    await waitFor(() => {
+      expect(states[states.length - 1]).toBe("unavailable")
+    })
+  })
+
+  it("reports 'tracked' when entries are present", async () => {
+    mockGetBreaksCatalogue.mockResolvedValue(makeApiResponse([makeBreakEntry()]))
+    const states: string[] = []
+    renderWithQuery(<ConfirmImpact provider="google" onStateChange={(s) => states.push(s)} />)
+
+    await waitFor(() => {
+      expect(states[states.length - 1]).toBe("tracked")
+    })
+  })
+})
