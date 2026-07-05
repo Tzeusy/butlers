@@ -297,6 +297,39 @@ async def test_kind_shape_check_rejects_demotion_row_with_proposed_action(
 
 
 @pytest.mark.asyncio(loop_scope="session")
+async def test_kind_shape_check_rejects_promotion_row_with_empty_string_sender_key(
+    pool: asyncpg.Pool,
+) -> None:
+    """Empty string is NOT NULL but is just as vacuous as NULL for a required
+    identity field — the CHECK must reject it, not just a missing value."""
+    with pytest.raises(asyncpg.CheckViolationError):
+        await pool.execute(
+            """
+            INSERT INTO rule_promotion_suggestions
+                (suggestion_kind, sender_key, source_channel, proposed_rule_type,
+                 proposed_condition, proposed_action)
+            VALUES ('promotion', '', 'email', 'sender_address', '{}'::jsonb, 'skip')
+            """
+        )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_kind_shape_check_rejects_promotion_row_with_empty_string_proposed_action(
+    pool: asyncpg.Pool,
+) -> None:
+    with pytest.raises(asyncpg.CheckViolationError):
+        await pool.execute(
+            """
+            INSERT INTO rule_promotion_suggestions
+                (suggestion_kind, sender_key, source_channel, proposed_rule_type,
+                 proposed_condition, proposed_action)
+            VALUES ('promotion', 'user@example.com', 'email', 'sender_address',
+                    '{}'::jsonb, '')
+            """
+        )
+
+
+@pytest.mark.asyncio(loop_scope="session")
 async def test_target_rule_id_fk_is_enforced(pool: asyncpg.Pool) -> None:
     with pytest.raises(asyncpg.ForeignKeyViolationError):
         await pool.execute(

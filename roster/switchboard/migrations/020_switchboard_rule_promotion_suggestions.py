@@ -38,7 +38,11 @@ this migration adds an explicit ``suggestion_kind`` column
     promotion rows must carry the sender/condition/action triple and no
     ``target_rule_id``; demotion rows must carry ``target_rule_id`` and none
     of the proposed-rule columns. This makes an inconsistent row a constraint
-    violation, not a silent latent bug for bead 4/5 to discover later.
+    violation, not a silent latent bug for bead 4/5 to discover later. The
+    required promotion-branch text columns (``sender_key``, ``source_channel``,
+    ``proposed_action``) also reject ``''`` alongside ``NULL`` — an empty
+    string is NOT NULL but is just as vacuous as no value for a required
+    identity/action field, and would otherwise silently satisfy the CHECK.
 
 Column notes:
   - ``target_rule_id`` (new, not in the original design.md sketch): the
@@ -115,16 +119,20 @@ def upgrade() -> None:
             -- Ties the suggestion_kind discriminator to column population:
             -- a promotion suggestion carries the sender/condition/action
             -- triple and no target_rule_id; a demotion suggestion carries
-            -- target_rule_id and none of the proposed-rule columns.
+            -- target_rule_id and none of the proposed-rule columns. The
+            -- text columns also reject '' (empty string is NOT NULL but is
+            -- just as semantically absent as NULL for a required identity/
+            -- action field) so the constraint cannot be satisfied by a
+            -- vacuous placeholder value.
             CONSTRAINT chk_rule_promotion_suggestions_kind_shape
                 CHECK (
                     (
                         suggestion_kind = 'promotion'
-                        AND sender_key IS NOT NULL
-                        AND source_channel IS NOT NULL
+                        AND sender_key IS NOT NULL AND sender_key <> ''
+                        AND source_channel IS NOT NULL AND source_channel <> ''
                         AND proposed_rule_type IS NOT NULL
                         AND proposed_condition IS NOT NULL
-                        AND proposed_action IS NOT NULL
+                        AND proposed_action IS NOT NULL AND proposed_action <> ''
                         AND target_rule_id IS NULL
                     )
                     OR
