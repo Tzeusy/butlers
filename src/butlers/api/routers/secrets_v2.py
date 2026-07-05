@@ -731,6 +731,18 @@ async def _fetch_capability_probe_logs_bulk(
     """
     if not keys:
         return {}
+    # Enumerate the known capability-qualified keys in Python rather than
+    # filtering with split_part(credential_key, ':', 1) = ANY(...) in SQL —
+    # a function call on the indexed column defeats
+    # ix_secret_probe_log_lookup (credential_scope, credential_key,
+    # recorded_at DESC), forcing a sequential scan as the table grows past
+    # its 90-day retention window. A plain credential_key = ANY(...) uses
+    # the index directly.
+    candidate_keys = [
+        f"{key}:{capability}"
+        for key in keys
+        for capability in (*_GOOGLE_CAPABILITY_ORDER, "connectivity")
+    ]
     try:
         rows = await pool.fetch(
             """
@@ -738,12 +750,11 @@ async def _fetch_capability_probe_logs_bulk(
                    credential_key, ok, code, message, recorded_at, latency_ms
             FROM public.secret_probe_log
             WHERE credential_scope = $1
-              AND credential_key LIKE '%:%'
-              AND split_part(credential_key, ':', 1) = ANY($2)
+              AND credential_key = ANY($2)
             ORDER BY credential_key, recorded_at DESC
             """,
             scope,
-            keys,
+            candidate_keys,
         )
     except UndefinedTableError:
         return {}
