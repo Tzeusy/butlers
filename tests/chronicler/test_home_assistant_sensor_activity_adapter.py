@@ -19,6 +19,7 @@ import ast
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -568,6 +569,131 @@ async def test_carryover_extends_episode_across_batches() -> None:
     assert ep.source_ref == prior_ref  # same row extended, not a new one
     assert ep.start_at == prior_start  # start carried from the prior batch
     assert ep.end_at == new_ping
+
+
+# ---------------------------------------------------------------------------
+# _resolve_carryover — malformed/stale carryover discard paths (same class of
+# logic as the sibling place-cluster adapter's carryover reject paths).
+# ---------------------------------------------------------------------------
+
+
+_GAP = timedelta(minutes=15)
+_VALID_CARRY: dict[str, Any] = {
+    "source_ref": "connectors.filtered_events:sensor_activity:room:binary_sensor.x:1000",
+    "start_at": (_NOW - timedelta(minutes=10)).isoformat(),
+    "end_at": (_NOW - timedelta(minutes=5)).isoformat(),
+}
+
+
+def test_resolve_carryover_accepts_well_formed_carry_within_gap() -> None:
+    resolved = HomeAssistantSensorActivityAdapter._resolve_carryover(_VALID_CARRY, _NOW, _GAP)
+    assert resolved == (_VALID_CARRY["source_ref"], _NOW - timedelta(minutes=10))
+
+
+def test_resolve_carryover_rejects_non_dict_carry() -> None:
+    assert HomeAssistantSensorActivityAdapter._resolve_carryover("garbage", _NOW, _GAP) is None
+    assert HomeAssistantSensorActivityAdapter._resolve_carryover(None, _NOW, _GAP) is None
+    assert HomeAssistantSensorActivityAdapter._resolve_carryover([], _NOW, _GAP) is None
+
+
+def test_resolve_carryover_rejects_missing_keys() -> None:
+    carry = {"source_ref": "ref", "start_at": _NOW.isoformat()}  # missing end_at
+    assert HomeAssistantSensorActivityAdapter._resolve_carryover(carry, _NOW, _GAP) is None
+
+
+def test_resolve_carryover_rejects_malformed_iso_timestamp() -> None:
+    carry = {**_VALID_CARRY, "start_at": "not-a-timestamp"}
+    assert HomeAssistantSensorActivityAdapter._resolve_carryover(carry, _NOW, _GAP) is None
+
+
+def test_resolve_carryover_rejects_blank_source_ref() -> None:
+    carry = {**_VALID_CARRY, "source_ref": "   "}
+    assert HomeAssistantSensorActivityAdapter._resolve_carryover(carry, _NOW, _GAP) is None
+
+
+def test_resolve_carryover_rejects_non_string_source_ref() -> None:
+    carry = {**_VALID_CARRY, "source_ref": 12345}
+    assert HomeAssistantSensorActivityAdapter._resolve_carryover(carry, _NOW, _GAP) is None
+
+
+def test_resolve_carryover_rejects_naive_start_at() -> None:
+    carry = {
+        **_VALID_CARRY,
+        "start_at": (_NOW - timedelta(minutes=10)).replace(tzinfo=None).isoformat(),
+    }
+    assert HomeAssistantSensorActivityAdapter._resolve_carryover(carry, _NOW, _GAP) is None
+
+
+def test_resolve_carryover_rejects_naive_end_at() -> None:
+    carry = {
+        **_VALID_CARRY,
+        "end_at": (_NOW - timedelta(minutes=5)).replace(tzinfo=None).isoformat(),
+    }
+    assert HomeAssistantSensorActivityAdapter._resolve_carryover(carry, _NOW, _GAP) is None
+
+
+def test_resolve_carryover_rejects_when_gap_since_prior_end_too_large() -> None:
+    stale_carry = {
+        "source_ref": _VALID_CARRY["source_ref"],
+        "start_at": (_NOW - timedelta(hours=5)).isoformat(),
+        "end_at": (_NOW - timedelta(hours=4, minutes=30)).isoformat(),
+    }
+    assert HomeAssistantSensorActivityAdapter._resolve_carryover(stale_carry, _NOW, _GAP) is None
+
+
+@pytest.mark.asyncio
+async def test_malformed_carryover_is_discarded_not_raised_and_starts_fresh_episode() -> None:
+    """Project-level: a malformed carryover degrades to a fresh episode, with a warning."""
+    entity = "binary_sensor.hallway_motion"
+    row = _ha_row(
+        row_id=_UUID_1,
+        received_at=_NOW,
+        entity_id=entity,
+        domain="binary_sensor",
+        device_class="motion",
+        new_state="on",
+    )
+    adapter = HomeAssistantSensorActivityAdapter()
+    read_conn = _FakeReadConn(table_exists=True, rows=[row])
+    chron_conn = _FakeChroniclerConn(fetch_results=[[], []])
+
+    upserted: list[Episode] = []
+
+    async def _fake_upsert_episode(conn: object, episode: Episode) -> Episode:
+        upserted.append(episode)
+        episode.id = uuid.uuid4()
+        return episode
+
+    with (
+        patch(
+            "butlers.chronicler.adapters.home_assistant_sensor_activity.resolve_owner_entity_id",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "butlers.chronicler.adapters.home_assistant_sensor_activity.upsert_episode",
+            side_effect=_fake_upsert_episode,
+        ),
+        patch(
+            "butlers.chronicler.adapters.home_assistant_sensor_activity.upsert_owner_episode_entity",
+            new=AsyncMock(),
+        ),
+        patch(
+            "butlers.chronicler.adapters.home_assistant_sensor_activity.get_carryover",
+            new=AsyncMock(return_value={entity: {"garbage": True}}),
+        ),
+        patch(
+            "butlers.chronicler.adapters.home_assistant_sensor_activity.save_carryover",
+            new=AsyncMock(),
+        ),
+    ):
+        result = await adapter.project(
+            _read_pool(read_conn), chronicler_pool=_chronicler_pool(chron_conn), since=None
+        )
+
+    assert result.episodes_closed == 1
+    ep = upserted[0]
+    assert ep.start_at == _NOW  # fresh episode, not extended from garbage carryover
+    assert any("Discarding stale/malformed" in w for w in result.warnings)
 
 
 @pytest.mark.asyncio
