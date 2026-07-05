@@ -247,9 +247,7 @@ def test_waking_overlap_seconds_full_calendar_day() -> None:
 
 
 def test_waking_overlap_seconds_gap_entirely_within_waking_hours() -> None:
-    seconds = waking_overlap_seconds(
-        _dt(10), _dt(14), UTC, waking_hour_start=6, waking_hour_end=22
-    )
+    seconds = waking_overlap_seconds(_dt(10), _dt(14), UTC, waking_hour_start=6, waking_hour_end=22)
     assert seconds == 4 * 3600
 
 
