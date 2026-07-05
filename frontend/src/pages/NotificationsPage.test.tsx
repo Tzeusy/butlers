@@ -70,6 +70,21 @@ const NOTIFICATION_2 = {
   created_at: "2026-02-19T08:00:00Z",
 };
 
+const NOTIFICATION_READ = {
+  id: "notif-ccc",
+  source_butler: "switchboard",
+  channel: "telegram",
+  recipient: "@user",
+  message: "Already acknowledged",
+  metadata: null,
+  status: "read",
+  effective_status: "read",
+  error: null,
+  session_id: null,
+  trace_id: null,
+  created_at: "2026-02-18T08:00:00Z",
+};
+
 function setNotificationsState(state: Partial<UseNotificationsResult>) {
   vi.mocked(useNotifications).mockReturnValue({
     data: undefined,
@@ -351,5 +366,26 @@ describe("NotificationsPage — j/k list-triage (bu-qvnce.11 slice 4)", () => {
     });
     renderLive();
     expect(container!.querySelector('[aria-label="Keyboard shortcuts for this list"]')).toBeNull();
+  });
+
+  it("skips the mark-read act key for an already-read row (mirrors the feed's own gating)", () => {
+    const markReadMutate = vi.fn();
+    vi.mocked(useMarkNotificationRead).mockReturnValue({
+      mutate: markReadMutate,
+      isPending: false,
+    } as unknown as ReturnType<typeof useMarkNotificationRead>);
+    setNotificationsState({
+      data: {
+        data: [NOTIFICATION_READ],
+        meta: { total: 1, offset: 0, limit: 20, has_more: false },
+      },
+    });
+
+    renderLive();
+    act(() => press("j")); // select the (only, already-read) row
+    act(() => press("a"));
+
+    expect(markReadMutate).not.toHaveBeenCalled();
+    expect(container!.textContent).not.toContain("Mark read");
   });
 });

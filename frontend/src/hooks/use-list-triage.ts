@@ -36,7 +36,7 @@
  *   const { moveSelection, hints } = useListTriage({ ids, selectedId, onSelect: setSelectedId, verbs });
  */
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useRegisterShortcut, type ShortcutBinding } from "@/hooks/use-register-shortcut";
 
 export interface ListTriageVerb {
@@ -88,13 +88,16 @@ export function useListTriage<TId extends string = string>({
   onSelect,
   verbs = [],
 }: UseListTriageOptions<TId>): UseListTriageResult {
-  function moveSelection(delta: 1 | -1) {
-    if (ids.length === 0) return;
-    const idx = selectedId ? ids.indexOf(selectedId) : -1;
-    const nextIdx = idx === -1 ? 0 : Math.min(Math.max(idx + delta, 0), ids.length - 1);
-    const next = ids[nextIdx];
-    if (next !== undefined && next !== selectedId) onSelect(next);
-  }
+  const moveSelection = useCallback(
+    (delta: 1 | -1) => {
+      if (ids.length === 0) return;
+      const idx = selectedId ? ids.indexOf(selectedId) : -1;
+      const nextIdx = idx === -1 ? 0 : Math.min(Math.max(idx + delta, 0), ids.length - 1);
+      const next = ids[nextIdx];
+      if (next !== undefined && next !== selectedId) onSelect(next);
+    },
+    [ids, selectedId, onSelect],
+  );
 
   const bindings = useMemo<ShortcutBinding[]>(() => {
     if (ids.length === 0) return [];
@@ -113,8 +116,7 @@ export function useListTriage<TId extends string = string>({
       }
     }
     return result;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- moveSelection closes over ids/selectedId/onSelect directly; listing ids/selectedId/onSelect/verbs (what those closures actually depend on) is what keeps this memo fresh each render.
-  }, [ids, selectedId, onSelect, verbs]);
+  }, [ids, selectedId, moveSelection, verbs]);
 
   useRegisterShortcut(bindings);
 
