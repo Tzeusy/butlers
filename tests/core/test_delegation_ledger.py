@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from butlers.core import delegation_ledger
 from butlers.core.delegation_ledger import (
     VALID_STATUSES,
     get_delegation,
@@ -209,20 +210,24 @@ class TestGetAndListDelegations:
 
 
 class TestResolveTargetViaCatalog:
+    """Patches ``core.delegation_ledger.search_memory_catalog`` -- the
+    dependency-inversion hook stub bound into this module's namespace at
+    import time (see ``butlers.core.memory_hooks``) -- rather than reaching
+    into ``butlers.modules.memory`` directly, which core must not import.
+    """
+
     async def test_no_hits_returns_all_none(self, monkeypatch):
-        async def _fake_search_catalog(pool, query, engine, *, limit, mode):
+        async def _fake_search(pool, query, *, limit, mode):
             return []
 
-        monkeypatch.setattr("butlers.modules.memory.search.search_catalog", _fake_search_catalog)
-        target, match_id, score = await resolve_target_via_catalog(
-            AsyncMock(), "question", object()
-        )
+        monkeypatch.setattr(delegation_ledger, "search_memory_catalog", _fake_search)
+        target, match_id, score = await resolve_target_via_catalog(AsyncMock(), "question")
         assert (target, match_id, score) == (None, None, None)
 
     async def test_top_hit_source_butler_wins(self, monkeypatch):
         hit_id = uuid.uuid4()
 
-        async def _fake_search_catalog(pool, query, engine, *, limit, mode):
+        async def _fake_search(pool, query, *, limit, mode):
             return [
                 {
                     "id": hit_id,
@@ -232,9 +237,9 @@ class TestResolveTargetViaCatalog:
                 }
             ]
 
-        monkeypatch.setattr("butlers.modules.memory.search.search_catalog", _fake_search_catalog)
+        monkeypatch.setattr(delegation_ledger, "search_memory_catalog", _fake_search)
         target, match_id, score = await resolve_target_via_catalog(
-            AsyncMock(), "Who is Alice's employer?", object()
+            AsyncMock(), "Who is Alice's employer?"
         )
         assert target == "relationship"
         assert match_id == str(hit_id)
@@ -243,21 +248,23 @@ class TestResolveTargetViaCatalog:
     async def test_falls_back_to_source_schema_when_source_butler_absent(self, monkeypatch):
         hit_id = uuid.uuid4()
 
-        async def _fake_search_catalog(pool, query, engine, *, limit, mode):
+        async def _fake_search(pool, query, *, limit, mode):
             return [{"id": hit_id, "source_butler": None, "source_schema": "finance"}]
 
-        monkeypatch.setattr("butlers.modules.memory.search.search_catalog", _fake_search_catalog)
-        target, _match_id, _score = await resolve_target_via_catalog(
-            AsyncMock(), "question", object()
-        )
+        monkeypatch.setattr(delegation_ledger, "search_memory_catalog", _fake_search)
+        target, _match_id, _score = await resolve_target_via_catalog(AsyncMock(), "question")
         assert target == "finance"
 
     async def test_search_failure_fails_closed_to_unroutable(self, monkeypatch):
-        async def _raising(pool, query, engine, *, limit, mode):
+        async def _raising(pool, query, *, limit, mode):
             raise RuntimeError("pgvector unavailable")
 
-        monkeypatch.setattr("butlers.modules.memory.search.search_catalog", _raising)
-        target, match_id, score = await resolve_target_via_catalog(
-            AsyncMock(), "question", object()
-        )
+        monkeypatch.setattr(delegation_ledger, "search_memory_catalog", _raising)
+        target, match_id, score = await resolve_target_via_catalog(AsyncMock(), "question")
+        assert (target, match_id, score) == (None, None, None)
+
+    async def test_memory_module_not_loaded_returns_no_hits(self, monkeypatch):
+        """No hook registered (memory module absent) -> [] hits, not an error."""
+        monkeypatch.setattr(delegation_ledger, "search_memory_catalog", AsyncMock(return_value=[]))
+        target, match_id, score = await resolve_target_via_catalog(AsyncMock(), "question")
         assert (target, match_id, score) == (None, None, None)

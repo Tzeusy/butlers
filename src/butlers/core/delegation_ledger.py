@@ -44,6 +44,8 @@ from typing import Any
 
 import asyncpg
 
+from butlers.core.memory_hooks import search_memory_catalog
+
 logger = logging.getLogger(__name__)
 
 VALID_STATUSES = frozenset({"pending", "routed", "unroutable", "failed", "answered"})
@@ -259,7 +261,6 @@ async def list_delegations(
 async def resolve_target_via_catalog(
     pool: asyncpg.Pool,
     question: str,
-    embedding_engine: Any,
 ) -> tuple[str | None, str | None, float | None]:
     """Resolve "whose domain covers this question" via public.memory_catalog.
 
@@ -268,14 +269,18 @@ async def resolve_target_via_catalog(
     ``GET /api/memory/catalog/search`` (Fleet Knowledge) already surfaces --
     no separate/parallel relevance index is introduced here.
 
+    Delegates to ``core.memory_hooks.search_memory_catalog`` (dependency
+    inversion -- core must not import ``modules.memory`` directly; the memory
+    module registers its search implementation, embedding engine included, on
+    startup). Returns no hits -- not an exception -- when the memory module is
+    not loaded on this butler.
+
     Returns ``(target_butler, catalog_match_id, score)``. ``target_butler`` is
     ``None`` when the catalog has no hit for this question -- callers must
     treat that as unroutable, not retry with a different index.
     """
-    from butlers.modules.memory.search import search_catalog
-
     try:
-        hits = await search_catalog(pool, question, embedding_engine, limit=1, mode="hybrid")
+        hits = await search_memory_catalog(pool, question, limit=1, mode="hybrid")
     except Exception:
         logger.warning(
             "resolve_target_via_catalog: catalog search failed; treating as no match",

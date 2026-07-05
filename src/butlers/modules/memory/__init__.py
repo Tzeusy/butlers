@@ -292,10 +292,12 @@ class MemoryModule(Module):
         # memory operations without importing from modules directly
         # (dependency inversion: core owns the interface, modules supply the impl).
         from butlers.core.memory_hooks import (
+            register_catalog_search,
             register_memory_context,
             register_memory_forget,
             register_memory_store_episode,
         )
+        from butlers.modules.memory.search import search_catalog as _search_catalog
         from butlers.modules.memory.tools import context as _context
         from butlers.modules.memory.tools import writing as _writing
         from butlers.modules.memory.tools.management import memory_forget as _memory_forget
@@ -346,9 +348,22 @@ class MemoryModule(Module):
             )
             return True
 
+        async def _catalog_search_hook(
+            pool: Any,
+            query: str,
+            *,
+            limit: int = 1,
+            mode: str = "hybrid",
+        ) -> list[dict[str, Any]]:
+            import asyncio
+
+            embedding_engine = await asyncio.to_thread(module._get_embedding_engine)
+            return await _search_catalog(pool, query, embedding_engine, limit=limit, mode=mode)
+
         register_memory_context(_context_hook)
         register_memory_store_episode(_store_episode_hook)
         register_memory_forget(_memory_forget)
+        register_catalog_search(_catalog_search_hook)
 
         await self._register_default_maintenance_schedules(db)
 

@@ -104,11 +104,8 @@ def register_delegation_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) 
         if not question or not question.strip():
             return {"status": "error", "error": "question must not be empty."}
 
-        from butlers.modules.memory.tools import get_embedding_engine
-
-        embedding_engine = get_embedding_engine()
         target_butler, catalog_match_id, catalog_score = await resolve_target_via_catalog(
-            pool, question, embedding_engine
+            pool, question
         )
 
         if target_butler is None:
@@ -184,20 +181,35 @@ def register_delegation_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) 
             return result
 
         client = daemon.switchboard_client
-        try:
-            if client is not None:
+        route_error: str | None = None
+        retryable = False
+
+        if client is not None:
+            try:
                 result = await asyncio.wait_for(
                     client.call_tool("route", route_tool_args),
                     timeout=_ROUTE_TIMEOUT_S,
                 )
-                if result.is_error:
-                    return await _fail(_extract_mcp_error_text(result))
-                data = result.data
-                if isinstance(data, dict) and data.get("error"):
-                    return await _fail(str(data["error"]))
-            elif butler_name == "switchboard":
-                from butlers.tools.switchboard.routing.route import route as _switchboard_route
+            except TimeoutError:
+                route_error = f"Switchboard route() call timed out after {_ROUTE_TIMEOUT_S}s."
+                retryable = True
+            except (ConnectionError, OSError) as exc:
+                route_error = f"Switchboard unreachable: {exc}"
+                retryable = True
+            except Exception as exc:
+                route_error = f"{type(exc).__name__}: {exc}"
 
+            if route_error is None:
+                if result.is_error:
+                    route_error = _extract_mcp_error_text(result)
+                else:
+                    data = result.data
+                    if isinstance(data, dict) and data.get("error"):
+                        route_error = str(data["error"])
+        elif butler_name == "switchboard":
+            from butlers.tools.switchboard.routing.route import route as _switchboard_route
+
+            try:
                 raw = await _switchboard_route(
                     pool,
                     target_butler,
@@ -205,23 +217,20 @@ def register_delegation_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) 
                     route_tool_args["args"],
                     source_butler=butler_name,
                 )
-                if isinstance(raw, dict) and raw.get("error"):
-                    return await _fail(str(raw["error"]))
-            else:
-                return await _fail(
-                    "Switchboard is not connected. Cannot route the delegated question. "
-                    "This is a transient infrastructure issue — retry after a delay.",
-                    retryable=True,
-                )
-        except TimeoutError:
-            return await _fail(
-                f"Switchboard route() call timed out after {_ROUTE_TIMEOUT_S}s.",
-                retryable=True,
+            except Exception as exc:
+                route_error = f"{type(exc).__name__}: {exc}"
+
+            if route_error is None and isinstance(raw, dict) and raw.get("error"):
+                route_error = str(raw["error"])
+        else:
+            route_error = (
+                "Switchboard is not connected. Cannot route the delegated question. "
+                "This is a transient infrastructure issue — retry after a delay."
             )
-        except (ConnectionError, OSError) as exc:
-            return await _fail(f"Switchboard unreachable: {exc}", retryable=True)
-        except Exception as exc:
-            return await _fail(f"{type(exc).__name__}: {exc}")
+            retryable = True
+
+        if route_error is not None:
+            return await _fail(route_error, retryable=retryable)
 
         try:
             await mark_dispatch_outcome(pool, ledger_id, status="routed")
