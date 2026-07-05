@@ -44,6 +44,7 @@ executing an unvalidated decision.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -258,7 +259,12 @@ async def _execute_tool_call(mcp_server: Any, call: dict[str, Any]) -> dict[str,
         }
 
     try:
-        result = await fn(**kwargs)
+        if inspect.iscoroutinefunction(fn):
+            result = await fn(**kwargs)
+        else:
+            result = fn(**kwargs)
+            if inspect.isawaitable(result):
+                result = await result
     except Exception as exc:
         logger.warning("structured_classify: local execution of %s failed: %s", name, exc)
         result = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}

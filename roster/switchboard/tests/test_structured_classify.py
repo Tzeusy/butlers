@@ -175,6 +175,49 @@ async def test_valid_decision_executes_in_process_and_returns_result() -> None:
     assert kwargs["butler_name"] == "switchboard"
 
 
+async def test_valid_decision_executes_sync_tool_fn_without_typeerror() -> None:
+    """Regression guard: a registered tool whose ``.fn`` is a plain sync
+    callable (not a coroutine function) must still execute correctly —
+    ``_execute_tool_call`` must not blindly ``await fn(**kwargs)``, which
+    would raise ``TypeError: object dict can't be used in 'await' expression``
+    for a sync function.
+    """
+    pool = MagicMock()
+    adapter = _make_adapter(
+        side_effect=[
+            (
+                [_route_call("health")],
+                "routing to health",
+                {"input_tokens": 10, "output_tokens": 5},
+            )
+        ]
+    )
+
+    mcp = MagicMock()
+
+    def _sync_fn(**kwargs):
+        return {"status": "accepted", "butler": "health"}
+
+    mcp.get_tool = MagicMock(side_effect=lambda name: _FakeTool(_sync_fn))
+
+    with (
+        patch(f"{_MODULE}.resolve_model_with_effective_tier", AsyncMock(return_value=_catalog())),
+        patch(f"{_MODULE}.check_token_quota", AsyncMock(return_value=_allowed_quota())),
+        patch(f"{_MODULE}.create_adapter", return_value=adapter),
+        patch(f"{_MODULE}.record_token_usage", AsyncMock()),
+    ):
+        result = await sc.try_structured_classification(
+            pool,
+            mcp_server=mcp,
+            prompt="I have a headache",
+            include_bug_report=False,
+            butler_name="switchboard",
+        )
+
+    assert result is not None
+    assert result.tool_calls[0]["result"] == {"status": "accepted", "butler": "health"}
+
+
 async def test_include_bug_report_offers_both_tools() -> None:
     pool = MagicMock()
     captured_tools = {}
