@@ -1,19 +1,16 @@
 """attention_ledger: one ledger for all proactive owner egress + seeded quiet hours.
 
 Revision ID: core_160
-Revises: core_157
+Revises: core_159
 Create Date: 2026-07-05 00:00:00.000000
 
 Numbering note: this migration originally landed as core_158. A concurrent
 migration (PR #2943, bu-vq97l's model_catalog_defaults reseed) claimed
 core_158 first and was itself renumbered to core_159 before merging, so this
 revision was renumbered to core_160 to avoid a duplicate-revision collision;
-core_158 is intentionally left unused rather than reused. This revision
-currently chains directly off core_157 because PR #2943 had not merged yet
-at review time — the merging reviewer/coordinator MUST rebase this branch
-onto main and update `down_revision` to `"core_159"` once #2943 lands,
-before merging this PR. Re-run `tests/config/test_migrations.py` after
-rechaining.
+core_158 is intentionally left unused rather than reused. PR #2943 merged
+first (2026-07-05), so this revision chains directly off core_159 — rebased
+and rechained by the merging reviewer per the plan noted above.
 
 Move 8 (2026-07-04 JARVIS pursuit, slice 1/5) — bu-qvnce.8.
 
@@ -44,7 +41,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "core_160"
-down_revision = "core_157"  # TODO(reviewer): rechain to "core_159" once #2943 merges
+down_revision = "core_159"
 branch_labels = None
 depends_on = None
 
