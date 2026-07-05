@@ -12,10 +12,12 @@ idempotent-re-run regression live in
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import croniter
 import pytest
 
 from butlers.chronicler.flags import (
@@ -28,6 +30,7 @@ from butlers.chronicler.flags import (
     LANE_SHARE_TRAILING_DAYS,
     MIN_EVIDENCE_FLOOR_SECONDS,
     MIN_TRAILING_DAYS_FOR_MEDIAN,
+    SOURCE_CRON_MINUTES,
     compute_lane_share_outliers,
     compute_routine_breaks,
     compute_sleep_missing,
@@ -41,6 +44,7 @@ from butlers.chronicler.models import (
     Routine,
     SourceAdapterState,
 )
+from butlers.config import load_config
 
 pytestmark = pytest.mark.unit
 
@@ -430,3 +434,89 @@ async def test_no_managed_flags_fire_on_a_fully_healthy_normal_day(monkeypatch) 
         FLAG_ROUTINE_BREAK,
         FLAG_LANE_SHARE_OUTLIER,
     }
+
+
+# ---------------------------------------------------------------------------
+# SOURCE_CRON_MINUTES vs roster/chronicler/butler.toml parity
+# ---------------------------------------------------------------------------
+#
+# SOURCE_CRON_MINUTES (flags.py) is a hand-maintained mirror of the actual
+# cron cadence declared in butler.toml (see flags.py's `[decision]` comment
+# above the map) — no structured per-source schedule registry exists for
+# `is_source_dark` to read instead. A drifted entry is silent: it produces
+# either a false `feeder_dark` (map says a job runs more often than it does)
+# or a missed real outage (map says less often), with no other signal to
+# catch it. This asserts the map against the real TOML cron for every
+# project-adapter job the four flag rules depend on, so a cadence edit to
+# butler.toml without a matching flags.py edit fails CI instead of silently
+# drifting.
+
+_REPO_ROOT = Path(__file__).parent.parent.parent
+_CHRONICLER_ROSTER_DIR = _REPO_ROOT / "roster" / "chronicler"
+
+# job_name (butler.toml `[[butler.schedule]]` entry) -> the `source_name`
+# its adapter projects to (see `jobs.py`'s `run_project_*` handlers for the
+# job -> adapter wiring, and each `adapters/*.py`'s `SOURCE_NAME` constant
+# for the adapter -> source_name mapping). Hand-maintained same as
+# SOURCE_CRON_MINUTES itself — this test's job is to keep the *cron* value
+# honest, not to derive the mapping structurally.
+_FLAG_DEPENDENT_JOB_TO_SOURCE: dict[str, str] = {
+    "chronicler_project_sessions": "core.sessions",
+    "chronicler_project_spotify": "spotify.session_summary",
+    "chronicler_project_steam": "steam.play_history",
+    "chronicler_project_owntracks": "owntracks.points",
+    "chronicler_project_owntracks_place_cluster": "owntracks.place_cluster",
+    "chronicler_project_google_health_sleep": "google_health.measurements",
+    "chronicler_project_meals": "health.meals",
+    "chronicler_project_home_assistant": "home_assistant.history",
+    "chronicler_project_home_assistant_sensor_activity": "home_assistant.sensor_activity",
+    "chronicler_project_focus_inferred": "chronicler.focus_inferred",
+    "chronicler_project_reading_inferred": "chronicler.reading_inferred",
+    "chronicler_project_exercise_inferred": "chronicler.exercise_inferred",
+    "chronicler_project_comms": "comms.message_bursts",
+    "chronicler_project_activitywatch": "activitywatch.window",
+    "chronicler_project_occupation_inferred": "chronicler.occupation_inferred",
+}
+
+
+def _cron_interval_minutes(cron: str) -> int:
+    """Minutes between two consecutive fires of *cron*.
+
+    Delegates to `croniter` rather than hand-parsing `*/N * * * *` vs
+    `N * * * *` forms — robust to any cron shape butler.toml might use.
+    """
+    anchor = datetime(2026, 1, 5, 0, 0, 0)  # arbitrary Monday 00:00
+    it = croniter.croniter(cron, anchor)
+    first = it.get_next(datetime)
+    second = it.get_next(datetime)
+    return int((second - first).total_seconds() // 60)
+
+
+def test_source_cron_minutes_covers_every_flag_dependent_source() -> None:
+    """Guards the guard below: every `SOURCE_CRON_MINUTES` key must be
+    exercised by `_FLAG_DEPENDENT_JOB_TO_SOURCE`, or a newly-added source
+    could drift from butler.toml without this parity check ever seeing it."""
+    assert set(SOURCE_CRON_MINUTES) == set(_FLAG_DEPENDENT_JOB_TO_SOURCE.values())
+
+
+def test_source_cron_minutes_matches_butler_toml_cadence() -> None:
+    config = load_config(_CHRONICLER_ROSTER_DIR)
+    cron_by_job_name = {s.job_name: s.cron for s in config.schedules if s.job_name}
+
+    missing_jobs = set(_FLAG_DEPENDENT_JOB_TO_SOURCE) - set(cron_by_job_name)
+    assert not missing_jobs, (
+        f"job_name(s) no longer declared in roster/chronicler/butler.toml: {missing_jobs}"
+    )
+
+    mismatches = {
+        source_name: {
+            "source_cron_minutes": SOURCE_CRON_MINUTES[source_name],
+            "butler_toml_minutes": _cron_interval_minutes(cron_by_job_name[job_name]),
+        }
+        for job_name, source_name in _FLAG_DEPENDENT_JOB_TO_SOURCE.items()
+        if SOURCE_CRON_MINUTES[source_name] != _cron_interval_minutes(cron_by_job_name[job_name])
+    }
+    assert not mismatches, (
+        "SOURCE_CRON_MINUTES (flags.py) has drifted from the actual cron in "
+        f"roster/chronicler/butler.toml: {mismatches}"
+    )
