@@ -302,9 +302,18 @@ def _build_spark24h(ingested_24h: int) -> list[int]:
 # three months because nothing surfaced the count anywhere.
 _BACKLOG_STATUSES: tuple[str, ...] = ("failed", "replay_pending")
 
+# error_detail prefix marking a 'failed' row as a deliberate write-off (payload
+# confirmed recoverable but intentionally not re-triaged — e.g. stale content
+# where re-triage would spawn a fresh LLM session/notification over months-old
+# messages) rather than a genuine unresolved failure. Established by bu-g4oiu's
+# live write-off of 99 events that were never actually processed by any butler
+# (see PR #2974). Written-off rows must not masquerade as pending losses on
+# this endpoint — they are a deliberate, reviewed disposition, not a silent gap.
+_WRITTEN_OFF_PREFIX = "written-off"
+
 
 async def _fetch_backlog_counts(db: DatabaseManager | None) -> dict:
-    """Return current failed/replay_pending totals from public.ingestion_events.
+    """Return current failed/replay_pending/written-off totals from public.ingestion_events.
 
     DB-truth counterpart to the Prometheus-backed funnel counters above:
     surfaces a growing ingestion-failure backlog directly on this endpoint so
@@ -312,6 +321,11 @@ async def _fetch_backlog_counts(db: DatabaseManager | None) -> dict:
     (bu-g4oiu). Queried independently of the Prometheus fetch so it stays
     available even when Prometheus itself is degraded — this is the more
     important signal of the two during a Prometheus outage, not less.
+
+    ``failed_total`` counts only genuine, unresolved failures — rows whose
+    ``error_detail`` carries the ``_WRITTEN_OFF_PREFIX`` marker are split out
+    into ``written_off_total`` instead, so a deliberate write-off never
+    masquerades as (or hides behind) a live pending-loss count.
 
     Fails open per the degraded-envelope convention (CLAUDE.md): a missing
     DatabaseManager or a genuine query error yields ``backlog_available:
@@ -323,14 +337,17 @@ async def _fetch_backlog_counts(db: DatabaseManager | None) -> dict:
             "backlog_available": False,
             "failed_total": None,
             "replay_pending_total": None,
+            "written_off_total": None,
         }
 
     try:
         pool = db.credential_shared_pool()
         rows = await pool.fetch(
-            "SELECT status, COUNT(*) AS cnt FROM public.ingestion_events "
-            "WHERE status = ANY($1::text[]) GROUP BY status",
+            "SELECT status, (error_detail LIKE $2) AS is_written_off, COUNT(*) AS cnt "
+            "FROM public.ingestion_events "
+            "WHERE status = ANY($1::text[]) GROUP BY status, is_written_off",
             list(_BACKLOG_STATUSES),
+            f"{_WRITTEN_OFF_PREFIX}%",
         )
     except Exception:
         logger.warning("pipeline_stats: backlog count query failed (non-fatal)", exc_info=True)
@@ -338,13 +355,27 @@ async def _fetch_backlog_counts(db: DatabaseManager | None) -> dict:
             "backlog_available": False,
             "failed_total": None,
             "replay_pending_total": None,
+            "written_off_total": None,
         }
 
-    counts = {row["status"]: int(row["cnt"]) for row in rows}
+    failed_total = 0
+    written_off_total = 0
+    replay_pending_total = 0
+    for row in rows:
+        cnt = int(row["cnt"])
+        if row["status"] == "failed":
+            if row["is_written_off"]:
+                written_off_total += cnt
+            else:
+                failed_total += cnt
+        elif row["status"] == "replay_pending":
+            replay_pending_total += cnt
+
     return {
         "backlog_available": True,
-        "failed_total": counts.get("failed", 0),
-        "replay_pending_total": counts.get("replay_pending", 0),
+        "failed_total": failed_total,
+        "replay_pending_total": replay_pending_total,
+        "written_off_total": written_off_total,
     }
 
 
@@ -422,12 +453,18 @@ async def get_pipeline_stats(
 
     Plus, independent of Prometheus (bu-g4oiu — DB truth, not windowed/derived):
     - ``failed_total``: current count of ``public.ingestion_events`` rows with
-      status='failed' (never replayed)
+      status='failed' that are genuine, unresolved failures (excludes
+      deliberate write-offs, see ``written_off_total``)
     - ``replay_pending_total``: current count with status='replay_pending'
       (replay requested but not yet reconciled)
+    - ``written_off_total``: current count of status='failed' rows explicitly
+      annotated as a reviewed write-off (``error_detail`` starts with
+      ``"written-off"``) — payload confirmed recoverable but intentionally
+      not re-triaged (e.g. stale content). Tracked separately so a deliberate
+      write-off never masquerades as a live pending loss.
     - ``backlog_available``: false when the DatabaseManager or the backlog
-      query itself is unavailable — ``failed_total``/``replay_pending_total``
-      are ``None`` in that case, not ``0``
+      query itself is unavailable — ``failed_total``/``replay_pending_total``/
+      ``written_off_total`` are ``None`` in that case, not ``0``
 
     Results are served from a 60-second TTL cache (Prometheus fields only —
     the backlog fields are queried fresh every request; the underlying query
