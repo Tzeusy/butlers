@@ -451,6 +451,27 @@ def test_classify_source_api_error_falls_back_for_bare_exception() -> None:
     assert "Connection refused" in description
 
 
+def test_classify_source_api_error_does_not_false_positive_on_prose_mention() -> None:
+    """A Gmail data-API error whose *message* text happens to mention
+    "invalid_grant" in prose (not as the actual OAuth error code) must not be
+    misclassified as an auth revocation — only the top-level ``error`` field
+    of the OAuth token endpoint's exact shape counts.
+    """
+    exc = _http_error_with_response(
+        {
+            "error": {
+                "code": 400,
+                "status": "INVALID_ARGUMENT",
+                "message": "Malformed request: field 'invalid_grant' is not recognized",
+            }
+        },
+        400,
+    )
+    is_auth_revocation, description = _classify_source_api_error(exc)
+    assert is_auth_revocation is False
+    assert "invalid_grant" in description  # text is preserved, just not misclassified
+
+
 def test_get_health_state_healthy_by_default(
     gmail_config: GmailConnectorConfig,
 ) -> None:

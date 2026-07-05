@@ -278,12 +278,26 @@ def _classify_source_api_error(exc: Exception) -> tuple[bool, str]:
     ``description`` is the most specific error text available: Google's own
     structured error body when the exception carries an HTTP response, else
     a compact ``"<error_type>: <str(exc)>"`` fallback.
+
+    Revocation detection inspects the parsed JSON payload's top-level
+    ``error`` field directly (the OAuth token endpoint's exact error shape:
+    ``{"error": "invalid_grant", ...}``) rather than substring-matching the
+    formatted description — a substring check on ``google_error`` would
+    false-positive if an unrelated Gmail data-API error message happened to
+    mention "invalid_grant" in prose, and the Gmail data API's nested-dict
+    error shape (``{"error": {"code": ..., "message": ...}}``) never equals
+    one of the revocation code strings so it's safely excluded either way.
     """
     response = getattr(exc, "response", None)
     google_error = _format_google_error(response) if response is not None else None
-    is_auth_revocation = bool(
-        google_error and any(code in google_error for code in _OAUTH_REVOCATION_ERROR_CODES)
-    )
+    is_auth_revocation = False
+    if response is not None:
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict) and payload.get("error") in _OAUTH_REVOCATION_ERROR_CODES:
+            is_auth_revocation = True
     description = google_error or f"{get_error_type(exc)}: {exc}"
     return is_auth_revocation, description
 
