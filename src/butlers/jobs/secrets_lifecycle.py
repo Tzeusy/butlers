@@ -22,7 +22,13 @@ Design
   ``public.audit_log`` — no new migration. Each successful delivery writes an
   ``action="lifecycle_state_notified"`` row with ``note=<state>``; the next
   scan reads the most recent such row per credential key and only re-notifies
-  when the current state differs from what was last delivered.
+  when the current state differs from what was last delivered. This
+  read-then-write debounce assumes a single dashboard-api instance (the
+  current deployment: one ``dashboard-api`` container, no replica scaling in
+  ``docker-compose.yml``) — two concurrent replicas racing the same scan
+  interval could both read "not yet notified" and double-send before either
+  writes its marker. Revisit with a proper claim (e.g. an advisory lock or a
+  unique constraint) before this job is ever run with more than one replica.
 - Delivery reuses the same gating and dispatch primitives ``notify()`` uses
   for the owner-default page (quiet hours via
   ``butlers.core.approvals_policy``, context-bus dnd/sleeping via
