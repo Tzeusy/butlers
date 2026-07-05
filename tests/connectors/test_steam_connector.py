@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -39,6 +39,7 @@ from butlers.connectors.metrics import ConnectorMetrics
 from butlers.connectors.steam import (
     AccountPollerState,
     SteamAccountPoller,
+    SteamCursor,
     _compute_play_delta,
     _to_wire_envelope,
     build_achievement_unlock_envelope,
@@ -475,3 +476,77 @@ def test_reason_source_poll_error_is_distinct_from_submission_error() -> None:
     assert FilteredEventBuffer.reason_source_poll_error() != (
         FilteredEventBuffer.reason_submission_error()
     )
+
+
+# ---------------------------------------------------------------------------
+# Partial-batch submission failure must not corrupt play_history or stall the
+# cursor (review follow-up to bu-a38da, flagged during PR #2970 review).
+# ---------------------------------------------------------------------------
+
+
+async def test_recently_played_partial_submission_failure_still_persists_and_advances_cursor() -> (
+    None
+):
+    """A mid-batch submission failure must not double-count playtime or stall the cursor.
+
+    Now that ``_submit_envelope`` raises on failure (this PR's fix), naively
+    letting that exception abort ``_poll_recently_played`` mid-loop would leave
+    the ``recently_played`` cursor stale while ``_upsert_play_history`` — an
+    ADDITIVE upsert — had already run for games earlier in the same batch. The
+    next poll would then recompute and re-add the SAME delta for those games,
+    double-counting playtime_minutes in ``connectors.steam_play_history``.
+    Every game in a batch must get exactly one play_history write and the
+    cursor must still advance, even when one game's submission fails.
+    """
+    mcp_client = AsyncMock()
+    mcp_client.call_tool.side_effect = [
+        ConnectionError("switchboard unreachable"),
+        {
+            "request_id": "22222222-2222-7222-8222-222222222222",
+            "status": "accepted",
+            "duplicate": False,
+        },
+    ]
+    poller = _make_poller(mcp_client)
+    poller._steam_client.request = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "games": [
+                {"appid": 730, "name": "CS2", "playtime_2weeks": 120, "playtime_forever": 500},
+                {"appid": 440, "name": "TF2", "playtime_2weeks": 90, "playtime_forever": 300},
+            ]
+        }
+    )
+    poller._state.cursors["recently_played"] = SteamCursor(
+        endpoint_identity=_ENDPOINT,
+        data_type="recently_played",
+        state_hash="stale-hash-does-not-match-new-state",
+        state_snapshot={
+            "730": {"playtime_2weeks": 100, "playtime_forever": 480},
+            "440": {"playtime_2weeks": 60, "playtime_forever": 270},
+        },
+    )
+
+    with (
+        patch(
+            "butlers.connectors.steam._upsert_play_history", new_callable=AsyncMock
+        ) as upsert_mock,
+        patch(
+            "butlers.connectors.steam._save_steam_cursor", new_callable=AsyncMock
+        ) as save_cursor_mock,
+    ):
+        with pytest.raises(RuntimeError, match="1 of 2 submissions failed"):
+            await poller._poll_recently_played()
+
+    # Both games get their play_history write — the failed submission for app
+    # 730 must not prevent app 440 (or app 730 itself) from being recorded.
+    assert upsert_mock.await_count == 2
+    submitted_app_ids = {call.kwargs["app_id"] for call in upsert_mock.await_args_list}
+    assert submitted_app_ids == {730, 440}
+
+    # Cursor still advances despite the partial failure, so the next poll does
+    # not recompute + re-add the same deltas.
+    save_cursor_mock.assert_awaited_once()
+    assert poller._state.cursors["recently_played"].state_snapshot == {
+        "730": {"playtime_2weeks": 120, "playtime_forever": 500},
+        "440": {"playtime_2weeks": 90, "playtime_forever": 300},
+    }

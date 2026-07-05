@@ -1169,6 +1169,7 @@ class SteamAccountPoller:
         # user actually played. Do not use this column for per-day analytics.
         poll_dt = datetime.now(UTC)
         events_emitted = 0
+        submission_failures: list[int] = []
 
         for game in games:
             app_id = game["appid"]
@@ -1192,13 +1193,35 @@ class SteamAccountPoller:
                 poll_ts=poll_ts,
                 raw=game,
             )
-            await self._maybe_submit(envelope, data_type="recently_played")
-            events_emitted += 1
+            try:
+                await self._maybe_submit(envelope, data_type="recently_played")
+                events_emitted += 1
+            except Exception as exc:
+                # Do NOT let one game's submission failure abort the rest of this
+                # poll (bu-a38da follow-up). _upsert_play_history below is an
+                # ADDITIVE upsert and the cursor is only persisted once at the end
+                # of this method — if this exception propagated immediately, the
+                # cursor would stay stale and the next poll would recompute the
+                # same delta for every game already processed this cycle and add
+                # it again, double-counting playtime_minutes in steam_play_history.
+                # Record the failure, keep going so play_history/cursor persist
+                # exactly once per poll, and re-raise after the loop so
+                # _poller_loop still sees a failure and degrades health/backs off.
+                logger.warning(
+                    "Steam recently_played: submission failed for app_id=%s endpoint=%s: %s",
+                    app_id,
+                    self._state.endpoint_identity,
+                    exc,
+                )
+                submission_failures.append(app_id)
 
             # Persist detected play session in play_history. Write the
             # per-poll delta (not the rolling 14-day total), so the row
             # for this date reflects only minutes played since the prior
             # poll. Same-day re-polls accumulate via the additive upsert.
+            # Written unconditionally (regardless of the submission outcome
+            # above) since it reflects actually-observed Steam playtime and
+            # must not be lost or reprocessed on the next poll.
             await _upsert_play_history(
                 self._db_pool,
                 steam_id=self._state.steam_id,
@@ -1209,7 +1232,8 @@ class SteamAccountPoller:
                 playtime_minutes=delta,
             )
 
-        # Update cursor
+        # Update cursor. Always runs (even when some submissions above failed)
+        # so a partial-failure poll never gets reprocessed from scratch.
         new_cursor = SteamCursor(
             endpoint_identity=self._state.endpoint_identity,
             data_type="recently_played",
@@ -1225,6 +1249,18 @@ class SteamAccountPoller:
                 "Steam recently_played: %d events emitted for endpoint=%s",
                 events_emitted,
                 self._state.endpoint_identity,
+            )
+
+        if submission_failures:
+            # Raised after play_history/cursor persistence above so
+            # _poller_loop's generic exception handler still degrades
+            # health/consecutive_errors and applies backoff (bu-a38da bug 3),
+            # without risking reprocessing/double-counting on the next poll.
+            raise RuntimeError(
+                f"Steam recently_played: {len(submission_failures)} of "
+                f"{events_emitted + len(submission_failures)} submissions failed "
+                f"for endpoint={self._state.endpoint_identity} "
+                f"app_ids={submission_failures}"
             )
 
     # ------------------------------------------------------------------
