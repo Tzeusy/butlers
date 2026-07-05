@@ -54,8 +54,15 @@ export function usePrefetchOnIntent(
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Read via ref rather than a schedule/cancel dependency so callers that
   // change `to` on every render (e.g. a list row) don't churn the returned
-  // handler identities. Written in an effect (not during render) -- mutating
-  // a ref while rendering is itself a rules-of-hooks violation.
+  // handler identities. Written in an effect (not during render) -- this
+  // repo's `react-hooks/refs` lint rule forbids writing a ref's `.current`
+  // during render outright (the "latest ref" idiom of mutating synchronously
+  // in the render body is not available here). Effect registration order is
+  // stable within a component (React flushes passive effects in hook-call
+  // order), so a caller invoking `schedule()` from its own effect that reads
+  // `to` (e.g. EntityFinder's highlight-prefetch effect) is safe as long as
+  // that effect is declared after this hook is called -- which every current
+  // call site does.
   const toRef = useRef(to);
   useEffect(() => {
     toRef.current = to;

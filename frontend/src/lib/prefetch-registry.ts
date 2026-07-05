@@ -80,12 +80,22 @@ const MATCHERS: Matcher[] = [matchSessionDetail, matchApprovalDetail, matchTimel
  * Resolve a navigating row's `to` target to a prefetch descriptor, or `null`
  * when the route isn't mapped. Query-string/hash suffixes are stripped
  * before matching -- only the pathname decides the target.
+ *
+ * Matchers `decodeURIComponent` the id segment, which throws `URIError` on
+ * malformed percent-encoding (e.g. a lone `%`). This is called unconditionally
+ * from a pointer/focus handler on every mapped row -- a caller must never see
+ * an uncaught exception just from hovering, so a decode failure degrades to
+ * the same no-op as an unmapped route instead of throwing.
  */
 export function resolvePrefetchTarget(to: string): PrefetchTarget | null {
   const pathname = to.split("?")[0].split("#")[0];
-  for (const matcher of MATCHERS) {
-    const target = matcher(pathname);
-    if (target) return target;
+  try {
+    for (const matcher of MATCHERS) {
+      const target = matcher(pathname);
+      if (target) return target;
+    }
+  } catch {
+    return null;
   }
   return null;
 }

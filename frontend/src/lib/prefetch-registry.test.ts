@@ -68,4 +68,12 @@ describe("resolvePrefetchTarget", () => {
   it("returns null for the bare /sessions list route (no id segment)", () => {
     expect(resolvePrefetchTarget("/sessions")).toBeNull();
   });
+
+  it("returns null instead of throwing on a malformed percent-encoded id segment", () => {
+    // A lone "%" (invalid percent-encoding) makes decodeURIComponent throw a
+    // URIError -- this must degrade to the same no-op as an unmapped route,
+    // not propagate out of a pointer/focus handler.
+    expect(() => resolvePrefetchTarget("/sessions/abc%")).not.toThrow();
+    expect(resolvePrefetchTarget("/sessions/abc%")).toBeNull();
+  });
 });
