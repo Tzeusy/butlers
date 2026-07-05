@@ -1,8 +1,15 @@
 """model_catalog_defaults_reseed: fix dead toml bootstrap seeding (tier vocab).
 
-Revision ID: core_158
+Revision ID: core_159
 Revises: core_157
 Create Date: 2026-07-05 00:00:02.000000
+
+NOTE (coordination, bu-vq97l): named/numbered core_159 instead of the next
+free slot (core_158) because a parallel in-flight lane (bu-qvnce.8, attention
+ledger) claimed core_158 on its own branch first. ``down_revision`` is left
+as ``core_157`` for now since merge order between the two lanes is not yet
+known; whichever of core_158/core_159 merges second must rebase and repoint
+its ``down_revision`` onto the other before merging, per the coordinator.
 
 bu-vq97l (discovered-from bu-qvnce.12): core_004's ``_load_seed_entries()``
 filters ``model_catalog_defaults.toml`` entries against
@@ -53,7 +60,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "core_158"
+revision = "core_159"
 down_revision = "core_157"
 branch_labels = None
 depends_on = None
@@ -85,7 +92,7 @@ def upgrade() -> None:
     seed_entries = _load_seed_entries()
     if not seed_entries:
         log.warning(
-            "core_158: model_catalog_defaults.toml produced no seed entries; "
+            "core_159: model_catalog_defaults.toml produced no seed entries; "
             "public.model_catalog will not be backfilled."
         )
         return

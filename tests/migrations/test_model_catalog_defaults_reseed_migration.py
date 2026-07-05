@@ -1,4 +1,4 @@
-"""Regression tests for core_158 (model_catalog_defaults.toml bootstrap reseed).
+"""Regression tests for core_159 (model_catalog_defaults.toml bootstrap reseed).
 
 bu-vq97l: core_004's ``_load_seed_entries()`` filters
 ``model_catalog_defaults.toml`` entries against the LEGACY tier vocabulary
@@ -11,7 +11,7 @@ genuinely fresh install seeds ZERO rows from the toml — the ``workhorse``,
 (only core_157's two ``api-haiku-*`` rows exist, both ``cheap``/``specialty``).
 
 These tests prove:
-  1. The static revision chain wiring (core_158 revises core_157).
+  1. The static revision chain wiring (core_159 revises core_157).
   2. Against a REAL fresh Alembic bootstrap of the full core chain (the exact
      regression the bug survived without — a prior "empirical" check only
      ever inspected a migrated test DB manually, never asserted in CI), every
@@ -45,14 +45,14 @@ _MIGRATION_PATH = (
     / "alembic"
     / "versions"
     / "core"
-    / "core_158_model_catalog_defaults_reseed.py"
+    / "core_159_model_catalog_defaults_reseed.py"
 )
 
 _DEFAULTS_TOML_PATH = Path(__file__).resolve().parents[2] / "model_catalog_defaults.toml"
 
 
 def _load_migration():
-    spec = importlib.util.spec_from_file_location("core_158", _MIGRATION_PATH)
+    spec = importlib.util.spec_from_file_location("core_159", _MIGRATION_PATH)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -61,12 +61,12 @@ def _load_migration():
 
 def test_migration_revision_chain() -> None:
     mod = _load_migration()
-    assert mod.revision == "core_158"
+    assert mod.revision == "core_159"
     assert mod.down_revision == "core_157"
 
 
 def test_canonical_tiers_match_core_093_rename_target() -> None:
-    """core_158's tier filter must accept exactly the vocabulary core_093 introduced."""
+    """core_159's tier filter must accept exactly the vocabulary core_093 introduced."""
     mod = _load_migration()
     assert set(mod._CANONICAL_TIERS) == {
         "reasoning",
@@ -88,9 +88,9 @@ def test_defaults_toml_entries_all_use_canonical_vocab() -> None:
     for entry in data["models"]:
         assert entry["complexity_tier"] in mod._CANONICAL_TIERS, (
             f"{entry['alias']!r} uses complexity_tier={entry['complexity_tier']!r}, "
-            "which core_158's seed filter won't match — either the toml drifted back "
+            "which core_159's seed filter won't match — either the toml drifted back "
             "to legacy vocab, or a new canonical tier was added without updating "
-            "_CANONICAL_TIERS in core_158."
+            "_CANONICAL_TIERS in core_159."
         )
 
 
@@ -129,7 +129,7 @@ async def _fetch_catalog_rows(db_url: str) -> list[asyncpg.Record]:
 async def test_fresh_bootstrap_seeds_every_toml_tier(fresh_core_db_url: str) -> None:
     """The bug: on a fresh install, workhorse/reasoning/local had ZERO rows.
 
-    After core_158, every tier represented in model_catalog_defaults.toml has
+    After core_159, every tier represented in model_catalog_defaults.toml has
     at least one catalog row post-bootstrap.
     """
     import tomllib
@@ -176,7 +176,7 @@ async def test_fresh_bootstrap_specific_toml_alias_resolves(fresh_core_db_url: s
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_reseed_upgrade_is_idempotent(fresh_core_db_url: str) -> None:
-    """Re-running core_158's upgrade() again must not error or duplicate rows."""
+    """Re-running core_159's upgrade() again must not error or duplicate rows."""
     mod = _load_migration()
     pool = await asyncpg.create_pool(fresh_core_db_url, min_size=1, max_size=2)
     try:
