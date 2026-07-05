@@ -135,14 +135,19 @@ async def list_connector_summaries_with_aggregates(
     ``_DEVICE_STALE_THRESHOLD`` (48h).
 
     ``devices`` is ``null`` when: (a) the connector_type has only one distinct
-    sender identity (nothing to disambiguate), or (b) the connector_type already
-    registers one ``connector_registry`` row per device (``registry_row_counts``
-    > 1 — e.g. OwnTracks post-bu-86zll), in which case each row's own
-    ``state``/``last_heartbeat_at`` is already device-accurate and attaching the
-    same ``devices`` list to every one of those rows would double up / could
-    disagree with each row's own liveness. A device with no event at all in the
-    lookback window drops out of ``devices`` entirely rather than appearing
-    maximally stale. ``device_liveness_available`` (top-level, mirrors
+    sender identity (nothing to disambiguate), or (b) the connector_type's
+    ``connector_registry`` rows have caught up to every device this fallback
+    already knows about (``registry_row_counts`` >= the known device count —
+    e.g. OwnTracks post-bu-86zll, once fully migrated), in which case each
+    row's own ``state``/``last_heartbeat_at`` is already device-accurate and
+    attaching the same ``devices`` list to every one of those rows would
+    double up / could disagree with each row's own liveness. A connector_type
+    only *partway* migrated (some devices already have their own row, a
+    sibling still doesn't) keeps the badge — gating on row count alone would
+    otherwise hide that still-unregistered sibling behind neither its own row
+    nor the badge (bu-e16to). A device with no event at all in the lookback
+    window drops out of ``devices`` entirely rather than appearing maximally
+    stale. ``device_liveness_available`` (top-level, mirrors
     ``aggregates_available``) is ``false`` only if the per-device query itself
     failed — it is unrelated to whether any given connector_type has devices data.
 
