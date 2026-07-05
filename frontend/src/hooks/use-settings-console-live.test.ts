@@ -83,6 +83,22 @@ describe("applyHeaderDelta / applyAttentionAdd / applyAttentionRemove", () => {
     expect(replaced.attention.find((i) => i.kind === "model")?.text).toBe("2 models errored");
   });
 
+  it("attention_add sorts red items before amber items", () => {
+    const withAmber = applyAttentionAdd(SNAPSHOT, {
+      tone: "amber",
+      kind: "model",
+      text: "1 model errored",
+      action_route: "/settings/models",
+    });
+    const withRed = applyAttentionAdd(withAmber, {
+      tone: "red",
+      kind: "cli_auth",
+      text: "CLI needs auth",
+      action_route: "/secrets",
+    });
+    expect(withRed.attention.map((i) => i.tone)).toEqual(["red", "red", "amber"]);
+  });
+
   it("attention_remove drops the item with the given kind", () => {
     const next = applyAttentionRemove(SNAPSHOT, "approval");
     expect(next.attention).toHaveLength(0);

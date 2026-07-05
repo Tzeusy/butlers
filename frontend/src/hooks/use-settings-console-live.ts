@@ -71,10 +71,24 @@ export function applyHeaderDelta(prev: ConsoleData, delta: Partial<HeaderCounts>
   return { ...prev, header_counts: { ...prev.header_counts, ...delta } };
 }
 
-/** Upsert by `kind` so a repeated add for the same kind does not duplicate. */
+/**
+ * Upsert by `kind` so a repeated add for the same kind does not duplicate,
+ * then re-sort red-before-amber to preserve the ordering contract
+ * (openspec/specs/dashboard-settings-console/spec.md line 61: "items are
+ * ordered with tone=red first, then tone=amber"). The initial REST snapshot
+ * already comes pre-sorted from `_build_console_payload`, but a live add can
+ * insert a red item after existing amber ones (or vice versa) -- a plain
+ * append would leave the strip out of contract order until the next
+ * POLL_BUS_RECONCILE_MS reseed.
+ */
 export function applyAttentionAdd(prev: ConsoleData, item: AttentionItem): ConsoleData {
   const others = prev.attention.filter((it) => it.kind !== item.kind);
-  return { ...prev, attention: [...others, item] };
+  const merged = [...others, item];
+  const sorted = [...merged].sort((a, b) => {
+    if (a.tone === b.tone) return 0;
+    return a.tone === "red" ? -1 : 1;
+  });
+  return { ...prev, attention: sorted };
 }
 
 export function applyAttentionRemove(prev: ConsoleData, kind: string): ConsoleData {
