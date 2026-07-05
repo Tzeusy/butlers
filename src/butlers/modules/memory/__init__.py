@@ -297,8 +297,19 @@ class MemoryModule(Module):
             register_memory_forget,
             register_memory_store_episode,
         )
-        from butlers.modules.memory.search import search_catalog as _search_catalog
         from butlers.modules.memory.tools import context as _context
+        from butlers.modules.memory.tools._helpers import _search as _search_helper
+
+        # NOT `from butlers.modules.memory.search import search_catalog`: that
+        # static import would make search.py's pgvector operators reachable
+        # from EVERY memory-enabled butler's transitive import graph,
+        # including relationship's deterministic-Finder endpoint
+        # (roster/relationship/tests/test_finder_no_llm_transitive.py walks
+        # ALL imports -- even function-body ones -- of every transitively
+        # visited first-party module). Reuse ``tools._helpers``'s existing
+        # runtime (non-AST-visible) module loader instead -- ``context.py``
+        # already reaches ``search.py`` the same way, for the same reason.
+        _search_catalog = _search_helper.search_catalog
         from butlers.modules.memory.tools import writing as _writing
         from butlers.modules.memory.tools.management import memory_forget as _memory_forget
 
