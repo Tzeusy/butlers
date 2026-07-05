@@ -308,6 +308,35 @@ class TestUrgentOnlySubCycle:
         )
         assert row["status"] == "filtered"
 
+    async def test_verbosity_off_does_not_filter_routine_pending(self, insight_pool):
+        """verbosity=off must only claim the urgent working set this cycle
+        considers — a routine candidate pending alongside it must stay
+        untouched 'pending' for a later, non-suppressed cycle, not get
+        collaterally marked 'filtered' by the hourly urgent sub-cycle."""
+        from butlers.tools.switchboard.insight.broker import delivery_cycle
+
+        await insight_pool.execute("""
+            INSERT INTO insight_settings (id, verbosity)
+            VALUES (1, 'off')
+            ON CONFLICT (id) DO UPDATE SET verbosity='off', quiet_start=NULL, quiet_end=NULL
+        """)
+        await _insert_candidate(insight_pool, dedup_key="health:urgent:u4b:2026", priority=95)
+        await _insert_candidate(insight_pool, dedup_key="health:routine:u4b:2026", priority=70)
+
+        notify_mock = AsyncMock(return_value={"status": "ok"})
+        result = await delivery_cycle(insight_pool, notify_fn=notify_mock, urgent_only=True)
+
+        assert result["skipped"] is True
+        notify_mock.assert_not_awaited()
+        urgent_row = await insight_pool.fetchrow(
+            "SELECT status FROM insight_candidates WHERE dedup_key = 'health:urgent:u4b:2026'"
+        )
+        routine_row = await insight_pool.fetchrow(
+            "SELECT status FROM insight_candidates WHERE dedup_key = 'health:routine:u4b:2026'"
+        )
+        assert urgent_row["status"] == "filtered"
+        assert routine_row["status"] == "pending"
+
     async def test_no_urgent_pending_is_a_cheap_noop(self, insight_pool):
         """Routine candidates are never selected, filtered, or otherwise
         touched by an urgent_only cycle when none meet the threshold."""

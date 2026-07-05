@@ -822,13 +822,31 @@ async def delivery_cycle(
     # off" setting.
     configured_budget = _get_configured_budget(settings)
     if configured_budget == 0:
-        logger.info("insight-delivery-cycle: verbosity=off, filtering all pending")
-        await pool.execute(
-            """
-            UPDATE insight_candidates SET status = 'filtered'
-            WHERE status = 'pending'
-            """
-        )
+        if urgent_only:
+            # Only touch the urgent working set this cycle actually considers.
+            # Routine (sub-threshold) candidates must stay untouched 'pending'
+            # for a later, non-suppressed cycle — the same invariant this mode
+            # upholds everywhere else (see selection/budget/cleanup above).
+            logger.info(
+                "insight-delivery-cycle: verbosity=off, filtering pending urgent "
+                "(priority>=%d) candidates only",
+                URGENT_PRIORITY_THRESHOLD,
+            )
+            await pool.execute(
+                """
+                UPDATE insight_candidates SET status = 'filtered'
+                WHERE status = 'pending' AND priority >= $1
+                """,
+                URGENT_PRIORITY_THRESHOLD,
+            )
+        else:
+            logger.info("insight-delivery-cycle: verbosity=off, filtering all pending")
+            await pool.execute(
+                """
+                UPDATE insight_candidates SET status = 'filtered'
+                WHERE status = 'pending'
+                """
+            )
         result["skipped"] = True
         return result
 
