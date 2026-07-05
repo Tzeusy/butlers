@@ -84,8 +84,8 @@ layer a given domain/source clears:
 ### 1.2 Home Assistant: the durable-retention domain gap
 
 `src/butlers/connectors/home_assistant.py::_DEFAULT_DOMAIN_ALLOWLIST` passes
-nine domains through the connector-local filter: `light, switch, sensor,
-climate, lock, cover, binary_sensor, automation, script, person`. All nine,
+ten domains through the connector-local filter: `light, switch, sensor,
+climate, lock, cover, binary_sensor, automation, script, person`. All ten,
 once past the significance/discretion filters, get submitted to the
 Switchboard `ingest` tool and land in `connectors.filtered_events` (12-month
 retention). But `_dispatch()`'s final persistence step is domain-gated:
@@ -98,7 +98,13 @@ if domain == "person" and db_pool is not None:
 
 Only `person.*` writes to `connectors.home_assistant_history` — the table
 Chronicler's `HomeAssistantHistoryAdapter` (`adapters/home_assistant.py`)
-reads to project `presence_episode`s. The other eight domains — motion,
+reads to project `presence_episode`s. (Live-data caveat, 2026-07-06: this
+table currently holds zero rows — bu-whhll.3's allowlist/persistence fix is
+deployed, but no live `person.*` state transition has occurred yet to
+exercise it; tracked by the still-open bu-bm2pm. This does not affect this
+design's proposals, which target the other nine domains below and the
+rollup layer, neither of which reads `home_assistant_history`.) The other
+nine domains — motion,
 door/window contact, light/switch/climate/lock/cover state, script and
 automation firings — are captured, pass every filter, and then sit in
 `filtered_events` for up to a year, read by exactly one consumer:
