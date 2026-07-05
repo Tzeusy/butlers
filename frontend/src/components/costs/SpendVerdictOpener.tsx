@@ -57,9 +57,17 @@ function buildAllClear(
   const movers = computeMovers(currentByButler, priorByButler, unavailableButlers, 1);
   const topMover = movers[0];
 
+  // Defensive: some fixtures/older responses may omit projection_confidence
+  // even though the type declares it required -- never render a raw
+  // "undefined-confidence" string if that ever happens in practice.
+  const confidence =
+    forecast.projection_confidence === "low" || forecast.projection_confidence === "normal"
+      ? `${forecast.projection_confidence}-confidence projection`
+      : null;
+
   const parts = [
     `${formatCostUsd(pace)}/day pace`,
-    `${forecast.projection_confidence}-confidence projection`,
+    confidence,
     topMover
       ? `top mover ${topMover.name} ${topMover.delta > 0 ? "+" : "−"}${formatCostUsd(Math.abs(topMover.delta))}`
       : null,
