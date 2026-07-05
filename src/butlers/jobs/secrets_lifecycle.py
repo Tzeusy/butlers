@@ -33,6 +33,32 @@ Design
   delivered/suppressed/deferred in the attention ledger. Priority is
   "medium" — important, but not the priority>=90 tier that bypasses quiet
   hours — so quiet hours genuinely defer it, per the bead's guidance.
+- Why this doesn't call the ``notify()`` MCP tool directly (bu-qvnce.8
+  doctrine question): ``notify()`` is a closure defined inside
+  ``register_notification_tools(ctx, mcp, _core_tool)``
+  (``butlers.core_tools._notifications``), bound to a specific *butler
+  daemon's* live runtime (``ctx.daemon``, its ``switchboard_client`` MCP
+  connection, its DB pool). This job runs as an ``asyncio.Task`` inside the
+  dashboard-api FastAPI process (see ``butlers.api.app.lifespan``), which
+  never instantiates a butler ``Daemon``/``ToolContext`` and has no
+  ``switchboard_client`` to call through — there is no live MCP tool to
+  invoke from here, only a process-boundary away. What *is* importable from
+  this process is the same set of underlying primitives ``notify()`` itself
+  calls: the quiet-hours/context-bus gate functions above, the attention
+  ledger writer, and ``butlers.tools.switchboard.notification.deliver``
+  (the same plain-function dispatch path ``notify()`` uses for its own
+  switchboard-self-delivery branch, i.e. no MCP hop). So this job composes
+  the identical primitives rather than re-deriving their logic — a single
+  source of truth is preserved for *what* the gate decides, even though the
+  call site is a second, process-boundary-forced consumer alongside
+  ``notify()`` and ``delivery_cycle()``. Known gap: this does not consult
+  the *per-butler* delivery-preferences override
+  (``butlers.core.temporal.delivery_db.get_delivery_preferences`` /
+  ``should_defer_notification``, the first, older quiet-hours gate in
+  ``notify()``) — that gate is keyed on a specific butler_name's own
+  preferences row, and this job has no single natural butler identity to
+  key it on. Tracked as a follow-up rather than blocking this change (see
+  PR #2951 discussion).
 - Natural future home: bu-a63hn (background verification loop) once it
   exists. This job does not block on it; it is a standalone scheduled check.
 """
@@ -409,7 +435,15 @@ async def run_secrets_lifecycle_loop(
 
     Intended to be wrapped in ``asyncio.create_task()`` from the API lifespan
     and cancelled on shutdown — see ``butlers.api.app.lifespan``.
+
+    Raises ``ValueError`` immediately for a non-positive ``interval_s`` rather
+    than spinning a tight zero-sleep loop that would hammer every butler
+    schema's pool — the caller (``butlers.api.app.lifespan``) already
+    validates and falls back to ``DEFAULT_SCAN_INTERVAL_S`` before calling
+    this, so this is a defense-in-depth guard for any other caller.
     """
+    if interval_s <= 0:
+        raise ValueError(f"interval_s must be a positive number, got {interval_s!r}")
     while True:
         await asyncio.sleep(interval_s)
         try:

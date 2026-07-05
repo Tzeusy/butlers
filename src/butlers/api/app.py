@@ -126,6 +126,13 @@ logger = logging.getLogger(__name__)
 
 _SECRETS_LIFECYCLE_SCAN_INTERVAL_ENV = "SECRETS_LIFECYCLE_SCAN_INTERVAL_S"
 
+# Strong references to fire-and-forget background tasks spawned from lifespan.
+# asyncio only holds a weak reference to a running Task once its creating
+# scope returns nothing that keeps it alive; without this, a task can be
+# garbage-collected mid-execution. Entries are removed via add_done_callback
+# once the task completes (normally or via cancellation).
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -197,9 +204,11 @@ async def lifespan(app: FastAPI):
             scan_interval_s = float(
                 os.environ.get(_SECRETS_LIFECYCLE_SCAN_INTERVAL_ENV, str(DEFAULT_SCAN_INTERVAL_S))
             )
+            if scan_interval_s <= 0:
+                raise ValueError("interval must be a positive number")
         except ValueError:
             logger.warning(
-                "%s is not a valid number; falling back to default %ss",
+                "%s is not a valid positive number; falling back to default %ss",
                 _SECRETS_LIFECYCLE_SCAN_INTERVAL_ENV,
                 DEFAULT_SCAN_INTERVAL_S,
             )
@@ -207,6 +216,8 @@ async def lifespan(app: FastAPI):
         secrets_lifecycle_task = asyncio.create_task(
             run_secrets_lifecycle_loop(get_db_manager(), interval_s=scan_interval_s)
         )
+        _BACKGROUND_TASKS.add(secrets_lifecycle_task)
+        secrets_lifecycle_task.add_done_callback(_BACKGROUND_TASKS.discard)
 
     except Exception:
         logger.warning("Failed to initialize DatabaseManager; DB endpoints will be unavailable")
