@@ -28,9 +28,11 @@ Environment variables:
 - CONNECTOR_HEALTH_PORT (default: 40087)
 - HA_BASE_URL: HA instance base URL (overrides entity_info)
 - HA_ACCESS_TOKEN: HA long-lived access token (overrides entity_info)
-- HA_DOMAIN_ALLOWLIST: comma-separated domain allowlist (default does NOT include
-  ``person``; add ``person`` to capture presence/location data into
-  ``connectors.home_assistant_history``)
+- HA_DOMAIN_ALLOWLIST: comma-separated domain allowlist (default now includes
+  ``person`` — see ``_DEFAULT_DOMAIN_ALLOWLIST``, bu-whhll.3 — which feeds
+  presence/location data into ``connectors.home_assistant_history``; setting
+  this variable REPLACES the entire default list, so omitting ``person`` here
+  silently re-drops presence data)
 - HA_POLL_INTERVAL_S (default: 60): REST fallback poll interval
 - HA_CHECKPOINT_OVERLAP_S (default: 30): checkpoint resume safety margin
 - HA_WS_PING_INTERVAL_S (default: 30): WebSocket keepalive ping interval
