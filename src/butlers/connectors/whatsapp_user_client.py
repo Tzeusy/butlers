@@ -961,8 +961,18 @@ class WhatsAppUserClientConnector:
                 # Invalidated-session alerting/recovery (bu-5ocmh) is an
                 # independent concern from the restart-on-recoverable-outage
                 # check below — it must still run when stale_restart_threshold_s
-                # disables the restart path.
-                await self._check_invalidated_session_state()
+                # disables the restart path. Guarded with a blanket try/except:
+                # this loop has no outer handler besides CancelledError, so an
+                # unexpected exception here must never kill the stale-link
+                # restart check that follows — that would silently reintroduce
+                # exactly the "nothing ever tells the owner" failure mode this
+                # bead exists to fix, just from a different code path.
+                try:
+                    await self._check_invalidated_session_state()
+                except Exception:
+                    logger.exception(
+                        "WA: invalidated-session check failed (non-fatal, continuing watchdog)"
+                    )
                 if self._link_is_stale():
                     await self._restart_for_stale_link()
                     return
@@ -1128,11 +1138,16 @@ class WhatsAppUserClientConnector:
             settings = await load_connector_settings(
                 self._db_pool, _CONNECTOR_TYPE, self._config.endpoint_identity
             )
+            # Defensive: every pool in this codebase registers register_jsonb_codec()
+            # (src/butlers/db.py), so `settings` is always a dict or None in
+            # practice — but a raw JSON string here must never raise past this
+            # try block and kill the watchdog loop for the rest of the process
+            # lifetime (see _link_watchdog_loop, which has no blanket handler).
+            requested_at = (settings or {}).get(self._PAIR_RESET_SETTINGS_KEY)
         except Exception:
             logger.debug("WA: failed to read pair-reset flag from DB (non-fatal)", exc_info=True)
             return
 
-        requested_at = (settings or {}).get(self._PAIR_RESET_SETTINGS_KEY)
         if not requested_at or requested_at == self._last_pair_reset_handled_at:
             return
 
@@ -1166,6 +1181,30 @@ class WhatsAppUserClientConnector:
         """
         if self._bridge_manager is None:
             return
+
+        # Consume the persisted flag now, before doing anything destructive.
+        # `_last_pair_reset_handled_at` only guards re-triggers within THIS
+        # process's lifetime — the DB row is otherwise never cleared, so a
+        # future connector restart (redeploy, crash, host reboot) would
+        # re-read the same old timestamp as if it were a brand-new request
+        # and wipe an already-healthy, already-repaired device. Clearing it
+        # here (best-effort; a ledger-write hiccup must not abort recovery)
+        # makes "already handled" durable across restarts, not just in-memory.
+        if self._db_pool is not None:
+            try:
+                from butlers.connectors.cursor_store import save_connector_settings
+
+                await save_connector_settings(
+                    self._db_pool,
+                    _CONNECTOR_TYPE,
+                    self._config.endpoint_identity,
+                    {self._PAIR_RESET_SETTINGS_KEY: None},
+                )
+            except Exception:
+                logger.exception(
+                    "WhatsApp: failed to clear pair-reset flag in DB (continuing anyway) — "
+                    "a connector restart before this clears could re-trigger recovery"
+                )
 
         try:
             await self._bridge_manager.stop()
