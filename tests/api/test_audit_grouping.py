@@ -126,16 +126,22 @@ class TestBuildAuditGroupOccurrencesQuery:
         ):
             assert column in sql
 
-    def test_filters_by_error_summary_is_schedule_and_butlers(self):
+    def test_filters_by_error_summary_and_butlers_not_is_schedule(self):
+        """grouped_errors groups by error_summary ALONE -- has_schedule is only
+        a BOOL_OR aggregate over that group, not part of its identity. A group
+        can straddle both scheduled and non-scheduled rows behind the same
+        normalized error message, so this query must not additionally filter
+        on is_schedule (that would silently drop rows on the other side of the
+        flag while the group's reported total keeps counting them)."""
         sql = build_audit_group_occurrences_query()
         assert "WHERE error_summary = $1" in sql
-        assert "is_schedule = $2" in sql
-        assert "butler = ANY($3::text[])" in sql
+        assert "butler = ANY($2::text[])" in sql
+        assert "is_schedule" not in sql.split("FROM normalized_errors", 1)[1]
 
     def test_orders_newest_first_with_limit_offset(self):
         sql = build_audit_group_occurrences_query()
         assert "ORDER BY created_at DESC" in sql
-        assert "LIMIT $4 OFFSET $5" in sql
+        assert "LIMIT $3 OFFSET $4" in sql
 
     def test_no_grouping_aggregate_in_occurrences_query(self):
         """This query returns raw rows, not the grouped_errors aggregate."""

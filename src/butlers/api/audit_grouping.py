@@ -147,10 +147,9 @@ SELECT
     error
 FROM normalized_errors
 WHERE error_summary = $1
-  AND is_schedule = $2
-  AND butler = ANY($3::text[])
+  AND butler = ANY($2::text[])
 ORDER BY created_at DESC
-LIMIT $4 OFFSET $5"""
+LIMIT $3 OFFSET $4"""
 
 
 def build_audit_group_query(
@@ -182,16 +181,26 @@ def build_audit_group_occurrences_query() -> str:
     (JARVIS audit move 6 — "Seen 47x" issue groups otherwise offer no drill-down
     path to their occurrences).
 
-    Callers bind exactly five positional parameters, in order:
+    ``grouped_errors`` groups by ``error_summary`` ALONE (``has_schedule`` and
+    ``butlers`` are only aggregates *over* that group, not part of its
+    identity) — so this query filters on ``error_summary`` alone too. It does
+    NOT additionally filter on ``is_schedule``: a group can legitimately mix
+    scheduled and non-scheduled rows behind the same normalized error message,
+    and filtering occurrences on the group's aggregated ``has_schedule`` flag
+    would silently drop the rows on the other side of that flag, while the
+    group's reported ``occurrences`` count keeps including them (undercounting
+    the drill-down page relative to the total it claims).
+
+    Callers bind exactly four positional parameters, in order:
         1. exact-match normalized ``error_summary`` (the group's
            ``Issue.error_message``)
-        2. ``is_schedule`` boolean (``True`` for ``scheduled_task_failure:*``
-           groups)
-        3. ``text[]`` of butler names to restrict to (the group's
+        2. ``text[]`` of butler names to restrict to (the group's
            ``Issue.butlers`` — a single-element array for a single-butler
-           group, or the full list for a multi-butler group)
-        4. ``LIMIT``
-        5. ``OFFSET``
+           group, or the full list for a multi-butler group; this is a
+           redundant-but-harmless restriction since every row grouped under
+           this ``error_summary`` already comes from a butler in that list)
+        3. ``LIMIT``
+        4. ``OFFSET``
 
     Returns:
         A complete SQL string ready to be passed to ``pool.fetch()``. Each row

@@ -370,12 +370,15 @@ async def list_issue_occurrences(
 
     JARVIS audit move 6: a "Seen 47x" issue group previously offered no path to
     its 47 occurrences. This re-derives the group's grouping parameters
-    (normalized error message, schedule flag, contributing butlers) from a
-    fresh grouped query — rather than trying to reverse the lossy slug
-    embedded in ``issue_key`` — then reuses the shared
+    (normalized error message, contributing butlers) from a fresh grouped
+    query — rather than trying to reverse the lossy slug embedded in
+    ``issue_key`` — then reuses the shared
     :func:`~butlers.api.audit_grouping.build_audit_group_occurrences_query`
     CTE to fetch the individual rows, so a group's occurrences can never
-    disagree with the group definition itself.
+    disagree with the group definition itself. Note the occurrences query
+    filters on ``error_summary`` alone (the actual ``GROUP BY`` key) — NOT on
+    the group's aggregated ``has_schedule`` flag, which a group can straddle
+    (see that function's docstring).
 
     Only audit-derived groups (``audit_error_group:*`` /
     ``scheduled_task_failure:*``) have occurrences to drill into — live
@@ -411,12 +414,11 @@ async def list_issue_occurrences(
         )
 
     error_summary = str(match["error_summary"])
-    is_schedule = bool(match["has_schedule"])
     butlers = [str(b) for b in (match["butlers"] or [])] or ["unknown"]
     total = int(match["occurrences"] or 0)
 
     occurrences_sql = build_audit_group_occurrences_query()
-    rows = await pool.fetch(occurrences_sql, error_summary, is_schedule, butlers, limit, offset)
+    rows = await pool.fetch(occurrences_sql, error_summary, butlers, limit, offset)
 
     page = [AuditLogEntry.from_record(row) for row in rows]
 

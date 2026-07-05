@@ -418,13 +418,16 @@ class TestListIssueOccurrences:
         assert body["data"][0]["action"] == "oauth_refresh"
         assert body["meta"]["total"] == 3
 
-        # The occurrences query binds (error_summary, is_schedule, butlers, limit, offset).
+        # The occurrences query binds (error_summary, butlers, limit, offset) --
+        # NOT is_schedule: a group's identity is error_summary ALONE
+        # (has_schedule is just a BOOL_OR aggregate over it), so filtering
+        # occurrences on that aggregate would silently drop rows on the other
+        # side of the flag for a group that straddles both.
         occ_call = [
             c for c in mock_pool.fetch.await_args_list if "grouped_errors" not in c.args[0]
         ][0]
         assert occ_call.args[1] == "OAuth token expired"
-        assert occ_call.args[2] is False
-        assert occ_call.args[3] == ["calendar"]
+        assert occ_call.args[2] == ["calendar"]
 
     async def test_unknown_key_returns_404(self) -> None:
         async def fetch_side_effect(query: str, *args: Any) -> list[Any]:
@@ -467,7 +470,7 @@ class TestListIssueOccurrences:
         occ_call = [
             c for c in mock_pool.fetch.await_args_list if "grouped_errors" not in c.args[0]
         ][0]
-        assert occ_call.args[3] == ["calendar", "health"]
+        assert occ_call.args[2] == ["calendar", "health"]
 
     async def test_empty_issue_key_is_422(self) -> None:
         app, _ = _build_app()
