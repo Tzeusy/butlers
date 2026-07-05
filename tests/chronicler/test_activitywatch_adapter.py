@@ -359,6 +359,41 @@ async def test_gap_beyond_threshold_starts_new_episode() -> None:
     assert result.episodes_closed == 2
 
 
+@pytest.mark.asyncio
+async def test_gap_measured_from_prior_row_end_not_start() -> None:
+    """A long-duration row must not fragment the episode on its own duration.
+
+    row1 is a 1-hour continuous session (duration_seconds=3600). row2 starts
+    61 minutes after row1's *start* -- but only 60 seconds after row1's true
+    *end* (ts + duration_seconds). Since 60s is well within
+    SCREEN_GAP_MINUTES, this must collapse into a single episode. Gating the
+    gap on start-to-start instead of end-to-start would incorrectly split
+    this into two episodes.
+    """
+    row1 = _make_row(ts=_NOW, app_class="ide", duration_seconds=3600.0, idempotency_key="k1")
+    row2 = _make_row(
+        ts=_NOW + timedelta(minutes=61),
+        app_class="ide",
+        duration_seconds=30.0,
+        idempotency_key="k2",
+    )
+    adapter = ActivityWatchWindowAdapter()
+    pool = _pool_returning(row1, row2)
+    cp = _chronicler_pool()
+
+    with (
+        patch("butlers.chronicler.adapters.activitywatch.upsert_point_event") as mock_pe,
+        patch("butlers.chronicler.adapters.activitywatch.upsert_episode") as mock_ep,
+    ):
+        mock_pe.side_effect = AsyncMock(return_value=MagicMock())
+        mock_ep.return_value = MagicMock()
+        result = await adapter.project(pool, chronicler_pool=cp, since=None)
+
+    assert result.episodes_closed == 1
+    episode_arg = mock_ep.await_args.args[1]
+    assert episode_arg.payload["ide_seconds"] == 3630.0
+
+
 # ---------------------------------------------------------------------------
 # Carryover continuation
 # ---------------------------------------------------------------------------

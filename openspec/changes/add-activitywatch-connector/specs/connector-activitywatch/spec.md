@@ -9,12 +9,12 @@ submits `ingest.v1` envelopes to the Switchboard. It is the desktop
 work-activity ingestion pathway into the butler ecosystem — the only
 connector that observes what the owner is doing on a computer.
 
-## Requirements
+## ADDED Requirements
 
 ### Requirement: Connector Identity and Role
 
-The ActivityWatch connector bridges a local ActivityWatch install into the
-butler ecosystem as a desktop-activity ingestion channel.
+The ActivityWatch connector SHALL bridge a local ActivityWatch install into
+the butler ecosystem as a desktop-activity ingestion channel.
 
 #### Scenario: Connector as polling client
 
@@ -51,7 +51,7 @@ butler ecosystem as a desktop-activity ingestion channel.
 
 ### Requirement: Bucket Discovery
 
-The connector discovers the ActivityWatch window-watcher and AFK-watcher
+The connector SHALL discover the ActivityWatch window-watcher and AFK-watcher
 buckets by querying the buckets index rather than hardcoding bucket IDs.
 
 #### Scenario: Window bucket required
@@ -73,8 +73,8 @@ buckets by querying the buckets index rather than hardcoding bucket IDs.
 
 ### Requirement: App-Class Bucketing
 
-Every window-focus event is classified into one of four app-class buckets
-using a static, case-insensitive substring-match table.
+Every window-focus event SHALL be classified into one of four app-class
+buckets using a static, case-insensitive substring-match table.
 
 #### Scenario: Classification buckets
 
@@ -91,8 +91,8 @@ using a static, case-insensitive substring-match table.
 
 ### Requirement: Privacy — Window Titles Never Reach Projected Surfaces
 
-Window titles are privacy-sensitive by default and are excluded from every
-outward-facing surface; only the app-class is projected.
+Window titles are privacy-sensitive by default and MUST be excluded from
+every outward-facing surface; only the app-class SHALL be projected.
 
 #### Scenario: Envelope excludes window titles
 
@@ -122,7 +122,7 @@ outward-facing surface; only the app-class is projected.
 
 ### Requirement: AFK-Aware Screen Episodes
 
-Contiguous active (non-AFK) window-focus events collapse into
+Contiguous active (non-AFK) window-focus events SHALL collapse into
 `screen_episode` rollups with a per-app-class duration breakdown.
 
 #### Scenario: Contiguous active rows collapse
@@ -160,7 +160,7 @@ Contiguous active (non-AFK) window-focus events collapse into
 
 ### Requirement: Durable Evidence Persistence
 
-Every accepted window-focus event is persisted to
+Every accepted window-focus event SHALL be persisted to
 `connectors.activitywatch_events` in addition to being submitted to the
 Switchboard.
 
@@ -174,7 +174,7 @@ Switchboard.
 
 ### Requirement: Bounded First-Run Backfill
 
-The very first poll (no checkpoint yet) does not flood the system with a
+The very first poll (no checkpoint yet) MUST NOT flood the system with a
 machine's entire ActivityWatch history.
 
 #### Scenario: Backfill window capped
@@ -185,7 +185,7 @@ machine's entire ActivityWatch history.
 
 ### Requirement: Checkpoint and Resume
 
-The connector persists a timestamp checkpoint so restarts resume without
+The connector SHALL persist a timestamp checkpoint so restarts resume without
 reprocessing or losing events.
 
 #### Scenario: Checkpoint advances on successful batch
@@ -197,7 +197,8 @@ reprocessing or losing events.
 
 ### Requirement: Connector Lifecycle
 
-The connector implements the standard connector base-contract obligations.
+The connector SHALL implement the standard connector base-contract
+obligations.
 
 #### Scenario: Heartbeat protocol
 
@@ -231,8 +232,8 @@ The connector implements the standard connector base-contract obligations.
 
 ### Requirement: Switchboard Registration
 
-ActivityWatch events bypass LLM classification; their value lives in the
-durable evidence table and Chronicler projection, not in natural-language
+ActivityWatch events SHALL bypass LLM classification; their value lives in
+the durable evidence table and Chronicler projection, not in natural-language
 summaries.
 
 #### Scenario: Global skip rule
@@ -245,6 +246,10 @@ summaries.
   DB querying
 
 ### Requirement: Environment Variables
+
+The connector SHALL be configured entirely via environment variables, with
+required variables validated at startup and optional variables falling back
+to documented defaults.
 
 #### Scenario: Required and optional configuration
 

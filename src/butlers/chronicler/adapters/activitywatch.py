@@ -385,7 +385,16 @@ class ActivityWatchWindowAdapter(ProjectionAdapter):
         for row in rows[1:]:
             prev = current[-1]
             same_identity = row["endpoint_identity"] == prev["endpoint_identity"]
-            time_gap = row["ts"] - prev["ts"]
+            # Gap is measured from where the *previous* row's activity ends
+            # (ts + duration_seconds) to where the next row starts — not
+            # start-to-start. Using start-to-start overestimates the true
+            # gap for any row with non-trivial duration (e.g. a sustained
+            # multi-hour IDE session), incorrectly fragmenting one
+            # continuous session into multiple episodes. This mirrors
+            # `_resolve_carryover`'s cross-batch boundary, which already
+            # gates on `end_at` rather than `start_at`.
+            prev_end_at = prev["ts"] + timedelta(seconds=prev["duration_seconds"])
+            time_gap = row["ts"] - prev_end_at
             if same_identity and time_gap <= gap:
                 current.append(row)
             else:
