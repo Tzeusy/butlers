@@ -26,13 +26,31 @@ import os
 import time
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from butlers.api.db import DatabaseManager
+from butlers.api.deps import get_db_manager
 from butlers.modules.metrics.prometheus import async_query, async_query_range
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/ingestion/pipeline", tags=["ingestion"])
+
+
+def _get_db_manager_optional() -> DatabaseManager | None:
+    """Return the DatabaseManager singleton, or None when not yet initialized.
+
+    Mirrors ``_get_pricing_optional`` in ``ingestion_events.py``: the backlog
+    fields below are best-effort (degraded-envelope pattern, see CLAUDE.md).
+    A daemon or test harness that hasn't wired the DatabaseManager yet must
+    not turn this endpoint into a 500 — the funnel stats above already
+    tolerate a missing ``PROMETHEUS_URL`` the same way.
+    """
+    try:
+        return get_db_manager()
+    except RuntimeError:
+        return None
+
 
 # ---------------------------------------------------------------------------
 # TTL cache — 60-second window per query key
@@ -275,6 +293,62 @@ def _build_spark24h(ingested_24h: int) -> list[int]:
 
 
 # ---------------------------------------------------------------------------
+# Failed/replay_pending backlog counts (bu-g4oiu) — DB truth, not Prometheus
+# ---------------------------------------------------------------------------
+
+# Statuses that represent an ingestion event stuck outside the normal
+# ingested/skipped happy path. Growth here (especially 'failed') is exactly
+# the silent-loss pattern bu-g4oiu found: 123 events sat unreplayed for up to
+# three months because nothing surfaced the count anywhere.
+_BACKLOG_STATUSES: tuple[str, ...] = ("failed", "replay_pending")
+
+
+async def _fetch_backlog_counts(db: DatabaseManager | None) -> dict:
+    """Return current failed/replay_pending totals from public.ingestion_events.
+
+    DB-truth counterpart to the Prometheus-backed funnel counters above:
+    surfaces a growing ingestion-failure backlog directly on this endpoint so
+    it is caught within a dashboard refresh instead of only by a manual audit
+    (bu-g4oiu). Queried independently of the Prometheus fetch so it stays
+    available even when Prometheus itself is degraded — this is the more
+    important signal of the two during a Prometheus outage, not less.
+
+    Fails open per the degraded-envelope convention (CLAUDE.md): a missing
+    DatabaseManager or a genuine query error yields ``backlog_available:
+    False`` and ``None`` counts — never a fabricated ``0``, which would read
+    as "no backlog" when the truth is "we couldn't check."
+    """
+    if db is None:
+        return {
+            "backlog_available": False,
+            "failed_total": None,
+            "replay_pending_total": None,
+        }
+
+    try:
+        pool = db.credential_shared_pool()
+        rows = await pool.fetch(
+            "SELECT status, COUNT(*) AS cnt FROM public.ingestion_events "
+            "WHERE status = ANY($1::text[]) GROUP BY status",
+            list(_BACKLOG_STATUSES),
+        )
+    except Exception:
+        logger.warning("pipeline_stats: backlog count query failed (non-fatal)", exc_info=True)
+        return {
+            "backlog_available": False,
+            "failed_total": None,
+            "replay_pending_total": None,
+        }
+
+    counts = {row["status"]: int(row["cnt"]) for row in rows}
+    return {
+        "backlog_available": True,
+        "failed_total": counts.get("failed", 0),
+        "replay_pending_total": counts.get("replay_pending", 0),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Cached fetch
 # ---------------------------------------------------------------------------
 
@@ -331,6 +405,7 @@ async def get_pipeline_stats(
         "24h",
         description="Time window for aggregate counters. One of: 1h, 24h, 7d.",
     ),
+    db: DatabaseManager | None = Depends(_get_db_manager_optional),
 ) -> dict:
     """Return aggregate pipeline funnel statistics.
 
@@ -345,11 +420,24 @@ async def get_pipeline_stats(
     - ``filtered24h``: count of filtered events in the last 24 hours
     - ``aggregates_available``: false when Prometheus is unreachable
 
-    Results are served from a 60-second TTL cache.
+    Plus, independent of Prometheus (bu-g4oiu — DB truth, not windowed/derived):
+    - ``failed_total``: current count of ``public.ingestion_events`` rows with
+      status='failed' (never replayed)
+    - ``replay_pending_total``: current count with status='replay_pending'
+      (replay requested but not yet reconciled)
+    - ``backlog_available``: false when the DatabaseManager or the backlog
+      query itself is unavailable — ``failed_total``/``replay_pending_total``
+      are ``None`` in that case, not ``0``
+
+    Results are served from a 60-second TTL cache (Prometheus fields only —
+    the backlog fields are queried fresh every request; the underlying query
+    is a cheap indexed COUNT(*) grouped by status).
 
     Supported ``window`` values: ``1h``, ``24h``, ``7d``.
     Returns HTTP 400 for unsupported window values (FastAPI validates the Literal).
-    NEVER returns HTTP 500 — Prometheus failures produce a degraded-mode 200.
+    NEVER returns HTTP 500 — Prometheus failures produce a degraded-mode 200,
+    and backlog-count failures degrade only the backlog fields.
     """
     data = await _get_cached_pipeline_stats(window)
-    return data
+    backlog = await _fetch_backlog_counts(db)
+    return {**data, **backlog}
