@@ -328,6 +328,48 @@ async def test_sweep_trips_circuit_breaker_after_consecutive_failures():
     assert all(o.ok is False for o in outcomes[:3])
 
 
+async def test_sweep_trips_circuit_breaker_on_unexpected_errors():
+    # A hard-down provider raises/times out rather than returning ok=False —
+    # _dispatch_probe converts that into a skipped outcome with
+    # skip_reason="error". The breaker must count those as failures too, or a
+    # full outage would never trip it (each remaining target would still pay
+    # for its own timeout instead of being skipped).
+    targets = [
+        ProbeTarget(
+            canonical_key=f"u:google-{i}",
+            family="user",
+            label="google",
+            state="expiring",
+            last_verified=None,
+            circuit_group="user:google",
+            user_provider="google",
+            user_identity=uuid4(),
+        )
+        for i in range(5)
+    ]
+
+    call_count = 0
+
+    async def fake_dispatch(db, target):
+        nonlocal call_count
+        call_count += 1
+        return ProbeOutcome(
+            key=target.canonical_key,
+            family=target.family,
+            label=target.label,
+            ok=None,
+            skipped=True,
+            skip_reason="error",
+        )
+
+    with patch("butlers.jobs.secrets_staleness._dispatch_probe", side_effect=fake_dispatch):
+        outcomes = await _sweep(object(), targets)
+
+    assert call_count == 3
+    assert [o.skip_reason for o in outcomes[3:]] == ["circuit_open", "circuit_open"]
+    assert all(o.skip_reason == "error" for o in outcomes[:3])
+
+
 async def test_sweep_resets_failure_streak_on_success():
     targets = [
         ProbeTarget(

@@ -360,7 +360,15 @@ async def _sweep(db: DatabaseManager, targets: list[ProbeTarget]) -> list[ProbeO
         outcome = await _dispatch_probe(db, target)
         outcomes.append(outcome)
 
-        if outcome.ok is False:
+        # An unexpected dispatch error (skip_reason="error") means the probe
+        # never got a real answer from the provider — exactly the "provider
+        # is down" case the breaker exists to catch (a hard-down provider
+        # raises/times out rather than returning ok=False). Count it as a
+        # failure too, or a full outage would never trip the breaker and
+        # every remaining target in the group pays for a fresh timeout.
+        # Rate-limited/circuit-open skips are not the provider's fault, so
+        # they neither advance nor reset the streak.
+        if outcome.ok is False or outcome.skip_reason == "error":
             count = consecutive_failures.get(target.circuit_group, 0) + 1
             consecutive_failures[target.circuit_group] = count
             if count >= _CIRCUIT_BREAK_THRESHOLD:
@@ -373,7 +381,6 @@ async def _sweep(db: DatabaseManager, targets: list[ProbeTarget]) -> list[ProbeO
                 )
         elif outcome.ok is True:
             consecutive_failures[target.circuit_group] = 0
-        # outcome.ok is None (skipped): neither resets nor advances the streak.
 
     return outcomes
 
