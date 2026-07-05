@@ -60,6 +60,15 @@ _SWITCHBOARD_BUTLER = "switchboard"
 # invisible behind a healthy connector-level heartbeat from a sibling device.
 _DEVICE_STALE_THRESHOLD = _dt.timedelta(hours=48)
 
+# How far back the per-device liveness query looks for a `MAX(received_at)` per
+# sender identity. Without a bound this is an unindexed full scan of
+# public.ingestion_events (no index covers source_sender_identity); bounding to
+# received_at's existing DESC index keeps it a bounded index scan. 90 days safely
+# covers the motivating bu-e16to regression (devices silent ~70 days) while
+# keeping the query cheap. A device with zero events in this window drops out of
+# the `devices` list entirely rather than showing as maximally stale.
+_DEVICE_LOOKBACK_WINDOW = _dt.timedelta(days=90)
+
 
 def _get_db_manager() -> DatabaseManager:
     """Dependency stub — overridden at app startup or in tests."""
@@ -117,18 +126,20 @@ async def list_connector_summaries_with_aggregates(
     not exposed here to avoid mislabeling lifetime volumes as "today".
 
     Each connector entry also includes ``devices`` (nullable) — for connector_types
-    with more than one distinct ``source_sender_identity`` ever observed in
-    ``public.ingestion_events`` (e.g. OwnTracks, where several physical devices post
-    through one shared connector_type and ``connector_registry`` only tracks a single
-    heartbeat identity for the whole connector), this is a list of
-    ``{sender_identity, last_seen_at, stale}`` entries, one per device, sorted most
-    recent first. ``stale`` is true when a device's last event is older than
-    ``_DEVICE_STALE_THRESHOLD`` (48h). ``devices`` is ``null`` for single-device
-    connectors so a silently-dead sibling device is never hidden behind a healthy
-    connector-level heartbeat from another device on the same connector_type
-    (bu-e16to). ``device_liveness_available`` (top-level, mirrors
-    ``aggregates_available``) is ``false`` only if the per-device query itself
-    failed — it is unrelated to whether any given connector_type has devices data.
+    with more than one distinct ``source_sender_identity`` observed in
+    ``public.ingestion_events`` within the last ``_DEVICE_LOOKBACK_WINDOW`` (90 days;
+    e.g. OwnTracks, where several physical devices post through one shared
+    connector_type and ``connector_registry`` only tracks a single heartbeat identity
+    for the whole connector), this is a list of ``{sender_identity, last_seen_at,
+    stale}`` entries, one per device, sorted most recent first. ``stale`` is true when
+    a device's last event is older than ``_DEVICE_STALE_THRESHOLD`` (48h). ``devices``
+    is ``null`` for single-device connectors so a silently-dead sibling device is
+    never hidden behind a healthy connector-level heartbeat from another device on
+    the same connector_type (bu-e16to). A device with no event at all in the lookback
+    window drops out of ``devices`` entirely rather than appearing maximally stale.
+    ``device_liveness_available`` (top-level, mirrors ``aggregates_available``) is
+    ``false`` only if the per-device query itself failed — it is unrelated to whether
+    any given connector_type has devices data.
 
     Always returns HTTP 200 — connector registry errors fall back to an empty list.
     Hourly timeseries errors fall back to all-zero ``hourly_events`` arrays per connector.
@@ -231,6 +242,7 @@ async def list_connector_summaries_with_aggregates(
     device_map: dict[str, list[dict[str, Any]]] = {}
     if rows:
         try:
+            device_lookback_start = _dt.datetime.now(_dt.UTC) - _DEVICE_LOOKBACK_WINDOW
             device_rows = await pool.fetch(
                 """
                 SELECT
@@ -240,8 +252,10 @@ async def list_connector_summaries_with_aggregates(
                 FROM public.ingestion_events
                 WHERE source_sender_identity IS NOT NULL
                   AND status = 'ingested'
+                  AND received_at >= $1
                 GROUP BY source_channel, source_sender_identity
                 """,
+                device_lookback_start,
             )
             now_for_devices = _dt.datetime.now(_dt.UTC)
             by_type: dict[str, list[dict[str, Any]]] = {}
