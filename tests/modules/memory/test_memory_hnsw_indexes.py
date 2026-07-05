@@ -113,13 +113,14 @@ async def _seed_and_explain(db_url: str) -> str:
 
         query_vec = corpus[0]
         plan_rows = await pool.fetch(
-            f"""
+            """
             EXPLAIN (FORMAT TEXT)
             SELECT id FROM facts
             WHERE tenant_id = 'plan-check'
-            ORDER BY embedding <=> '{query_vec!s}'::vector
+            ORDER BY embedding <=> $1::vector
             LIMIT 10
-            """
+            """,
+            str(query_vec),
         )
         return "\n".join(r[0] for r in plan_rows)
     finally:
