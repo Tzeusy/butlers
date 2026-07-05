@@ -341,8 +341,9 @@ describe("ChroniclesPage editorial archetype", () => {
     _isFetching = true;
     const html = renderPage();
     // placeholderData means `data` is still populated during the day-step
-    // refetch, so the page must not fall back to the editorial WorkspaceSkeleton.
-    expect(html).not.toContain("animate-pulse");
+    // refetch, so the page must not fall back to the editorial WorkspaceSkeleton
+    // (ui/page.tsx's WorkspaceSkeleton: "h-96 w-full rounded-lg bg-muted").
+    expect(html).not.toContain("h-96");
     expect(html).toContain("Quiet day.");
   });
 
