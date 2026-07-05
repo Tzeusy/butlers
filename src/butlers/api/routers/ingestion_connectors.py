@@ -53,6 +53,13 @@ router = APIRouter(prefix="/api/ingestion/connectors", tags=["ingestion"])
 
 _SWITCHBOARD_BUTLER = "switchboard"
 
+# Per-device liveness staleness threshold (bu-e16to). A multi-device connector
+# (e.g. OwnTracks, where several physical devices post through one shared
+# connector_type) surfaces a per-sender-identity `devices` list; a device with
+# no event in this long is flagged `stale` so a silently-dead device is never
+# invisible behind a healthy connector-level heartbeat from a sibling device.
+_DEVICE_STALE_THRESHOLD = _dt.timedelta(hours=48)
+
 
 def _get_db_manager() -> DatabaseManager:
     """Dependency stub — overridden at app startup or in tests."""
@@ -109,8 +116,24 @@ async def list_connector_summaries_with_aggregates(
     is a cumulative lifetime counter (since process start) and is intentionally
     not exposed here to avoid mislabeling lifetime volumes as "today".
 
+    Each connector entry also includes ``devices`` (nullable) — for connector_types
+    with more than one distinct ``source_sender_identity`` ever observed in
+    ``public.ingestion_events`` (e.g. OwnTracks, where several physical devices post
+    through one shared connector_type and ``connector_registry`` only tracks a single
+    heartbeat identity for the whole connector), this is a list of
+    ``{sender_identity, last_seen_at, stale}`` entries, one per device, sorted most
+    recent first. ``stale`` is true when a device's last event is older than
+    ``_DEVICE_STALE_THRESHOLD`` (48h). ``devices`` is ``null`` for single-device
+    connectors so a silently-dead sibling device is never hidden behind a healthy
+    connector-level heartbeat from another device on the same connector_type
+    (bu-e16to). ``device_liveness_available`` (top-level, mirrors
+    ``aggregates_available``) is ``false`` only if the per-device query itself
+    failed — it is unrelated to whether any given connector_type has devices data.
+
     Always returns HTTP 200 — connector registry errors fall back to an empty list.
     Hourly timeseries errors fall back to all-zero ``hourly_events`` arrays per connector.
+    Per-device liveness query errors fall back to ``devices: null`` for every connector
+    and ``device_liveness_available: false``.
     """
     pool = _pool(db)
     aggregates_available = _get_prometheus_url() is not None
@@ -197,6 +220,56 @@ async def list_connector_summaries_with_aggregates(
             logger.warning("connector summaries: failed to fetch hourly timeseries", exc_info=True)
             # hourly_map stays empty — connectors fall back to all-zeros below
 
+    # Per-device liveness for multi-device connectors (bu-e16to). A connector_type
+    # can have several distinct physical devices posting through it (e.g. OwnTracks
+    # household phones); connector_registry only ever tracks ONE shared heartbeat
+    # identity for such connectors (whichever device most recently resolved it),
+    # so a silently-dead sibling device is otherwise invisible. source_sender_identity
+    # on public.ingestion_events is set per-event from the payload's own device id
+    # and survives that identity churn, so it is the source of truth here.
+    device_liveness_available = True
+    device_map: dict[str, list[dict[str, Any]]] = {}
+    if rows:
+        try:
+            device_rows = await pool.fetch(
+                """
+                SELECT
+                    source_channel AS connector_type,
+                    source_sender_identity AS sender_identity,
+                    MAX(received_at) AS last_seen_at
+                FROM public.ingestion_events
+                WHERE source_sender_identity IS NOT NULL
+                  AND status = 'ingested'
+                GROUP BY source_channel, source_sender_identity
+                """,
+            )
+            now_for_devices = _dt.datetime.now(_dt.UTC)
+            by_type: dict[str, list[dict[str, Any]]] = {}
+            for dr in device_rows:
+                by_type.setdefault(dr["connector_type"], []).append(
+                    {"sender_identity": dr["sender_identity"], "last_seen_at": dr["last_seen_at"]}
+                )
+            # Only surface a `devices` list for genuinely multi-device connector_types
+            # (>1 distinct sender identity ever seen) -- a single-sender connector's
+            # device would just duplicate the roster row's own liveness verdict.
+            for ctype, devices in by_type.items():
+                if len(devices) < 2:
+                    continue
+                device_map[ctype] = [
+                    {
+                        "sender_identity": d["sender_identity"],
+                        "last_seen_at": d["last_seen_at"].isoformat(),
+                        "stale": (now_for_devices - d["last_seen_at"]) > _DEVICE_STALE_THRESHOLD,
+                    }
+                    for d in sorted(devices, key=lambda d: d["last_seen_at"], reverse=True)
+                ]
+        except Exception:
+            logger.warning(
+                "connector summaries: failed to fetch per-device liveness", exc_info=True
+            )
+            device_liveness_available = False
+            device_map = {}
+
     connectors = []
     for r in rows:
         liveness = _liveness(r["last_heartbeat_at"])
@@ -224,11 +297,16 @@ async def list_connector_summaries_with_aggregates(
                     "messages_failed": r["counter_messages_failed"] or 0,
                 },
                 "hourly_events": hourly,
+                "devices": device_map.get(r["connector_type"]),
             }
         )
 
     return ApiResponse[dict](
-        data={"connectors": connectors, "aggregates_available": aggregates_available}
+        data={
+            "connectors": connectors,
+            "aggregates_available": aggregates_available,
+            "device_liveness_available": device_liveness_available,
+        }
     )
 
 
