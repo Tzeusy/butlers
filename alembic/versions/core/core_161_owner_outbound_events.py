@@ -1,7 +1,7 @@
 """owner_outbound_events: durable owner-outbound-message point-event evidence table.
 
 Revision ID: core_161
-Revises: core_157
+Revises: core_160
 Create Date: 2026-07-05 00:00:00.000000
 
 Creates ``connectors.owner_outbound_events`` — the evidence table the new
@@ -12,13 +12,13 @@ signal even though both connectors already observe them).
 
 RECHAIN NOTE (per bu-whhll.8 dispatch guidance): the core migration chain was
 contended at dispatch time — ``core_159`` (PR #2943) and ``core_160``
-(PR #2944) were both still open/unmerged. This revision is deliberately
-numbered ``core_161`` to reserve the next free slot, but ``down_revision``
-below points at ``core_157`` (the actual chain tip in this worktree at branch
-time) so the migration is self-consistent and testable on its own branch.
-**Whoever merges this after core_159/core_160 land MUST rebase and update
-``down_revision`` to ``"core_160"`` before merge** (see AGENTS.md "Parallel
-migration revision collision").
+(PR #2944) were both still open/unmerged. This revision was originally
+numbered ``core_161`` to reserve the next free slot with ``down_revision``
+pointed at ``core_157`` (the chain tip at branch time) so the migration was
+self-consistent and testable on its own branch. Both ``core_159`` and
+``core_160`` have since merged, and this revision has been rebased and
+rechained onto ``core_160`` (see AGENTS.md "Parallel migration revision
+collision").
 
 Design notes (mirrors ``core_154_activitywatch_events.py``, the closest prior
 art for a connector-owned Tier-1 evidence table):
@@ -52,7 +52,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "core_161"
-down_revision = "core_157"
+down_revision = "core_160"
 branch_labels = None
 depends_on = None
 
