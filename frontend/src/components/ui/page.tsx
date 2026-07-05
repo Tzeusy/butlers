@@ -223,7 +223,7 @@ function DetailSkeleton() {
 }
 
 function WorkspaceSkeleton() {
-  return <div className="h-96 w-full rounded-lg bg-muted" />;
+  return <div data-testid="workspace-skeleton" className="h-96 w-full rounded-lg bg-muted" />;
 }
 
 function EditorSkeleton({ count }: { count: number }) {
