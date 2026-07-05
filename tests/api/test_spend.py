@@ -1879,6 +1879,27 @@ def test_spend_rule_condition_accepts_purpose() -> None:
     ]
 
 
+def test_spend_rule_condition_rejects_trigger_and_purpose_together() -> None:
+    """trigger and purpose alias the same trigger_source value (bu-og0j2/bu-qvnce.12).
+
+    A condition setting both can never match at dispatch (they're ANDed against the
+    same underlying value), so it is rejected at create/update time (422) instead of
+    silently persisting a rule that fails closed forever.
+    """
+    from pydantic import ValidationError
+
+    from butlers.api.routers.spend import SpendRuleCondition
+
+    with pytest.raises(ValidationError):
+        SpendRuleCondition(trigger="route", purpose="discretion")
+    # Same value on both keys is still rejected -- redundant, not a legitimate use.
+    with pytest.raises(ValidationError):
+        SpendRuleCondition(trigger="route", purpose="route")
+    # Either alone is fine.
+    assert SpendRuleCondition(trigger="route").trigger == "route"
+    assert SpendRuleCondition(purpose="route").purpose == "route"
+
+
 def test_spend_rule_create_accepts_new_dims() -> None:
     """SpendRuleCreate accepts the new trigger condition dim and max_cost_per_call effect."""
     from butlers.api.routers.spend import SpendRuleCreate

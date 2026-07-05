@@ -1348,7 +1348,9 @@ class SpendRuleCondition(BaseModel):
     ``purpose`` — both evaluate against the dispatch ``trigger_source``; ``purpose``
     matches the vocabulary ``/spend/breakdown?by=purpose`` and
     ``public.token_usage_ledger.purpose`` use for the same dimension, see bu-qvnce.12).
-    Each may be a scalar or a list (membership match).
+    Each may be a scalar or a list (membership match).  ``trigger`` and ``purpose`` are
+    mutually exclusive within one condition (422 if both are set) since they alias the
+    same underlying value and could never both hold at once.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1358,6 +1360,21 @@ class SpendRuleCondition(BaseModel):
     tier: str | list[str] | None = None
     trigger: str | list[str] | None = None
     purpose: str | list[str] | None = None
+
+    @model_validator(mode="after")
+    def _validate_trigger_purpose_alias(self) -> SpendRuleCondition:
+        # trigger and purpose both evaluate against the same dispatch trigger_source
+        # (see _rule_condition_matches) -- a condition specifying both can never match
+        # unless their values happen to agree, which is never a legitimate rule intent.
+        # Reject at create/update time (422) rather than persist a rule that silently
+        # fails closed forever at dispatch.
+        if self.trigger is not None and self.purpose is not None:
+            raise ValueError(
+                "condition cannot set both 'trigger' and 'purpose' -- they are aliases "
+                "for the same dispatch trigger_source dimension; a rule combining both "
+                "could never match"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_tiers(self) -> SpendRuleCondition:
