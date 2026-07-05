@@ -31,8 +31,10 @@ Design notes
   ``public.model_catalog`` via
   :func:`~butlers.core.model_routing.next_same_tier_candidate`. Discretion
   calls never carry MCP tool calls (``mcp_servers={}``), so Gate 1 of the
-  classifier (captured tool calls suppress failover) never fires here —
-  every classifier decision turns on the exception itself.
+  classifier (captured tool calls suppress failover) never fires here.
+  ``adapter.last_process_info`` is still passed through, since some gates
+  (e.g. OpenCode's pre-tool-call ``APIError`` envelope) key off it rather
+  than ``tool_calls``.
 """
 
 from __future__ import annotations
@@ -306,23 +308,17 @@ class DiscretionDispatcher:
 
             _usage_dict: dict | None = None
 
-            async def _invoke(
-                _adapter: RuntimeAdapter = adapter,
-                _model_id: str = model_id,
-                _extra_args: list[str] = extra_args,
-                _prompt: str = effective_prompt,
-                _timeout: int = session_timeout_s,
-            ) -> str:
+            async def _invoke() -> str:
                 nonlocal _usage_dict
-                result_text, _tool_calls, _usage_dict = await _adapter.invoke(
-                    prompt=_prompt,
+                result_text, _tool_calls, _usage_dict = await adapter.invoke(
+                    prompt=effective_prompt,
                     system_prompt=system_prompt,
                     mcp_servers={},
                     env=_minimal_env(),
                     max_turns=1,
-                    model=_model_id,
-                    runtime_args=_extra_args or None,
-                    timeout=_timeout,
+                    model=model_id,
+                    runtime_args=extra_args or None,
+                    timeout=session_timeout_s,
                 )
                 return result_text or ""
 
@@ -331,10 +327,9 @@ class DiscretionDispatcher:
 
             async with self._semaphore:
                 try:
-                    try:
-                        result = await asyncio.wait_for(_invoke(), timeout=session_timeout_s)
-                    except Exception as exc:  # noqa: BLE001 — classified below
-                        attempt_exc = exc
+                    result = await asyncio.wait_for(_invoke(), timeout=session_timeout_s)
+                except Exception as exc:  # noqa: BLE001 — classified below
+                    attempt_exc = exc
                 finally:
                     # Record token usage best-effort (success and failure).
                     # Tokens are consumed by the provider on invocation regardless of outcome.
@@ -374,7 +369,11 @@ class DiscretionDispatcher:
             # Invocation failed: classify for same-tier failover eligibility.
             # tool_calls is always [] — discretion calls pass mcp_servers={}, so
             # Gate 1 (captured tool calls suppress failover) never fires here.
-            decision = classify_failover_eligibility(FailoverContext(exception=attempt_exc))
+            # process_info is still passed through: some gates (e.g. OpenCode's
+            # pre-tool-call APIError envelope) key off it, not just tool_calls.
+            decision = classify_failover_eligibility(
+                FailoverContext(exception=attempt_exc, process_info=adapter.last_process_info)
+            )
 
             if not decision.eligible:
                 logger.debug(

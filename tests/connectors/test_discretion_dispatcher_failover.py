@@ -19,6 +19,9 @@ Covers:
 - DiscretionDispatcher reuses the shared
   ``butlers.core.failover_classifier.classify_failover_eligibility`` — it
   does not fork a second, duplicate classifier.
+- The classifier call includes ``adapter.last_process_info`` alongside the
+  exception, so process-info-gated eligibility checks (e.g. OpenCode's
+  pre-tool-call ``APIError`` envelope) are not silently starved.
 - End-to-end: when the dispatcher exhausts failover, DiscretionEvaluator's
   pre-existing error-path observability (structured log + a
   ``discretion_evaluations_total`` increment) still fires, so the resulting
@@ -35,6 +38,7 @@ import pytest
 
 from butlers.connectors.discretion import DiscretionEvaluator, discretion_evaluations_total
 from butlers.connectors.discretion_dispatcher import DiscretionDispatcher
+from butlers.core.failover_classifier import FailoverDecision
 from butlers.core.model_routing import QuotaStatus
 
 pytestmark = pytest.mark.unit
@@ -68,6 +72,42 @@ def test_discretion_dispatcher_reuses_shared_failover_classifier() -> None:
         discretion_dispatcher.classify_failover_eligibility
         is failover_classifier.classify_failover_eligibility
     )
+
+
+async def test_call_passes_adapter_process_info_to_classifier() -> None:
+    """The classifier call must include ``adapter.last_process_info``.
+
+    Some failover-eligibility gates (e.g. OpenCode's pre-tool-call ``APIError``
+    envelope) key off ``process_info`` rather than the exception message alone
+    — omitting it would silently misclassify those failures as ineligible.
+    """
+    pool = MagicMock()
+    dispatcher = DiscretionDispatcher(pool=pool)
+
+    catalog = ("opencode", "some-opencode-model", [], uuid.uuid4(), 30, "specialty")
+    process_info = {"runtime_type": "opencode", "is_pre_tool_call": True}
+    adapter = _make_adapter(side_effect=[RuntimeError("boom")])
+    adapter.last_process_info = process_info
+
+    captured: list = []
+
+    def _fake_classify(ctx):
+        captured.append(ctx)
+        return FailoverDecision(eligible=False, reason="test_stub")
+
+    with (
+        patch(f"{_MODULE}.resolve_model_with_effective_tier", AsyncMock(return_value=catalog)),
+        patch(f"{_MODULE}.check_token_quota", AsyncMock(return_value=_allowed_quota())),
+        patch.object(dispatcher, "_get_or_create_adapter", return_value=adapter),
+        patch.object(dispatcher, "_resolve_provider_config", AsyncMock(return_value=None)),
+        patch(f"{_MODULE}.classify_failover_eligibility", side_effect=_fake_classify),
+        patch(f"{_MODULE}.record_token_usage", AsyncMock()),
+    ):
+        with pytest.raises(RuntimeError, match="boom"):
+            await dispatcher.call("hi")
+
+    assert len(captured) == 1
+    assert captured[0].process_info == process_info
 
 
 # ---------------------------------------------------------------------------
