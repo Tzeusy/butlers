@@ -208,12 +208,20 @@ export default function SessionsPage() {
     filters.until !== "";
 
   function selectSession(id: string | null) {
-    setSearchParams((prev) => {
-      const sp = new URLSearchParams(prev);
-      if (id) sp.set("selected", id);
-      else sp.delete("selected");
-      return sp;
-    });
+    // replace: true — j/k rove the list one keypress at a time (see the
+    // shortcut bindings below), and closing the drawer also calls this; a
+    // default push here would spam one history entry per keypress/close,
+    // the same "N Back-clicks to leave the page" defect PR #2928's
+    // follow-up (bu-k14bg) fixed for free-text filter inputs.
+    setSearchParams(
+      (prev) => {
+        const sp = new URLSearchParams(prev);
+        if (id) sp.set("selected", id);
+        else sp.delete("selected");
+        return sp;
+      },
+      { replace: true },
+    );
   }
 
   function handleSessionClick(session: SessionSummary) {
