@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
@@ -24,11 +25,13 @@ from butlers.chronicler.adapters import (
     MealsAdapter,
     OccupationInferredAdapter,
     OwnerOutboundMessageAdapter,
+    OwnTracksPlaceClusterAdapter,
     OwnTracksPointAdapter,
     ReadingInferredAdapter,
     SpotifySessionAdapter,
     SteamPlayAdapter,
 )
+from butlers.chronicler.adapters.owntracks_place_cluster import parse_place_references
 from butlers.chronicler.contracts import seed_source_registry
 from butlers.config import list_butlers
 
@@ -208,6 +211,28 @@ async def run_project_owntracks(
         supported_fields=("batch_limit", "movement_gap_minutes"),
     )
     adapter = OwnTracksPointAdapter(**options)
+    return await _run_adapter(db_pool=db_pool, adapter=adapter)
+
+
+async def run_project_owntracks_place_cluster(
+    db_pool: asyncpg.Pool,
+    job_args: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Project OwnTracks GPS place clusters into Chronicler (bu-ac2pg).
+
+    Owner-declared reference points (e.g. home/work lat-lon) are configured
+    via the ``OWNTRACKS_PLACE_REFERENCES`` environment variable — a JSON list
+    of ``{"label", "lat", "lon", "radius_m"?}`` objects, mirroring the
+    ``HA_WELLNESS_RULES_EXTRA`` owner-extensibility pattern. Unset/empty means
+    every recurring cluster surfaces honestly as ``place_unknown``.
+    """
+    options = _parse_job_args(
+        "chronicler_project_owntracks_place_cluster",
+        job_args,
+        supported_fields=("batch_limit", "min_dwell_minutes", "max_gap_minutes"),
+    )
+    reference_points = parse_place_references(os.environ.get("OWNTRACKS_PLACE_REFERENCES", ""))
+    adapter = OwnTracksPlaceClusterAdapter(reference_points=reference_points, **options)
     return await _run_adapter(db_pool=db_pool, adapter=adapter)
 
 
@@ -491,6 +516,7 @@ __all__ = [
     "run_project_occupation_inferred",
     "run_project_owner_outbound",
     "run_project_owntracks",
+    "run_project_owntracks_place_cluster",
     "run_project_reading_inferred",
     "run_project_sessions",
     "run_project_spotify",
