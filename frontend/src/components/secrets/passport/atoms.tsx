@@ -35,6 +35,43 @@ export function stateColor(state: CredentialState): string {
   return toneColor(meta.tone);
 }
 
+// ── Timestamp formatting ───────────────────────────────────────────────────
+
+const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/**
+ * Normalize a passport timestamp field to the page's human-relative
+ * vocabulary ("14:21 today" / "yesterday 09:08" / "2026-03-27 02:41"),
+ * matching the backend's `_format_probe_time` phrasing (secrets_v2.py).
+ *
+ * Some fields (ISSUED, LAST VERIFIED) are raw ISO-8601 datetimes — a plain
+ * `datetime` field serialized by FastAPI, microseconds and all — while
+ * others (e.g. probe `test.at`) already arrive pre-formatted server-side.
+ * Reformatting only the raw-ISO case (and leaving anything else, including
+ * "—" placeholders, untouched) means this is safe to apply everywhere
+ * without double-processing an already-human string.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function formatPassportTimestamp(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  if (!ISO_DATETIME_RE.test(raw)) return raw;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const dayDiff = Math.round(
+    (startOfDay(now).getTime() - startOfDay(d).getTime()) / 86_400_000,
+  );
+  if (dayDiff === 0) return `${time} today`;
+  if (dayDiff === 1) return `yesterday ${time}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`;
+}
+
 // ── Typography ─────────────────────────────────────────────────────────────
 
 /**
@@ -577,6 +614,17 @@ export function BlockHead({
 
 // ── Scope atoms ───────────────────────────────────────────────────────────────
 
+/**
+ * One-line legend per VISA PERMISSIONS state — "extra" reads as a warning at
+ * a glance, but it means granted beyond what's required, not a problem.
+ * Surfaced as a title attribute on each row's state label (hover to read).
+ */
+const VISA_STATE_LEGEND: Record<"granted" | "missing" | "extra", string> = {
+  granted: "Required and granted.",
+  missing: "Required but not yet granted.",
+  extra: "Granted beyond what's required — not a warning.",
+};
+
 /** VisaRow: single scope with granted/missing/extra state. */
 export function VisaRow({
   scope,
@@ -596,6 +644,7 @@ export function VisaRow({
       className="grid gap-2.5 items-baseline py-1.5 border-b border-[var(--border-soft)]"
       style={{ gridTemplateColumns: "12px 1fr auto" }}
       data-scope-state={state}
+      title={VISA_STATE_LEGEND[state]}
     >
       <Mono size={10} color={state === "missing" ? "var(--amber)" : "var(--mfg)"}>
         {state === "missing" ? "∅" : "✓"}
@@ -657,10 +706,19 @@ export function ScopeBalance({
 
 // ── ProbeResult ─────────────────────────────────────────────────────────────
 
-/** ProbeResult: latency / code / timestamp / serif-italic message. */
+/**
+ * ProbeResult: latency / code / timestamp / serif-italic message.
+ *
+ * The sole test/probe control for a credential page (bu-eptoz) — the button
+ * rendered here ("run probe" / "probe again") replaces what used to be a
+ * second, redundant "test" pill in the page's commit footer. `pending`
+ * mirrors that button's in-flight label ("testing…") now that this is the
+ * only control carrying that feedback.
+ */
 export function ProbeResult({
   test,
   onProbe,
+  pending,
 }: {
   test: {
     ok: boolean;
@@ -671,6 +729,8 @@ export function ProbeResult({
     message?: string | null;
   } | null;
   onProbe?: () => void;
+  /** True while the probe mutation is in flight — shows "testing…" and disables the button. */
+  pending?: boolean;
 }) {
   if (!test) {
     return (
@@ -682,9 +742,10 @@ export function ProbeResult({
           <button
             type="button"
             onClick={onProbe}
+            disabled={pending}
             className="font-mono text-[11px] px-2.5 py-1 border border-[var(--border-strong)] rounded-sm bg-transparent text-[var(--fg)] cursor-pointer"
           >
-            run probe
+            {pending ? "testing…" : "run probe"}
           </button>
         )}
       </div>
@@ -729,9 +790,10 @@ export function ProbeResult({
         <button
           type="button"
           onClick={onProbe}
+          disabled={pending}
           className="font-mono text-[11px] px-2.5 py-1 border border-[var(--border-strong)] rounded-sm bg-transparent text-[var(--fg)] cursor-pointer"
         >
-          probe again
+          {pending ? "testing…" : "probe again"}
         </button>
       )}
     </div>
