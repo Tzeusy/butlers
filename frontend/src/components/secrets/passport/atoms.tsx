@@ -39,8 +39,10 @@ export function stateColor(state: CredentialState): string {
 
 const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
 
-function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+// Calendar-day boundary in UTC (epoch ms at 00:00 UTC of `d`'s UTC date) —
+// deliberately UTC, not host/browser-local. See formatPassportTimestamp.
+function startOfUTCDay(d: Date): number {
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
 /**
@@ -54,6 +56,14 @@ function startOfDay(d: Date): Date {
  * Reformatting only the raw-ISO case (and leaving anything else, including
  * "—" placeholders, untouched) means this is safe to apply everywhere
  * without double-processing an already-human string.
+ *
+ * Deliberately formats in UTC (`getUTC*`), not the viewer's host/browser
+ * timezone: `_format_probe_time` never converts timezone either — it prints
+ * the wall-clock components of a UTC-aware `recorded_at` as-is. Using local
+ * getters here would make ISSUED/LAST VERIFIED disagree with the probe
+ * block's "verified 14:21 today" for the same instant on any viewer whose
+ * host clock isn't UTC, silently mislabeling "today" as "yesterday" (or vice
+ * versa) across two fields on the same page.
  */
 // eslint-disable-next-line react-refresh/only-export-components
 export function formatPassportTimestamp(raw: string | null | undefined): string | null {
@@ -63,13 +73,13 @@ export function formatPassportTimestamp(raw: string | null | undefined): string 
   if (Number.isNaN(d.getTime())) return raw;
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
-  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const time = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
   const dayDiff = Math.round(
-    (startOfDay(now).getTime() - startOfDay(d).getTime()) / 86_400_000,
+    (startOfUTCDay(now) - startOfUTCDay(d)) / 86_400_000,
   );
   if (dayDiff === 0) return `${time} today`;
   if (dayDiff === 1) return `yesterday ${time}`;
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`;
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${time}`;
 }
 
 // ── Typography ─────────────────────────────────────────────────────────────
