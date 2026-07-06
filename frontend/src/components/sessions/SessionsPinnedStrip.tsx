@@ -37,6 +37,7 @@ import type { KeyboardEvent, ReactNode } from "react";
 import type { SessionSummary } from "@/api/types";
 import { ButlerMark } from "@/components/ui/ButlerMark";
 import { StatusBadge } from "@/components/sessions/StatusBadge";
+import { SourceDegradedNote } from "@/components/ui/query-boundary";
 import { useSessionErrorExcerpts } from "@/hooks/use-sessions";
 import { useTickingNow } from "@/hooks/use-ticking-now";
 import { elapsedText } from "@/lib/session-elapsed";
@@ -123,6 +124,14 @@ export interface SessionsPinnedStripProps {
    * recency-windowed failures (see module doc for the shared "recent"
    * definition with SessionsVerdictOpener). */
   recentFailures: SessionSummary[];
+  /** True when the running-sessions query (above) errored. Must NOT be
+   * conflated with "no running sessions" -- a killed backend renders a
+   * degraded note instead of silently collapsing the strip (fleet-wide
+   * degraded-mode convention, see butlers/CLAUDE.md API Conventions). */
+  runningError?: boolean;
+  /** True when the recent-failures query (above) errored. Same rule as
+   * `runningError`: never let a fetch failure read as "no recent failures". */
+  recentFailuresError?: boolean;
   onSessionClick?: (session: SessionSummary) => void;
   /** Mirrors ?selected= (same convention as SessionTable). */
   selectedId?: string | null;
@@ -131,6 +140,8 @@ export interface SessionsPinnedStripProps {
 export function SessionsPinnedStrip({
   runningSessions,
   recentFailures,
+  runningError = false,
+  recentFailuresError = false,
   onSessionClick,
   selectedId = null,
 }: SessionsPinnedStripProps) {
@@ -140,7 +151,12 @@ export function SessionsPinnedStrip({
   // to whatever the caller passed in `recentFailures` (a handful of rows).
   const errorsById = useSessionErrorExcerpts(recentFailures);
 
-  if (runningSessions.length === 0 && recentFailures.length === 0) {
+  const hasDegradedSource = runningError || recentFailuresError;
+
+  // Nothing to pin AND both sources are healthy -> collapse (see module doc
+  // decision note). A degraded source always renders its note, even with
+  // zero rows to show, so a fetch failure never reads as "nothing pinned".
+  if (runningSessions.length === 0 && recentFailures.length === 0 && !hasDegradedSource) {
     return null;
   }
 
@@ -154,6 +170,16 @@ export function SessionsPinnedStrip({
       <span className="mb-2 block font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
         Pinned
       </span>
+      {hasDegradedSource && (
+        <div className="mb-2 flex flex-col gap-1.5">
+          {runningError && (
+            <SourceDegradedNote label="Running sessions" detail="unavailable" />
+          )}
+          {recentFailuresError && (
+            <SourceDegradedNote label="Recent failures" detail="unavailable" />
+          )}
+        </div>
+      )}
       <ul className="flex flex-col gap-0.5">
         {runningSessions.map((session) => (
           <PinnedRow

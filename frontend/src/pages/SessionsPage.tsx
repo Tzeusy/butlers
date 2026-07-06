@@ -193,7 +193,7 @@ export default function SessionsPage() {
   // small row budget. "Recent" thus means one consistent thing on this page:
   // the last SESSIONS_VERDICT_WINDOW_HOURS, newest-first, capped at
   // PINNED_FAILURES_LIMIT rows.
-  const { data: recentFailuresResponse } = useSessions(
+  const { data: recentFailuresResponse, isError: recentFailuresError } = useSessions(
     { status: "failed", since: verdictSinceIso, limit: PINNED_FAILURES_LIMIT },
     { refetchInterval: autoRefreshControl.refetchInterval },
   );
@@ -514,6 +514,8 @@ export default function SessionsPage() {
       <SessionsPinnedStrip
         runningSessions={runningSessionsResponse?.data ?? []}
         recentFailures={recentFailuresResponse?.data ?? []}
+        runningError={runningSessionsError}
+        recentFailuresError={recentFailuresError}
         onSessionClick={handleSessionClick}
         selectedId={selectedSessionId}
       />

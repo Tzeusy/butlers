@@ -153,6 +153,49 @@ describe("SessionsPinnedStrip — recent failures", () => {
   });
 });
 
+describe("SessionsPinnedStrip — degraded sources", () => {
+  it("does not render a degraded note when both queries succeed with no rows", () => {
+    setup();
+    const { container, queryByText } = render(
+      <SessionsPinnedStrip runningSessions={[]} recentFailures={[]} />,
+    );
+    expect(container.firstChild).toBeNull();
+    expect(queryByText(/unavailable/i)).toBeNull();
+  });
+
+  it("renders a degraded note for running sessions on error, even with zero rows", () => {
+    setup();
+    const { getByText, queryAllByTestId } = render(
+      <SessionsPinnedStrip runningSessions={[]} recentFailures={[]} runningError />,
+    );
+    expect(getByText(/Running sessions: unavailable/i)).toBeTruthy();
+    // No fabricated rows -- only the degraded note renders.
+    expect(queryAllByTestId("pinned-session-row")).toHaveLength(0);
+  });
+
+  it("renders a degraded note for recent failures on error, even with zero rows", () => {
+    setup();
+    const { getByText } = render(
+      <SessionsPinnedStrip runningSessions={[]} recentFailures={[]} recentFailuresError />,
+    );
+    expect(getByText(/Recent failures: unavailable/i)).toBeTruthy();
+  });
+
+  it("renders both the degraded note and real rows when one source errors and the other has data", () => {
+    setup();
+    const running = makeSession({ id: "run-1", success: null });
+    const { getByText, getByTestId } = render(
+      <SessionsPinnedStrip
+        runningSessions={[running]}
+        recentFailures={[]}
+        recentFailuresError
+      />,
+    );
+    expect(getByText(/Recent failures: unavailable/i)).toBeTruthy();
+    expect(getByTestId("pinned-session-row")).toBeTruthy();
+  });
+});
+
 describe("SessionsPinnedStrip — interaction", () => {
   it("calls onSessionClick with the clicked pinned session", () => {
     setup();
