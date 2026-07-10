@@ -77,6 +77,10 @@ import { ConflictRadarBanner } from "@/components/calendar/ConflictRadarBanner";
 import { CalendarPortabilityDialog } from "@/components/calendar/CalendarPortabilityDialog";
 import { DayBriefingCard } from "@/components/calendar/DayBriefingCard";
 import { MeetingPrepRailContainer } from "@/components/calendar/MeetingPrepRail";
+import {
+  ContactPeoplePicker,
+  type SelectedPerson,
+} from "@/components/calendar/ContactPeoplePicker";
 import { CalendarProposalsPanel } from "@/components/calendar/CalendarProposalsPanel";
 import { CalendarDuplicatesPanel } from "@/components/calendar/CalendarDuplicatesPanel";
 import { QuickAddBar } from "@/pages/calendar/QuickAddBar";
@@ -134,6 +138,8 @@ interface UserEventFormState {
   timezone: string;
   description: string;
   location: string;
+  /** People linked to the event; their entity ids thread into `entity_ids[]`. */
+  people: SelectedPerson[];
 }
 
 interface ButlerEventDraft {
@@ -2922,6 +2928,7 @@ export default function CalendarWorkspacePage() {
       timezone: defaultTimezone,
       description: "",
       location: "",
+      people: [],
     });
     setUserEventDialogOpen(true);
   }
@@ -3503,6 +3510,13 @@ export default function CalendarWorkspacePage() {
     const location = userEventForm.location.trim();
     if (location) {
       payload.location = location;
+    }
+
+    // Link selected people by their identity-layer entity ids. The backend
+    // `calendar_create_event`/`calendar_update_event` tools accept `entity_ids`
+    // and persist them to the calendar_event_entities join table.
+    if (userEventForm.people.length > 0) {
+      payload.entity_ids = userEventForm.people.map((p) => p.entity_id);
     }
 
     if (action === "update") {
@@ -5973,6 +5987,17 @@ export default function CalendarWorkspacePage() {
                   disabled={userEventMutation.isPending}
                 />
               </div>
+
+              {/* People — link known contacts to the event (entity_ids). */}
+              <ContactPeoplePicker
+                value={userEventForm.people}
+                onChange={(people) =>
+                  setUserEventForm((current) =>
+                    current ? { ...current, people } : current,
+                  )
+                }
+                disabled={userEventMutation.isPending}
+              />
 
               {/* Conflict card — rendered when the backend returns status='conflict' */}
               {userEventConflict ? (
