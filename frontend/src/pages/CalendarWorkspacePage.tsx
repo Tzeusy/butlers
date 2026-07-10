@@ -1083,7 +1083,7 @@ function auditStatusColor(status: CalendarAuditEntry["action_status"]): string {
     case "pending":
       return "text-[var(--yellow)]";
     case "failed":
-      return "text-[var(--red)]";
+      return "text-[var(--red-text)]";
     case "noop":
       return "text-[var(--mfg)]";
     default:
@@ -1473,7 +1473,7 @@ function CalendarActivityPanel({
                   </Mono>
                   {entry.error ? (
                     <span
-                      className="max-w-[20rem] truncate text-[11px] text-[var(--red)]"
+                      className="max-w-[20rem] truncate text-[11px] text-[var(--red-text)]"
                       title={entry.error}
                     >
                       {entry.error}
@@ -1713,7 +1713,7 @@ function CalendarEntryDetailPanel({
               className={cn(
                 "font-mono text-[10px] uppercase tracking-[0.12em]",
                 saveStatus === "error"
-                  ? "text-[var(--red)]"
+                  ? "text-[var(--red-text)]"
                   : "text-[var(--mfg)]",
               )}
             >
@@ -1908,7 +1908,7 @@ function CalendarEntryDetailPanel({
         <div className="mt-auto border-t border-[var(--border)] pt-3">
           <PillButton
             data-testid="detail-delete-button"
-            className="hover:border-[var(--red)] hover:text-[var(--red)]"
+            className="hover:border-[var(--red)] hover:text-[var(--red-text)]"
             disabled={isPending}
             onClick={() => onDelete(entry)}
           >
@@ -4734,7 +4734,7 @@ export default function CalendarWorkspacePage() {
                                       data-testid="butler-dismiss-button"
                                       onClick={() => handleButlerDismiss(item)}
                                       disabled={butlerMutation.isPending}
-                                      className="hover:border-[var(--red)] hover:text-[var(--red)]"
+                                      className="hover:border-[var(--red)] hover:text-[var(--red-text)]"
                                     >
                                       Dismiss
                                     </PillButton>
@@ -4742,7 +4742,7 @@ export default function CalendarWorkspacePage() {
                                   <PillButton
                                     onClick={() => handleButlerDelete(item)}
                                     disabled={butlerMutation.isPending}
-                                    className="hover:border-[var(--red)] hover:text-[var(--red)]"
+                                    className="hover:border-[var(--red)] hover:text-[var(--red-text)]"
                                   >
                                     Delete
                                   </PillButton>
@@ -5391,7 +5391,7 @@ export default function CalendarWorkspacePage() {
                                   disabled={
                                     !canMutate || userEventMutation.isPending
                                   }
-                                  className="hover:border-[var(--red)] hover:text-[var(--red)]"
+                                  className="hover:border-[var(--red)] hover:text-[var(--red-text)]"
                                 >
                                   Delete
                                 </PillButton>
@@ -5414,7 +5414,7 @@ export default function CalendarWorkspacePage() {
                               {isCancelledEntry(entry) ? (
                                 <KindTag
                                   data-testid="entry-cancelled-tag"
-                                  className="text-[var(--red)]"
+                                  className="text-[var(--red-text)]"
                                 >
                                   cancelled
                                 </KindTag>
@@ -5563,7 +5563,7 @@ export default function CalendarWorkspacePage() {
                       <KindTag>{account.status}</KindTag>
                       {account.health.error_message ? (
                         <span
-                          className="max-w-[16rem] truncate text-[11px] text-[var(--red)]"
+                          className="max-w-[16rem] truncate text-[11px] text-[var(--red-text)]"
                           title={account.health.error_message}
                         >
                           {account.health.error_message}
@@ -5728,7 +5728,7 @@ export default function CalendarWorkspacePage() {
                           source.error_kind === "auth" ? (
                             <Link
                               to="/ingestion?tab=connectors"
-                              className="inline-flex items-center rounded-[3px] border border-[var(--red)] px-2 py-0.5 text-[11px] font-medium text-[var(--red)] transition-colors hover:bg-[var(--red)]/10"
+                              className="inline-flex items-center rounded-[3px] border border-[var(--red)] px-2 py-0.5 text-[11px] font-medium text-[var(--red-text)] transition-colors hover:bg-[var(--red)]/10"
                               title="This source needs re-authorization"
                             >
                               Reconnect
@@ -5780,11 +5780,11 @@ export default function CalendarWorkspacePage() {
                               <StateDot state="error" />
                               {source.error_kind &&
                               source.error_kind !== "none" ? (
-                                <KindTag className="text-[var(--red)]">
+                                <KindTag className="text-[var(--red-text)]">
                                   {source.error_kind}
                                 </KindTag>
                               ) : null}
-                              <span className="max-w-[16rem] truncate text-[11px] text-[var(--red)]">
+                              <span className="max-w-[16rem] truncate text-[11px] text-[var(--red-text)]">
                                 {source.last_error}
                               </span>
                             </span>
@@ -6510,7 +6510,7 @@ export default function CalendarWorkspacePage() {
             <PillButton
               onClick={confirmDelete}
               disabled={userEventMutation.isPending}
-              className="border-[var(--red)] text-[var(--red)] hover:opacity-80"
+              className="border-[var(--red)] text-[var(--red-text)] hover:opacity-80"
             >
               {userEventMutation.isPending ? "Deleting..." : "Delete"}
             </PillButton>
