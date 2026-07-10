@@ -161,3 +161,36 @@ authoritative specs true to `main`, the following §8-only delta content was
 The proposal/design narrative above still describes the full intended scope
 (including §8) as historical record. When §8 ships, re-introduce that spec
 content via a **new** OpenSpec change.
+
+### MODIFIED-requirement reconstruction (2026-07-10, review bu-4gg9u)
+
+The IEA delta's `## MODIFIED Requirements` blocks for **Storage Shape**
+(`butler-chronicler`) and **Chronicler Aggregations** (`chronicler-api`) were
+authored as slim replacements. Because OpenSpec `MODIFIED` replaces the *entire*
+requirement, archiving them would have deleted pre-existing scenarios that
+describe behavior **still shipped on `main`**. Each dropped scenario was
+re-verified against code and the two requirements rebuilt as the UNION of
+(still-true old scenarios + the new IEA additions). Deliberate, code-verified
+exceptions:
+
+- **Storage Shape — dropped `Scenario: Derived owner column preserved during
+  transition`.** The `chronicler.episodes.entity_id` column it described was
+  dropped by migration `016_drop_episodes_entity_id`; owner attribution now lives
+  solely in `chronicler.episode_entities` (`role='owner'`). The scenario is stale
+  and is intentionally NOT restored.
+- **Storage Shape — `Scenario: Episode entity link table contract`** was restored
+  with a minimal update: its parenthetical justification referencing the now-dropped
+  `episodes.entity_id` convention was removed; the FK-absence rule and its
+  boot-safety rationale are unchanged.
+- **Chronicler Aggregations — `Scenario: Unmapped active source surfaces as warning
+  bucket` was rewritten** (now `Unmapped active source is dropped with a warning`).
+  Under the IEA lane taxonomy there is no `other` lane, so an unmapped
+  `activity`-layer episode is dropped from the lane buckets rather than summed into
+  an `other` bucket. The warning log + OTel span attribute
+  `chronicler.aggregate.unmapped_source` still fire (verified in
+  `roster/chronicler/api/router.py`).
+
+All other pre-existing scenarios were restored verbatim after confirming they
+still hold on `main`. This reconstruction is mirrored between
+`openspec/specs/` and this archived change's MODIFIED blocks so the archive is
+self-consistent.
