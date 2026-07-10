@@ -2133,7 +2133,10 @@ class GmailConnectorRuntime:
                             external_thread_id=_thread_id,
                             observed_at=_observed_at,
                             sender_identity=_from_header,
-                            raw=message_data,
+                            # Filtered-content privacy tier (bu-glbjx): content
+                            # the connector chose not to submit persists a bounded
+                            # preview only; the full raw payload is NOT retained.
+                            raw={},
                             policy_tier=policy_result.policy_tier,
                         ),
                     )
@@ -2168,7 +2171,10 @@ class GmailConnectorRuntime:
                             external_thread_id=_thread_id,
                             observed_at=_observed_at,
                             sender_identity=_from_header,
-                            raw=message_data,
+                            # Filtered-content privacy tier (bu-glbjx): content
+                            # the connector chose not to submit persists a bounded
+                            # preview only; the full raw payload is NOT retained.
+                            raw={},
                             policy_tier=policy_result.policy_tier,
                         ),
                     )
@@ -2200,7 +2206,10 @@ class GmailConnectorRuntime:
                             external_thread_id=_thread_id,
                             observed_at=_observed_at,
                             sender_identity=_from_header,
-                            raw=message_data,
+                            # Filtered-content privacy tier (bu-glbjx): content
+                            # the connector chose not to submit persists a bounded
+                            # preview only; the full raw payload is NOT retained.
+                            raw={},
                             policy_tier=policy_result.policy_tier,
                         ),
                     )

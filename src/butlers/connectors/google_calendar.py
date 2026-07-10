@@ -1380,7 +1380,10 @@ class CalendarConnectorRuntime:
                     external_thread_id=None,
                     observed_at=observed_at,
                     sender_identity=organizer_email,
-                    raw=event,
+                    # Filtered-content privacy tier (bu-glbjx): content the
+                    # connector chose not to submit persists a bounded preview
+                    # only; the full raw payload is NOT retained.
+                    raw={},
                     normalized_text=normalized_text,
                 ),
             )
@@ -1414,7 +1417,10 @@ class CalendarConnectorRuntime:
                     external_thread_id=None,
                     observed_at=observed_at,
                     sender_identity=organizer_email,
-                    raw=event,
+                    # Filtered-content privacy tier (bu-glbjx): content the
+                    # connector chose not to submit persists a bounded preview
+                    # only; the full raw payload is NOT retained.
+                    raw={},
                     normalized_text=normalized_text,
                 ),
             )
