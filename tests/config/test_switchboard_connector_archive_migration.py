@@ -102,19 +102,30 @@ def test_seed_archives_only_the_four_dead_identities(postgres_container):
     """The seed archives the four dead identities (UUID one by prefix) and no others."""
     db_url = _prepare_pre_seed_db(postgres_container)
 
-    # Four dead identities (the google_health user one carries a volatile UUID suffix).
+    # Four dead identities. endpoint_identity is stored in its full,
+    # connector-type-prefixed form (the value connectors emit + cursor_store
+    # persists verbatim), so the fixtures — like the seed — use the prefixed
+    # form. The google_health user one carries a volatile UUID + resource suffix,
+    # matched by the stable ``google_health:user:<owner>:`` prefix.
     dead = [
-        ("google_health", "degraded"),
-        ("google_health", "user:uniquosity@gmail.com:3f9a1c22-dead-4beef-0000-000000000001"),
-        ("owntracks", "unknown"),
-        ("home_assistant", "homeassistant.parrot-hen.ts.net:443"),
+        ("google_health", "google_health:degraded"),
+        (
+            "google_health",
+            "google_health:user:uniquosity@gmail.com:3f9a1c22-dead-4beef-0000-000000000001:spo2",
+        ),
+        ("owntracks", "owntracks:unknown"),
+        ("home_assistant", "home_assistant:homeassistant.parrot-hen.ts.net:443"),
     ]
     # Live identities that must remain active (archived_at NULL).
     live = [
-        ("gmail", "live@example.com"),
-        ("google_health", "user:someone-else@gmail.com:abc"),  # different owner → no prefix match
-        ("owntracks", "phone-1"),
-        ("home_assistant", "v-on-shenton.ts.net:8123"),
+        ("gmail", "gmail:live@example.com"),
+        # different owner → no prefix match
+        ("google_health", "google_health:user:someone-else@gmail.com:abc"),
+        # canonical owner heartbeat (no trailing ``:`` after the email) → the
+        # ``google_health:user:<owner>:`` prefix must NOT archive it.
+        ("google_health", "google_health:user:uniquosity@gmail.com"),
+        ("owntracks", "owntracks:phone-1"),
+        ("home_assistant", "home_assistant:v-on-shenton.ts.net:8123"),
     ]
     for ctype, ident in dead + live:
         _insert_connector(db_url, ctype, ident)
@@ -130,10 +141,10 @@ def test_seed_archives_only_the_four_dead_identities(postgres_container):
 def test_seed_is_idempotent(postgres_container):
     """Re-running the seed statements does not change an already-archived timestamp."""
     db_url = _prepare_pre_seed_db(postgres_container)
-    _insert_connector(db_url, "owntracks", "unknown")
+    _insert_connector(db_url, "owntracks", "owntracks:unknown")
     _apply_sw_022(db_url)
 
-    first = _archived_at(db_url, "owntracks", "unknown")
+    first = _archived_at(db_url, "owntracks", "owntracks:unknown")
     assert first is not None
 
     # Re-run the exact seed UPDATE — the ``archived_at IS NULL`` guard makes it a no-op.
@@ -144,13 +155,13 @@ def test_seed_is_idempotent(postgres_container):
                 text(
                     "UPDATE connector_registry SET archived_at = now()"
                     " WHERE archived_at IS NULL AND connector_type = 'owntracks'"
-                    " AND endpoint_identity = 'unknown'"
+                    " AND endpoint_identity = 'owntracks:unknown'"
                 )
             )
     finally:
         engine.dispose()
 
-    assert _archived_at(db_url, "owntracks", "unknown") == first
+    assert _archived_at(db_url, "owntracks", "owntracks:unknown") == first
 
 
 def test_downgrade_drops_archived_column_and_index(postgres_container):
