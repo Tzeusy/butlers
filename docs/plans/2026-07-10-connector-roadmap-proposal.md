@@ -118,7 +118,10 @@ bank offers it, PDF otherwise), which the owner already receives.
 The skill's decision tree points at a drop-folder: owner-initiated file, not a
 background poll of a remote service. The CSV *parsing* engine already exists
 (`roster/finance/tools/data_import.py` — format auto-detection, 500-row batches,
-`import_batches` audit table, tiered dedup `roster/finance/migrations/005`). The
+tiered dedup `roster/finance/migrations/005_add_csv_dedup_index.py`). (The former
+`import_batches` audit table was dropped as verified-dead in migration
+`007_drop_import_batches.py`, so an import-status surface would be new work, not
+reuse.) The
 missing piece is a **watched-directory trigger** (grep confirms no `drop_folder`
 / watch-folder anywhere today) plus a **PDF-statement→CSV extraction** front-end
 for DBS-style PDF-only banks.
@@ -139,8 +142,9 @@ Proposed shape:
 - Connector/job: **S–M** — a directory/blob watcher + the PDF-extraction step is
   the only genuinely new code; CSV parsing is done.
 - Module: **none** (import tools exist).
-- Dashboard: **S** — surface a drop/upload target + `import_batches` status
-  (a bulk endpoint `POST /transactions/bulk` already exists).
+- Dashboard: **S** — surface a drop/upload target + import progress/error status
+  (a bulk endpoint `POST /transactions/bulk` already exists; the old
+  `import_batches` audit table is gone, so the status surface is new).
 
 ### 3.5 Privacy / security
 
@@ -160,7 +164,7 @@ deterministic). Storage is bounded (statements are small, monthly).
 
 - Finance statement drop-folder: watched blob location + auto-detect + route to existing `import_transactions`
 - PDF bank-statement → CSV extraction (DBS/POSB/UOB/OCBC/SCB), local-only, no cloud OCR
-- Dashboard: statement drop/upload target + `import_batches` progress & error surface
+- Dashboard: statement drop/upload target + import progress & error surface (new; the `import_batches` audit table was dropped in migration 007)
 - Reconciliation pass: dedup imported rows against existing email-sourced transactions (RFC 0012 tiers)
 - (Deferred, owner-gated) SGFinDex balance-snapshot side-channel spike — see §5.1
 
