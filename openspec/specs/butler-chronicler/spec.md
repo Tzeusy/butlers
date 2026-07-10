@@ -142,11 +142,11 @@ checkpoints, source adapter state, and idempotency keys.
 
 ### Requirement: Owner-Only Adapter Entity Attribution
 
-Projection adapters whose source is owner-driven self-tracking data and
-carries no distinct participant set (focus, sessions, spotify, steam,
-meals, owntracks, reading, google_health) SHALL attribute every projected
-row to the owner entity, mirroring the calendar adapter's entity surface
-without invoking attendee resolution.
+Projection adapters for owner-driven self-tracking data SHALL attribute every
+projected row to the owner entity when the source carries no distinct
+participant set (focus, sessions, spotify, steam, meals, owntracks, reading,
+google_health), mirroring the calendar adapter's entity surface without
+invoking attendee resolution.
 
 #### Scenario: Owner entity resolved once per run
 
