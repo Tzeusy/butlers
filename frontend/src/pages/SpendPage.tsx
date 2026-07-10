@@ -627,10 +627,11 @@ function BreakdownSection() {
               <Skeleton key={i} className="h-4 w-full" />
             ))}
           </div>
-        ) : isError ? (
+        ) : isError && entries.length === 0 ? (
           // A failed breakdown query must not fall through to "No spend has
           // been recorded yet." — an outage would read as a genuine $0 month
-          // (bu-mkd5r, three-way state contract).
+          // (bu-mkd5r, three-way state contract). Only when nothing is cached:
+          // a background-refetch error keeps the last-good breakdown visible.
           <SourceDegradedNote
             label="Spend breakdown"
             detail="unavailable"
@@ -1253,10 +1254,12 @@ function SpendRulesSection() {
               <Skeleton key={i} className="h-8 w-full" />
             ))}
           </div>
-        ) : isError ? (
+        ) : isError && rules.length === 0 ? (
           // A failed rules fetch must not render RulesTable's empty "No routing
           // rules are configured" line — that would read as a deliberately
-          // empty ruleset when the endpoint is actually down (bu-mkd5r).
+          // empty ruleset when the endpoint is actually down (bu-mkd5r). Only
+          // when nothing is cached: a background-refetch error keeps the
+          // last-good ruleset visible.
           <SourceDegradedNote
             label="Routing rules"
             detail="unavailable"

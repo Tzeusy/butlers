@@ -70,8 +70,11 @@ export default function EducationPage() {
   // An errored fetch must never fall through to the "No curriculums yet."
   // empty state — a killed backend would read as a calm all-clear (bu-mkd5r,
   // three-way loading/error/empty contract). Surface it as an honest
-  // error-with-retry instead, above the empty branch below.
-  if (isError) {
+  // error-with-retry instead, above the empty branch below. Gate on an empty
+  // cache so a background-refetch error keeps the last-good curriculum list
+  // visible (React Query never clears data on error) rather than blanking a
+  // populated page.
+  if (isError && mindMaps.length === 0) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl font-bold tracking-tight">Education</h1>
