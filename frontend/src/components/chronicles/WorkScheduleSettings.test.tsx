@@ -149,4 +149,15 @@ describe("WorkScheduleSettings — rows", () => {
     const html = render();
     expect(html).toContain(">disabled<");
   });
+
+  it("surfaces a toggle/update failure outside edit mode instead of failing silently", () => {
+    mockRoutines({ data: { data: [makeRoutine({ id: "d3", origin: "declared" })], meta: {} } });
+    vi.mocked(useUpdateChroniclesRoutine).mockReturnValue({
+      ...idleMutation,
+      isError: true,
+    } as unknown as ReturnType<typeof useUpdateChroniclesRoutine>);
+    const html = render();
+    expect(html).toContain("routine-update-error-d3");
+    expect(html).toContain("Couldn&#x27;t update this schedule");
+  });
 });

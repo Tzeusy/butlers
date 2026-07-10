@@ -332,6 +332,12 @@ function RoutineRow({ routine }: { routine: ChroniclerRoutine }) {
           Couldn&apos;t delete this schedule. Try again.
         </p>
       )}
+
+      {update.isError && !editing && (
+        <p className="mt-2 text-xs text-destructive" data-testid={`routine-update-error-${routine.id}`}>
+          Couldn&apos;t update this schedule. Try again.
+        </p>
+      )}
     </li>
   );
 }

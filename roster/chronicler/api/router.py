@@ -2844,7 +2844,9 @@ def _validate_routine_window(window_start: dt_time, window_end: dt_time) -> None
 def _validate_routine_timezone(tz: str) -> None:
     try:
         zoneinfo.ZoneInfo(tz)
-    except (zoneinfo.ZoneInfoNotFoundError, KeyError):
+    except (zoneinfo.ZoneInfoNotFoundError, KeyError, ValueError):
+        # ValueError covers an empty/malformed key ("" -> "keys must be
+        # normalized relative paths"); without it a blank timezone would 500.
         raise HTTPException(
             status_code=400,
             detail=f"Unrecognized IANA timezone: {tz!r}",

@@ -474,6 +474,25 @@ async def test_post_declared_routine_rejects_unknown_timezone(pool) -> None:
     assert "timezone" in resp.text.lower()
 
 
+async def test_post_declared_routine_rejects_empty_timezone(pool) -> None:
+    # zoneinfo.ZoneInfo("") raises ValueError (not ZoneInfoNotFoundError); the
+    # validator must map it to a 400, not let it bubble up as a 500.
+    transport = _build_chronicler_api(pool)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/chronicler/routines",
+            json={
+                "dow_mask": 1,
+                "window_start_local": "09:00:00",
+                "window_end_local": "17:00:00",
+                "label": "Blank tz",
+                "timezone": "",
+            },
+        )
+    assert resp.status_code == 400
+    assert "timezone" in resp.text.lower()
+
+
 async def test_patch_declared_routine_edits_schedule(pool) -> None:
     from butlers.chronicler.storage import create_declared_routine
 
