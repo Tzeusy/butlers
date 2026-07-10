@@ -179,6 +179,35 @@ async def test_correct_tombstones_block_and_decays_routine(pool) -> None:
     assert ep is None
 
 
+async def test_correct_defaults_now_and_still_tombstones(pool) -> None:
+    """A ``correct`` with no explicit ``now`` must still tombstone the block.
+
+    Guards the silent-correction-failure foot-gun: if ``now`` defaulted to
+    ``None`` the override would be written without ``corrected_tombstone_at`` and
+    the "correction" would report ``applied`` while changing nothing.
+    """
+    routine = await _make_routine(pool, confidence=0.5, support=10)
+    episode = await _make_occupation_episode(pool, routine_id=routine.id)
+
+    result = await apply_gap_interview_answer(
+        pool,
+        answer=GapInterviewAnswer.CORRECT,
+        local_date=_LOCAL_DATE,
+        occupation_episode_id=episode.id,
+        routine_id=routine.id,
+        # now intentionally omitted
+    )
+    assert result["status"] == "applied"
+
+    overrides = await list_overrides_for(
+        pool, target_kind=OverrideTarget.EPISODE, target_id=episode.id
+    )
+    assert len(overrides) == 1
+    assert overrides[0].corrected_tombstone_at is not None
+    # And the block really drops out of the corrected view.
+    assert await get_episode(pool, episode.id) is None
+
+
 # ── dismiss ─────────────────────────────────────────────────────────────────
 
 

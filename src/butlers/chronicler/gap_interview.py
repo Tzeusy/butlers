@@ -45,7 +45,7 @@ from __future__ import annotations
 import enum
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, tzinfo
+from datetime import UTC, datetime, tzinfo
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
@@ -107,9 +107,25 @@ def _str_value(value: Any) -> str:
     return str(getattr(value, "value", value))
 
 
+def _coerce_dt(value: Any) -> datetime | None:
+    """Normalise a start/end field to ``datetime``.
+
+    ``asdict(Episode)`` rows carry ``datetime`` already; ``v_episodes_corrected``
+    SQL rows can arrive as ISO strings (the two shapes this module documents it
+    tolerates). Empty/missing values pass through as ``None`` so a malformed row
+    is skipped by the caller's presence checks rather than crashing sorting or
+    duration math downstream.
+    """
+    if not value:
+        return None
+    if isinstance(value, str):
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return value
+
+
 def _window(ep: Mapping[str, Any]) -> tuple[datetime | None, datetime | None]:
-    start = ep.get("canonical_start_at") or ep.get("start_at")
-    end = ep.get("canonical_end_at") or ep.get("end_at") or start
+    start = _coerce_dt(ep.get("canonical_start_at") or ep.get("start_at"))
+    end = _coerce_dt(ep.get("canonical_end_at") or ep.get("end_at")) or start
     return start, end
 
 
@@ -317,6 +333,13 @@ async def apply_gap_interview_answer(
     """
     from butlers.chronicler.models import Override, OverrideTarget
     from butlers.chronicler.storage import adjust_routine_confidence, insert_override
+
+    # ``now`` stamps the tombstone on a ``correct``. Defaulting it here (rather
+    # than leaving ``None``) means a caller that forgets to pass it can never
+    # silently write a non-tombstoning "correction" — the fail mode this
+    # feature exists to avoid. Tests still inject ``now`` for determinism.
+    if now is None:
+        now = datetime.now(UTC)
 
     answer = GapInterviewAnswer(answer)
     override_id: str | None = None

@@ -184,6 +184,47 @@ def test_enum_and_string_confidence_shapes_both_detected():
     assert "low_confidence_occupation" in decision.reasons
 
 
+def test_v_episodes_corrected_string_date_shape_is_coerced():
+    """SQL-view rows arrive with ISO-string ``canonical_*`` dates, not datetimes.
+
+    The module documents it tolerates both ``asdict(Episode)`` (datetime) and
+    ``v_episodes_corrected`` (plain-string) shapes; a string-dated occupation
+    block must still anchor the question window without crashing.
+    """
+    start, end = _day_bounds()
+    routine_id = uuid4()
+    ep_id = uuid4()
+    episodes = [
+        {
+            "layer": "activity",
+            "source_name": "spotify.session_summary",
+            "episode_type": "listening_episode",
+            "confidence": "medium",
+            "canonical_start_at": _utc(6).isoformat().replace("+00:00", "Z"),
+            "canonical_end_at": _utc(22).isoformat(),
+        },
+        {
+            "id": str(ep_id),
+            "layer": "activity",
+            "source_name": OCCUPATION_SOURCE_NAME,
+            "episode_type": EPISODE_TYPE_OCCUPATION,
+            "confidence": "low",
+            "canonical_start_at": _utc(9).isoformat(),
+            "canonical_end_at": _utc(18).isoformat(),
+            "payload": {"routine_id": str(routine_id)},
+        },
+    ]
+    decision = evaluate_gap_interview(
+        episodes, local_date=_DATE, day_start_utc=start, day_end_utc=end, tz=_TZ
+    )
+    assert decision is not None
+    assert decision.reasons == ("low_confidence_occupation",)
+    assert decision.occupation_episode_id == ep_id
+    assert decision.routine_id == routine_id
+    assert decision.window_start_local == "09:00"
+    assert decision.window_end_local == "18:00"
+
+
 # ── run_gap_interview: one-message-per-day orchestration ────────────────────
 
 
