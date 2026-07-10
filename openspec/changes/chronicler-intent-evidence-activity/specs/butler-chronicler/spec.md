@@ -2,31 +2,6 @@
 
 ## MODIFIED Requirements
 
-### Requirement: Retrospective-Only Scope
-
-The chronicler SHALL remain retrospective: it MUST NOT plan, ingest external
-data, own a connector, or send proactive/coaching nudges. The **single
-sanctioned owner-facing message** is the existing once-daily *retrospective*
-day-close summary; this is a scheduled recap, not a proactive notification, and
-no other owner-facing messages are permitted. **Amendment:** the chronicler MAY
-synthesize durable insights into **its own schema** via the memory module, and
-MAY *propose* entity-enrichment facts to the `relationship` butler **over MCP**.
-These derived write-backs add no new owner-facing messages, do not constitute
-ingestion or scheduler authority, and never write another butler's schema
-directly.
-
-#### Scenario: Synthesized insight stays within own schema
-
-- **WHEN** the chronicler synthesizes a durable insight at day-close
-- **THEN** it is written only to the chronicler's own schema
-- **AND** no external data is ingested and the owner is not notified
-
-#### Scenario: Cross-butler enrichment is an MCP proposal
-
-- **WHEN** the chronicler has a candidate entity fact worth sharing
-- **THEN** it is proposed to `relationship` over MCP
-- **AND** the chronicler does not write `entity_facts` directly
-
 ### Requirement: Storage Shape
 
 Episodes and point events SHALL retain their existing shape, with two additions:

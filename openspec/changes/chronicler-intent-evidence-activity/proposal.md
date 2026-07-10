@@ -139,3 +139,25 @@ surface.
   pass plus deterministic projection cadence.
 - **Mutating evidence.** The chronicler never edits another butler's data;
   corrections remain a non-destructive overlay on its own rows.
+
+## Archive Note (partial archive, 2026-07-10)
+
+This change was archived after §§1–7, §9, §10 shipped, but **§8 (memory
+write-back loop + doctrine amendment)** was **not** shipped — it is parked under
+`bu-93y4rt`, blocked on an owner architectural decision (`bu-w6jca`). To keep the
+authoritative specs true to `main`, the following §8-only delta content was
+**removed before archive** and is intentionally **not** reflected in
+`openspec/specs/`:
+
+- `chronicler-intent-evidence-activity` delta: the entire `Requirement: Memory
+  Write-Back Within Own Schema` (and the "synthesize durable insights" clause of
+  the Purpose).
+- `butler-chronicler` delta: the `Requirement: Retrospective-Only Scope`
+  MODIFIED block — its only change from the authoritative requirement was the §8
+  doctrine amendment (own-schema synthesis + MCP entity-enrichment proposals) and
+  its two §8 scenarios; the authoritative retrospective-only requirement is left
+  unchanged.
+
+The proposal/design narrative above still describes the full intended scope
+(including §8) as historical record. When §8 ships, re-introduce that spec
+content via a **new** OpenSpec change.

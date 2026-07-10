@@ -5,8 +5,7 @@
 Reframe chronicler projection around three layers — Intent (planned), Evidence
 (raw signals, consumed not owned), and Activity (inferred, counted) — so that
 only corroborated activity counts as lived time, every activity carries a
-confidence and an evidence chain, and the chronicler can synthesize durable
-insights within its own schema.
+confidence and an evidence chain.
 
 ## ADDED Requirements
 
@@ -207,33 +206,6 @@ participants via `relationship.entity_facts`.
 - **WHEN** a message burst's participant cannot be resolved to an entity
 - **THEN** a `social` activity is still emitted with an unattributed participant
 - **AND** the activity confidence reflects the missing resolution
-
-### Requirement: Memory Write-Back Within Own Schema
-
-The chronicler SHALL synthesize durable insights into its own schema via the
-memory module, and MAY propose entity-enrichment facts to the `relationship`
-butler over MCP. It SHALL NOT write directly to another butler's schema, ingest
-external data, or notify the owner.
-
-#### Scenario: Insight written to own schema
-
-- **WHEN** day-close synthesizes a durable insight (e.g. accumulating sleep debt)
-- **THEN** the insight is written to the chronicler's own memory tables with
-  `source=chronicler` provenance and a confidence
-- **AND** no other butler's schema is written directly
-
-#### Scenario: Entity enrichment proposed over MCP
-
-- **WHEN** repeated co-presence resolves to a person worth recording
-- **THEN** the chronicler proposes the fact to `relationship` over MCP
-- **AND** it does not write `entity_facts` directly
-
-#### Scenario: Low-confidence block scheduled for re-reconciliation
-
-- **WHEN** a block remains low-confidence at day-close
-- **THEN** a self-reminder is recorded so a later day-close re-reconciles it
-  after evidence backfill
-- **AND** the owner is not notified
 
 ## Source References
 
