@@ -941,26 +941,33 @@ async def _set_archived(
                     detail=f"Connector '{connector_type}/{endpoint_identity}' not found",
                 )
 
-            # Emit audit entry within the same transaction — atomicity with the state change
-            try:
-                client_host = getattr(request.client, "host", None) if request.client else None
-                verb = "archived" if archive else "unarchived"
-                await _audit_append(
-                    conn,
-                    actor="dashboard",
-                    action=action,
-                    target=f"{connector_type}/{endpoint_identity}",
-                    note=(f"Connector '{connector_type}/{endpoint_identity}' {verb} via dashboard"),
-                    ip=client_host,
-                )
-            except Exception:
-                logger.warning(
-                    "ingestion_connectors: failed to append audit_log entry for %s %s/%s",
-                    action,
-                    connector_type,
-                    endpoint_identity,
-                    exc_info=True,
-                )
+        # Emit the audit entry AFTER the state change has committed (outside the
+        # transaction block, matching the disconnect/rotate-token audit pattern).
+        # If _audit_append were inside conn.transaction() and raised, asyncpg
+        # would abort the transaction; the swallowed exception then lets the
+        # context manager issue COMMIT, which Postgres turns into a ROLLBACK of
+        # the aborted tx — silently discarding the archive/unarchive while still
+        # returning 200. Auditing post-commit keeps the audit write best-effort
+        # (logged on failure) without ever rolling back the persisted state.
+        try:
+            client_host = getattr(request.client, "host", None) if request.client else None
+            verb = "archived" if archive else "unarchived"
+            await _audit_append(
+                conn,
+                actor="dashboard",
+                action=action,
+                target=f"{connector_type}/{endpoint_identity}",
+                note=(f"Connector '{connector_type}/{endpoint_identity}' {verb} via dashboard"),
+                ip=client_host,
+            )
+        except Exception:
+            logger.warning(
+                "ingestion_connectors: failed to append audit_log entry for %s %s/%s",
+                action,
+                connector_type,
+                endpoint_identity,
+                exc_info=True,
+            )
 
     logger.info(
         "%s connector %s/%s",
