@@ -1,7 +1,17 @@
 # calendar-conflict-overcommitment-radar Specification
 
 ## Purpose
-TBD - created by archiving change calendar-conflict-overcommitment-radar. Update Purpose after archive.
+
+The conflict and overcommitment radar scans the forward calendar window at read
+time to detect scheduling problems — overlapping events, back-to-back density,
+and overloaded days — and surfaces them in the calendar workspace as a radar
+banner and amber-edged grid entries. The scan is a pure read: it runs off the
+projected `calendar_event_instances` store, makes no provider API call and no LLM
+call at request time, and fails open (degraded mode is silent). Detected issues
+carry any `pending` fix proposals from the shared `calendar_event_proposals`
+store so the UI can offer one-tap fixes, rendering an empty/informational state
+until a proposal producer runs.
+
 ## Requirements
 ### Requirement: [TARGET-STATE] Forward-Window Conflict Scan Endpoint
 
