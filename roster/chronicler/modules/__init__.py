@@ -2,8 +2,10 @@
 
 Registers the Tier-1 read tools (``chronicler_list_events``,
 ``chronicler_list_episodes``, ``chronicler_get_episode``,
-``chronicler_submit_correction``, ``chronicler_list_corrections``) and the
-Tier-2 bundle assembler tool (``chronicler_day_close_bundle``).
+``chronicler_submit_correction``, ``chronicler_list_corrections``), the
+Tier-2 bundle assembler tool (``chronicler_day_close_bundle``), and the
+day-close gap-interview tools (``chronicler_gap_interview`` /
+``chronicler_resolve_gap_interview``, bu-whhll.12).
 
 The bundle assembler tool is the entry-point for scheduled Tier-2 paths
 (day-close, drilldown, etc.).  It applies sensitive masking, field stripping,
@@ -418,6 +420,166 @@ def _register_tools(mcp: Any, module: ChroniclerModule) -> None:
         from dataclasses import asdict
 
         return {"data": [asdict(o) for o in overrides], "count": len(overrides)}
+
+    # ------------------------------------------------------------------
+    # chronicler_gap_interview  — day-close gap interview ASK (bu-whhll.12)
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    async def chronicler_gap_interview(
+        date_label: str,
+        timezone: str = "UTC",
+    ) -> dict[str, Any]:
+        """Evaluate the once-daily day-close gap interview for *date_label*.
+
+        Deterministic ask-side of bu-whhll.12: when the closed day left more
+        than two hours of waking time unaccounted, or carries a low-confidence
+        ``occupation_block`` the pipeline was never sure about, the owner is
+        worth **one** confirmation prompt. This tool decides that and enforces
+        the max-one-per-day dedupe via the KV state store; the caller (the
+        ``chronicler_gap_interview`` scheduled prompt) is responsible only for
+        delivering the returned ``message`` via ``notify()`` — which applies the
+        owner's quiet-hours / delivery preferences.
+
+        Args:
+            date_label: Closed local day in ``YYYY-MM-DD``.
+            timezone: IANA timezone the day is bounded/displayed in.
+
+        Returns one of:
+            ``{"action": "send", "message": str, "interview_id": str,
+               "options": [...], "priority": "low"}`` — deliver ``message`` via
+            ``notify(channel="telegram", intent="send", priority="low")`` and
+            send nothing else.
+            ``{"action": "skip", "reason": "already_asked" | "no_gap"}`` — send
+            nothing.
+        """
+        from dataclasses import asdict
+        from datetime import UTC, datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        from butlers.chronicler.editorial import WAKING_HOUR_END, WAKING_HOUR_START
+        from butlers.chronicler.gap_interview import evaluate_gap_interview
+        from butlers.chronicler.storage import list_episodes
+        from butlers.core.state import state_get, state_set
+
+        pool = module._get_pool()
+        asked_key = f"gap_interview:asked:{date_label}"
+        # Dedupe first: never a second prompt for the same day.
+        if await state_get(pool, asked_key) is not None:
+            return {"action": "skip", "reason": "already_asked"}
+
+        day = datetime.fromisoformat(date_label).date()
+        tzinfo = ZoneInfo(timezone)
+        start_at = datetime(day.year, day.month, day.day, tzinfo=tzinfo).astimezone(UTC)
+        end_at = (
+            datetime(day.year, day.month, day.day, tzinfo=tzinfo) + timedelta(days=1)
+        ).astimezone(UTC)
+
+        episodes = await list_episodes(pool, start_from=start_at, start_to=end_at, limit=1000)
+        decision = evaluate_gap_interview(
+            [asdict(ep) for ep in episodes],
+            local_date=date_label,
+            day_start_utc=start_at,
+            day_end_utc=end_at,
+            tz=tzinfo,
+            waking_hour_start=WAKING_HOUR_START,
+            waking_hour_end=WAKING_HOUR_END,
+        )
+        if decision is None:
+            return {"action": "skip", "reason": "no_gap"}
+
+        interview_id = f"{date_label}:{decision.occupation_episode_id or 'gap'}"
+        # Persist the answer-side mapping BEFORE marking asked, so a resolver can
+        # always find the pending interview a delivered prompt refers to.
+        await state_set(
+            pool,
+            f"gap_interview:pending:{interview_id}",
+            {
+                "interview_id": interview_id,
+                "local_date": date_label,
+                "occupation_episode_id": (
+                    str(decision.occupation_episode_id) if decision.occupation_episode_id else None
+                ),
+                "routine_id": str(decision.routine_id) if decision.routine_id else None,
+                "answered": False,
+            },
+        )
+        # Mark asked (dedupe) even if the caller's notify() later defers to
+        # quiet hours — notify() queues the deferred send, so the single daily
+        # prompt is still honoured.
+        await state_set(
+            pool, asked_key, {"interview_id": interview_id, "reasons": list(decision.reasons)}
+        )
+        message = f"{decision.question}\n\nReply: confirm / correct / dismiss"
+        return {
+            "action": "send",
+            "message": message,
+            "interview_id": interview_id,
+            "options": list(decision.options),
+            "priority": "low",
+        }
+
+    # ------------------------------------------------------------------
+    # chronicler_resolve_gap_interview  — day-close gap interview ANSWER
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    async def chronicler_resolve_gap_interview(
+        interview_id: str,
+        answer: str,
+    ) -> dict[str, Any]:
+        """Apply a one-tap gap-interview answer (bu-whhll.12).
+
+        The deterministic answer-side: turns ``confirm`` / ``correct`` /
+        ``dismiss`` into a durable ``chronicler.overrides`` row (the first real
+        tenant of the corrections machinery) and a reinforce/decay nudge on the
+        matching routine. This is the seam the future decision-loop transport
+        (RFC 0021) — or the telegram inline-button callback — calls with the
+        ``interview_id`` handed out by :func:`chronicler_gap_interview`.
+
+        Args:
+            interview_id: The id returned by ``chronicler_gap_interview``.
+            answer: One of ``confirm`` / ``correct`` / ``dismiss``.
+
+        Returns the apply summary, or ``{"status": "error"|"already_answered"}``.
+        """
+        from datetime import UTC, datetime
+        from uuid import UUID
+
+        from butlers.chronicler.gap_interview import (
+            GapInterviewAnswer,
+            apply_gap_interview_answer,
+        )
+        from butlers.core.state import state_get, state_set
+
+        pool = module._get_pool()
+        pending_key = f"gap_interview:pending:{interview_id}"
+        pending = await state_get(pool, pending_key)
+        if pending is None:
+            return {"status": "error", "error": "unknown_or_expired_interview"}
+        if pending.get("answered"):
+            return {"status": "already_answered", "interview_id": interview_id}
+        try:
+            parsed = GapInterviewAnswer(str(answer).strip().lower())
+        except ValueError:
+            return {
+                "status": "error",
+                "error": f"invalid answer {answer!r}; expected confirm/correct/dismiss",
+            }
+
+        occ = pending.get("occupation_episode_id")
+        rid = pending.get("routine_id")
+        result = await apply_gap_interview_answer(
+            pool,
+            answer=parsed,
+            local_date=pending["local_date"],
+            occupation_episode_id=UUID(occ) if occ else None,
+            routine_id=UUID(rid) if rid else None,
+            now=datetime.now(UTC),
+        )
+        pending["answered"] = True
+        await state_set(pool, pending_key, pending)
+        return result
 
     # ------------------------------------------------------------------
     # chronicler_day_close_bundle  — Tier-2 bounded assembler

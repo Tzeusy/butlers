@@ -738,3 +738,44 @@ via the usual `upsert_owner_episode_entity` convention.
 **Scheduling:** `chronicler_project_comms` job, `*/15 * * * *` (matches
 `chronicler_project_sessions`'s cadence — messaging activity is higher-frequency
 than the `*/30 * * * *` sources).
+
+## Day-close gap interview (bu-whhll.12)
+
+A **separate, explicitly-opted-in surface** — NOT part of day-close. The
+`chronicler_day_close` prompt is forbidden from sending any extra
+proactive/correction message and explicitly defers those to "separate,
+explicitly-opted-in surfaces"; this is one of them. The day-close narration is
+left untouched.
+
+- **Surface:** its own `[[butler.schedule]]` in `butler.toml`
+  (`chronicler_gap_interview`, `dispatch_mode="prompt"`, `cron = "0 9 * * *"` in
+  the owner's timezone). Runs after the 01:05 day-close, at a civil hour.
+  **Max one message per day** (dedupe key `gap_interview:asked:<YYYY-MM-DD>` in
+  the KV `state` store).
+- **Trigger** (`chronicler/gap_interview.py::evaluate_gap_interview`, pure): the
+  closed day left **>2h of waking-window** (06:00–22:00 local, matching
+  `editorial.WAKING_HOUR_*`) unaccounted — reusing
+  `aggregations.untracked_seconds_for_window` so the prompt can never disagree
+  with the dashboard's untracked slice — **OR** a low-confidence
+  `occupation_block` is present (occupation blocks are always `confidence=low`).
+- **Ask:** `chronicler_gap_interview(date_label, timezone)` evaluates + dedupes
+  and returns `{"action":"send", message, interview_id, ...}` or
+  `{"action":"skip", ...}`. The prompt delivers `message` via `notify()`, which
+  applies the owner's quiet-hours / delivery preferences (no bespoke gate).
+- **Answer:** `chronicler_resolve_gap_interview(interview_id, answer)` applies
+  `confirm|correct|dismiss` deterministically — the **first real tenant of the
+  corrections machinery**: writes a `chronicler.overrides` row (confirm
+  annotates, correct tombstones the inferred block, dismiss notes) and
+  reinforces/decays the matching routine's `confidence` via
+  `storage.adjust_routine_confidence` (clamped to `[0,1]`).
+- **Transport isolation (coordinator decision):** the ask/answer transport is
+  isolated behind `gap_interview.GapInterviewTransport` so it can migrate onto
+  the **decision loop** (RFC 0021 one-tap approvals, epic bu-24lu6, owner-gated
+  behind bu-24lu6.1) with no engine change. **Known gap:** true telegram inline
+  buttons + auto-routing a one-tap callback back to
+  `chronicler_resolve_gap_interview` require shared-infra work that does not
+  exist yet — the `telegram_bot` connector drops `callback_query` updates and
+  the notify chain has no `reply_markup` support — and overlaps the decision
+  loop. Until that lands, the ask is delivered as text (reply confirm/correct/
+  dismiss) and the answer is applied via `chronicler_resolve_gap_interview` /
+  the dashboard corrections API. No new migration (overrides/routines exist).

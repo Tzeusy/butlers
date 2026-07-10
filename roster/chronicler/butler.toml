@@ -197,3 +197,29 @@ run — your job is to narrate over that result, not to re-derive it.
    coaching nudge, or correction prompt from this task; those are separate,
    explicitly-opted-in surfaces, not part of day-close.
 """
+
+# Day-close GAP INTERVIEW (bu-whhll.12) — one of the "separate, explicitly-
+# opted-in surfaces" the day-close prompt above defers to. Deliberately its OWN
+# scheduled surface (NOT bolted into day-close), owner-toggleable, max one
+# message/day. Runs at 09:00 owner-local — after the 01:05 day-close reconciles
+# yesterday, at a civil hour; notify() additionally applies quiet-hours /
+# delivery preferences. The tool enforces the per-day dedupe.
+[[butler.schedule]]
+name = "chronicler_gap_interview"
+cron = "0 9 * * *"
+dispatch_mode = "prompt"
+complexity = "cheap"
+prompt = """
+Run the Chronicler day-close GAP INTERVIEW for yesterday. This is a separate,
+explicitly-opted-in surface — NOT part of day-close — and must send AT MOST ONE
+message.
+1. Use the owner's configured timezone from your system prompt. Compute
+   yesterday's local date in that timezone, not in UTC.
+2. Call chronicler_gap_interview(date_label="<local-yesterday>", timezone="<owner-IANA-timezone>").
+3. If it returns {"action": "skip"}: exit silently. Send NOTHING.
+4. If it returns {"action": "send", ...}: deliver EXACTLY the returned `message`
+   verbatim via notify(channel="telegram", intent="send", message=<message>,
+   priority="low"). Do NOT add any commentary, summary, or second message. The
+   owner answers confirm/correct/dismiss; that answer is applied separately via
+   chronicler_resolve_gap_interview.
+"""
