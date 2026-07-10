@@ -12,10 +12,10 @@ type TipProps = Omit<
   "children"
 > & {
   /**
-   * Tooltip body. When nullish, `false`, or an empty string, the child renders
-   * untouched with no wrapper — this mirrors the `title={cond ? text : undefined}`
-   * idiom the native attribute used, so a conditionally-absent tooltip stays
-   * absent (and adds no radix machinery).
+   * Tooltip body. When nullish or an empty string, the child renders untouched
+   * with no wrapper — this mirrors the `title={cond ? text : undefined}` idiom
+   * the native attribute used, so a conditionally-absent tooltip stays absent
+   * (and adds no radix machinery).
    */
   content: React.ReactNode
   /**
@@ -52,7 +52,7 @@ export function Tip({
   delayDuration = 0,
   ...contentProps
 }: TipProps) {
-  if (content == null || content === false || content === "") {
+  if (content == null || content === "") {
     return children
   }
   return (

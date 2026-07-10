@@ -18,6 +18,8 @@ import {
 import { toast } from "sonner";
 import { Link, useSearchParams } from "react-router";
 
+import { Tip } from "@/components/ui/tip";
+
 import type {
   ApiResponse,
   CalendarAccountEntry,
@@ -1487,13 +1489,14 @@ export function CalendarActivityPanel({
               meta={
                 <div className="flex items-center gap-3">
                   {entry.source_session_id ? (
-                    <Link
-                      to={`/sessions/${entry.source_session_id}`}
-                      className="font-mono text-[10px] text-[var(--mfg)] underline decoration-dotted hover:text-[var(--fg)]"
-                      title={`Session ${entry.source_session_id}`}
-                    >
-                      session ›
-                    </Link>
+                    <Tip content={`Session ${entry.source_session_id}`}>
+                      <Link
+                        to={`/sessions/${entry.source_session_id}`}
+                        className="font-mono text-[10px] text-[var(--mfg)] underline decoration-dotted hover:text-[var(--fg)]"
+                      >
+                        session ›
+                      </Link>
+                    </Tip>
                   ) : null}
                   {undoable ? (
                     undone ? (
@@ -1938,14 +1941,15 @@ function CalendarEntryDetailPanel({
             </Mono>
           ) : null}
           {entry.source_session_id ? (
-            <Link
-              to={`/sessions/${entry.source_session_id}`}
-              data-testid="detail-session-link"
-              className="font-mono text-[11px] text-[var(--mfg)] underline decoration-dotted hover:text-[var(--fg)]"
-              title={`Session ${entry.source_session_id}`}
-            >
-              session ›
-            </Link>
+            <Tip content={`Session ${entry.source_session_id}`}>
+              <Link
+                to={`/sessions/${entry.source_session_id}`}
+                data-testid="detail-session-link"
+                className="font-mono text-[11px] text-[var(--mfg)] underline decoration-dotted hover:text-[var(--fg)]"
+              >
+                session ›
+              </Link>
+            </Tip>
           ) : null}
         </div>
       ) : null}
