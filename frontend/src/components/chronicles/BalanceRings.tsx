@@ -58,10 +58,14 @@ function Ring({
   unavailable: boolean;
 }) {
   const config = laneConfig(lane);
-  // Arc fraction: day's total relative to the baseline (capped at 1 full ring),
-  // or relative to itself when there is no baseline yet.
-  const denom = baselineSeconds && baselineSeconds > 0 ? baselineSeconds : seconds || 1;
-  const fraction = unavailable ? 0 : Math.max(0, Math.min(1, seconds / denom));
+  // Arc fraction: day's total relative to the baseline (capped at 1 full ring).
+  // With no baseline yet ("no usual"), there is nothing to fill against — the
+  // ring stays empty rather than filling to 100%, which would falsely read as
+  // "met usual" (the seconds text + "no usual yet" label carry the real total).
+  const fraction =
+    unavailable || !baselineSeconds || baselineSeconds <= 0
+      ? 0
+      : Math.max(0, Math.min(1, seconds / baselineSeconds));
   const dash = fraction * RING_CIRCUMFERENCE;
 
   return (
