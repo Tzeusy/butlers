@@ -1495,7 +1495,7 @@ export function CalendarActivityPanel({
                       <PillButton
                         data-testid="calendar-audit-undo"
                         data-action-id={entry.id}
-                        disabled={undoing}
+                        disabled={undoingId !== null}
                         onClick={() => onUndo(entry)}
                         title="Reverse this calendar change"
                       >
