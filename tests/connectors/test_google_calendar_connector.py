@@ -534,6 +534,35 @@ async def test_blocked_event_persists_no_raw_payload(
     assert row[6] == "Blocked Meeting"
 
 
+async def test_blocked_event_preview_bounded_to_200_chars(
+    account_config: CalendarAccountConfig,
+) -> None:
+    """A summary longer than 200 chars is truncated before persistence."""
+    runtime = CalendarConnectorRuntime(account_config)
+    block_decision = PolicyDecision(
+        action="block",
+        matched_rule_type="sender_domain",
+        reason="blocked",
+    )
+    event = {
+        "id": "evt-blocked-long",
+        "status": "confirmed",
+        "summary": "z" * 500,
+        "start": {"dateTime": "2026-06-01T10:00:00Z"},
+        "end": {"dateTime": "2026-06-01T11:00:00Z"},
+        "created": "2026-01-01T00:00:00Z",
+        "updated": "2026-01-02T00:00:00Z",
+        "organizer": {"email": "blocked@example.com"},
+    }
+    with patch.object(runtime._ingestion_policy, "evaluate", return_value=block_decision):
+        ingested = await runtime._process_event(event)
+
+    assert ingested is False
+    assert len(runtime._filtered_event_buffer) == 1
+    row = runtime._filtered_event_buffer._rows[0]
+    assert row[6] == "z" * 200
+
+
 async def test_global_skip_persists_no_raw_payload(
     account_config: CalendarAccountConfig,
 ) -> None:

@@ -1366,7 +1366,7 @@ class CalendarConnectorRuntime:
                 external_message_id=event_id,
                 source_channel=_CONNECTOR_CHANNEL,
                 sender_identity=organizer_email,
-                subject_or_preview=summary,
+                subject_or_preview=summary[:200],
                 filter_reason=FilteredEventBuffer.reason_policy_rule(
                     "connector_rule",
                     decision.action,
@@ -1403,7 +1403,7 @@ class CalendarConnectorRuntime:
                 external_message_id=event_id,
                 source_channel=_CONNECTOR_CHANNEL,
                 sender_identity=organizer_email,
-                subject_or_preview=summary,
+                subject_or_preview=summary[:200],
                 filter_reason=FilteredEventBuffer.reason_policy_rule(
                     "global_rule",
                     global_decision.action,

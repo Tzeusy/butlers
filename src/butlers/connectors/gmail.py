@@ -2123,7 +2123,7 @@ class GmailConnectorRuntime:
                         external_message_id=message_id,
                         source_channel=self._config.connector_channel,
                         sender_identity=_from_header,
-                        subject_or_preview=_subject or None,
+                        subject_or_preview=_subject[:200] if _subject else None,
                         filter_reason=policy_result.filter_reason,
                         full_payload=FilteredEventBuffer.full_payload(
                             channel=self._config.connector_channel,
@@ -2157,7 +2157,7 @@ class GmailConnectorRuntime:
                         external_message_id=message_id,
                         source_channel=self._config.connector_channel,
                         sender_identity=_from_header,
-                        subject_or_preview=_subject or None,
+                        subject_or_preview=_subject[:200] if _subject else None,
                         filter_reason=FilteredEventBuffer.reason_policy_rule(
                             "connector_rule",
                             "block",
@@ -2192,7 +2192,7 @@ class GmailConnectorRuntime:
                         external_message_id=message_id,
                         source_channel=self._config.connector_channel,
                         sender_identity=_from_header,
-                        subject_or_preview=_subject or None,
+                        subject_or_preview=_subject[:200] if _subject else None,
                         filter_reason=FilteredEventBuffer.reason_policy_rule(
                             "global_rule",
                             "skip",

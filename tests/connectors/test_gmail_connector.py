@@ -669,6 +669,32 @@ async def test_connector_rule_block_persists_no_raw_payload(
     assert row[6] == "Blocked Subject"
 
 
+async def test_connector_rule_block_preview_bounded_to_200_chars(
+    gmail_runtime: GmailConnectorRuntime,
+) -> None:
+    """A subject longer than 200 chars is truncated before persistence."""
+    from butlers.ingestion_policy import PolicyDecision
+
+    with (
+        patch.object(
+            gmail_runtime,
+            "_fetch_message",
+            new_callable=AsyncMock,
+            return_value=_make_message(subject="z" * 500),
+        ),
+        patch.object(
+            gmail_runtime._ingestion_policy,
+            "evaluate",
+            return_value=PolicyDecision(action="block", matched_rule_type="sender_domain"),
+        ),
+    ):
+        await gmail_runtime._ingest_single_message("msg123")
+
+    rows = gmail_runtime._filtered_event_buffer._rows
+    assert len(rows) == 1
+    assert rows[0][6] == "z" * 200
+
+
 async def test_global_skip_persists_no_raw_payload(
     gmail_runtime: GmailConnectorRuntime,
 ) -> None:
