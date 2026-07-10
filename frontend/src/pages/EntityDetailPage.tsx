@@ -2324,9 +2324,12 @@ function WorkbenchKpiStrip({ entityId }: { entityId: string }) {
         testId="workbench-kpi-strip-error"
         label="Metrics"
         onRetry={() => {
-          void refetchNeighbours();
-          void refetchBins();
-          void refetchFacts();
+          // Only refetch the sources that actually errored — avoids redundant
+          // requests for KPIs that loaded fine (consistent with the other
+          // multi-source sections' retry handlers).
+          if (neighboursError) void refetchNeighbours();
+          if (binsError) void refetchBins();
+          if (factsError) void refetchFacts();
         }}
       />
     );
