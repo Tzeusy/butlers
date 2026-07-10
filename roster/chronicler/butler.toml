@@ -21,6 +21,22 @@ url = "http://localhost:41100/mcp"
 # Projection adapters run as scheduled jobs, NOT as modules or connectors.
 # Chronicler does not own any connector and does not ingest external events.
 
+# Memory module (bu-93y4rt, tasks.md §8 — doctrine-amended write-back loop).
+# The chronicler imports the shared memory module like nine other butlers.
+# Module storage is per-butler, so day-close synthesized insights + self-
+# reminders land in the chronicler's OWN `chronicler.*` schema (never a
+# foreign write) — satisfying the "writes only to its own schema" invariant.
+# Enabling the module here is what runs the module's OWN per-schema migration
+# chain (`memory` branch) into `chronicler.*` at daemon startup (lifecycle
+# step 8); no core Alembic revision is involved.
+#
+# Maintenance schedules (memory_decay_sweep, memory_consolidation,
+# memory_episode_cleanup, memory_purge_superseded, memory_consolidation_backfill)
+# are module defaults self-registered by MemoryModule.on_startup — no
+# [[butler.schedule]] block needed here.
+[modules.memory]
+groups = ["core", "entity"]
+
 [[butler.schedule]]
 name = "chronicler_project_sessions"
 cron = "*/15 * * * *"

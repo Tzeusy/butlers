@@ -37,11 +37,17 @@ def test_chronicler_is_not_staffer(butler_toml: dict) -> None:
     assert butler.get("type", "butler") == "butler"
 
 
-def test_chronicler_configures_only_own_mcp_module(butler_toml: dict) -> None:
-    """Projection adapters are scheduled jobs, while the read/bundle tool
-    surface is provided by Chronicler's own MCP module."""
+def test_chronicler_configures_own_module_plus_memory(butler_toml: dict) -> None:
+    """Projection adapters are scheduled jobs, while the read/bundle tool surface
+    is provided by Chronicler's own MCP module. The shared memory module is
+    enabled for the doctrine-amended day-close write-back loop (bu-93y4rt): its
+    per-schema tables land in ``chronicler.*``, so it is an own-schema store, not
+    a cross-butler dependency. No other module may be configured."""
     modules = butler_toml.get("modules", {})
-    assert modules == {"chronicler": {}}
+    assert set(modules) == {"chronicler", "memory"}
+    assert modules["chronicler"] == {}
+    # Minimal group set for the write-back: `core` (store_fact) + `entity`.
+    assert modules["memory"] == {"groups": ["core", "entity"]}
 
 
 def test_chronicler_schedule_uses_jobs_for_projection(butler_toml: dict) -> None:
