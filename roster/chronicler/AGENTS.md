@@ -758,24 +758,32 @@ left untouched.
   `aggregations.untracked_seconds_for_window` so the prompt can never disagree
   with the dashboard's untracked slice — **OR** a low-confidence
   `occupation_block` is present (occupation blocks are always `confidence=low`).
-- **Ask:** `chronicler_gap_interview(date_label, timezone)` evaluates + dedupes
-  and returns `{"action":"send", message, interview_id, ...}` or
-  `{"action":"skip", ...}`. The prompt delivers `message` via `notify()`, which
-  applies the owner's quiet-hours / delivery preferences (no bespoke gate).
-- **Answer:** `chronicler_resolve_gap_interview(interview_id, answer)` applies
-  `confirm|correct|dismiss` deterministically — the **first real tenant of the
-  corrections machinery**: writes a `chronicler.overrides` row (confirm
-  annotates, correct tombstones the inferred block, dismiss notes) and
-  reinforces/decays the matching routine's `confidence` via
-  `storage.adjust_routine_confidence` (clamped to `[0,1]`).
-- **Transport isolation (coordinator decision):** the ask/answer transport is
-  isolated behind `gap_interview.GapInterviewTransport` so it can migrate onto
-  the **decision loop** (RFC 0021 one-tap approvals, epic bu-24lu6, owner-gated
-  behind bu-24lu6.1) with no engine change. **Known gap:** true telegram inline
-  buttons + auto-routing a one-tap callback back to
-  `chronicler_resolve_gap_interview` require shared-infra work that does not
-  exist yet — the `telegram_bot` connector drops `callback_query` updates and
-  the notify chain has no `reply_markup` support — and overlaps the decision
-  loop. Until that lands, the ask is delivered as text (reply confirm/correct/
-  dismiss) and the answer is applied via `chronicler_resolve_gap_interview` /
-  the dashboard corrections API. No new migration (overrides/routines exist).
+- **Ask:** `chronicler_gap_interview(date_label, timezone)` does the whole ask
+  itself — evaluate → per-day dedupe → quiet-hours/`delivery_preferences` gate →
+  deliver a **Telegram inline-button** message (✅ Work day / ✏️ Not work /
+  🚫 Dismiss). The scheduled prompt only calls this tool; it sends nothing. The
+  telegram send is a self-contained `gap_interview.GapInterviewTransport` impl
+  (`gap_interview_telegram.TelegramInlineButtonTransport`) that resolves the
+  owner chat (`public.entity_info`) + bot token (`butler_secrets`) and POSTs
+  `sendMessage` with a `reply_markup` inline keyboard whose buttons encode
+  `cgi:<interview_id>:<answer>` (`interview_id == date_label`, ≤64-byte budget).
+- **Answer (round-trip, wired):** the owner's tap fires a `callback_query`. The
+  shared `telegram_bot` connector recognises the **prefix-guarded `cgi:`**
+  payload (`_maybe_handle_gap_interview_callback`; every other callback keeps
+  its existing drop behaviour — additive) and, because the connector runs as the
+  restricted `connector_writer` role and cannot write the chronicler schema,
+  POSTs `{interview_id, answer}` to `POST /api/chronicler/gap-interview/resolve`
+  (env `CONNECTOR_INTERNAL_API_URL`, default `http://dashboard-api:41200`) and
+  `answerCallbackQuery`-acks the tap. That endpoint + the
+  `chronicler_resolve_gap_interview` MCP tool both delegate to
+  `gap_interview.resolve_gap_interview_callback` (one resolver, identical write
+  shape). It is the **first real tenant of the corrections machinery**: writes a
+  `chronicler.overrides` row (confirm annotates, correct tombstones the inferred
+  block, dismiss notes), reinforces/decays the routine's `confidence` via
+  `storage.adjust_routine_confidence` (clamped `[0,1]`), and is idempotent
+  (telegram re-delivers callbacks). Unknown/expired taps get a graceful toast.
+- **Transport isolation (coordinator decision):** ask + answer both sit behind
+  `GapInterviewTransport` / `resolve_gap_interview_callback` so they migrate onto
+  the **decision loop** (RFC 0021 one-tap approvals, epic bu-24lu6, gated behind
+  bu-24lu6.1) with no engine change — only the encoding/route swaps. No new
+  migration (overrides/routines exist).

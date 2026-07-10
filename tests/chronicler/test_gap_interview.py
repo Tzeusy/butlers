@@ -342,3 +342,36 @@ def test_answer_enum_roundtrip():
     assert GapInterviewAnswer("confirm") is GapInterviewAnswer.CONFIRM
     assert GapInterviewAnswer("correct") is GapInterviewAnswer.CORRECT
     assert GapInterviewAnswer("dismiss") is GapInterviewAnswer.DISMISS
+
+
+# ── callback_data encode/decode (cgi: prefix) ───────────────────────────────
+
+
+def test_build_and_parse_callback_roundtrip():
+    from butlers.chronicler.gap_interview import build_callback_data, parse_gap_interview_callback
+
+    data = build_callback_data("2026-07-02", GapInterviewAnswer.CONFIRM)
+    assert data == "cgi:2026-07-02:confirm"
+    assert parse_gap_interview_callback(data) == ("2026-07-02", "confirm")
+    # A telegram callback_data must stay within the 64-byte budget.
+    assert len(build_callback_data("2026-07-02", "dismiss").encode()) <= 64
+
+
+def test_parse_callback_rejects_foreign_and_malformed():
+    from butlers.chronicler.gap_interview import parse_gap_interview_callback
+
+    assert parse_gap_interview_callback(None) is None
+    assert parse_gap_interview_callback("") is None
+    assert parse_gap_interview_callback("other:2026-07-02:confirm") is None  # wrong prefix
+    assert parse_gap_interview_callback("cgi:") is None  # empty body
+    assert parse_gap_interview_callback("cgi:2026-07-02") is None  # no answer segment
+
+
+def test_parse_callback_interview_id_with_colons_survives():
+    from butlers.chronicler.gap_interview import parse_gap_interview_callback
+
+    # rpartition splits on the LAST colon, so a colon-bearing id round-trips.
+    assert parse_gap_interview_callback("cgi:2026-07-02:abc:confirm") == (
+        "2026-07-02:abc",
+        "confirm",
+    )

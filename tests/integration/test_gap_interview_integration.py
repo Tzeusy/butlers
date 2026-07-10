@@ -333,62 +333,138 @@ async def _register(pool):
     return registered
 
 
-async def test_gap_interview_tool_dedupe_and_resolve_roundtrip(full_pool) -> None:
+async def _seed_pending(pool, *, interview_id, occupation_episode_id, routine_id) -> None:
+    from butlers.core.state import state_set
+
+    await state_set(
+        pool,
+        f"gap_interview:pending:{interview_id}",
+        {
+            "interview_id": interview_id,
+            "local_date": _LOCAL_DATE,
+            "occupation_episode_id": str(occupation_episode_id) if occupation_episode_id else None,
+            "routine_id": str(routine_id) if routine_id else None,
+            "answered": False,
+        },
+    )
+
+
+async def test_ask_tool_dedupe_already_asked(full_pool) -> None:
+    from butlers.core.state import state_set
+
+    # A day already asked is short-circuited before any transport/token work.
+    await state_set(full_pool, f"gap_interview:asked:{_LOCAL_DATE}", {"interview_id": _LOCAL_DATE})
+    gap = (await _register(full_pool))["chronicler_gap_interview"]
+    result = await gap(date_label=_LOCAL_DATE, timezone="Asia/Singapore")
+    assert result == {"status": "already_asked", "date": _LOCAL_DATE}
+
+
+async def test_ask_tool_not_configured_without_owner_chat(full_pool) -> None:
+    # No owner telegram chat id / bot token in the test DB → cannot deliver;
+    # the day is NOT marked asked, so it can retry once configured.
     routine = await _make_routine(full_pool, confidence=0.5, support=10)
     await _make_occupation_episode(full_pool, routine_id=routine.id)
-    tools = await _register(full_pool)
-    gap = tools["chronicler_gap_interview"]
-    resolve = tools["chronicler_resolve_gap_interview"]
+    gap = (await _register(full_pool))["chronicler_gap_interview"]
+    result = await gap(date_label=_LOCAL_DATE, timezone="Asia/Singapore")
+    assert result["status"] == "not_configured"
 
-    # First call asks (low-confidence occupation block present).
-    first = await gap(date_label=_LOCAL_DATE, timezone="Asia/Singapore")
-    assert first["action"] == "send"
-    assert "work day" in first["message"]
-    assert first["options"] == ["confirm", "correct", "dismiss"]
-    interview_id = first["interview_id"]
+    from butlers.core.state import state_get
 
-    # Second call the same day is deduped — never a second prompt.
-    second = await gap(date_label=_LOCAL_DATE, timezone="Asia/Singapore")
-    assert second == {"action": "skip", "reason": "already_asked"}
+    assert await state_get(full_pool, f"gap_interview:asked:{_LOCAL_DATE}") is None
 
-    # Resolve applies the answer: override row written, routine reinforced.
-    applied = await resolve(interview_id=interview_id, answer="confirm")
+
+async def test_resolve_tool_roundtrip(full_pool) -> None:
+    routine = await _make_routine(full_pool, confidence=0.5, support=10)
+    episode = await _make_occupation_episode(full_pool, routine_id=routine.id)
+    await _seed_pending(
+        full_pool,
+        interview_id=_LOCAL_DATE,
+        occupation_episode_id=episode.id,
+        routine_id=routine.id,
+    )
+    resolve = (await _register(full_pool))["chronicler_resolve_gap_interview"]
+
+    applied = await resolve(interview_id=_LOCAL_DATE, answer="confirm")
     assert applied["status"] == "applied"
     assert applied["override_id"] is not None
     refreshed = await get_routine(full_pool, routine.id)
     assert refreshed.confidence == pytest.approx(0.60)
 
-    # A second resolve is idempotent — the interview is already answered.
-    again = await resolve(interview_id=interview_id, answer="confirm")
+    # Idempotent: a re-tap (telegram retries callbacks) is a no-op.
+    again = await resolve(interview_id=_LOCAL_DATE, answer="confirm")
     assert again["status"] == "already_answered"
 
 
-async def test_gap_interview_tool_skips_when_no_gap(full_pool) -> None:
-    # A day with a fully-tracked waking window and no occupation block: no prompt.
-
-    from butlers.chronicler.models import Precision
-
-    await upsert_episode(
-        full_pool,
-        Episode(
-            source_name="spotify.session_summary",
-            source_ref="spotify:full-day",
-            episode_type="listening_episode",
-            start_at=datetime(2026, 7, 2, 6, tzinfo=_TZ).astimezone(UTC),
-            end_at=datetime(2026, 7, 2, 22, tzinfo=_TZ).astimezone(UTC),
-            precision=Precision.EXACT,
-            layer=Layer.ACTIVITY,
-            confidence=Confidence.MEDIUM,
-        ),
-    )
-    tools = await _register(full_pool)
-    gap = tools["chronicler_gap_interview"]
-    result = await gap(date_label=_LOCAL_DATE, timezone="Asia/Singapore")
-    assert result == {"action": "skip", "reason": "no_gap"}
-
-
 async def test_resolve_unknown_interview_errors(full_pool) -> None:
-    tools = await _register(full_pool)
-    resolve = tools["chronicler_resolve_gap_interview"]
-    result = await resolve(interview_id="nope:gap", answer="confirm")
+    resolve = (await _register(full_pool))["chronicler_resolve_gap_interview"]
+    result = await resolve(interview_id="2026-01-01", answer="confirm")
     assert result["status"] == "error"
+
+
+# ── Inbound one-tap round-trip via the dashboard API (connector's route) ─────
+
+
+def _build_chronicler_api(pool):
+    from unittest.mock import MagicMock
+
+    from butlers.api.app import create_app
+    from butlers.api.db import DatabaseManager
+
+    db = MagicMock(spec=DatabaseManager)
+    db.pool.return_value = pool
+    app = create_app(api_key="")
+    for butler_name, router_module in app.state.butler_routers:
+        if butler_name == "chronicler" and hasattr(router_module, "_get_db_manager"):
+            app.dependency_overrides[router_module._get_db_manager] = lambda: db
+            break
+    else:  # pragma: no cover — defensive
+        raise AssertionError("chronicler router not registered on the app")
+    import httpx
+
+    return httpx.ASGITransport(app=app)
+
+
+async def test_resolve_endpoint_applies_answer_end_to_end(full_pool) -> None:
+    import httpx
+
+    routine = await _make_routine(full_pool, confidence=0.5, support=10)
+    episode = await _make_occupation_episode(full_pool, routine_id=routine.id)
+    await _seed_pending(
+        full_pool,
+        interview_id=_LOCAL_DATE,
+        occupation_episode_id=episode.id,
+        routine_id=routine.id,
+    )
+
+    transport = _build_chronicler_api(full_pool)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/chronicler/gap-interview/resolve",
+            json={"interview_id": _LOCAL_DATE, "answer": "confirm"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "applied"
+
+    # The route actually wrote the override + reinforced the routine.
+    overrides = await list_overrides_for(
+        full_pool, target_kind=OverrideTarget.EPISODE, target_id=episode.id
+    )
+    assert len(overrides) == 1
+    refreshed = await get_routine(full_pool, routine.id)
+    assert refreshed.confidence == pytest.approx(0.60)
+
+
+async def test_resolve_endpoint_unknown_interview_is_graceful(full_pool) -> None:
+    import httpx
+
+    transport = _build_chronicler_api(full_pool)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/chronicler/gap-interview/resolve",
+            json={"interview_id": "2026-01-01", "answer": "confirm"},
+        )
+    # Always HTTP 200 with a status the connector can turn into a toast.
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "error"
+    assert body["error"] == "unknown_or_expired_interview"

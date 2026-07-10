@@ -389,6 +389,117 @@ async def apply_gap_interview_answer(
     }
 
 
+# ── One-tap callback round-trip (cgi: prefix) ───────────────────────────────
+#
+# The telegram inline-button transport encodes each button's answer into a
+# ``callback_data`` string; the shared telegram_bot connector recognises the
+# ``cgi:`` prefix (and ONLY that prefix — every other callback keeps its
+# current drop behaviour) and hands the payload back to
+# :func:`resolve_gap_interview_callback`. When the decision loop (RFC 0021)
+# takes over the transport, it reuses the same resolver — only the encoding
+# changes.
+
+CALLBACK_PREFIX = "cgi:"
+
+
+def build_callback_data(interview_id: str, answer: GapInterviewAnswer | str) -> str:
+    """Encode one inline button's ``callback_data`` (``cgi:<interview_id>:<answer>``).
+
+    Telegram caps ``callback_data`` at 64 bytes; ``interview_id`` is
+    ``<YYYY-MM-DD>:<uuid|gap>`` (≤47 chars) so the longest payload
+    (``cgi:2026-07-02:<uuid>:confirm`` ≈ 59 bytes) stays under the cap.
+    """
+    return f"{CALLBACK_PREFIX}{interview_id}:{GapInterviewAnswer(answer).value}"
+
+
+def parse_gap_interview_callback(data: str | None) -> tuple[str, str] | None:
+    """Decode a ``cgi:`` ``callback_data`` into ``(interview_id, answer)``.
+
+    Returns ``None`` for any payload that is not a well-formed gap-interview
+    callback — the connector uses this both as the recognizer (``None`` ⇒ not
+    ours, drop as before) and the parser. ``rpartition`` splits on the *last*
+    colon so an ``interview_id`` that itself contains colons round-trips.
+    """
+    if not data or not data.startswith(CALLBACK_PREFIX):
+        return None
+    interview_id, sep, answer = data[len(CALLBACK_PREFIX) :].rpartition(":")
+    if not sep or not interview_id or not answer:
+        return None
+    return interview_id, answer
+
+
+async def resolve_gap_interview_callback(
+    pool: Any,
+    *,
+    interview_id: str,
+    answer: str,
+    now: datetime,
+    scoped_search_path: bool = False,
+) -> dict[str, Any]:
+    """Apply a one-tap answer identified by ``interview_id`` (idempotent).
+
+    Reads the pending mapping stashed by the ask side from the KV ``state``
+    store, applies the answer via :func:`apply_gap_interview_answer`, and marks
+    the interview answered so a duplicate tap (telegram re-delivers callbacks on
+    retry) is a no-op. Shared by the ``chronicler_resolve_gap_interview`` MCP
+    tool and the telegram_bot connector's ``cgi:`` handler.
+
+    ``scoped_search_path`` wraps the whole read-apply-mark sequence in one
+    transaction with ``SET LOCAL search_path TO chronicler, public`` — the
+    connector's pool is the shared butlers DB with no chronicler search path,
+    so it needs this; the MCP tool's pool is already chronicler-scoped and
+    passes ``False``. Never raises for owner-facing conditions: an unknown or
+    already-answered interview and an unparseable answer all return a
+    ``status`` the caller can surface as a graceful toast.
+    """
+    if scoped_search_path:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("SET LOCAL search_path TO chronicler, public")
+                return await _resolve_on_conn(conn, interview_id, answer, now)
+    return await _resolve_on_conn(pool, interview_id, answer, now)
+
+
+async def _resolve_on_conn(
+    conn: Any, interview_id: str, answer: str, now: datetime
+) -> dict[str, Any]:
+    from butlers.core.state import state_get, state_set
+
+    pending_key = f"gap_interview:pending:{interview_id}"
+    pending = await state_get(conn, pending_key)
+    if pending is None:
+        return {
+            "status": "error",
+            "error": "unknown_or_expired_interview",
+            "interview_id": interview_id,
+        }
+    if pending.get("answered"):
+        return {"status": "already_answered", "interview_id": interview_id}
+    try:
+        parsed = GapInterviewAnswer(str(answer).strip().lower())
+    except ValueError:
+        return {
+            "status": "error",
+            "error": f"invalid answer {answer!r}; expected confirm/correct/dismiss",
+            "interview_id": interview_id,
+        }
+
+    occ = pending.get("occupation_episode_id")
+    rid = pending.get("routine_id")
+    result = await apply_gap_interview_answer(
+        conn,
+        answer=parsed,
+        local_date=pending["local_date"],
+        occupation_episode_id=UUID(occ) if occ else None,
+        routine_id=UUID(rid) if rid else None,
+        now=now,
+    )
+    pending["answered"] = True
+    await state_set(conn, pending_key, pending)
+    result["interview_id"] = interview_id
+    return result
+
+
 # ── Transport seam (telegram now, decision loop later) ──────────────────────
 
 
@@ -509,6 +620,7 @@ async def run_gap_interview(
 
 
 __all__ = [
+    "CALLBACK_PREFIX",
     "DEFAULT_UNACCOUNTED_THRESHOLD_SECONDS",
     "DEFAULT_WAKING_HOUR_END",
     "DEFAULT_WAKING_HOUR_START",
@@ -520,6 +632,9 @@ __all__ = [
     "GapInterviewTransport",
     "TransportResult",
     "apply_gap_interview_answer",
+    "build_callback_data",
     "evaluate_gap_interview",
+    "parse_gap_interview_callback",
+    "resolve_gap_interview_callback",
     "run_gap_interview",
 ]
