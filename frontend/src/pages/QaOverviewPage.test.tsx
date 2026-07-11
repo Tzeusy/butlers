@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
@@ -183,6 +183,19 @@ function renderPage(route = "/qa") {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+}
+
+// Publishes the current command-palette labels via a callback fired in an
+// effect (not during render — reassigning an outer variable mid-render trips
+// the react-hooks/globals purity rule). Mirrors the onReady-sink pattern in
+// use-memory-url-state.back-nav.test.tsx.
+function CommandLabelsProbe({ onLabels }: { onLabels: (labels: string[]) => void }) {
+  const labels = useCommandMenuActions().map((c: PaletteCommand) => c.label);
+  useEffect(() => {
+    onLabels(labels);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- labels is a fresh array each render; compare by content via the join key.
+  }, [labels.join("|")]);
+  return null;
 }
 
 // Default the circuit-breaker query to a healthy closed state for every test.
@@ -963,10 +976,6 @@ describe("QaOverviewPage -- evidence-bearing reset + palette verb", () => {
     });
 
     let labels: string[] = [];
-    function Probe() {
-      labels = useCommandMenuActions().map((c: PaletteCommand) => c.label);
-      return null;
-    }
     act(() => {
       root.render(
         <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -974,7 +983,7 @@ describe("QaOverviewPage -- evidence-bearing reset + palette verb", () => {
             <MemoryRouter initialEntries={["/qa"]}>
               <QaOverviewPage />
             </MemoryRouter>
-            <Probe />
+            <CommandLabelsProbe onLabels={(l) => (labels = l)} />
           </CommandRegistryProvider>
         </QueryClientProvider>,
       );
@@ -987,10 +996,6 @@ describe("QaOverviewPage -- evidence-bearing reset + palette verb", () => {
     setupTripped();
 
     let labels: string[] = [];
-    function Probe() {
-      labels = useCommandMenuActions().map((c: PaletteCommand) => c.label);
-      return null;
-    }
     act(() => {
       root.render(
         <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -998,7 +1003,7 @@ describe("QaOverviewPage -- evidence-bearing reset + palette verb", () => {
             <MemoryRouter initialEntries={["/qa"]}>
               <QaOverviewPage />
             </MemoryRouter>
-            <Probe />
+            <CommandLabelsProbe onLabels={(l) => (labels = l)} />
           </CommandRegistryProvider>
         </QueryClientProvider>,
       );
