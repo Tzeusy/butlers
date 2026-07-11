@@ -46,7 +46,7 @@ export function useApprovalsPendingBadge(): number {
  */
 export function useDecisionsOpenBadge(): number {
   const { data } = useDecisions()
-  if (!data || data.meta.decisions_available === false) return 0
+  if (!data || data.meta?.decisions_available === false) return 0
   return data.data.length
 }
 

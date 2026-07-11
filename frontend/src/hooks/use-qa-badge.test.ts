@@ -171,6 +171,20 @@ describe("useDecisionsOpenBadge", () => {
     mockDecisions([{ id: "bu-a" }], false)
     expect(useDecisionsOpenBadge()).toBe(0)
   })
+
+  // Regression: a permissive catch-all mock/proxy (e.g. Playwright's
+  // `page.route("**/api/**", () => ({ data: [] }))` used by unrelated e2e
+  // specs) can return `{ data: [...] }` with `meta` entirely absent rather
+  // than `{ decisions_available: true }`. `data.meta.decisions_available`
+  // (no optional chaining) throws in that shape and crashes the sidebar —
+  // rendered on every route — taking down unrelated pages. Locks in the
+  // `data.meta?.decisions_available` guard.
+  it("does not throw and returns 0 when meta is entirely absent", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(useDecisions).mockReturnValue({ data: { data: [] } } as any)
+    expect(() => useDecisionsOpenBadge()).not.toThrow()
+    expect(useDecisionsOpenBadge()).toBe(0)
+  })
 })
 
 describe("useBadgeCounts", () => {
