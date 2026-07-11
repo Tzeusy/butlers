@@ -195,6 +195,9 @@ git push                # Push to remote (bead mutations already in Dolt)
 
 ## Notes to self
 
+### Steam presence events are metadata-only
+- Steam `status_change` / `online_status` envelopes must keep `payload.raw = null` and `control.ingestion_tier = "metadata"` so presence deltas are durably logged without LLM classification or proactive `notify()` routing; play, achievement, library, and friend deltas remain full-tier.
+
 ### Contributor workflow: PRs only, never push directly to main
 All code changes must go through a pull request — never `git push origin main` or
 `git push --force origin main`. GitHub branch protection (Settings → Branches →
