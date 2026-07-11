@@ -78,3 +78,23 @@ dolt.port: 3307
 export.path: "issues.export.jsonl"
 
 export.git-add: false
+
+# Disable the post-merge/post-checkout JSONL->Dolt auto-import (bd PR #3730,
+# GH#3729, default true). That feature exists to plug a data-loss gap in
+# JSONL-in-git sync topologies with no shared Dolt server: without it, issues
+# created on another machine could enter this machine's Dolt only via a
+# manual `bd import`, so an untouched local Dolt could silently overwrite the
+# richer git-tracked JSONL on the next auto-export.
+#
+# That scenario cannot happen here: this repo runs Dolt-native shared-server
+# mode (see sync.mode / dolt.* above), so every write already lands directly
+# on the one shared server at dolt.port — there is no "other machine's Dolt"
+# to reconcile, and issues.export.jsonl is a pure downstream export, never an
+# input. With import.auto left at its default, every `git checkout <branch>`
+# and `git pull`/`git merge` re-imports the full ~9MB issues.export.jsonl via
+# `bd import --quiet`, which upserts ~5.6k issues row-by-row and took 5-8
+# minutes per checkout while contending the shared :3307 server (bu-dna8i).
+# Note: no-auto-import (above) does NOT gate this — that flag guards a
+# different, older stale-DB auto-import path (maybeAutoImportJSONL);
+# import.auto is the key PR #3730 actually checks.
+import.auto: false
