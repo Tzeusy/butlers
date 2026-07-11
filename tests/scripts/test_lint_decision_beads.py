@@ -153,6 +153,13 @@ def test_multiple_violations_all_reported():
     assert len(result.violations) == 5  # label, metadata, options, default, due_at
 
 
+def test_non_dict_issue_flagged_not_raised():
+    result = ldb.lint_issue(["not", "a", "dict"])
+    assert not result.ok
+    assert result.issue_id == "<unknown>"
+    assert any("invalid issue data format" in v for v in result.violations)
+
+
 # ---------------------------------------------------------------------------
 # lint_issues / format_results
 # ---------------------------------------------------------------------------
@@ -228,3 +235,30 @@ def test_cli_single_issue_json_object_is_wrapped(tmp_path):
     fixture.write_text(json.dumps(_decision_issue()))
     proc = _run_cli("--issues-json-file", str(fixture))
     assert proc.returncode == 0
+
+
+def test_cli_exits_two_on_missing_file(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    proc = _run_cli("--issues-json-file", str(missing))
+    assert proc.returncode == 2
+    assert "could not obtain issue data" in proc.stderr
+
+
+def test_cli_exits_two_on_invalid_json(tmp_path):
+    fixture = tmp_path / "issues.json"
+    fixture.write_text("{not valid json")
+    proc = _run_cli("--issues-json-file", str(fixture))
+    assert proc.returncode == 2
+    assert "could not obtain issue data" in proc.stderr
+
+
+def test_load_issues_from_file_missing_raises_bd_unavailable(tmp_path):
+    with pytest.raises(ldb.BdUnavailableError):
+        ldb.load_issues_from_file(tmp_path / "nope.json")
+
+
+def test_load_issues_from_file_invalid_json_raises_bd_unavailable(tmp_path):
+    fixture = tmp_path / "bad.json"
+    fixture.write_text("not json")
+    with pytest.raises(ldb.BdUnavailableError):
+        ldb.load_issues_from_file(fixture)

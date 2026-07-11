@@ -75,13 +75,20 @@ class LintResult:
         return not self.violations
 
 
-def lint_issue(issue: dict[str, Any]) -> LintResult:
+def lint_issue(issue: Any) -> LintResult:
     """Check one issue dict against the decision-bead convention.
 
     Accepts any issue shape returned by `bd show`/`bd list --json` (or the
     JSONL export). Never raises on malformed input -- a wrong-shaped field
     is reported as a violation, not an exception.
     """
+    if not isinstance(issue, dict):
+        return LintResult(
+            issue_id="<unknown>",
+            title="",
+            violations=["invalid issue data format (expected a dictionary)"],
+        )
+
     issue_id = str(issue.get("id") or "<unknown>")
     title = str(issue.get("title") or "")
     violations: list[str] = []
@@ -124,7 +131,7 @@ def lint_issue(issue: dict[str, Any]) -> LintResult:
     return LintResult(issue_id=issue_id, title=title, violations=violations)
 
 
-def lint_issues(issues: list[dict[str, Any]]) -> list[LintResult]:
+def lint_issues(issues: list[Any]) -> list[LintResult]:
     return [lint_issue(issue) for issue in issues]
 
 
@@ -172,7 +179,10 @@ def load_issues_from_bd(issue_ids: list[str], *, status: str) -> list[dict[str, 
 
 
 def load_issues_from_file(path: Path) -> list[dict[str, Any]]:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as exc:
+        raise BdUnavailableError(f"failed to read or parse {path}: {exc}") from exc
     if isinstance(data, dict):
         data = [data]
     if not isinstance(data, list):
