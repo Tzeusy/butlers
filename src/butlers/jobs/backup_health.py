@@ -185,12 +185,19 @@ def _run_restore_drill_sync(
             return RestoreDrillResult(
                 ok=False, detail=f"restore timed out after {RESTORE_TIMEOUT_S:.0f}s"
             )
+        except OSError as exc:
+            return RestoreDrillResult(ok=False, detail=f"failed to invoke psql: {exc}")
 
         if restore.returncode != 0:
             detail = (restore.stderr or restore.stdout or b"").decode(errors="replace").strip()
             return RestoreDrillResult(ok=False, detail=f"restore failed: {detail[-2000:]}")
 
-        count_proc = _run(["psql", *conn_args, "-d", scratch_db, "-tAc", _INTEGRITY_QUERY])
+        try:
+            count_proc = _run(["psql", *conn_args, "-d", scratch_db, "-tAc", _INTEGRITY_QUERY])
+        except OSError as exc:
+            return RestoreDrillResult(
+                ok=False, detail=f"failed to invoke psql (integrity check): {exc}"
+            )
         if count_proc.returncode != 0:
             detail = (
                 (count_proc.stderr or count_proc.stdout or b"").decode(errors="replace").strip()

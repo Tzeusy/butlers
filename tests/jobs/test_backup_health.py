@@ -112,6 +112,34 @@ def test_run_restore_drill_sync_missing_client_tools(
     assert "postgresql-client" in result.detail
 
 
+def test_run_restore_drill_sync_psql_restore_invoke_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """createdb/dropdb succeed but the psql restore call itself raises OSError
+    (e.g. a partially-broken client install) -- a recorded fail, not an
+    uncaught exception out of _run_restore_drill_sync."""
+    backup = _write_gzip_backup(tmp_path)
+    dropdb_calls = 0
+
+    def fake_run(cmd, **kwargs):
+        nonlocal dropdb_calls
+        if cmd[0] == "dropdb":
+            dropdb_calls += 1
+            return _completed(0)
+        if cmd[0] == "createdb":
+            return _completed(0)
+        if cmd[0] == "psql":
+            raise OSError("psql: text file busy")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = _run_restore_drill_sync(backup, db_params=_DB_PARAMS)
+    assert result.ok is False
+    assert "failed to invoke psql" in result.detail
+    # Teardown still ran even though the restore call itself raised.
+    assert dropdb_calls == 2
+
+
 def test_run_restore_drill_sync_corrupt_backup_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
