@@ -495,7 +495,7 @@ function CircuitBreakerChip() {
     return (
       <Badge
         variant="outline"
-        className="border-[var(--amber)] text-[var(--amber)] text-xs"
+        className="border-[var(--amber)] text-[var(--amber-text)] text-xs"
         data-testid="circuit-breaker-unknown"
       >
         Circuit breaker: unknown

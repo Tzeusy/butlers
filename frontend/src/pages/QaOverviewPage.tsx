@@ -167,7 +167,7 @@ function StickyTopBar({
     breakerTripped
       ? "border-destructive/50 text-destructive hover:border-destructive hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
       : breakerUnknown
-        ? "border-[var(--amber)]/50 text-[var(--amber)] disabled:cursor-default disabled:opacity-100"
+        ? "border-[var(--amber)]/50 text-[var(--amber-text)] disabled:cursor-default disabled:opacity-100"
         : "border-border/60 text-muted-foreground disabled:cursor-default disabled:opacity-100",
   ].join(" ");
 
@@ -378,7 +378,7 @@ function ResetBreakerDialog({
         ) : (
           <p
             data-testid="qa-breaker-reset-evidence-unavailable"
-            className="border-y border-border/60 py-2 font-mono text-[11px] text-[var(--amber)]"
+            className="border-y border-border/60 py-2 font-mono text-[11px] text-[var(--amber-text)]"
           >
             {attemptsAvailable
               ? "No failing attempts on record — the breaker's evidence is empty."
