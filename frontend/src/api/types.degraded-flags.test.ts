@@ -102,14 +102,36 @@ const REGISTRY: DegradedFlagEntry[] = [
 /**
  * Files that only ever *describe* a flag, never *read* it, so a mention
  * there must not count as consumption:
- *   - types.ts: the type declaration file itself.
- *   - client.ts: hand-written JSDoc on the fetch wrappers routinely repeats
- *     flag names in prose (e.g. "meta carries the degraded-envelope
- *     `catalogue_available` flag") without any code actually branching on
- *     the value — scanning it would let a doc comment alone satisfy the
- *     consumer check even after the real UI consumer was deleted.
+ *   - types.ts: the type declaration file itself — the registry's own
+ *     "declared in types.ts" check already covers this file; excluding it
+ *     here stops a bare interface-field declaration from also counting as
+ *     "consumption".
+ * client.ts is intentionally NOT special-cased here (see stripComments
+ * below) — its flag mentions live inside JSDoc `/** *\/` blocks, which
+ * comment-stripping already neutralizes for every scanned file, not just
+ * this one.
  */
-const EXCLUDED_BASENAMES = new Set(["types.ts", "client.ts"])
+const EXCLUDED_BASENAMES = new Set(["types.ts"])
+
+/**
+ * Best-effort removal of `/* ... *\/` block comments and `// ...` line
+ * comments before consumer-pattern matching.
+ *
+ * Without this, a *prose mention* of a flag name anywhere under
+ * frontend/src — a JSDoc blurb, a stale inline comment left behind after
+ * the real call site was deleted — satisfies the word-boundary regex just
+ * as well as an actual property read, letting the "has a real consumer"
+ * assertion pass vacuously even when nothing in the file actually branches
+ * on the flag. Comment-stripping is what makes the check test *code*
+ * instead of *prose about code*. This is line/block-comment stripping only
+ * (not a full TS parse), so it does not special-case comment markers that
+ * appear inside string/template literals — acceptable for this repo's
+ * flag names, which are snake_case identifiers that don't occur in URL-like
+ * string literals.
+ */
+function stripComments(content: string): string {
+  return content.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")
+}
 
 function isScannableSourceFile(filePath: string): boolean {
   if (!(filePath.endsWith(".ts") || filePath.endsWith(".tsx"))) return false
@@ -164,7 +186,7 @@ describe("degraded-envelope FE flag-consumption registry (bu-tpudw.5)", () => {
   it("every non-pending registry flag has at least one real frontend consumer", () => {
     const sourceFiles = listSourceFiles(SRC_DIR)
     const contentByFile = new Map<string, string>(
-      sourceFiles.map((file) => [file, fs.readFileSync(file, "utf-8")]),
+      sourceFiles.map((file) => [file, stripComments(fs.readFileSync(file, "utf-8"))]),
     )
 
     const unconsumed = REGISTRY.filter((entry) => !entry.pending).filter((entry) => {
