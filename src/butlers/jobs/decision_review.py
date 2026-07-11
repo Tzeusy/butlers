@@ -218,6 +218,8 @@ def _load_issues(path: Path) -> dict[str, dict[str, Any]]:
             if not line:
                 continue
             record = json.loads(line)
+            if not isinstance(record, dict):
+                continue
             issue_id = record.get("id")
             if issue_id:
                 issues[issue_id] = record
@@ -272,7 +274,12 @@ def compute_decision_digest(
                 kind = "deploy"
             else:
                 continue
-            for edge in issue.get("dependencies") or []:
+            dependencies = issue.get("dependencies")
+            if not isinstance(dependencies, list):
+                continue
+            for edge in dependencies:
+                if not isinstance(edge, dict):
+                    continue
                 if edge.get("type") != "blocks":
                     continue
                 decision = decisions.get(edge.get("depends_on_id"))
@@ -526,28 +533,36 @@ async def run_decision_escalation_check(
     skipped = 0
     for hit in digest.escalations:
         fingerprint = f"{hit.decision_id}:{hit.blocked_id}"
-        already = await pool.fetchrow(
-            "SELECT 1 FROM public.audit_log WHERE target = $1 AND action = $2 LIMIT 1",
-            fingerprint,
-            _ESCALATED_ACTION,
-        )
-        if already is not None:
-            skipped += 1
-            continue
+        try:
+            already = await pool.fetchrow(
+                "SELECT 1 FROM public.audit_log WHERE target = $1 AND action = $2 LIMIT 1",
+                fingerprint,
+                _ESCALATED_ACTION,
+            )
+            if already is not None:
+                skipped += 1
+                continue
 
-        message = _compose_escalation_message(hit)
-        outcome = await _deliver(pool, message=message, dedup_key=fingerprint, priority="high")
-        if outcome != "delivered":
-            continue
+            message = _compose_escalation_message(hit)
+            outcome = await _deliver(pool, message=message, dedup_key=fingerprint, priority="high")
+            if outcome != "delivered":
+                continue
 
-        await audit_router.append(
-            pool,
-            _ACTOR,
-            _ESCALATED_ACTION,
-            target=fingerprint,
-            note=f"blocked {hit.blocked_kind} for {_format_age(hit.block_age)}",
-        )
-        escalated += 1
+            await audit_router.append(
+                pool,
+                _ACTOR,
+                _ESCALATED_ACTION,
+                target=fingerprint,
+                note=f"blocked {hit.blocked_kind} for {_format_age(hit.block_age)}",
+            )
+            escalated += 1
+        except Exception as exc:  # noqa: BLE001 - one bad escalation must not sink the tick
+            logger.error(
+                "decision_escalation_check: failed to process escalation for %s: %s",
+                fingerprint,
+                exc,
+                exc_info=True,
+            )
 
     return {
         "available": True,

@@ -125,6 +125,60 @@ def test_digest_genuine_zero_is_available_and_empty(tmp_path):
     assert digest.open_decisions == ()
 
 
+def test_digest_skips_non_dict_jsonl_lines_instead_of_crashing(tmp_path):
+    """A line that parses as valid JSON but isn't an object (e.g. a bare list)
+    must be skipped, not crash the whole load with AttributeError on .get()."""
+    export = tmp_path / "issues.export.jsonl"
+    export.write_text(
+        json.dumps([1, 2, 3])
+        + "\n"
+        + json.dumps(_decision("bu-v4ipc", created_days_ago=6))
+        + "\n"
+        + json.dumps("just a string")
+        + "\n"
+    )
+
+    digest = compute_decision_digest(export, now=_NOW)
+    assert digest.available is True
+    assert digest.unavailable_reason is None
+    assert {d.id for d in digest.open_decisions} == {"bu-v4ipc"}
+
+
+def test_digest_tolerates_malformed_dependencies_field(tmp_path):
+    """`dependencies` not being a list, or containing non-dict edges, must not
+    raise -- this loop runs outside compute_decision_digest's own try/except,
+    so an uncaught exception here would break the "never raises" contract."""
+    export = tmp_path / "issues.export.jsonl"
+    _write_export(
+        export,
+        [
+            _decision("bu-v4ipc", created_days_ago=6),
+            {
+                "id": "bu-wzbu9",
+                "title": "Silent message loss",
+                "status": "open",
+                "priority": 1,
+                "issue_type": "bug",
+                "created_at": _iso(_NOW - timedelta(days=30)),
+                "dependencies": "not-a-list",
+            },
+            {
+                "id": "bu-other",
+                "title": "Another P1",
+                "status": "open",
+                "priority": 1,
+                "issue_type": "bug",
+                "created_at": _iso(_NOW - timedelta(days=30)),
+                "dependencies": ["not-a-dict-edge"],
+            },
+        ],
+    )
+
+    digest = compute_decision_digest(export, now=_NOW)
+    assert digest.available is True
+    assert digest.escalations == ()
+
+
 # ---------------------------------------------------------------------------
 # compute_decision_digest -- real-shaped fixture
 # ---------------------------------------------------------------------------
@@ -500,6 +554,58 @@ async def test_run_escalation_check_delivers_and_records_marker(tmp_path):
     append_mock.assert_awaited_once()
     assert append_mock.await_args.args[2] == "decision_escalation_notified"
     assert append_mock.await_args.kwargs["target"] == "bu-v4ipc:bu-wzbu9"
+
+
+async def test_run_escalation_check_one_failure_does_not_sink_the_others(tmp_path):
+    """A per-hit exception (e.g. a transient DB error) must be caught and
+    logged so the remaining escalations in the same tick still get processed,
+    instead of the first failure aborting the whole loop."""
+    export = tmp_path / "issues.export.jsonl"
+    _write_export(
+        export,
+        [
+            _decision("bu-v4ipc", created_days_ago=6),
+            _blocker(
+                "bu-wzbu9",
+                title="Silent message loss",
+                issue_type="bug",
+                priority=1,
+                blocks_id="bu-v4ipc",
+                edge_age_hours=140,
+            ),
+            _blocker(
+                "bu-other",
+                title="Another P1",
+                issue_type="bug",
+                priority=1,
+                blocks_id="bu-v4ipc",
+                edge_age_hours=140,
+            ),
+        ],
+    )
+    pool = AsyncMock()
+    pool.fetchrow = AsyncMock(side_effect=[Exception("simulated transient DB error"), None])
+
+    with (
+        patch("butlers.jobs.decision_review._DEFAULT_EXPORT_PATH", export),
+        patch("butlers.jobs.decision_review._check_suppression", new=AsyncMock(return_value=None)),
+        patch(
+            "butlers.jobs.decision_review.resolve_owner_telegram_recipient",
+            new=AsyncMock(return_value="12345"),
+        ),
+        patch(
+            "butlers.tools.switchboard.notification.deliver.deliver",
+            new=AsyncMock(return_value={"status": "sent"}),
+        ),
+        patch("butlers.jobs.decision_review.record_attention_event", new=AsyncMock()),
+        patch("butlers.jobs.decision_review.audit_router.append", new=AsyncMock()) as append_mock,
+    ):
+        result = await run_decision_escalation_check(pool)
+
+    assert result["available"] is True
+    assert result["escalations_found"] == 2
+    assert result["escalated"] == 1
+    append_mock.assert_awaited_once()
 
 
 async def test_run_escalation_check_suppressed_does_not_write_marker(tmp_path):
