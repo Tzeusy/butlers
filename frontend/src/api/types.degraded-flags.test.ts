@@ -99,8 +99,17 @@ const REGISTRY: DegradedFlagEntry[] = [
 // Source-file scanning
 // ---------------------------------------------------------------------------
 
-/** The type declaration file itself — declaring a name isn't consuming it. */
-const EXCLUDED_BASENAMES = new Set(["types.ts"])
+/**
+ * Files that only ever *describe* a flag, never *read* it, so a mention
+ * there must not count as consumption:
+ *   - types.ts: the type declaration file itself.
+ *   - client.ts: hand-written JSDoc on the fetch wrappers routinely repeats
+ *     flag names in prose (e.g. "meta carries the degraded-envelope
+ *     `catalogue_available` flag") without any code actually branching on
+ *     the value — scanning it would let a doc comment alone satisfy the
+ *     consumer check even after the real UI consumer was deleted.
+ */
+const EXCLUDED_BASENAMES = new Set(["types.ts", "client.ts"])
 
 function isScannableSourceFile(filePath: string): boolean {
   if (!(filePath.endsWith(".ts") || filePath.endsWith(".tsx"))) return false
