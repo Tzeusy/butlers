@@ -97,4 +97,16 @@ export.git-add: false
 # Note: no-auto-import (above) does NOT gate this — that flag guards a
 # different, older stale-DB auto-import path (maybeAutoImportJSONL);
 # import.auto is the key PR #3730 actually checks.
+#
+# CAVEAT (confirmed empirically in PR #3144 review): on bd v1.0.4 this line
+# is a no-op. bd's YAML config loader does not wire up `import.auto` —
+# `bd config get import.auto` reports "(not set)" and `bd config show`
+# reports "import.auto = true (default)" even when this file is the one bd
+# loads (confirmed via `bd -v config get`, which prints the config.yaml path
+# it read). The BD_IMPORT_AUTO env var IS honored, so the actual fix lives in
+# .beads/hooks/post-checkout and .beads/hooks/post-merge (each exports
+# BD_IMPORT_AUTO=false outside the managed BEADS INTEGRATION markers, so it
+# survives `bd doctor --fix` hook regeneration). This YAML line is kept as
+# forward-compatible documentation of intent in case a future bd version
+# wires the key up — do not rely on it alone.
 import.auto: false

@@ -136,12 +136,20 @@ Mutations land in Dolt immediately — no export/sync step is required for durab
   but (b) once merged and refreshed, the fix applies instantly to every
   existing and future worktree with no per-worktree copying required (unlike
   `metadata.json`, which is genuinely per-worktree local state).
-- `import.auto: false` is set in `.beads/config.yaml` (bu-dna8i) to disable
-  the `post-checkout`/`post-merge` JSONL→Dolt auto-import bd added in its own
-  PR #3730 (GH#3729). That feature exists for JSONL-in-git sync topologies
-  with no shared Dolt server; it does not apply here (the shared server is
-  already the single source of truth) and was costing 5-8 minutes per
-  checkout re-importing ~5.6k issues row-by-row. Do not remove it without
+- The `post-checkout`/`post-merge` JSONL→Dolt auto-import bd added in its own
+  PR #3730 (GH#3729) is disabled via `export BD_IMPORT_AUTO=false` in
+  `.beads/hooks/post-checkout` and `.beads/hooks/post-merge` (bu-dna8i). That
+  feature exists for JSONL-in-git sync topologies with no shared Dolt server;
+  it does not apply here (the shared server is already the single source of
+  truth) and was costing 5-8 minutes per checkout re-importing ~5.6k issues
+  row-by-row. `.beads/config.yaml` also sets `import.auto: false` as
+  forward-compatible documentation, but **that line is currently a no-op on
+  bd v1.0.4** — its YAML config loader does not wire up the `import.auto`
+  key (confirmed via `bd config show` provenance: reports `(default)`, not
+  `(config.yaml)`, even from a repo root whose own checked-out config.yaml
+  sets it). The env var in the hook scripts is the actual, verified fix — it
+  is placed outside the `BEADS INTEGRATION` managed markers so `bd doctor
+  --fix` hook regeneration preserves it. Do not remove either without
   re-reading bu-dna8i's findings — `no-auto-import` (already `true` in this
   file) is a *different* config key and does not gate this behavior.
 
