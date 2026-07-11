@@ -1480,7 +1480,10 @@ async def test_audit_partial_fan_out_failure_flags_degraded(app):
     than let the shorter log read as a complete history (bu-yjfk2)."""
     rows = {"general": [_audit_row(action_type="workspace_user_create", action_status="applied")]}
     app, _ = _build_audit_app(
-        app, audit_rows=rows, calendar_butlers=["general", "relationship"], audit_failed=["relationship"]
+        app,
+        audit_rows=rows,
+        calendar_butlers=["general", "relationship"],
+        audit_failed=["relationship"],
     )
 
     async with httpx.AsyncClient(

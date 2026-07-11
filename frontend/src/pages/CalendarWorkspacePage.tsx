@@ -1119,6 +1119,7 @@ interface CalendarActivityPanelProps {
         total?: number;
         offset?: number;
         limit?: number;
+        sources_available?: boolean;
       };
     };
   };
