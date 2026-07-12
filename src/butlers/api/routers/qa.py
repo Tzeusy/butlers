@@ -117,11 +117,6 @@ _QA_CASE_HUMAN_ACTION_SQL = (
     "OR a.error_detail ILIKE '%operator%' "
     "OR a.error_detail ILIKE '%escalat%'"
 )
-#: Terminal-crash statuses without a human-action marker -- mirrors
-#: ``butlers.core.healing.dispatch.CIRCUIT_BREAKER_FAILURE_STATUSES`` and the
-#: precedence baked into ``butlers.core.qa.severity.state_of_case`` (bu-hmdqz.9).
-_QA_CASE_TERMINAL_FAILURE_SQL = "a.status IN ('failed', 'timeout', 'anonymization_failed')"
-
 _QA_CASE_STATE_SQL: dict[str, str] = {
     "detect": (
         "a.status NOT IN ('pr_merged', 'unfixable', 'pr_open', 'investigating', "
@@ -132,7 +127,9 @@ _QA_CASE_STATE_SQL: dict[str, str] = {
     "landed": "a.status = 'pr_merged'",
     # 'timeout'/'anonymization_failed' never carry a human-action marker check
     # (failed_with_human_action() only ever escalates 'unfixable'/'failed'), so
-    # they always land here alongside marker-less 'failed' rows.
+    # they always land here alongside marker-less 'failed' rows. Mirrors
+    # ``butlers.core.healing.dispatch.CIRCUIT_BREAKER_FAILURE_STATUSES`` and the
+    # precedence baked into ``butlers.core.qa.severity.state_of_case`` (bu-hmdqz.9).
     "failed": (
         f"a.status IN ('timeout', 'anonymization_failed') "
         f"OR (a.status = 'failed' AND NOT ({_QA_CASE_HUMAN_ACTION_SQL}))"
