@@ -246,8 +246,21 @@ def materialize_beads_export(config: DeployConfig) -> bool:
     Deliberately exports to ``issues.export.jsonl``, never
     ``issues.jsonl`` -- see the bd 1.0.4 auto-import-loop hazard documented
     in AGENTS.md/CLAUDE.md.
+
+    Ensures *export_path* exists as a regular file before ever touching
+    ``bd`` (classic Docker bind-mount trap, flagged in PR #3174 review): if
+    the host path backing a ``:ro`` bind mount doesn't exist yet, Docker
+    creates a *directory* there to satisfy the mount, and every subsequent
+    ``bd export -o`` to that path then fails permanently with
+    ``IsADirectoryError`` -- this is not self-healing. Touching an empty
+    placeholder first (parent-dir + file, no-op if already a file) means a
+    ``bd export`` failure below only ever leaves behind stale/empty content,
+    never a directory that wedges the mount forever.
     """
     export_path = config.repo_root / ".beads" / "issues.export.jsonl"
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    if not export_path.exists():
+        export_path.touch()
     cmd = ["bd", "export", "-o", str(export_path)]
     try:
         proc = subprocess.run(cmd, cwd=config.repo_root, capture_output=True, text=True, timeout=60)
