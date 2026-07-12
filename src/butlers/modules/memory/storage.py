@@ -2710,15 +2710,26 @@ async def run_decay_sweep(pool: Pool) -> dict:
                         )
                         continue
                 else:
-                    async with conn.transaction():
-                        await conn.execute(
-                            "UPDATE facts SET validity = 'expired', metadata = $1 WHERE id = $2",
-                            metadata,
+                    try:
+                        async with conn.transaction():
+                            await conn.execute(
+                                "UPDATE facts SET validity = 'expired', metadata = $1 "
+                                "WHERE id = $2",
+                                metadata,
+                                fact["id"],
+                            )
+                            await _cascade_catalog_disownment(
+                                conn, "facts", [fact["id"]], invalid_at=now
+                            )
+                    except Exception:
+                        logger.error(
+                            "run_decay_sweep: expiry (or its catalog disownment "
+                            "cascade) failed for fact %s; skipping this fact so "
+                            "the rest of the sweep still runs",
                             fact["id"],
+                            exc_info=True,
                         )
-                        await _cascade_catalog_disownment(
-                            conn, "facts", [fact["id"]], invalid_at=now
-                        )
+                        continue
                 stats["facts_expired"] += 1
             elif eff < fading_thresh:
                 had_stale_status = metadata.pop("status", None) is not None
@@ -2762,15 +2773,27 @@ async def run_decay_sweep(pool: Pool) -> dict:
 
             if eff < expiry_thresh:
                 metadata["forgotten"] = True
-                async with conn.transaction():
-                    await conn.execute(
-                        "UPDATE rules SET metadata = $1 WHERE id = $2",
-                        metadata,
+                try:
+                    async with conn.transaction():
+                        await conn.execute(
+                            "UPDATE rules SET metadata = $1 WHERE id = $2",
+                            metadata,
+                            rule["id"],
+                        )
+                        # Same transaction as the forgotten-flag write — see the
+                        # matching fact-expiry cascade above.
+                        await _cascade_catalog_disownment(
+                            conn, "rules", [rule["id"]], invalid_at=now
+                        )
+                except Exception:
+                    logger.error(
+                        "run_decay_sweep: expiry (or its catalog disownment "
+                        "cascade) failed for rule %s; skipping this rule so "
+                        "the rest of the sweep still runs",
                         rule["id"],
+                        exc_info=True,
                     )
-                    # Same transaction as the forgotten-flag write — see the
-                    # matching fact-expiry cascade above.
-                    await _cascade_catalog_disownment(conn, "rules", [rule["id"]], invalid_at=now)
+                    continue
                 stats["rules_expired"] += 1
             elif eff < fading_thresh:
                 metadata["status"] = "fading"
@@ -2828,29 +2851,50 @@ async def purge_superseded_facts(pool: Pool, *, older_than_days: int = 7) -> dic
     through supersession.
     """
     async with pool.acquire() as conn:
-        async with conn.transaction():
-            deleted_rows = await conn.fetch(
-                "DELETE FROM facts "
-                "WHERE validity = 'superseded' "
-                "AND created_at < now() - make_interval(days => $1) "
-                "RETURNING id",
-                older_than_days,
+        # Independent transaction from the ha_state purge below: a failure in
+        # one MUST NOT prevent the other from proceeding, so this block is its
+        # own try/except rather than letting an exception here propagate past
+        # the ha_state block entirely (that would silently violate the
+        # independence this comment — and the one below — promises).
+        deleted = 0
+        try:
+            async with conn.transaction():
+                deleted_rows = await conn.fetch(
+                    "DELETE FROM facts "
+                    "WHERE validity = 'superseded' "
+                    "AND created_at < now() - make_interval(days => $1) "
+                    "RETURNING id",
+                    older_than_days,
+                )
+                deleted_ids = [row["id"] for row in deleted_rows]
+                await _cascade_catalog_disownment(conn, "facts", deleted_ids)
+            deleted = len(deleted_ids)
+        except Exception:
+            logger.error(
+                "purge_superseded_facts: superseded purge (or its catalog "
+                "disownment cascade) failed; skipping, ha_state purge below "
+                "still runs",
+                exc_info=True,
             )
-            deleted_ids = [row["id"] for row in deleted_rows]
-            await _cascade_catalog_disownment(conn, "facts", deleted_ids)
-        deleted = len(deleted_ids)
 
         # Purge orphaned ha_state facts — machine-generated snapshots that should
         # not persist now that the snapshot loop is disabled. Independent
         # transaction from the supersession purge above: a failure in one MUST
         # NOT prevent the other from proceeding (matches the original
         # two-independent-DELETEs behavior).
-        async with conn.transaction():
-            ha_deleted_rows = await conn.fetch(
-                "DELETE FROM facts WHERE predicate = 'ha_state' RETURNING id",
+        deleted_ha = 0
+        try:
+            async with conn.transaction():
+                ha_deleted_rows = await conn.fetch(
+                    "DELETE FROM facts WHERE predicate = 'ha_state' RETURNING id",
+                )
+                ha_ids = [row["id"] for row in ha_deleted_rows]
+                await _cascade_catalog_disownment(conn, "facts", ha_ids)
+            deleted_ha = len(ha_ids)
+        except Exception:
+            logger.error(
+                "purge_superseded_facts: ha_state purge (or its catalog disownment cascade) failed",
+                exc_info=True,
             )
-            ha_ids = [row["id"] for row in ha_deleted_rows]
-            await _cascade_catalog_disownment(conn, "facts", ha_ids)
-        deleted_ha = len(ha_ids)
 
     return {"deleted": deleted, "deleted_ha_state": deleted_ha}
