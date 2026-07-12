@@ -71,7 +71,7 @@ from butlers.config import ConfigError, load_config
 from butlers.core.failover_classifier import is_provider_auth_marker
 from butlers.core.healing.dispatch import CIRCUIT_BREAKER_FAILURE_STATUSES
 from butlers.core.healing.fingerprint import compute_fingerprint_from_report
-from butlers.core.model_routing import get_breaker_state
+from butlers.core.model_routing import get_breaker_states
 from butlers.core.qa.github_pr import GithubPrClient, get_pr_client, parse_pr_url
 from butlers.core.qa.models import QaFinding
 from butlers.core.qa.notes import InvestigationNotes
@@ -630,7 +630,7 @@ class QaSummary(BaseModel):
         description=(
             "Non-null when the QA staffer's own workhorse-tier model has an open "
             "dispatch-outcome circuit breaker (public.model_dispatch_attempts; see "
-            "butlers.core.model_routing.get_breaker_state) whose most recent "
+            "butlers.core.model_routing.get_breaker_states) whose most recent "
             "runtime_failure text looks credential/auth-related. Surfaces the "
             "watcher's own broken runtime CLI instead of reporting "
             "staffer_status='healthy' over a dead credential (bu-hmdqz.9)."
@@ -1362,7 +1362,7 @@ async def _detect_runtime_credential_alert(pool: asyncpg.Pool) -> str | None:
 
     Checks every workhorse-tier catalog entry QA is eligible to dispatch on
     (see ``_fetch_qa_workhorse_catalog_ids``): when one has an open
-    dispatch-outcome circuit breaker (``butlers.core.model_routing.get_breaker_state``,
+    dispatch-outcome circuit breaker (``butlers.core.model_routing.get_breaker_states``,
     fully derived from ``public.model_dispatch_attempts`` -- no live CLI probe,
     so this stays cheap on a frequently-polled endpoint) AND its most recent
     ``runtime_failure`` text matches a provider auth/credential marker (the
@@ -1370,25 +1370,49 @@ async def _detect_runtime_credential_alert(pool: asyncpg.Pool) -> str | None:
     revoked"), returns that failure text. Returns ``None`` when nothing is
     wrong, no eligible entry exists, or on query failure (non-fatal --
     this is a bonus verdict-clause signal, not a required field).
+
+    Batched to three fixed queries regardless of candidate count: one for the
+    eligible catalog ids, one ``get_breaker_states`` call for their breaker
+    state, and one ``ROW_NUMBER() OVER (PARTITION BY catalog_entry_id)`` query
+    for the latest ``runtime_failure`` text of the open entries -- no per-id
+    N+1 loop (bu-773mv).
     """
     try:
-        for catalog_id in await _fetch_qa_workhorse_catalog_ids(pool):
-            breaker = await get_breaker_state(pool, catalog_id)
-            if not breaker.open:
-                continue
-            row = await pool.fetchrow(
-                """
-                SELECT error_message, failure_reason
+        catalog_ids = await _fetch_qa_workhorse_catalog_ids(pool)
+        if not catalog_ids:
+            return None
+
+        breaker_states = await get_breaker_states(pool, catalog_ids)
+        # Preserve catalog-order first-match semantics: an open breaker on the
+        # first eligible entry with auth-shaped failure text wins.
+        open_ids = [cid for cid in catalog_ids if breaker_states[cid].open]
+        if not open_ids:
+            return None
+
+        rows = await pool.fetch(
+            """
+            SELECT catalog_entry_id, error_message, failure_reason
+            FROM (
+                SELECT
+                    catalog_entry_id,
+                    error_message,
+                    failure_reason,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY catalog_entry_id ORDER BY ts DESC
+                    ) AS rn
                 FROM public.model_dispatch_attempts
-                WHERE catalog_entry_id = $1 AND outcome = 'runtime_failure'
-                ORDER BY ts DESC
-                LIMIT 1
-                """,
-                catalog_id,
-            )
-            if row is None:
-                continue
-            reason = row["failure_reason"] or row["error_message"]
+                WHERE catalog_entry_id = ANY($1)
+                  AND outcome = 'runtime_failure'
+            ) ranked
+            WHERE rn = 1
+            """,
+            open_ids,
+        )
+        latest_failure_by_id = {
+            row["catalog_entry_id"]: (row["failure_reason"] or row["error_message"]) for row in rows
+        }
+        for catalog_id in open_ids:
+            reason = latest_failure_by_id.get(catalog_id)
             if reason and is_provider_auth_marker(reason):
                 return str(reason)[:500]
         return None
