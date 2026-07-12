@@ -876,7 +876,7 @@ async def _get_butler_schedule_costs(
                 # -- otherwise a multi-model schedule silently splits into
                 # under-ranked fragments and collides on the frontend's
                 # `${butler}-${schedule_name}` React key (bu-hmdqz.7).
-                merged: dict[str, dict[str, object]] = {}
+                merged: dict[str, dict] = {}
                 for entry in data.get("schedules", []):
                     name = entry.get("name", "")
                     model_id = entry.get("model", "")
