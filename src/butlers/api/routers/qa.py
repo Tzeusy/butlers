@@ -1334,8 +1334,13 @@ async def _fetch_qa_workhorse_catalog_ids(pool: asyncpg.Pool) -> list[uuid.UUID]
     just the top-priority alias: ``_detect_runtime_credential_alert`` treats an
     open breaker on ANY QA-eligible workhorse entry as worth surfacing, since
     same-tier failover would otherwise mask a single candidate's credential
-    outage from the operator entirely. Returns an empty list on query failure
-    (debug-logged, non-fatal).
+    outage from the operator entirely.
+
+    Ordered highest-effective-priority first (same tiebreak as
+    ``_fetch_model_from_catalog``: ``priority DESC, created_at ASC, id ASC``) so
+    ``_detect_runtime_credential_alert``'s first-match is deterministic and
+    surfaces the entry QA would actually spawn first. Returns an empty list on
+    query failure (debug-logged, non-fatal).
     """
     try:
         rows = await pool.fetch(
@@ -1348,6 +1353,9 @@ async def _fetch_qa_workhorse_catalog_ids(pool: asyncpg.Pool) -> list[uuid.UUID]
             WHERE
                 COALESCE(bmo.enabled, mc.enabled) = TRUE
                 AND COALESCE(bmo.complexity_tier, mc.complexity_tier) = 'workhorse'
+            ORDER BY COALESCE(bmo.priority, mc.priority) DESC,
+                     mc.created_at ASC,
+                     mc.id ASC
             """,
             _QA_BUTLER_NAME,
         )
@@ -1383,8 +1391,9 @@ async def _detect_runtime_credential_alert(pool: asyncpg.Pool) -> str | None:
             return None
 
         breaker_states = await get_breaker_states(pool, catalog_ids)
-        # Preserve catalog-order first-match semantics: an open breaker on the
-        # first eligible entry with auth-shaped failure text wins.
+        # catalog_ids is priority-ordered (see _fetch_qa_workhorse_catalog_ids),
+        # so first-match deterministically surfaces the highest-priority open
+        # entry with auth-shaped failure text -- the one QA would spawn first.
         open_ids = [cid for cid in catalog_ids if breaker_states[cid].open]
         if not open_ids:
             return None
