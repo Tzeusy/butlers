@@ -17,6 +17,7 @@ No real database required -- pools are mocked.
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -46,6 +47,13 @@ def _write_export(path: Path, records: list[dict]) -> None:
     with path.open("w", encoding="utf-8") as fh:
         for record in records:
             fh.write(json.dumps(record) + "\n")
+    # Stamp the export's mtime to the process clock. The staleness check
+    # (compute_decision_digest) compares datetime.now() against the file's
+    # kernel mtime; faketime offsets this process's now() but not the kernel,
+    # so a just-written file would otherwise read as 45/120 days stale. Tests
+    # that want a stale file re-utime it afterward.
+    now_ts = datetime.now(UTC).timestamp()
+    os.utime(path, (now_ts, now_ts))
 
 
 def _iso(dt: datetime) -> str:
