@@ -45,9 +45,10 @@ A source that cannot be read is tracked via DegradedSources and surfaces as
 the "degraded" state_class instead of silently composing "quiet"
 (classify.classify's docstring documents the exact priority).
 
-Design reference: openspec/changes/dashboard-overview-briefing/spec.md
-Design notes: openspec/changes/dashboard-overview-briefing/design.md
-Spec reference: openspec/specs/dashboard-domain-pages/briefing/spec.md
+Design reference: openspec/changes/archive/2026-05-15-dashboard-overview-briefing/
+    specs/dashboard-briefing/spec.md
+Design notes: openspec/changes/archive/2026-05-15-dashboard-overview-briefing/design.md
+Spec reference: openspec/specs/dashboard-briefing/spec.md
 """
 
 from __future__ import annotations
