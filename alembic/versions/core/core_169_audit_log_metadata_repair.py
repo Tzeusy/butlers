@@ -50,16 +50,30 @@ Batching
 --------
 349k rows is small enough that a single UPDATE would very likely be fine,
 but batches by primary-key range anyway (id BETWEEN start AND end, walking
-the poisoned band's [MIN(id), MAX(id)]) so no single statement holds a
-long-running write lock or generates one giant WAL burst against a table
-that is also receiving live concurrent INSERTs from every butler in the
-fleet. Each batch's row-level locks are released as its statement commits;
-concurrent appenders are never blocked since they only ever INSERT new
-rows, never touch the ones being repaired here. The batching loop itself
-runs entirely inside a single PL/pgSQL ``DO`` block (not a Python-level
-loop calling out per batch) -- this repo's migration test harness invokes
-migrations by capturing each ``op.execute()`` call's literal SQL text and
-replaying it against a real asyncpg pool (see
+the poisoned band's [MIN(id), MAX(id)]) so no single statement's plan/WAL
+record covers the whole poisoned band at once against a table that is also
+receiving live concurrent INSERTs from every butler in the fleet.
+
+Note this repo's ``env.py`` wraps an entire migration run in one
+``context.begin_transaction()`` (see ``run_migrations_online``), and a
+``DO`` block cannot issue ``COMMIT`` -- so batching here does NOT release
+row-level locks between batches or provide partial-progress checkpoints;
+all locks acquired by every batch (across this SQL block and the
+``dismissed_issues`` cleanup below) are held until the migration's single
+outer transaction commits at the end, and a failure at any point rolls the
+whole repair back atomically, not just the in-flight batch. What batching
+still buys: each individual UPDATE statement only plans/touches one 5000-row
+slice rather than the full 349k-row band, keeping any one statement's
+working set and WAL burst small. Concurrent appenders are never blocked
+regardless of transaction length, since they only ever INSERT new rows and
+never touch the existing ones being repaired here (row-level locks from an
+UPDATE do not contend with unrelated INSERTs).
+
+The batching loop itself runs entirely inside a single PL/pgSQL ``DO``
+block (not a Python-level loop calling out per batch) -- this repo's
+migration test harness invokes migrations by capturing each
+``op.execute()`` call's literal SQL text and replaying it against a real
+asyncpg pool (see
 ``tests/migrations/test_healing_breaker_reset_backfill_migration.py`` for
 the established pattern this follows), so all control flow needed at
 migration-apply time must live in the SQL text itself.
@@ -160,17 +174,20 @@ REPAIR_METADATA_SQL = """
         WHILE v_batch_start <= v_max_id LOOP
             v_batch_end := LEAST(v_batch_start + v_batch_size - 1, v_max_id);
 
-            WITH repaired AS (
-                UPDATE public.audit_log
-                SET metadata = CASE
-                    WHEN jsonb_typeof(
-                        pg_temp.core_169_try_parse_jsonb(metadata #>> '{}')
-                    ) = 'object'
-                        THEN pg_temp.core_169_try_parse_jsonb(metadata #>> '{}')
-                    ELSE jsonb_build_object('_raw', metadata #>> '{}')
-                END
+            WITH parsed AS (
+                SELECT id, pg_temp.core_169_try_parse_jsonb(metadata #>> '{}') AS val
+                FROM public.audit_log
                 WHERE id BETWEEN v_batch_start AND v_batch_end
                   AND jsonb_typeof(metadata) = 'string'
+            ),
+            repaired AS (
+                UPDATE public.audit_log
+                SET metadata = CASE
+                    WHEN jsonb_typeof(parsed.val) = 'object' THEN parsed.val
+                    ELSE jsonb_build_object('_raw', audit_log.metadata #>> '{}')
+                END
+                FROM parsed
+                WHERE audit_log.id = parsed.id
                 RETURNING 1
             )
             SELECT count(*) INTO v_batch_repaired FROM repaired;

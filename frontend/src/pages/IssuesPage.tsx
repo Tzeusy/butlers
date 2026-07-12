@@ -429,7 +429,7 @@ export default function IssuesPage() {
         occurrences={occurrencesQuery.data?.data ?? []}
         occurrencesLoading={occurrencesQuery.isLoading}
         occurrencesError={occurrencesQuery.isError}
-        occurrencesTotal={occurrencesQuery.data?.meta?.total}
+        occurrencesTotal={occurrencesQuery.data?.meta.total}
         onLoadMoreOccurrences={handleLoadMoreOccurrences}
         selectedIssueKey={selectedIssueKey}
       />
