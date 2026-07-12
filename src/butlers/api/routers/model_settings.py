@@ -1638,7 +1638,11 @@ async def get_dispatch_attempts(
             params: list[Any] = [outcome]
             if reason_prefix is not None:
                 params.append(reason_prefix)
-                where_clauses.append(f"failure_reason LIKE ${len(params)} || '%'")
+                # True prefix match, not a LIKE pattern -- reason_prefix is caller-supplied
+                # (query param), and `%`/`_` are LIKE wildcards. `left(...) = $n` avoids
+                # having to escape those characters and keeps the "prefix" contract exact.
+                n = len(params)
+                where_clauses.append(f"left(failure_reason, length(${n})) = ${n}")
             if since is not None:
                 params.append(since)
                 where_clauses.append(f"ts >= ${len(params)}")

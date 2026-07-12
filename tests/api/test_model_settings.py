@@ -821,7 +821,7 @@ async def test_dispatch_attempts_outcome_mode_reason_prefix_and_since_filter(app
 
     fetch_call = mock_pool.fetch.call_args
     sql = fetch_call.args[0]
-    assert "failure_reason LIKE $2 || '%'" in sql
+    assert "left(failure_reason, length($2)) = $2" in sql
     assert "ts >= $3" in sql
     assert "ORDER BY ts ASC" in sql
     assert fetch_call.args[1] == "quota_skip"
@@ -831,7 +831,7 @@ async def test_dispatch_attempts_outcome_mode_reason_prefix_and_since_filter(app
 
     fetchval_call = mock_pool.fetchval.call_args
     count_sql = fetchval_call.args[0]
-    assert "failure_reason LIKE $2 || '%'" in count_sql
+    assert "left(failure_reason, length($2)) = $2" in count_sql
     assert "ts >= $3" in count_sql
     # The count query binds outcome/reason_prefix/since but NOT limit.
     assert len(fetchval_call.args) == 4
