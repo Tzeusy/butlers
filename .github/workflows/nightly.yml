@@ -156,9 +156,14 @@ jobs:
           # signal survive intact. Scoped to this leg only (CLI flag, not a
           # pyproject.toml addopts change) so the required `check`/`nightly`
           # jobs are unaffected.
+          # bu-sjf9q: --timeout-method=thread interrupts hangs that the default
+          # signal method cannot (non-signal-interruptible waits in fixture or
+          # session teardown -- the cause of the 99% hang that outlasted the
+          # 300s signal timeout). -rf prints the named-failure summary; each
+          # failure's name survives even a mid-run cancel.
           LD_PRELOAD="${LIBFAKETIME_SO}" FAKETIME="${{ matrix.offset }}" \
-            uv run pytest tests/ roster/ -q --tb=short --ignore=tests/e2e \
+            uv run pytest tests/ roster/ -v -rf --tb=short --ignore=tests/e2e \
             -m "not bench and not perf and not nightly" -n auto --dist loadfile \
-            --timeout=300
+            --timeout=300 --timeout-method=thread
         env:
           TESTCONTAINERS_RYUK_DISABLED: "true"
