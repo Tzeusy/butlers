@@ -196,7 +196,8 @@ def _fingerprint(stale_sources: tuple[StaleCalendarSource, ...]) -> str:
     migration-chain drift.
     """
     canonical = "|".join(
-        f"{s.db_butler}:{s.source_key}" for s in sorted(stale_sources, key=lambda s: s.source_key)
+        f"{s.db_butler}:{s.source_key}"
+        for s in sorted(stale_sources, key=lambda s: (s.db_butler, s.source_key))
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

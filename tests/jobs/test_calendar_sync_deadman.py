@@ -251,6 +251,31 @@ def test_fingerprint_stable_regardless_of_ordering():
     assert len(fp1) == 64  # sha256 hex digest
 
 
+def test_fingerprint_stable_when_source_key_collides_across_butlers():
+    """Two different db_butlers can share the same source_key (e.g. both run
+    ``provider:google:primary``). Sorting by source_key alone leaves their
+    relative order dependent on input order (Python sort is stable); the
+    fingerprint must sort by (db_butler, source_key) to stay deterministic.
+    """
+    a = StaleCalendarSource(
+        source_key="provider:google:primary",
+        db_butler="general",
+        butler_name=None,
+        last_synced_at=None,
+    )
+    b = StaleCalendarSource(
+        source_key="provider:google:primary",
+        db_butler="relationship",
+        butler_name=None,
+        last_synced_at=None,
+    )
+
+    fp1 = _fingerprint((a, b))
+    fp2 = _fingerprint((b, a))
+
+    assert fp1 == fp2
+
+
 def test_fingerprint_changes_when_composition_changes():
     a = StaleCalendarSource(
         source_key="provider:google:a", db_butler="general", butler_name=None, last_synced_at=None
