@@ -90,8 +90,12 @@ _WILDCARD = "\x00"
 
 # Guards the scanner itself: if fewer than this many apiFetch call sites
 # resolve, the parser has regressed (silently) and every assertion below
-# would be vacuous. At the time of writing, 443/443 resolve.
-_MIN_RESOLVED_FUNCTIONS = 400
+# would be vacuous. At the time of writing, 443/443 resolve. Kept close to
+# that count (not a round number like 400) so a single newly-unparseable
+# call site — one function silently dropped by a future authoring pattern —
+# trips this guard instead of hiding inside slack (PR #3173 review: a wide
+# buffer here would let coverage rot without failing).
+_MIN_RESOLVED_FUNCTIONS = 430
 
 # ---------------------------------------------------------------------------
 # Known, tracked contract exceptions
@@ -227,8 +231,17 @@ def _extract_functions(text: str) -> dict[str, str]:
         try:
             paren_close = _find_matching(text, paren_open, "(", ")")
             brace_open = text.index("{", paren_close + 1)
-            brace_close = _find_matching(text, brace_open, "{", "}")
         except (ValueError, IndexError):
+            continue
+        # A bodyless declaration (TS overload signature / ambient `declare
+        # function`) ends in `;` before any `{` of its own — the next `{`
+        # `text.index` finds belongs to a *later* declaration. Skip rather
+        # than misattribute that unrelated body to this name.
+        if ";" in text[paren_close + 1 : brace_open]:
+            continue
+        try:
+            brace_close = _find_matching(text, brace_open, "{", "}")
+        except ValueError:
             continue
         out[name] = text[brace_open + 1 : brace_close]
     return out
@@ -767,3 +780,34 @@ def test_scan_finds_the_circles_groups_call(client_ts_text: str):
     assert "getGroups" in contracts
     assert contracts["getGroups"].paths == ["/relationship/groups"]
     assert contracts["getGroups"].query_names >= {"offset", "limit"}
+
+
+def test_extract_functions_skips_bodyless_overload_signature():
+    """Regression guard (PR #3173 review): a TS overload signature or
+    ambient `declare function` ends in `;` before any `{` of its own. Naively
+    scanning forward for the next `{` would steal the *following, unrelated*
+    function's body and misattribute it under the bodyless name — e.g. a
+    dead `alpha` overload silently inheriting `beta`'s real apiFetch call,
+    fabricating a contract entry for an endpoint `alpha` never actually
+    calls. The bodyless signature must be skipped entirely, and the
+    following function must resolve to its own body only."""
+    text = (
+        "function alpha(x: string): void;\n"
+        "function beta(y: number): void {\n"
+        "  apiFetch('/beta-path');\n"
+        "}\n"
+    )
+    functions = _extract_functions(text)
+    assert "alpha" not in functions, "bodyless 'alpha' must not resolve — it has no body of its own"
+    assert functions["beta"] == "\n  apiFetch('/beta-path');\n"
+
+
+def test_extract_local_consts_stops_at_statement_semicolon_not_body_end():
+    """The const extractor terminates on the first top-level `;`. Confirm it
+    does not run past the true end of a single-line const assignment into
+    unrelated statements that follow in the same function body (client.ts
+    consistently semicolon-terminates local consts feeding apiFetch calls;
+    see module docstring for the documented scope limit)."""
+    body = 'const path = someCond ? "/a" : "/b"; apiFetch(path);'
+    consts = _extract_local_consts(body)
+    assert consts["path"] == 'someCond ? "/a" : "/b"'
