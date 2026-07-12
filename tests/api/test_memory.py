@@ -425,6 +425,9 @@ class _StatsPool:
     (None when that butler has no run). *schema* answers the catalog-drift
     gauge's ``SELECT current_schema()`` probe (defaults ``None``, which the
     gauge treats as "no schema resolved" — same as an omitted memory module).
+    *drift* answers the catalog-drift gauge's single combined
+    ``public.memory_catalog`` fetchrow with live/stale/facts_drifted/
+    rules_drifted (defaults all 0).
     """
 
     def __init__(
@@ -433,10 +436,12 @@ class _StatsPool:
         counts: dict[str, int] | None = None,
         last_runs: dict[str, dict | None] | None = None,
         schema: str | None = None,
+        drift: dict[str, int] | None = None,
     ) -> None:
         self._counts = counts or {}
         self._last_runs = last_runs or {}
         self._schema = schema
+        self._drift = drift or {}
 
     async def fetchval(self, query: str, *args: object) -> int:
         if "current_schema()" in query:
@@ -450,6 +455,13 @@ class _StatsPool:
         if "consolidation_runs" in query:
             butler = args[0]
             return self._last_runs.get(butler)
+        if "memory_catalog" in query:
+            return {
+                "live": self._drift.get("live", 0),
+                "stale": self._drift.get("stale", 0),
+                "facts_drifted": self._drift.get("facts_drifted", 0),
+                "rules_drifted": self._drift.get("rules_drifted", 0),
+            }
         return None
 
 
@@ -646,11 +658,11 @@ class _CatalogQueryRaisingPool:
     async def fetchval(self, query: str, *args: object):
         if "current_schema()" in query:
             return self._schema
-        if "memory_catalog" in query:
-            raise self._exc
         return 0
 
     async def fetchrow(self, query: str, *args: object) -> dict | None:
+        if "memory_catalog" in query:
+            raise self._exc
         return None
 
 
@@ -660,21 +672,11 @@ async def test_stats_catalog_drift_gauge_aggregates_across_pools(app):
         {
             "atlas": _StatsPool(
                 schema="atlas",
-                counts={
-                    "WHERE source_schema = $1 AND invalid_at IS NULL": 10,
-                    "WHERE source_schema = $1 AND invalid_at IS NOT NULL": 2,
-                    "source_table = 'facts'": 1,
-                    "source_table = 'rules'": 1,
-                },
+                drift={"live": 10, "stale": 2, "facts_drifted": 1, "rules_drifted": 1},
             ),
             "finance": _StatsPool(
                 schema="finance",
-                counts={
-                    "WHERE source_schema = $1 AND invalid_at IS NULL": 5,
-                    "WHERE source_schema = $1 AND invalid_at IS NOT NULL": 1,
-                    "source_table = 'facts'": 0,
-                    "source_table = 'rules'": 2,
-                },
+                drift={"live": 5, "stale": 1, "facts_drifted": 0, "rules_drifted": 2},
             ),
         }
     )
@@ -704,9 +706,7 @@ async def test_stats_catalog_drift_omitted_when_schema_unresolved(app):
             "switchboard": _StatsPool(schema=None),
             "atlas": _StatsPool(
                 schema="atlas",
-                counts={
-                    "WHERE source_schema = $1 AND invalid_at IS NULL": 3,
-                },
+                drift={"live": 3},
             ),
         }
     )
@@ -734,7 +734,7 @@ async def test_stats_catalog_drift_flags_genuine_failure(app):
         {
             "atlas": _StatsPool(
                 schema="atlas",
-                counts={"WHERE source_schema = $1 AND invalid_at IS NULL": 3},
+                drift={"live": 3},
             ),
             "finance": _CatalogQueryRaisingPool(
                 schema="finance", exc=RuntimeError("connection reset by peer")
@@ -769,7 +769,7 @@ async def test_stats_catalog_drift_not_flagged_for_missing_memory_schema(app):
         {
             "atlas": _StatsPool(
                 schema="atlas",
-                counts={"WHERE source_schema = $1 AND invalid_at IS NULL": 3},
+                drift={"live": 3},
             ),
             "switchboard": _CatalogQueryRaisingPool(
                 schema="switchboard", exc=UndefinedTableError("relation does not exist")

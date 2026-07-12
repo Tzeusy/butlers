@@ -734,57 +734,39 @@ async def get_catalog_drift_counts(
           next reverse-reconciliation pass would mark stale. Non-zero means
           the catalog is currently serving disowned memories; it should
           trend toward zero as the backfill job's reconciliation phase runs.
+
+    This endpoint fans out across every butler pool (``GET
+    /api/memory/stats``), so a single combined query (via ``FILTER``) keeps
+    the round-trip count per pool at one instead of four.
     """
-    live = (
-        await pool.fetchval(
-            "SELECT count(*) FROM public.memory_catalog"
-            " WHERE source_schema = $1 AND invalid_at IS NULL",
-            source_schema,
-        )
-        or 0
+    row = await pool.fetchrow(
+        """
+        SELECT
+            count(*) FILTER (WHERE mc.invalid_at IS NULL) AS live,
+            count(*) FILTER (WHERE mc.invalid_at IS NOT NULL) AS stale,
+            count(*) FILTER (
+                WHERE mc.source_table = 'facts'
+                  AND mc.invalid_at IS NULL
+                  AND (f.id IS NULL OR f.validity NOT IN ('active', 'fading'))
+            ) AS facts_drifted,
+            count(*) FILTER (
+                WHERE mc.source_table = 'rules'
+                  AND mc.invalid_at IS NULL
+                  AND (r.id IS NULL OR COALESCE(r.metadata ->> 'forgotten', 'false') = 'true')
+            ) AS rules_drifted
+        FROM public.memory_catalog mc
+        LEFT JOIN facts f ON mc.source_table = 'facts' AND f.id = mc.source_id
+        LEFT JOIN rules r ON mc.source_table = 'rules' AND r.id = mc.source_id
+        WHERE mc.source_schema = $1
+        """,
+        source_schema,
     )
-    stale = (
-        await pool.fetchval(
-            "SELECT count(*) FROM public.memory_catalog"
-            " WHERE source_schema = $1 AND invalid_at IS NOT NULL",
-            source_schema,
-        )
-        or 0
-    )
-    facts_drifted = (
-        await pool.fetchval(
-            """
-            SELECT count(*)
-            FROM public.memory_catalog mc
-            LEFT JOIN facts f ON f.id = mc.source_id
-            WHERE mc.source_schema = $1
-              AND mc.source_table = 'facts'
-              AND mc.invalid_at IS NULL
-              AND (f.id IS NULL OR f.validity NOT IN ('active', 'fading'))
-            """,
-            source_schema,
-        )
-        or 0
-    )
-    rules_drifted = (
-        await pool.fetchval(
-            """
-            SELECT count(*)
-            FROM public.memory_catalog mc
-            LEFT JOIN rules r ON r.id = mc.source_id
-            WHERE mc.source_schema = $1
-              AND mc.source_table = 'rules'
-              AND mc.invalid_at IS NULL
-              AND (r.id IS NULL OR COALESCE(r.metadata ->> 'forgotten', 'false') = 'true')
-            """,
-            source_schema,
-        )
-        or 0
-    )
+    if not row:
+        return {"live": 0, "stale": 0, "drifted": 0}
     return {
-        "live": int(live),
-        "stale": int(stale),
-        "drifted": int(facts_drifted) + int(rules_drifted),
+        "live": int(row["live"] or 0),
+        "stale": int(row["stale"] or 0),
+        "drifted": int(row["facts_drifted"] or 0) + int(row["rules_drifted"] or 0),
     }
 
 
