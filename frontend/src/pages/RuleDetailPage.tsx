@@ -61,7 +61,7 @@ export default function RuleDetailPage() {
   // a forgotten rule can still be reached (direct link, ?forgotten=true
   // audit query). Label it explicitly rather than leaving it distinguishable
   // only via the raw metadata block below.
-  const forgotten = rule?.metadata?.forgotten === true;
+  const forgotten = rule?.metadata?.["forgotten"] === true;
 
   const provenance =
     rule?.source_episode_id != null ? (
