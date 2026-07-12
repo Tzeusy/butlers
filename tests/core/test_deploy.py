@@ -21,6 +21,7 @@ from butlers.core.deploy import (
     _clean_compose_env,
     _compose_base_args,
     build_image,
+    materialize_beads_export,
     recreate_services,
     resolve_git_sha,
     run_deploy,
@@ -159,6 +160,45 @@ class TestRunMigrations:
         assert exc_info.value.phase == "migrate"
 
 
+class TestMaterializeBeadsExport:
+    """bu-hmdqz.6: best-effort `bd export` refresh before recreate_services."""
+
+    def test_success_exports_to_repo_root_beads_dir(self, monkeypatch):
+        captured = {}
+
+        def fake_run(cmd, cwd, capture_output, text, timeout):
+            captured["cmd"] = cmd
+            captured["cwd"] = cwd
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        result = materialize_beads_export(_config())
+        assert result is True
+        assert captured["cmd"] == ["bd", "export", "-o", "/repo/.beads/issues.export.jsonl"]
+        assert captured["cwd"] == Path("/repo")
+
+    def test_missing_bd_binary_returns_false_not_raises(self, monkeypatch):
+        def fake_run(cmd, cwd, capture_output, text, timeout):
+            raise FileNotFoundError("bd not found")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        assert materialize_beads_export(_config()) is False
+
+    def test_timeout_returns_false_not_raises(self, monkeypatch):
+        def fake_run(cmd, cwd, capture_output, text, timeout):
+            raise subprocess.TimeoutExpired(cmd, timeout)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        assert materialize_beads_export(_config()) is False
+
+    def test_nonzero_exit_returns_false_not_raises(self, monkeypatch):
+        def fake_run(cmd, cwd, capture_output, text, timeout):
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="dolt: connection refused")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        assert materialize_beads_export(_config()) is False
+
+
 class TestRecreateServices:
     def test_up_dash_d_remove_orphans_no_profile(self, monkeypatch):
         captured = {}
@@ -249,6 +289,11 @@ class TestRunDeploy:
 
             return _fn
 
+        def _export_ok(config):
+            # Best-effort — never raises, so it is not a valid `fail_at` target.
+            calls.append("beads-export")
+            return True
+
         async def _wait_ok(config):
             calls.append("health-check")
             if fail_at == "health-check":
@@ -256,6 +301,7 @@ class TestRunDeploy:
 
         monkeypatch.setattr("butlers.core.deploy.build_image", make("build"))
         monkeypatch.setattr("butlers.core.deploy.run_migrations", make("migrate"))
+        monkeypatch.setattr("butlers.core.deploy.materialize_beads_export", _export_ok)
         monkeypatch.setattr("butlers.core.deploy.recreate_services", make("recreate"))
         monkeypatch.setattr("butlers.core.deploy.wait_for_health", _wait_ok)
         monkeypatch.setattr("butlers.core.deploy.resolve_git_sha", lambda repo_root: "deadbeef")
@@ -272,7 +318,7 @@ class TestRunDeploy:
 
         result = await run_deploy(_config(), pool=pool)
 
-        assert calls == ["build", "migrate", "recreate", "health-check"]
+        assert calls == ["build", "migrate", "beads-export", "recreate", "health-check"]
         assert result.result == "success"
         assert result.git_sha == "deadbeef"
         assert result.migration_head == "core_163"
