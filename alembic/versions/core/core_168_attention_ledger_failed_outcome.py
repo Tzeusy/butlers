@@ -1,16 +1,15 @@
 """attention_ledger: add 'failed' to the outcome CHECK constraint.
 
 Revision ID: core_168
-Revises: core_166
+Revises: core_167
 Create Date: 2026-07-12 00:00:00.000000
 
 Numbering note: chain head at authoring time was core_166. PR #3170
-(agent/bu-hmdqz.2) is in flight adding core_167 off the same head -- this
+(agent/bu-hmdqz.2) was in flight adding core_167 off the same head -- this
 revision reserves core_168 rather than colliding on core_167, per the repo's
-duplicate-revision-collision lore (core_160's own renumbering saga). Whichever
-of the two PRs merges second must rechain its ``down_revision`` to the other's
-new head before merge -- this file's ``down_revision`` may need to become
-``core_167`` if that PR lands first.
+duplicate-revision-collision lore (core_160's own renumbering saga). PR #3170
+merged first (core_167 is now on origin/main), so this revision rechains its
+``down_revision`` onto ``core_167`` to keep the ``core`` chain single-headed.
 
 Move 3/15 (2026-07-12 JARVIS pursuit) -- bu-hmdqz.3.
 
@@ -35,7 +34,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "core_168"
-down_revision = "core_166"
+down_revision = "core_167"
 branch_labels = None
 depends_on = None
 
