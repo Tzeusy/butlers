@@ -1411,7 +1411,6 @@ function FleetHaltBanner() {
         className="attention-row flex items-center gap-3 px-4 py-3"
         data-tone="red"
         role="alert"
-        aria-label="Monthly ceiling reached -- dispatches denied"
       >
         <span className="shrink-0 h-2 w-2 rounded-full bg-[var(--red)]" aria-hidden />
         <p className="text-sm flex-1">

@@ -1145,7 +1145,7 @@ describe("SpendPage — fleet-halt banner (bu-7o89u.3)", () => {
     expect(banner.textContent ?? "").toContain("Monthly ceiling reached")
     expect(banner.textContent ?? "").toContain("12")
     expect(banner.textContent ?? "").toContain("4")
-    expect(screen.getByRole("alert", { name: /Monthly ceiling reached/ })).toBeTruthy()
+    expect(screen.getByRole("alert")).toBeTruthy()
   })
 
   it("degraded: a failed attempts source renders a note, never a silent 'no halt'", async () => {
