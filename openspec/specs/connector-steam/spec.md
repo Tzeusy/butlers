@@ -177,7 +177,8 @@ The connector SHALL map each detected Steam delta to an `ingest.v1` envelope wit
   - `event.external_event_id = "steam:status:<steam_id>:<poll_timestamp>"`
   - `payload.normalized_text` = human-readable summary (e.g., "Now playing Dota 2" or "Went offline")
   - `payload.raw` = `null`
-  - `control.ingestion_tier` = `"metadata"` so the Switchboard persists the presence delta without LLM classification or proactive routing
+  - `control.ingestion_tier` = `"metadata"` so the Switchboard persists the presence delta as a metadata-only reference (`payload.raw = null`) — this controls *persistence shape only* and, on its own, does NOT bypass LLM classification or proactive routing
+  - The actual classification/routing bypass is a `scope='global'`, `rule_type='substring'` `ingestion_rules` row matching the `"steam:status:"` prefix of `external_event_id` (seeded by migration `025_switchboard_steam_status_skip.py`; see `ingestion-policy` spec's "Gaming (Steam) connector populates envelope" scenario), evaluated by `IngestionPolicyEvaluator(scope='global')` before any LLM session spawns
 
 #### Scenario: Game purchase event mapping
 
@@ -255,7 +256,7 @@ The connector SHALL submit all Steam envelopes with the registered `gaming`/`ste
 - **WHEN** the connector constructs an ingest.v1 envelope
 - **THEN** `control.policy_tier` SHALL be `"default"` (user's own activity, no priority escalation)
 - **AND** play session, achievement unlock, game purchase, and friend-change envelopes SHALL set `control.ingestion_tier = "full"` (Tier 1 — include complete `payload.raw`)
-- **AND** online status-change envelopes SHALL set `control.ingestion_tier = "metadata"` (Tier 2 — persist the presence summary without routing to a butler session)
+- **AND** online status-change envelopes SHALL set `control.ingestion_tier = "metadata"` (Tier 2 — persist the presence summary; routing to a butler session is independently bypassed by the seeded global `ingestion_rules` row described in the "Online status change event mapping" scenario above, not by this tier alone)
 
 #### Scenario: Idempotency key format
 
