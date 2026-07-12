@@ -408,20 +408,25 @@ function SpendPanel({ onNavigate }: { onNavigate: (route: string) => void }) {
             Retry →
           </button>
         </p>
-      ) : data?.data?.ceiling_source_error ? (
+      ) : data?.data.ceiling_source_error ? (
         // Ledger/gate source degraded (bu-7o89u.1): mtd_usd is a fabricated
         // 0, not a genuine "$0 this month" reading -- never render it.
-        <SourceDegradedNote
-          label="Spend MTD"
-          detail="ledger unavailable"
-          onRetry={() => {
-            void refetch();
-          }}
-        />
+        // Stop propagation so the Retry button doesn't bubble into
+        // PanelShell's onClick and navigate to /spend instead of retrying.
+        // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- not itself interactive; onClick only swallows bubbling so clicking Retry doesn't trigger the ancestor PanelShell's click-to-navigate.
+        <div onClick={(e) => e.stopPropagation()}>
+          <SourceDegradedNote
+            label="Spend MTD"
+            detail="ledger unavailable"
+            onRetry={() => {
+              void refetch();
+            }}
+          />
+        </div>
       ) : (
         <div className="flex items-baseline gap-2">
           <span className="text-[22px] font-medium tabular-nums leading-none">
-            ${(data?.data?.mtd_usd ?? 0).toFixed(2)}
+            ${(data?.data.mtd_usd ?? 0).toFixed(2)}
           </span>
           <span className="text-xs text-muted-foreground">MTD</span>
         </div>

@@ -458,7 +458,12 @@ async def _build_console_payload(
     # _get_spend_mtd sets ceiling and spend_mtd together (both real or both
     # None on failure), so ceiling is not None here implies spend_mtd is a
     # real, ledger-priced float -- never a fabricated placeholder.
-    if ceiling is not None and ceiling > 0 and projection_confidence != "low":
+    if (
+        ceiling is not None
+        and spend_mtd is not None
+        and ceiling > 0
+        and projection_confidence != "low"
+    ):
         ratio = spend_mtd / ceiling
         if ratio >= 0.90:
             pct = int(ratio * 100)
