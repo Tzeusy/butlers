@@ -313,25 +313,65 @@ breaker_open AS (
 """
 
 
+def _breaker_recent_cte(*, filter_by_ids: bool) -> str:
+    """Build the ``breaker_recent``/``breaker_open`` CTE pair.
+
+    ``filter_by_ids`` pushes a ``catalog_entry_id`` predicate into
+    ``breaker_recent`` itself so Postgres can use the
+    ``idx_model_dispatch_attempts_catalog_ts (catalog_entry_id, ts DESC)``
+    index instead of windowing the entire ``model_dispatch_attempts`` table
+    on every call. Only safe when the caller supplies concrete entry ids
+    (single-entry and batch-with-ids callers); the resolver's own
+    ``_BREAKER_OPEN_CTE`` genuinely needs every entry, so it stays unfiltered.
+    """
+    id_filter = "AND catalog_entry_id = ANY($1)" if filter_by_ids else ""
+    return f"""
+    breaker_recent AS (
+        SELECT
+            catalog_entry_id,
+            outcome,
+            ts,
+            ROW_NUMBER() OVER (PARTITION BY catalog_entry_id ORDER BY ts DESC) AS rn
+        FROM public.model_dispatch_attempts
+        WHERE outcome IN ('runtime_failure', 'success')
+        {id_filter}
+    ),
+    breaker_open AS (
+        SELECT catalog_entry_id
+        FROM breaker_recent
+        WHERE rn <= {_BREAKER_FAILURE_THRESHOLD}
+        GROUP BY catalog_entry_id
+        HAVING
+            COUNT(*) >= {_BREAKER_FAILURE_THRESHOLD}
+            AND bool_and(outcome = 'runtime_failure')
+            AND now() - MAX(ts) < interval '{_BREAKER_HALF_OPEN_COOLDOWN_MINUTES} minutes'
+    )
+    """
+
+
 async def get_breaker_state(pool: asyncpg.Pool, catalog_entry_id: uuid.UUID) -> BreakerState:
     """Return the live derived breaker state for one catalog entry.
 
     Used by the attention-ledger push (``maybe_push_breaker_open_attention``)
     and by the Models tab list endpoint to surface the routing consequence
     ("excluded by breaker") without duplicating the threshold/cooldown logic
-    baked into ``_BREAKER_OPEN_CTE``.
+    baked into ``_BREAKER_OPEN_CTE``. Filters ``breaker_recent`` to this one
+    entry so the query stays index-bound
+    (``idx_model_dispatch_attempts_catalog_ts``) regardless of dispatch
+    history size.
     """
+    cte = _breaker_recent_cte(filter_by_ids=True)
     row = await pool.fetchrow(
         f"""
-        WITH {_BREAKER_OPEN_CTE}
+        WITH {cte}
         SELECT
             (SELECT COUNT(*) FROM breaker_recent
-             WHERE catalog_entry_id = $1 AND rn <= {_BREAKER_FAILURE_THRESHOLD}
+             WHERE rn <= {_BREAKER_FAILURE_THRESHOLD}
                AND outcome = 'runtime_failure') AS consecutive_failures,
-            (SELECT MAX(ts) FROM breaker_recent WHERE catalog_entry_id = $1) AS last_attempt_at,
-            EXISTS (SELECT 1 FROM breaker_open WHERE catalog_entry_id = $1) AS is_open
+            (SELECT MAX(ts) FROM breaker_recent) AS last_attempt_at,
+            EXISTS (SELECT 1 FROM breaker_open) AS is_open
         """,
-        catalog_entry_id,
+        [catalog_entry_id],
     )
     if row is None:
         return BreakerState(open=False, consecutive_failures=0, last_attempt_at=None)
@@ -349,11 +389,15 @@ async def get_breaker_states(
 
     Used by ``GET /api/settings/models`` to annotate every row without an
     N+1 query. When ``catalog_entry_ids`` is ``None``, returns state for every
-    entry that has any recent (runtime_failure|success) dispatch history.
+    entry that has any recent (runtime_failure|success) dispatch history
+    (unfiltered scan — no concrete id set to push down). When
+    ``catalog_entry_ids`` is provided, filters ``breaker_recent`` to those ids
+    so Postgres can use ``idx_model_dispatch_attempts_catalog_ts`` instead of
+    windowing the whole table on every Models tab page load.
     """
-    rows = await pool.fetch(
-        f"""
-        WITH {_BREAKER_OPEN_CTE}
+    cte = _breaker_recent_cte(filter_by_ids=catalog_entry_ids is not None)
+    query = f"""
+        WITH {cte}
         SELECT
             br.catalog_entry_id,
             COUNT(*) FILTER (WHERE br.outcome = 'runtime_failure') AS consecutive_failures,
@@ -364,6 +408,10 @@ async def get_breaker_states(
         WHERE br.rn <= {_BREAKER_FAILURE_THRESHOLD}
         GROUP BY br.catalog_entry_id, bo.catalog_entry_id
         """
+    rows = (
+        await pool.fetch(query, catalog_entry_ids)
+        if catalog_entry_ids is not None
+        else await pool.fetch(query)
     )
     states = {
         row["catalog_entry_id"]: BreakerState(
