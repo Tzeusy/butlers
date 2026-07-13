@@ -21,6 +21,7 @@ from butlers.core.deploy import (
     DeployError,
     _clean_compose_env,
     _compose_base_args,
+    _head_vs_origin_main,
     build_image,
     materialize_beads_export,
     preflight_check,
@@ -573,3 +574,23 @@ class TestPreflightCheck:
         _git(main, "commit", "-m", "local unmerged commit")
         overrides = preflight_check(_config(repo_root=main, allow_dirty_root=True))
         assert any("not an ancestor of origin/main" in reason for reason in overrides)
+
+    def test_non_git_directory_rejected_with_clear_message(self, tmp_path):
+        """A plain directory with no .git gets an explicit "not a git repository"
+        error, not a confusing ancestry message from a failed git subprocess."""
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        with pytest.raises(DeployError) as exc_info:
+            preflight_check(_config(repo_root=plain))
+        assert exc_info.value.phase == "preflight"
+        assert "not a git repository" in str(exc_info.value)
+
+    def test_ancestry_check_fails_closed_when_git_unavailable(self, monkeypatch):
+        """If the git binary cannot execute, ancestry is unconfirmed → fail
+        closed (not an ancestor, zeroed counts), never an unhandled traceback."""
+
+        def _boom(*args, **kwargs):
+            raise OSError("git: command not found")
+
+        monkeypatch.setattr(subprocess, "run", _boom)
+        assert _head_vs_origin_main(Path("/repo")) == (False, 0, 0)

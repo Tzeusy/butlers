@@ -227,29 +227,38 @@ def _head_vs_origin_main(repo_root: Path) -> tuple[bool, int, int]:
     commits on main not on HEAD), included in the rejection message so an
     operator can see *how* divergent the checkout is. If either git invocation
     fails (e.g. ``origin/main`` ref absent), ancestry cannot be confirmed and
-    is reported ``False`` (fail closed), with zeroed counts.
+    is reported ``False`` (fail closed), with zeroed counts. A git binary that
+    is missing or cannot execute (``OSError``) is caught here and likewise
+    reported as ``(False, 0, 0)`` — a preflight guard must fail closed, never
+    crash the deploy with an unhandled traceback.
     """
-    is_ancestor = (
-        subprocess.run(
-            ["git", "merge-base", "--is-ancestor", "HEAD", "origin/main"],
+    try:
+        is_ancestor = (
+            subprocess.run(
+                ["git", "merge-base", "--is-ancestor", "HEAD", "origin/main"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+            ).returncode
+            == 0
+        )
+        ahead = behind = 0
+        counts = subprocess.run(
+            ["git", "rev-list", "--left-right", "--count", "origin/main...HEAD"],
             cwd=repo_root,
             capture_output=True,
             text=True,
-        ).returncode
-        == 0
-    )
-    ahead = behind = 0
-    counts = subprocess.run(
-        ["git", "rev-list", "--left-right", "--count", "origin/main...HEAD"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-    )
-    if counts.returncode == 0:
-        parts = counts.stdout.split()
-        if len(parts) == 2:
-            behind, ahead = int(parts[0]), int(parts[1])
-    return is_ancestor, ahead, behind
+        )
+        if counts.returncode == 0:
+            parts = counts.stdout.split()
+            if len(parts) == 2:
+                behind, ahead = int(parts[0]), int(parts[1])
+        return is_ancestor, ahead, behind
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning(
+            "deploy preflight: git ancestry check could not execute (%s); failing closed", exc
+        )
+        return False, 0, 0
 
 
 def preflight_check(config: DeployConfig) -> tuple[str, ...]:
@@ -281,22 +290,31 @@ def preflight_check(config: DeployConfig) -> tuple[str, ...]:
     """
     violations: list[str] = []
 
-    if _is_linked_worktree(config.repo_root):
+    if not (config.repo_root / ".git").exists():
+        # Not a git checkout at all — flag it explicitly rather than letting the
+        # git subprocesses below fail into a confusing "not an ancestor" message
+        # (and skip those subprocesses entirely; there is nothing to check).
         violations.append(
-            f"deploy root {config.repo_root} is a linked git worktree (.git is a "
-            "gitdir-pointer file, not a directory); deploys must run from the canonical "
-            "main checkout so `docker build` bakes committed code, not a frozen worktree "
-            "snapshot (bu-hmdqz.1)"
+            f"deploy root {config.repo_root} is not a git repository (no .git); deploys "
+            "must run from the canonical main checkout"
         )
+    else:
+        if _is_linked_worktree(config.repo_root):
+            violations.append(
+                f"deploy root {config.repo_root} is a linked git worktree (.git is a "
+                "gitdir-pointer file, not a directory); deploys must run from the canonical "
+                "main checkout so `docker build` bakes committed code, not a frozen worktree "
+                "snapshot (bu-hmdqz.1)"
+            )
 
-    _fetch_origin_main(config.repo_root)
-    is_ancestor, ahead, behind = _head_vs_origin_main(config.repo_root)
-    if not is_ancestor:
-        violations.append(
-            f"deploy root {config.repo_root} HEAD is not an ancestor of origin/main "
-            f"({ahead} commit(s) ahead, {behind} behind); `docker build` would bake this "
-            "unmerged/divergent code into the prod image (bu-hmdqz.1)"
-        )
+        _fetch_origin_main(config.repo_root)
+        is_ancestor, ahead, behind = _head_vs_origin_main(config.repo_root)
+        if not is_ancestor:
+            violations.append(
+                f"deploy root {config.repo_root} HEAD is not an ancestor of origin/main "
+                f"({ahead} commit(s) ahead, {behind} behind); `docker build` would bake this "
+                "unmerged/divergent code into the prod image (bu-hmdqz.1)"
+            )
 
     if not violations:
         return ()
