@@ -241,8 +241,10 @@ def clean_stored_display_name(raw: str | None, address: str) -> str | None:
     would be worse than the local-part heuristic:
 
     - empty / whitespace-only,
-    - equal to the email address itself (many mailers put the bare address in
-      the display slot, e.g. ``"noreply@x.com" <noreply@x.com>``),
+    - containing ``@`` — an email address in the display slot, not a human name
+      (mailers commonly stuff the bare address, or a *different* address, there,
+      e.g. ``"noreply@x.com" <noreply@x.com>``); this also subsumes the
+      "equal to the sender address" case,
     - all-punctuation / no alphanumeric character.
 
     A surviving name is returned stripped. ``None`` means "no usable stored
@@ -252,6 +254,8 @@ def clean_stored_display_name(raw: str | None, address: str) -> str | None:
         return None
     name = raw.strip()
     if not name:
+        return None
+    if "@" in name:
         return None
     if name.lower() == (address or "").strip().lower():
         return None

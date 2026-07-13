@@ -306,6 +306,12 @@ class TestCleanStoredDisplayName:
     def test_name_equal_to_address_is_rejected(self) -> None:
         assert clean_stored_display_name("A@Example.com", "a@example.com") is None
 
+    def test_display_name_containing_at_is_rejected(self) -> None:
+        # A display name with '@' is an email address, not a human name — reject
+        # it even when it differs from the sender's own address.
+        assert clean_stored_display_name("A@Example.com", "a@example.com") is None
+        assert clean_stored_display_name("b@example.com", "a@example.com") is None
+
     def test_all_punctuation_is_rejected(self) -> None:
         assert clean_stored_display_name("<<>>", "a@example.com") is None
         assert clean_stored_display_name("--", "a@example.com") is None
