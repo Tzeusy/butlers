@@ -242,9 +242,10 @@ re-run at any point in the pipeline.
 
 - **WHEN** the `butlers deploy` verb reads `migration_head` for a ledger row
   (via `butlers.core.deployments.resolve_core_migration_head`)
-- **THEN** the head is resolved by discovering, through `information_schema`,
-  the schemas that physically carry an `alembic_version` table and reading the
-  core-chain (`core_NNN`) head from them — NOT by assuming a single canonical
+- **THEN** the head is resolved by discovering, through the Postgres catalog
+  (`pg_catalog.pg_class`/`pg_namespace`), the schemas that physically carry an
+  `alembic_version` table and reading the core-chain (`core_NNN`) head from
+  them — NOT by assuming a single canonical
   schema such as `public`, which on the live deployment carries cross-butler
   tables but no `alembic_version` (the core chain is applied per butler schema)
 - **AND** when no schema tracks the core chain, `migration_head` is recorded as

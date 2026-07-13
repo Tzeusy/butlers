@@ -127,11 +127,11 @@ class TestResolveCoreMigrationHead:
 
     @staticmethod
     def _make_pool(schemas: list[str], per_schema_rows: dict[str, list[str]]) -> AsyncMock:
-        """Build a pool whose fetch() routes the information_schema discovery
+        """Build a pool whose fetch() routes the pg_catalog schema-discovery
         query vs the per-schema alembic_version reads."""
 
         async def _fetch(query, *args):
-            if "information_schema.tables" in query:
+            if "pg_class" in query:
                 return [{"table_schema": s} for s in schemas]
             for schema, revs in per_schema_rows.items():
                 if f'"{schema}".alembic_version' in query:

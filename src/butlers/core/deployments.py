@@ -102,16 +102,22 @@ async def _schemas_with_alembic_version(pool: asyncpg.Pool) -> list[str]:
     The core migration chain is applied *per butler schema*, never to a single
     canonical schema — on the live DB ``alembic_version`` exists in each butler
     schema (``chronicler`` .. ``travel``) and NOT in ``public``. Discover the
-    schemas that actually track migrations via ``information_schema`` rather
+    schemas that actually track migrations from the Postgres catalog rather
     than assuming any one schema (the old ``read_migration_head(pool, "public")``
-    assumption is exactly what recorded ``migration_head=None``).
+    assumption is exactly what recorded ``migration_head=None``). Reads
+    ``pg_catalog.pg_class``/``pg_namespace`` directly (a plain relation,
+    ``relkind = 'r'``) rather than ``information_schema.tables``, which is a
+    slower permission-checked view over the same data.
     """
     rows = await pool.fetch(
         """
-        SELECT table_schema FROM information_schema.tables
-        WHERE table_name = 'alembic_version'
-          AND table_schema NOT IN ('pg_catalog', 'information_schema')
-        ORDER BY table_schema
+        SELECT n.nspname AS table_schema
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname = 'alembic_version'
+          AND c.relkind = 'r'
+          AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        ORDER BY n.nspname
         """
     )
     return [row["table_schema"] for row in rows]
