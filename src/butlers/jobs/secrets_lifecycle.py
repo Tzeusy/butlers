@@ -580,7 +580,10 @@ async def _delivery_preferences_deferral(
     if prefs is None:
         return None
 
-    tz_name = prefs.get("timezone", "UTC")
+    # `or "UTC"` (not a .get default) so an explicit null timezone value also
+    # falls back rather than reaching ZoneInfo(None); the try/except still
+    # guards an invalid tz *string*.
+    tz_name = prefs.get("timezone") or "UTC"
     try:
         tz = ZoneInfo(tz_name)
     except Exception:
