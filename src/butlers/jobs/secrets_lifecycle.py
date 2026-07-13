@@ -641,9 +641,14 @@ async def run_secrets_lifecycle_check(db: DatabaseManager) -> dict[str, Any]:
             # rather than one direct + one drained (bu-id0fh). A drain that
             # happens to fire just before this scan is the bounded residual:
             # one extra ping, never the old N+1.
+            # Best-effort: this cleanup runs AFTER the delivery + marker have
+            # already succeeded, so any failure resolving the switchboard pool
+            # must not propagate to the outer handler (which would increment
+            # `errors` and record a duplicate `failed` event for a delivery
+            # that actually succeeded). Swallow broadly, not just KeyError.
             try:
                 switchboard_pool = db.pool("switchboard")
-            except KeyError:
+            except Exception:
                 switchboard_pool = None
             if switchboard_pool is not None:
                 cancelled = await _supersede_pending_retries(switchboard_pool, dedup_marker)
