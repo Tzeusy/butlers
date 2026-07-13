@@ -1249,7 +1249,11 @@ async def delivery_cycle(
             _terminally_filtered = _r["status"] == "filtered"
             await record_attention_event(
                 pool,
-                origin_butler=_r["origin_butler"] or "unknown",
+                # insight_candidates.origin_butler is NOT NULL (see the schema
+                # in create_insight_tables / the core migration), and this is a
+                # bare asyncpg Record access — a missing key would KeyError, not
+                # yield None — so no None-guard is warranted here.
+                origin_butler=_r["origin_butler"],
                 source="insight",
                 outcome="failed",
                 channel=delivery_channel or _r["channel"],
