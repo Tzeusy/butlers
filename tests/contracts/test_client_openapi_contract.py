@@ -840,11 +840,14 @@ def test_frontend_limit_literal_within_backend_ceiling(
 
     op = openapi_paths.get(api_path, {}).get("get")
     assert op is not None, f"{label}: GET {api_path} is no longer mounted"
-    param = next((p for p in op.get("parameters", []) if p["name"] == param_name), None)
+    # Defensive: `parameters` may be absent or explicitly null; a param may
+    # carry `content` instead of `schema` — either way fall through to the
+    # clear "no maximum" assertion below rather than raising KeyError.
+    param = next((p for p in (op.get("parameters") or []) if p["name"] == param_name), None)
     assert param is not None, (
         f"{label}: GET {api_path} no longer declares a `{param_name}` query param"
     )
-    maximum = param["schema"].get("maximum")
+    maximum = param.get("schema", {}).get("maximum")
     assert maximum is not None, (
         f"{label}: `{param_name}` on GET {api_path} no longer declares a maximum (le)"
     )
