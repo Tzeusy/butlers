@@ -146,3 +146,12 @@ async def test_unparseable_date_is_a_clean_422(monkeypatch) -> None:
     app, _ = _make_app_capturing_args(monkeypatch)
     resp = await _get(app, "/api/sessions/aggregate?from_date=not-a-date")
     assert resp.status_code == 422
+
+
+async def test_day_key_shaped_invalid_calendar_date_is_a_clean_422(monkeypatch) -> None:
+    """A value matching the YYYY-MM-DD shape but with an out-of-range month/day
+    (e.g. month 13) must still be a clean 422, not fall through to the
+    app-wide ValueError->400 handler via an uncaught datetime() ValueError."""
+    app, _ = _make_app_capturing_args(monkeypatch)
+    resp = await _get(app, "/api/sessions/aggregate?from_date=2026-13-40")
+    assert resp.status_code == 422
