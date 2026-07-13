@@ -3582,9 +3582,9 @@ def _row_to_rule_promotion_suggestion(r: Any) -> RulePromotionSuggestion:
         proposed_action=r["proposed_action"],
         evidence_count=r["evidence_count"],
         is_clearly_automated=r["is_clearly_automated"],
-        first_evidence_at=str(r["first_evidence_at"]) if r["first_evidence_at"] else None,
-        last_evidence_at=str(r["last_evidence_at"]) if r["last_evidence_at"] else None,
-        created_at=str(r["created_at"]),
+        first_evidence_at=r["first_evidence_at"].isoformat() if r["first_evidence_at"] else None,
+        last_evidence_at=r["last_evidence_at"].isoformat() if r["last_evidence_at"] else None,
+        created_at=r["created_at"].isoformat(),
     )
 
 
@@ -3597,7 +3597,7 @@ def _row_to_rule_promotion_auto_applied(r: Any) -> RulePromotionAutoApplied:
         evidence_count=r["evidence_count"],
         created_rule_id=str(r["created_rule_id"]) if r["created_rule_id"] else None,
         rule_enabled=r["rule_enabled"],
-        decided_at=str(r["decided_at"]) if r["decided_at"] else None,
+        decided_at=r["decided_at"].isoformat() if r["decided_at"] else None,
         decided_by=r["decided_by"],
     )
 

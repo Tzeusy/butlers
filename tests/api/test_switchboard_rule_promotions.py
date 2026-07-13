@@ -12,6 +12,7 @@ in tests/integration/test_switchboard_rule_promotion_apply.py.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -20,6 +21,8 @@ import pytest
 from tests.api.test_switchboard import _app_with_mock, _make_row
 
 pytestmark = pytest.mark.unit
+
+_TS = datetime(2026, 7, 5, 0, 0, 0, tzinfo=UTC)
 
 _APPLY_MOD = "butlers.tools.switchboard.routing.rule_promotion_apply"
 
@@ -40,9 +43,9 @@ async def test_list_returns_pending_and_auto_applied(app):
                 "proposed_action": "route_to:finance",
                 "evidence_count": 4,
                 "is_clearly_automated": False,
-                "first_evidence_at": "2026-07-01T00:00:00+00:00",
-                "last_evidence_at": "2026-07-05T00:00:00+00:00",
-                "created_at": "2026-07-05T00:00:00+00:00",
+                "first_evidence_at": _TS,
+                "last_evidence_at": _TS,
+                "created_at": _TS,
             }
         )
     ]
@@ -55,7 +58,7 @@ async def test_list_returns_pending_and_auto_applied(app):
                 "proposed_action": "metadata_only",
                 "evidence_count": 6,
                 "created_rule_id": "33333333-3333-3333-3333-333333333333",
-                "decided_at": "2026-07-06T00:00:00+00:00",
+                "decided_at": _TS,
                 "decided_by": "auto:promotion",
                 "rule_enabled": True,
             }
