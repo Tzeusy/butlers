@@ -249,3 +249,25 @@ class TestCollectionsSearch:
         # No filter -> the ILIKE pattern binding is NULL (returns every row).
         assert pool.fetchval.await_args.args[-1] is None
         assert pool.fetch.await_args.args[1] is None
+
+    async def test_whitespace_only_q_is_treated_as_no_filter(self, app):
+        _, pool = _make_app(app, fetchval_seq=[0], fetch_seq=[[]])
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/general/collections", params={"q": "   "})
+
+        assert resp.status_code == 200
+        # A whitespace-only query must not become a spurious '%   %' ILIKE.
+        assert pool.fetchval.await_args.args[-1] is None
+        assert pool.fetch.await_args.args[1] is None
+
+    async def test_q_is_trimmed_before_matching(self, app):
+        _, pool = _make_app(app, fetchval_seq=[0], fetch_seq=[[]])
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/general/collections", params={"q": "  recipes  "})
+
+        assert resp.status_code == 200
+        assert pool.fetch.await_args.args[1] == "%recipes%"

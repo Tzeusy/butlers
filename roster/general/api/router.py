@@ -170,7 +170,9 @@ async def list_collections(
     (bu-4u5l6). Without it, all collections are returned.
     """
     pool = _pool(db)
-    like = f"%{q}%" if q else None
+    # Trim surrounding whitespace and treat a blank/whitespace-only query as no
+    # filter (return all) rather than an ILIKE '%   %' that matches spuriously.
+    like = f"%{q.strip()}%" if q and q.strip() else None
 
     total = (
         await pool.fetchval(
