@@ -120,9 +120,9 @@ band composition addendum and visually in each cell's `ButlerMark` component.
      `unknown`, tone `neutral` (an untrustworthy heartbeat is not a confidently
      healthy one, the bu-y1am9 clock-skew fold)
   4. `active_session_count > 0`: verb `running`, tone `green`
-  5. `cadence_status = overdue` (silent longer than the butler's own cron
-     cadence, or longer than 5 minutes when no cadence is known): verb
-     `overdue`, tone `amber`
+  5. `cadence_status = overdue` (silent longer than twice the butler's own cron
+     cadence per `_CADENCE_OVERDUE_FACTOR`, or longer than 5 minutes when no
+     cadence is known): verb `overdue`, tone `amber`
   6. otherwise: verb `idle`, tone `neutral`
 - **AND** the complete verb set is `running` / `idle` / `overdue` / `offline` /
   `quarantined` / `unknown`, and the complete tone set is `green` / `amber` /
