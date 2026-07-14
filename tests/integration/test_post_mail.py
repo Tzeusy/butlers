@@ -254,9 +254,13 @@ async def test_registry_reads_work_on_public_scoped_pool(pool):
 
     async with pool.acquire() as conn:
         # Arrive on a public-scoped connection: switchboard is NOT in search_path.
-        await conn.execute("SET search_path TO public, pg_catalog")
-        await register_butler(conn, "pubscoped", "http://localhost:9/sse", modules=["mailbox"])
-        butlers = await list_butlers(conn)
+        # SET LOCAL inside a transaction auto-reverts on commit, so the pooled
+        # connection is never left with a mutated search_path for a later test
+        # (no cross-test pollution -- gemini review).
+        async with conn.transaction():
+            await conn.execute("SET LOCAL search_path TO public, pg_catalog")
+            await register_butler(conn, "pubscoped", "http://localhost:9/sse", modules=["mailbox"])
+            butlers = await list_butlers(conn)
 
     assert any(b["name"] == "pubscoped" for b in butlers)
 
@@ -272,10 +276,12 @@ async def test_post_mail_lookup_works_on_public_scoped_pool(pool):
     await pool.execute("DELETE FROM switchboard.routing_log")
 
     async with pool.acquire() as conn:
-        await conn.execute("SET search_path TO public, pg_catalog")
-        result = await post_mail(
-            conn, target_butler="nonexistent", sender="alice", sender_channel="mcp", body="Hi"
-        )
+        # SET LOCAL reverts on commit (no pooled-connection search_path leak).
+        async with conn.transaction():
+            await conn.execute("SET LOCAL search_path TO public, pg_catalog")
+            result = await post_mail(
+                conn, target_butler="nonexistent", sender="alice", sender_channel="mcp", body="Hi"
+            )
 
     assert "error" in result
     rows = await pool.fetch(
