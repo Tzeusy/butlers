@@ -1230,6 +1230,8 @@ function RulePromotionStatsSection() {
 
   const hasActivity =
     stats.promoted_rules_active > 0 ||
+    // Keep historical savings visible even after the rules were disabled.
+    stats.promoted_rule_matches > 0 ||
     stats.suggestions_pending > 0 ||
     stats.suggestions_confirmed > 0 ||
     stats.suggestions_dismissed > 0 ||

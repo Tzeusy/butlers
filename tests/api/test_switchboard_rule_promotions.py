@@ -218,17 +218,40 @@ async def test_rule_enabled_no_minted_rule_is_409(app):
 # ---------------------------------------------------------------------------
 
 
+def _stats_fetch_router(*, counts=None, ids=None, counts_exc=None, ids_exc=None):
+    """Route the stats endpoint's two ``pool.fetch`` calls by SQL.
+
+    Block 1 fetches from ``rule_promotion_suggestions`` (the status counts);
+    block 3 fetches promoted-rule ids from ``ingestion_rules``. Routing by SQL
+    keeps the mock robust to call order.
+    """
+
+    async def _fetch(sql, *args):
+        if "FROM rule_promotion_suggestions" in sql:
+            if counts_exc is not None:
+                raise counts_exc
+            return counts or []
+        if "FROM ingestion_rules" in sql:
+            if ids_exc is not None:
+                raise ids_exc
+            return ids or []
+        raise AssertionError(f"unexpected fetch SQL: {sql}")
+
+    return _fetch
+
+
 async def test_stats_happy_path(app):
-    """Aggregate metrics are computed from the three sub-queries."""
+    """Aggregate metrics are computed from the sub-queries."""
     counts = [
         _make_row({"suggestion_kind": "promotion", "status": "pending_review", "n": 3}),
         _make_row({"suggestion_kind": "promotion", "status": "confirmed", "n": 7}),
         _make_row({"suggestion_kind": "promotion", "status": "dismissed", "n": 2}),
         _make_row({"suggestion_kind": "demotion", "status": "pending_review", "n": 1}),
     ]
+    ids = [_make_row({"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"})]
     verdict = _make_row({"matches": 128, "spot_checks": 40})
     _app, mock_pool = _app_with_mock(app)
-    mock_pool.fetch = AsyncMock(side_effect=[counts])
+    mock_pool.fetch = AsyncMock(side_effect=_stats_fetch_router(counts=counts, ids=ids))
     mock_pool.fetchval = AsyncMock(return_value=5)
     mock_pool.fetchrow = AsyncMock(return_value=verdict)
 
@@ -250,11 +273,31 @@ async def test_stats_happy_path(app):
     assert not body["meta"].get("sources_degraded")
 
 
+async def test_stats_no_promoted_rules_skips_verdict_query(app):
+    """With no promoted rules, verdict metrics are 0 and not degraded."""
+    counts = [_make_row({"suggestion_kind": "promotion", "status": "pending_review", "n": 1})]
+    _app, mock_pool = _app_with_mock(app)
+    mock_pool.fetch = AsyncMock(side_effect=_stats_fetch_router(counts=counts, ids=[]))
+    mock_pool.fetchval = AsyncMock(return_value=0)
+    # fetchrow must never be called when there are no promoted rule ids.
+    mock_pool.fetchrow = AsyncMock(side_effect=AssertionError("verdict query should be skipped"))
+
+    async with _client(app) as client:
+        resp = await client.get("/api/switchboard/rule-promotion-stats")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["data"]["promoted_rule_matches"] == 0
+    assert body["data"]["llm_sessions_avoided_estimate"] == 0
+    assert not body["meta"].get("sources_degraded")
+
+
 async def test_stats_flags_degraded_verdict_block(app):
     """A failed verdict-log scan must flag its source, never read as zero savings."""
     counts = [_make_row({"suggestion_kind": "promotion", "status": "confirmed", "n": 4})]
+    ids = [_make_row({"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"})]
     _app, mock_pool = _app_with_mock(app)
-    mock_pool.fetch = AsyncMock(side_effect=[counts])
+    mock_pool.fetch = AsyncMock(side_effect=_stats_fetch_router(counts=counts, ids=ids))
     mock_pool.fetchval = AsyncMock(return_value=2)
     mock_pool.fetchrow = AsyncMock(side_effect=RuntimeError("boom"))
 
@@ -274,8 +317,12 @@ async def test_stats_flags_degraded_verdict_block(app):
 
 async def test_stats_flags_degraded_suggestion_and_rules_blocks(app):
     """Each block degrades independently."""
+    ids = [_make_row({"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"})]
     _app, mock_pool = _app_with_mock(app)
-    mock_pool.fetch = AsyncMock(side_effect=RuntimeError("boom"))
+    # Block 1 (suggestion counts) fails; block 3's id fetch succeeds.
+    mock_pool.fetch = AsyncMock(
+        side_effect=_stats_fetch_router(counts_exc=RuntimeError("boom"), ids=ids)
+    )
     mock_pool.fetchval = AsyncMock(side_effect=RuntimeError("boom"))
     mock_pool.fetchrow = AsyncMock(return_value=_make_row({"matches": 9, "spot_checks": 0}))
 

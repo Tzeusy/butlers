@@ -3746,22 +3746,35 @@ async def get_rule_promotion_stats(
         degraded.append("promoted_rules")
 
     # Block 3: verdict-log metrics on promoted rules (matches + spot-checks).
+    # Two-step to stay index-friendly: fetch the (small) set of promoted-rule
+    # ids first, then filter the potentially large routing_verdict_log by the
+    # indexed ``matched_rule_id``. A join filtered on the non-indexed
+    # ``ingestion_rules.created_by`` would scan (gemini review). All promoted
+    # rules count here, not just currently-enabled ones, since a since-disabled
+    # rule still avoided sessions while it was live.
     try:
-        row = await pool.fetchrow(
-            """
-            SELECT
-                COUNT(*) FILTER (WHERE v.verdict_source = 'rule')::bigint       AS matches,
-                COUNT(*) FILTER (WHERE v.verdict_source = 'spot_check')::bigint AS spot_checks
-            FROM routing_verdict_log v
-            JOIN ingestion_rules r ON r.id = v.matched_rule_id
-            WHERE r.created_by = 'promotion'
-            """
-        )
-        matches = int(row["matches"] or 0) if row is not None else 0
-        stats.promoted_rule_matches = matches
-        # Each promoted-rule match is one spawned-session LLM round-trip removed.
-        stats.llm_sessions_avoided_estimate = matches
-        stats.promoted_rule_spot_checks = int(row["spot_checks"] or 0) if row is not None else 0
+        promoted_rule_ids = [
+            r["id"]
+            for r in await pool.fetch(
+                "SELECT id FROM ingestion_rules WHERE created_by = 'promotion'"
+            )
+        ]
+        if promoted_rule_ids:
+            row = await pool.fetchrow(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE verdict_source = 'rule')::bigint       AS matches,
+                    COUNT(*) FILTER (WHERE verdict_source = 'spot_check')::bigint AS spot_checks
+                FROM routing_verdict_log
+                WHERE matched_rule_id = ANY($1::uuid[])
+                """,
+                promoted_rule_ids,
+            )
+            matches = int(row["matches"] or 0) if row is not None else 0
+            # Each promoted-rule match is one spawned-session LLM round-trip removed.
+            stats.promoted_rule_matches = matches
+            stats.llm_sessions_avoided_estimate = matches
+            stats.promoted_rule_spot_checks = int(row["spot_checks"] or 0) if row is not None else 0
     except Exception:
         logger.warning("get_rule_promotion_stats: verdict-log query failed", exc_info=True)
         degraded.append("verdict_metrics")
