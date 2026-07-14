@@ -118,6 +118,7 @@ _LANE_BY_CATEGORY: dict[str, str] = {
     "social": "social",
     # Owner occupation (occupation blocks + graduated focus/reading/screen).
     "occupation": "work",
+    "ambient": "rest",
 }
 
 

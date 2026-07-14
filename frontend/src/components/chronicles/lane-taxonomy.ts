@@ -199,6 +199,7 @@ const SOURCE_CATEGORY_MAP: Record<string, Category> = {
   "chronicler.reading_inferred|reading_block": "work",
   "chronicler.occupation_inferred|occupation_block": "work",
   "activitywatch.window|screen_episode": "work",
+  "home_assistant.sensor_activity|room_activity_episode": "rest",
 }
 
 /**
