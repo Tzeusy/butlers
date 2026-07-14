@@ -328,6 +328,24 @@ async def test_entity_contact_genuine_failure_flags_both(app: FastAPI) -> None:
     assert body["meta"]["sources_degraded"] == ["contacts", "entities"]
 
 
+async def test_no_pool_available_flags_entity_contact_not_500(app: FastAPI) -> None:
+    """bu-c3u8i (gemini review): when no butler DB pool is available at all,
+    _any_pool would raise -- the endpoint must still return 200 with the
+    entity/contact groups flagged degraded, never a 500 that breaks the
+    always-200 contract."""
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.butler_names = []  # -> _any_pool raises RuntimeError
+    mock_db.pool = MagicMock(side_effect=KeyError("none"))
+    mock_db.fan_out_with_status = AsyncMock(return_value=({}, []))
+    app.dependency_overrides[_get_db_manager] = lambda: mock_db
+
+    body = await _get(app, "anything")
+
+    assert body["data"]["entities"] == []
+    assert body["data"]["contacts"] == []
+    assert body["meta"]["sources_degraded"] == ["contacts", "entities"]
+
+
 async def test_entity_contact_missing_schema_not_degraded(app: FastAPI) -> None:
     """bu-c3u8i classify-before-flagging: a legitimately-absent entities /
     relationship schema (pre-migration, or a butler without the module) yields
