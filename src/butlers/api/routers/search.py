@@ -119,7 +119,7 @@ async def search(
 
     # --- Entities search (shared schema) via search_v1 read-model ---
     pool = _any_pool(db)
-    entity_rows = await query_entity_search(pool, pattern, limit)
+    entity_rows, entity_degraded = await query_entity_search(pool, pattern, limit)
     for entity_row in entity_rows:
         alias_text = ", ".join(entity_row.aliases[:3])
         snippet = entity_row.entity_type or ""
@@ -138,7 +138,7 @@ async def search(
 
     # --- Contacts search (shared schema) via search_v1 read-model ---
     # Channel identifiers now come from relationship.entity_facts (bu-hjo3i).
-    contact_rows = await query_contact_search(pool, pattern, limit)
+    contact_rows, contact_degraded = await query_contact_search(pool, pattern, limit)
     for contact_row in contact_rows:
         parts = []
         if contact_row.email:
@@ -197,12 +197,17 @@ async def search(
                 )
             )
 
-    # Degraded-source honesty (bu-tpudw.4): a search over a half-down fleet
-    # must never render as a clean "no results". The per-butler fan-outs report
-    # which sources failed; surface them via meta.sources_degraded (the shared
+    # Degraded-source honesty (bu-tpudw.4; entity/contact groups added in
+    # bu-c3u8i): a search over a half-down fleet must never render as a clean
+    # "no results". Each read-model reports which sources failed -- the
+    # per-butler fan-outs name the failed butlers, the shared-schema
+    # entity/contact queries name their own group on a genuine (non-absent)
+    # failure -- and we surface them via meta.sources_degraded (the shared
     # ApiMeta bag convention) so the finder can name the missing sources inline
     # instead of showing a fabricated empty result.
-    degraded = sorted(set(session_degraded) | set(state_degraded))
+    degraded = sorted(
+        set(entity_degraded) | set(contact_degraded) | set(session_degraded) | set(state_degraded)
+    )
     meta = ApiMeta(sources_degraded=degraded) if degraded else ApiMeta()
 
     # Trim to limit (fan_out may return limit per butler, need global trim)
