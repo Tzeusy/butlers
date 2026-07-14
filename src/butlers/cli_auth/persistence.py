@@ -139,7 +139,7 @@ def _record_codex_baseline() -> None:
         logger.debug("codex_auth_sync: baseline recording skipped", exc_info=True)
 
 
-async def restore_connector_cli_auth(pool: asyncpg.Pool, *, context: str) -> dict[str, bool]:
+async def restore_connector_cli_auth(pool: asyncpg.Pool | None, *, context: str) -> dict[str, bool]:
     """Restore CLI-auth tokens from the shared credential DB at connector startup.
 
     Standalone connector containers (whatsapp/telegram user clients, live-listener)
@@ -160,6 +160,15 @@ async def restore_connector_cli_auth(pool: asyncpg.Pool, *, context: str) -> dic
     connector's existing discretion-auth health hook. Returns the per-provider restore
     results (``{}`` on outright failure).
     """
+    if pool is None:
+        logger.warning(
+            "%s: no DB pool available to restore CLI auth from the credential DB; "
+            "discretion-tier codex calls will 401 and fail closed until a credential DB "
+            "is reachable",
+            context,
+        )
+        return {}
+
     store = CredentialStore(pool)
     try:
         results = await restore_tokens(store)

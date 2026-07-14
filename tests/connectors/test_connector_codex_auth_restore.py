@@ -69,6 +69,20 @@ async def test_helper_warns_loudly_and_skips_baseline_when_no_codex(caplog) -> N
     )
 
 
+async def test_helper_warns_and_noops_when_pool_is_none(caplog) -> None:
+    """A None pool (DB disabled/unreachable) is handled loudly and returns {} —
+    never a CredentialStore(None) crash — per the honest fail-open contract."""
+    with (
+        patch("butlers.cli_auth.persistence.restore_tokens") as restore_tokens,
+        caplog.at_level(logging.WARNING, logger="butlers.cli_auth.persistence"),
+    ):
+        results = await restore_connector_cli_auth(None, context="live_listener")
+
+    assert results == {}
+    restore_tokens.assert_not_called()
+    assert any("no db pool" in r.message.lower() for r in caplog.records)
+
+
 async def test_helper_is_non_fatal_and_loud_when_restore_raises(caplog) -> None:
     """Regression pin: a failed restore logs loudly and returns {} — it must NOT
     raise (crash-looping the connector) nor silently swallow at debug."""
