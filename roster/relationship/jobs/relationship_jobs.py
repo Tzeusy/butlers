@@ -3272,9 +3272,10 @@ async def archive_rejected_identity_enrichment_orphans(db_pool: asyncpg.Pool) ->
     ``scripts/cleanup_bulk_email_identity_proposals.py``): no ``entity_facts`` as subject or
     object-entity (an approved has-email
     proposal writes such a fact, so approved/graduated entities are excluded and left
-    intact), no live (pending/approved/executed) ``pending_actions`` subject, and no linked
-    ``public.contacts`` row. Any acquired reference means the entity graduated to a real
-    entity and is left fully intact.
+    intact) and no live (pending/approved/executed) ``pending_actions`` subject. (Contact
+    linkage lives in ``relationship.entity_facts`` now that ``public.contacts`` is retired,
+    so the entity_facts checks cover it.) Any acquired reference means the entity graduated
+    to a real entity and is left fully intact.
 
     We *soft-delete* (set ``metadata.deleted_at`` -- the ecosystem tombstone convention,
     honored alongside ``merged_into`` by every entity query) rather than hard-DELETE, for
@@ -3284,14 +3285,11 @@ async def archive_rejected_identity_enrichment_orphans(db_pool: asyncpg.Pool) ->
     (2) it avoids RESTRICT-FK failures (``entity_view_marks``/``merge_reviews``); (3) it is
     reversible. Returns the number of entities archived.
     """
-    has_contacts = await db_pool.fetchval("SELECT to_regclass('public.contacts')")
-    contacts_clause = (
-        "AND NOT EXISTS (SELECT 1 FROM public.contacts c WHERE c.entity_id = e.id)"
-        if has_contacts is not None
-        else ""
-    )
+    # NB: public.contacts / public.contact_info were retired (DROPped by core_115 /
+    # core_134); contact linkage now lives entirely in relationship.entity_facts, so the
+    # entity_facts subject/object checks below fully cover "is this entity referenced".
     archived = await db_pool.fetch(
-        f"""
+        """
         UPDATE public.entities e
         SET metadata = e.metadata
                 || jsonb_build_object(
@@ -3314,7 +3312,6 @@ async def archive_rejected_identity_enrichment_orphans(db_pool: asyncpg.Pool) ->
               WHERE pa.tool_args ->> 'subject' = e.id::text
                 AND pa.status IN ('pending', 'approved', 'executed')
           )
-          {contacts_clause}
         RETURNING e.id
         """
     )
