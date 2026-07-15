@@ -180,6 +180,11 @@ export function ConnectorsRoster() {
   const healthyCount = allConnectors.filter(
     (c) => !deriveConnectorDispatchInfo(c).needsAttention,
   ).length
+  const attentionNeededCount = allConnectors.filter(
+    (c) =>
+      deriveConnectorDispatchInfo(c).needsAttention ||
+      Boolean(c.operational_warnings?.length),
+  ).length
   const authNeededCount = allConnectors.filter(
     (c) => deriveConnectorDispatchInfo(c).authStatus === 'needs_reauth',
   ).length
@@ -261,7 +266,7 @@ export function ConnectorsRoster() {
         {[
           { label: 'connectors · live', value: formatNum(totalConnectors) },
           { label: 'healthy', value: formatNum(healthyCount) },
-          { label: 'needs attention', value: formatNum(totalConnectors - healthyCount) },
+          { label: 'needs attention', value: formatNum(attentionNeededCount) },
           { label: 'auth · error', value: formatNum(authNeededCount) },
           { label: 'events · 24h', value: formatNum(totalEvents24h) },
         ].map(({ label, value }) => (

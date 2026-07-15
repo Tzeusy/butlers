@@ -230,10 +230,12 @@ location payload required by deterministic adapters.
 
 Butlers SHALL document the phone-side configuration needed for useful
 OwnTracks evidence. The operator, not the connector, owns these app changes:
-enable Wi-Fi SSID reporting, create stable `Home` and `Office` regions, and
+enable available extended location data, verify Wi-Fi SSID reporting on
+platforms that support it, create stable `Home` and `Office` regions, and
 consider Move monitoring mode during waking hours when cadence is sparse. The
-guidance SHALL explain that Move mode improves reporting cadence at a battery
-cost and that platform/version labels can differ.
+guidance SHALL explain that OwnTracks currently documents `SSID` as an optional
+iOS field, that Move mode improves reporting cadence at a battery cost, and that
+platform/version labels can differ.
 
 #### Scenario: Operator follows the OwnTracks runbook
 

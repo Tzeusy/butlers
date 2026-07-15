@@ -114,7 +114,7 @@ const SPARSE_OWNTRACKS_CONNECTOR: ConnectorSummary = {
   today: { messages_ingested: 3, messages_failed: 0, uptime_pct: 99.9 },
   hourly_events: Array(24).fill(0),
   operational_warnings: [
-    'Only 3 OwnTracks location points were recorded in the last 24 hours. Movement inference needs at least 24; use Move mode during waking hours.',
+    'Only 3 OwnTracks location points were recorded in the last 24 hours. The operational baseline is 24; use Move mode during waking hours.',
   ],
 }
 
@@ -303,13 +303,18 @@ describe('AC2: auth issues appear consistently in attention strip and row', () =
     ).toContain('cadence sparse')
     expect(
       container.querySelector('[data-testid="connector-warning-owntracks"]')?.textContent,
-    ).toContain('Movement inference needs at least 24')
+    ).toContain('The operational baseline is 24')
     expect(
       container.querySelector('[data-testid="connector-warning-owntracks"]')?.className,
     ).toContain('text-[var(--amber-text)]')
     expect(
       container.querySelector('[data-testid="health-verdict-owntracks"]')?.textContent?.trim(),
     ).toBe('online')
+
+    const attentionKpiLabel = Array.from(container.querySelectorAll('div')).find(
+      (element) => element.textContent?.trim() === 'needs attention',
+    )
+    expect(attentionKpiLabel?.parentElement?.lastElementChild?.textContent?.trim()).toBe('1')
   })
 })
 

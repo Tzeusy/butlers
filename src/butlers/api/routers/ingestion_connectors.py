@@ -97,7 +97,7 @@ def _owntracks_cadence_warning(point_count: int) -> str:
     """Describe a sparse OwnTracks evidence stream without changing health."""
     return (
         f"Only {point_count} OwnTracks location points were recorded in the last 24 hours. "
-        f"Movement inference needs at least {_OWNTRACKS_MIN_POINTS_PER_WINDOW}; "
+        f"The operational baseline is {_OWNTRACKS_MIN_POINTS_PER_WINDOW}; "
         "use Move mode during waking hours."
     )
 

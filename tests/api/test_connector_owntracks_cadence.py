@@ -85,7 +85,7 @@ async def test_sparse_owntracks_points_surface_operational_warning(app: FastAPI)
     assert connector["liveness"] == "online"
     assert connector["operational_warnings"] == [
         "Only 3 OwnTracks location points were recorded in the last 24 hours. "
-        "Movement inference needs at least 24; use Move mode during waking hours."
+        "The operational baseline is 24; use Move mode during waking hours."
     ]
 
 

@@ -11,10 +11,11 @@ OwnTracks labels and menu locations vary slightly by platform and app version.
 Use the equivalent setting on your device when the wording differs.
 
 1. Keep the existing HTTP connection pointed at the Butlers OwnTracks webhook.
-2. Enable extended location data, including Wi-Fi SSID reporting. Confirm a
-   location payload contains an uppercase `SSID` field while connected to
-   Wi-Fi. On some Android devices a VPN or OS privacy restriction prevents the
-   app from reading the SSID even when Wi-Fi is connected.
+2. Enable extended location data for the connectivity metadata your platform
+   supports. On iOS, confirm that a location payload contains the optional
+   uppercase `SSID` field while connected to Wi-Fi. OwnTracks does not currently
+   document `SSID` as an Android location field, and VPN or OS privacy
+   restrictions can prevent it from appearing even on supported devices.
 3. Create regions/waypoints named `Home` and `Office` at the corresponding
    locations. Use distinct, stable names: the phone sends them verbatim in the
    location payload's `inregions` list and in enter/leave transitions.
