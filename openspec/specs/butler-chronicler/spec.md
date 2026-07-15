@@ -519,6 +519,8 @@ exact, case-sensitive JSON object mapping SSID names to the canonical places
 - **THEN** the scheduled projector reads the new mapping on its next run
 - **AND** existing OwnTracks evidence is replayed idempotently when the mapping
   value changes
+- **AND** projections made invalid by a removed or relabelled mapping SHALL be
+  tombstoned before valid retained evidence is re-projected
 - **AND** raw SSID names SHALL NOT appear in episode payloads or source refs
 
 ## Source References

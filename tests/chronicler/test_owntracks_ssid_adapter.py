@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -128,6 +129,80 @@ def test_missing_ssid_breaks_contiguity_and_singletons_do_not_claim_presence() -
 
     assert spans == []
     assert carryover[_ENDPOINT]["point_count"] == 1
+
+
+def test_json_string_raw_payload_is_decoded_for_grouping() -> None:
+    rows = [_row(0), _row(10)]
+    for row in rows:
+        row["raw_payload"] = json.dumps(row["raw_payload"])
+
+    spans, _ = group_ssid_points(
+        rows,
+        ssid_places={"Corp WiFi": "work"},
+        max_gap=timedelta(minutes=DEFAULT_MAX_GAP_MINUTES),
+    )
+
+    assert [(span.start_at, span.end_at, span.place) for span in spans] == [
+        (_NOW, _NOW + timedelta(minutes=10), "work")
+    ]
+
+
+async def test_empty_poll_preserves_endpoint_carryover() -> None:
+    prior_carryover = {
+        _ENDPOINT: {
+            "ssid": "Corp WiFi",
+            "start_at": _NOW.isoformat(),
+            "end_at": _NOW.isoformat(),
+            "point_count": 1,
+        }
+    }
+    adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
+
+    with (
+        patch(
+            "butlers.chronicler.adapters.owntracks_ssid.get_carryover",
+            new=AsyncMock(return_value=prior_carryover),
+        ),
+        patch.object(adapter, "_fetch_points", new=AsyncMock(return_value=[])),
+        patch(
+            "butlers.chronicler.adapters.owntracks_ssid.save_carryover",
+            new=AsyncMock(),
+        ) as save,
+    ):
+        await adapter.project(AsyncMock(), chronicler_pool=AsyncMock(), since=_NOW)
+
+    saved = save.await_args.args[2]
+    assert saved[_ENDPOINT] == prior_carryover[_ENDPOINT]
+
+
+async def test_all_malformed_batch_preserves_endpoint_carryover() -> None:
+    prior_carryover = {
+        _ENDPOINT: {
+            "ssid": "Corp WiFi",
+            "start_at": _NOW.isoformat(),
+            "end_at": _NOW.isoformat(),
+            "point_count": 1,
+        }
+    }
+    malformed_row = _row(10, endpoint_identity="")
+    adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
+
+    with (
+        patch(
+            "butlers.chronicler.adapters.owntracks_ssid.get_carryover",
+            new=AsyncMock(return_value=prior_carryover),
+        ),
+        patch.object(adapter, "_fetch_points", new=AsyncMock(return_value=[malformed_row])),
+        patch(
+            "butlers.chronicler.adapters.owntracks_ssid.save_carryover",
+            new=AsyncMock(),
+        ) as save,
+    ):
+        result = await adapter.project(AsyncMock(), chronicler_pool=AsyncMock(), since=_NOW)
+
+    saved = save.await_args.args[2]
+    assert saved[_ENDPOINT] == prior_carryover[_ENDPOINT]
+    assert result.watermark == _NOW + timedelta(minutes=10)
 
 
 async def test_upsert_work_presence_stamps_minute_activity_and_medium_confidence() -> None:

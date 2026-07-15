@@ -123,8 +123,10 @@ The OwnTracks Wi-Fi presence source SHALL use this compatibility declaration:
 - **THEN** `owntracks.ssid_presence` SHALL be `supported`
 - **AND** its read surface SHALL be
   `connectors.owntracks_points (raw_payload.SSID)`
-- **AND** its adapter checkpoint SHALL be maintained in
+- **AND** its source registration SHALL be maintained in
   `chronicler.source_adapter_state`
+- **AND** its projection checkpoint SHALL be maintained in
+  `chronicler.projection_checkpoints`
 
 ## Source References
 

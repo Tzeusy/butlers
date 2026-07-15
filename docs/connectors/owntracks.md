@@ -66,10 +66,11 @@ Missing and unlabelled SSIDs are explicit gaps rather than inferred places.
 
 The scheduled projector reads this state on every run. Changing the mapping
 causes retained OwnTracks evidence to be replayed idempotently, so an SSID can
-be labelled after observations arrive. The mapping uses the existing JSONB
-state store and requires no migration. Projected episodes contain only the
-canonical `payload.place`; raw network names remain in the private source
-evidence and state value.
+be labelled after observations arrive. Removing or relabelling a mapping
+tombstones stale derived episodes before replay, so old place claims do not
+remain active. The mapping uses the existing JSONB state store and requires no
+migration. Projected episodes contain only the canonical `payload.place`; raw
+network names remain in the private source evidence and state value.
 
 ## Privacy note
 

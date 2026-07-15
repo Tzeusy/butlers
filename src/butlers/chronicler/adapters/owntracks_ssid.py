@@ -95,6 +95,10 @@ def _mapping_digest(ssid_places: dict[str, str]) -> str:
     return hashlib.sha256(serialized.encode()).hexdigest()
 
 
+def _ssid_ref_digest(ssid: str) -> str:
+    return hashlib.sha256(ssid.encode()).hexdigest()[:16]
+
+
 @dataclass
 class SsidPresenceSpan:
     endpoint_identity: str
@@ -105,10 +109,9 @@ class SsidPresenceSpan:
     point_count: int
 
     def source_ref(self) -> str:
-        ssid_digest = hashlib.sha256(self.ssid.encode()).hexdigest()[:16]
         return (
             f"{_EVIDENCE_TABLE}:ssid:{self.endpoint_identity}:"
-            f"{ssid_digest}:{int(self.start_at.timestamp())}"
+            f"{_ssid_ref_digest(self.ssid)}:{int(self.start_at.timestamp())}"
         )
 
 
@@ -297,6 +300,7 @@ class OwnTracksSsidPresenceAdapter(ProjectionAdapter):
         effective_since = None if mapping_changed else since
         if mapping_changed:
             result.warnings.append("SSID place mapping changed; replaying source evidence")
+            await self._tombstone_stale_mapping_episodes(chronicler_pool)
             prior_carryover = {}
 
         rows = await self._fetch_points(pool, effective_since)
@@ -308,7 +312,8 @@ class OwnTracksSsidPresenceAdapter(ProjectionAdapter):
             return result
 
         if not rows:
-            await save_carryover(chronicler_pool, self.source_name, {_MAPPING_DIGEST_KEY: digest})
+            unchanged_carryover = {**prior_carryover, _MAPPING_DIGEST_KEY: digest}
+            await save_carryover(chronicler_pool, self.source_name, unchanged_carryover)
             result.watermark = effective_since
             return result
 
@@ -339,7 +344,7 @@ class OwnTracksSsidPresenceAdapter(ProjectionAdapter):
                 result.rows_projected += 1
                 result.episodes_closed += 1
         else:
-            new_carryover = {}
+            new_carryover = dict(prior_carryover)
 
         new_carryover[_MAPPING_DIGEST_KEY] = digest
         await save_carryover(chronicler_pool, self.source_name, new_carryover)
@@ -422,6 +427,31 @@ class OwnTracksSsidPresenceAdapter(ProjectionAdapter):
             logger.exception("Failed reading %s for SSID presence", _EVIDENCE_TABLE)
             return None
         return list(rows)
+
+    async def _tombstone_stale_mapping_episodes(self, chronicler_pool: asyncpg.Pool) -> None:
+        """Retire projections that are no longer valid under the owner mapping."""
+        digests = [_ssid_ref_digest(ssid) for ssid in self.ssid_places]
+        places = list(self.ssid_places.values())
+        async with chronicler_pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE episodes AS episode
+                SET tombstone_at = now(),
+                    tombstone_reason = 'owner SSID mapping changed',
+                    updated_at = now()
+                WHERE episode.source_name = $1
+                  AND episode.tombstone_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM unnest($2::text[], $3::text[]) AS valid(ssid_digest, place)
+                      WHERE episode.source_ref ~ (':' || valid.ssid_digest || ':[0-9]+$')
+                        AND episode.payload ->> 'place' = valid.place
+                  )
+                """,
+                self.source_name,
+                digests,
+                places,
+            )
 
     async def _upsert_presence_episode(
         self,
