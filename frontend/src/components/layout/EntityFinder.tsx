@@ -297,7 +297,13 @@ export default function EntityFinder() {
   // -------------------------------------------------------------------------
   useEffect(() => {
     function handleOpen() {
-      openerRef.current = document.activeElement as HTMLElement | null;
+      // A repeated Cmd/Ctrl+K while the Dialog already owns focus resets the
+      // query, but must not replace the original outside opener with the
+      // command input. The latter is removed on close and cannot receive
+      // restored focus.
+      if (!open) {
+        openerRef.current = document.activeElement as HTMLElement | null;
+      }
       setOpen(true);
       setQuery("");
       setActiveValue("");
@@ -307,7 +313,7 @@ export default function EntityFinder() {
     window.addEventListener(OPEN_ENTITY_FINDER_EVENT, handleOpen);
     return () =>
       window.removeEventListener(OPEN_ENTITY_FINDER_EVENT, handleOpen);
-  }, []);
+  }, [open]);
 
   // -------------------------------------------------------------------------
   // Navigation
@@ -565,7 +571,7 @@ export default function EntityFinder() {
         {/* Left column: input + list + footer */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Input row */}
-          <div className="flex items-center border-b border-border px-4">
+          <div className="flex items-center border-b border-border px-4 focus-within:ring-2 focus-within:ring-inset focus-within:ring-foreground">
             <span className="mr-2 shrink-0 font-mono text-xs text-muted-foreground">
               /
             </span>
