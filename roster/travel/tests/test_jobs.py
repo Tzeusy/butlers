@@ -62,6 +62,23 @@ class _FrozenDateTime(datetime, metaclass=_RealInstanceCheck):
         return _NOW
 
 
+@pytest.mark.parametrize(
+    "frozen_utc",
+    [
+        datetime(2026, 1, 1, 0, 5, tzinfo=UTC),
+        datetime(2026, 1, 1, 23, 55, tzinfo=UTC),
+    ],
+)
+def test_frozen_fixture_date_uses_utc_instant_at_day_boundaries(
+    monkeypatch, frozen_utc: datetime
+) -> None:
+    """Fixture dates stay anchored to UTC on both sides of UTC midnight."""
+    monkeypatch.setitem(globals(), "_NOW", frozen_utc)
+
+    assert _today() == frozen_utc.date()
+    assert _FrozenDate.today() == frozen_utc.date()
+
+
 @pytest.fixture(autouse=True)
 def _freeze_travel_clock(monkeypatch):
     """Pin the travel job module's clock to the module-import anchors."""
