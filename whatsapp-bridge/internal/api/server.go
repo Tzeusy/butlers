@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/skip2/go-qrcode"
 	bridgeEvents "github.com/butlers/whatsapp-bridge/internal/events"
+	"github.com/skip2/go-qrcode"
 )
 
 // BridgeState represents the current connection state of the bridge.

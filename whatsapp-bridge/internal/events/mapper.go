@@ -13,13 +13,13 @@ import (
 
 // BridgeEvent is the JSON structure emitted on the SSE stream.
 type BridgeEvent struct {
-	Type        string          `json:"type"`
-	MessageID   string          `json:"message_id"`
-	ChatJID     string          `json:"chat_jid"`
-	SenderJID   string          `json:"sender_jid"`
-	Timestamp   int64           `json:"timestamp"`
-	Content     json.RawMessage `json:"content"`
-	Raw         json.RawMessage `json:"raw,omitempty"`
+	Type      string          `json:"type"`
+	MessageID string          `json:"message_id"`
+	ChatJID   string          `json:"chat_jid"`
+	SenderJID string          `json:"sender_jid"`
+	Timestamp int64           `json:"timestamp"`
+	Content   json.RawMessage `json:"content"`
+	Raw       json.RawMessage `json:"raw,omitempty"`
 }
 
 // MapMessage maps a whatsmeow *events.Message to a BridgeEvent.
@@ -167,9 +167,9 @@ func extractTypeAndContent(msg *waE2E.Message, info waTypes.MessageInfo) (string
 			options = append(options, o.GetOptionName())
 		}
 		c, _ := json.Marshal(map[string]any{
-			"question":       poll.GetName(),
-			"options":        options,
-			"select_max":     poll.GetSelectableOptionsCount(),
+			"question":   poll.GetName(),
+			"options":    options,
+			"select_max": poll.GetSelectableOptionsCount(),
 		})
 		return "poll", c
 	}
