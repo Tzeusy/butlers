@@ -8,7 +8,7 @@ The Google Health connector is a standalone polling process that reads the owner
 
 ### Requirement: Owner Account Discovery and Scope Verification
 
-The connector SHALL operate against **every** `public.google_accounts` row whose `status = 'active'` and whose `granted_scopes` covers all three Google Health scope families. The canonical requested scopes are `https://www.googleapis.com/auth/googlehealth.sleep.readonly`, `https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly`, and `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`. Eligibility checks MAY treat Google's unsuffixed token-response variants as equivalent members of the same scope families. The connector SHALL maintain independent per-account polling state and emit a heartbeat per account.
+The connector SHALL operate against **every** `public.google_accounts` row whose `status = 'active'` and whose `granted_scopes` covers all three Google Health scope families. The canonical requested scopes are `https://www.googleapis.com/auth/googlehealth.sleep.readonly`, `https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly`, and `https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly`. Eligibility checks SHALL treat Google's unsuffixed token-response variants as equivalent members of the same scope families. The connector SHALL maintain independent per-account polling state and emit a heartbeat per account.
 
 #### Scenario: Startup with one or more accounts granting Health scopes
 
