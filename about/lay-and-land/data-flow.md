@@ -118,7 +118,11 @@ Most jobs, including `memory_episode_cleanup` and `eligibility_sweep`, are
 zero-LLM. `memory_consolidation` is the explicit exception: its deterministic
 Python handler claims and groups episodes, then uses the daemon's live Spawner
 once per non-empty `(tenant_id, butler)` group so model selection and timeouts
-remain governed by the model catalog.
+remain governed by the model catalog. A core-owned memory runtime hook resolves
+the started module's pool and configured embedding engine at dispatch time;
+this keeps private memory schemas such as `chronicler_mem` and the module's
+per-model engine cache authoritative instead of falling back to the daemon's
+domain pool or the default embedding model.
 
 ---
 

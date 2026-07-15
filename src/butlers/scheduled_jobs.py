@@ -9,7 +9,6 @@ The registry maps butler_name → job_name → handler function.
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import logging
 import sys
@@ -312,13 +311,16 @@ async def _run_memory_consolidation_job(
     "Catalog write-behind defaults to enabled" requirement; no butler.toml
     currently overrides it) and keeps the ``store_fact``/``store_rule``
     catalog pass-through correct for whenever a real ``Spawner`` lands here.
-    ``source_schema`` is intentionally left unresolved — this handler has no
-    access to a butler's toml config, so ``execute_consolidation`` falls back
-    to the pool's own ``current_schema()`` (see its docstring).
+    Pool, embedding-model, and source-schema resolution remain owned by the
+    started memory module through ``core.memory_hooks``.  This preserves custom
+    embedding configuration and private memory schemas such as
+    ``chronicler_mem`` rather than accidentally using the daemon's domain pool.
     """
+    del pool
+
+    from butlers.core.memory_hooks import consolidate_memory
     from butlers.core.spawn_hooks import get_spawner
-    from butlers.modules.memory.consolidation import DEFAULT_BATCH_SIZE, run_consolidation
-    from butlers.modules.memory.tools import get_embedding_engine
+    from butlers.modules.memory.consolidation import DEFAULT_BATCH_SIZE
 
     batch_size = DEFAULT_BATCH_SIZE
     if job_args is not None:
@@ -345,12 +347,9 @@ async def _run_memory_consolidation_job(
         raise RuntimeError(
             "memory_consolidation requires the daemon Spawner to be registered before dispatch"
         )
-    embedding_engine = await asyncio.to_thread(get_embedding_engine)
 
-    return await run_consolidation(
-        pool=pool,
-        embedding_engine=embedding_engine,
-        cc_spawner=spawner,
+    return await consolidate_memory(
+        spawner=spawner,
         batch_size=batch_size,
         enable_shared_catalog=True,
     )

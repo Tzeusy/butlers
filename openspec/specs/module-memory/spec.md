@@ -138,6 +138,7 @@ The consolidation pipeline SHALL transform unconsolidated episodes into durable 
 - **THEN** it MUST pass the daemon's live `Spawner` to `run_consolidation` rather than using the `cc_spawner=None` dry-run path
 - **AND** an empty pending-episode claim MUST spawn no runtime session
 - **AND** each non-empty `(tenant_id, butler)` group MUST use `trigger_source='schedule:consolidation'` without overriding model, runtime, or session timeout, so model selection, spend-routing policy, quotas, failover, and timeout remain authoritative in the model catalog and `Spawner`
+- **AND** database and embedding resolution MUST use the active memory module's runtime pool and configured embedding-engine lifecycle, including any private `memory_schema`, rather than the daemon's domain pool or the embedding helper's default model
 - **AND** the handler's returned consolidation statistics or raised error MUST remain the scheduled task result recorded by the scheduler
 
 #### Scenario: Consolidation without spawner (dry run)

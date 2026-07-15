@@ -138,20 +138,14 @@ class TestNativeScheduleDispatch:
     ) -> None:
         """The deterministic handler reaches consolidation with the live catalog-backed Spawner."""
         daemon, mock_spawner = self._make_daemon(tmp_path, "general", 41101)
-        embedding_engine = object()
-        captured = {}
-
-        async def _fake_run_consolidation(**kwargs):
-            captured.update(kwargs)
-            return {"episodes_processed": 2, "groups_consolidated": 1}
+        consolidate_memory = AsyncMock(
+            return_value={"episodes_processed": 2, "groups_consolidated": 1}
+        )
 
         monkeypatch.setattr("butlers.core.spawn_hooks.get_spawner", lambda: mock_spawner)
         monkeypatch.setattr(
-            "butlers.modules.memory.tools.get_embedding_engine", lambda: embedding_engine
-        )
-        monkeypatch.setattr(
-            "butlers.modules.memory.consolidation.run_consolidation",
-            _fake_run_consolidation,
+            "butlers.core.memory_hooks.consolidate_memory",
+            consolidate_memory,
         )
 
         result = await daemon._dispatch_scheduled_task(
@@ -161,8 +155,8 @@ class TestNativeScheduleDispatch:
         )
 
         assert result == {"episodes_processed": 2, "groups_consolidated": 1}
-        assert captured["pool"] is daemon.db.pool
-        assert captured["cc_spawner"] is mock_spawner
-        assert captured["embedding_engine"] is embedding_engine
-        assert captured["batch_size"] == 7
-        assert captured["enable_shared_catalog"] is True
+        consolidate_memory.assert_awaited_once_with(
+            spawner=mock_spawner,
+            batch_size=7,
+            enable_shared_catalog=True,
+        )

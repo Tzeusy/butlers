@@ -314,6 +314,7 @@ class MemoryModule(Module):
         # (dependency inversion: core owns the interface, modules supply the impl).
         from butlers.core.memory_hooks import (
             register_catalog_search,
+            register_memory_consolidation,
             register_memory_context,
             register_memory_forget,
             register_memory_store_episode,
@@ -392,10 +393,31 @@ class MemoryModule(Module):
             embedding_engine = await asyncio.to_thread(module._get_embedding_engine)
             return await _search_catalog(pool, query, embedding_engine, limit=limit, mode=mode)
 
+        async def _consolidation_hook(
+            *,
+            spawner: Any,
+            batch_size: int,
+            enable_shared_catalog: bool,
+        ) -> dict[str, Any]:
+            import asyncio
+
+            from butlers.modules.memory.consolidation import run_consolidation
+
+            embedding_engine = await asyncio.to_thread(module._get_embedding_engine)
+            return await run_consolidation(
+                pool=module._get_pool(),
+                embedding_engine=embedding_engine,
+                cc_spawner=spawner,
+                batch_size=batch_size,
+                enable_shared_catalog=enable_shared_catalog,
+                source_schema=module._config.catalog_source_schema or None,
+            )
+
         register_memory_context(_context_hook)
         register_memory_store_episode(_store_episode_hook)
         register_memory_forget(_memory_forget)
         register_catalog_search(_catalog_search_hook)
+        register_memory_consolidation(_consolidation_hook)
 
         await self._register_default_maintenance_schedules(db)
 
@@ -443,6 +465,9 @@ class MemoryModule(Module):
 
     async def on_shutdown(self) -> None:
         """Clear state references."""
+        from butlers.core.memory_hooks import clear_memory_consolidation
+
+        clear_memory_consolidation()
         self._db = None
         self._embedding_engine = None
         if self._memory_db is not None:

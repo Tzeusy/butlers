@@ -169,50 +169,30 @@ class TestJobArgsValidation:
         assert result == {"facts_checked": 0}
 
     async def test_consolidation_batch_size_override_is_validated(self, monkeypatch) -> None:
-        captured: dict[str, Any] = {}
         spawner = object()
-        embedding_engine = object()
+        consolidate_memory = AsyncMock(return_value={"episodes_processed": 0})
 
-        async def _fake_run_consolidation(
-            *,
-            pool,
-            embedding_engine,
-            cc_spawner,
-            batch_size,
-            enable_shared_catalog,
-            source_schema=None,
-        ):
-            captured["batch_size"] = batch_size
-            captured["cc_spawner"] = cc_spawner
-            captured["embedding_engine"] = embedding_engine
-            captured["enable_shared_catalog"] = enable_shared_catalog
-            captured["source_schema"] = source_schema
-            return {"episodes_processed": 0}
-
-        monkeypatch.setattr(
-            "butlers.modules.memory.consolidation.run_consolidation", _fake_run_consolidation
-        )
+        monkeypatch.setattr("butlers.core.memory_hooks.consolidate_memory", consolidate_memory)
         monkeypatch.setattr("butlers.core.spawn_hooks.get_spawner", lambda: spawner)
-        monkeypatch.setattr(
-            "butlers.modules.memory.tools.get_embedding_engine", lambda: embedding_engine
-        )
 
         # No job_args -> DEFAULT_BATCH_SIZE.
         from butlers.modules.memory.consolidation import DEFAULT_BATCH_SIZE
 
         await _run_memory_consolidation_job(pool=object(), job_args=None)
-        assert captured["batch_size"] == DEFAULT_BATCH_SIZE
-        assert captured["cc_spawner"] is spawner
-        assert captured["embedding_engine"] is embedding_engine
-        # bu-5ud8p.3: enable_shared_catalog must always be threaded through so
-        # consolidation-derived facts/rules aren't silently invisible to the
-        # catalog once a real Spawner is wired into this deterministic path.
-        assert captured["enable_shared_catalog"] is True
-        assert captured["source_schema"] is None
+        consolidate_memory.assert_awaited_once_with(
+            spawner=spawner,
+            batch_size=DEFAULT_BATCH_SIZE,
+            enable_shared_catalog=True,
+        )
 
         # Valid override.
+        consolidate_memory.reset_mock()
         await _run_memory_consolidation_job(pool=object(), job_args={"batch_size": 500})
-        assert captured["batch_size"] == 500
+        consolidate_memory.assert_awaited_once_with(
+            spawner=spawner,
+            batch_size=500,
+            enable_shared_catalog=True,
+        )
 
         # Invalid overrides raise.
         for bad_args in ({"batch_size": 0}, {"batch_size": -1}, {"batch_size": True}):
@@ -221,6 +201,15 @@ class TestJobArgsValidation:
 
         with pytest.raises(RuntimeError, match="unsupported keys"):
             await _run_memory_consolidation_job(pool=object(), job_args={"unknown": 1})
+
+    async def test_consolidation_requires_registered_runtime_hooks(self, monkeypatch) -> None:
+        import butlers.core.memory_hooks as memory_hooks
+
+        monkeypatch.setattr("butlers.core.spawn_hooks.get_spawner", lambda: object())
+        monkeypatch.setattr(memory_hooks, "_memory_consolidation_hook", None)
+
+        with pytest.raises(RuntimeError, match="memory module runtime hook"):
+            await _run_memory_consolidation_job(pool=object(), job_args=None)
 
 
 class TestCatalogBackfillJobArgsValidation:
@@ -900,10 +889,25 @@ async def test_consolidation_backfill_batch_size_bounds_claim_and_skips_dead_let
 
     spawner = _SuccessfulSpawner()
     monkeypatch.setattr("butlers.core.spawn_hooks.get_spawner", lambda: spawner)
-    monkeypatch.setattr("butlers.modules.memory.tools.get_embedding_engine", lambda: object())
 
     pool = await _pool_for(core_memory_db_url)
     try:
+        from butlers.core.memory_hooks import (
+            clear_memory_consolidation,
+            register_memory_consolidation,
+        )
+        from butlers.modules.memory.consolidation import run_consolidation
+
+        async def _consolidate_memory(*, spawner, batch_size: int, enable_shared_catalog: bool):
+            return await run_consolidation(
+                pool=pool,
+                embedding_engine=object(),
+                cc_spawner=spawner,
+                batch_size=batch_size,
+                enable_shared_catalog=enable_shared_catalog,
+            )
+
+        register_memory_consolidation(_consolidate_memory)
         for i in range(12):
             await pool.execute(
                 "INSERT INTO episodes (butler, content) VALUES ('switchboard', $1)",
@@ -937,4 +941,5 @@ async def test_consolidation_backfill_batch_size_bounds_claim_and_skips_dead_let
         )
         assert still_pending == 7  # 12 - 5 claimed this run
     finally:
+        clear_memory_consolidation()
         await pool.close()
