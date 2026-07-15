@@ -43,9 +43,9 @@ import (
 )
 
 const (
-	pairingTimeout  = 120 * time.Second
-	exitOK          = 0
-	exitTimeout     = 1
+	pairingTimeout = 120 * time.Second
+	exitOK         = 0
+	exitTimeout    = 1
 	exitInvalidated = 2
 )
 
