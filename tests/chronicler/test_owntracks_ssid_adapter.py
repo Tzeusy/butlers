@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
+import asyncpg
 import pytest
 
 from butlers.chronicler.adapters.base import AdapterResult
@@ -239,12 +240,34 @@ async def test_all_malformed_batch_preserves_endpoint_carryover() -> None:
     assert result.watermark == _NOW + timedelta(minutes=10)
 
 
+async def test_unavailable_source_does_not_tombstone_mapping_replay_episodes() -> None:
+    adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "home"})
+    prior_carryover = {"_mapping_digest": "previous-mapping"}
+
+    with (
+        patch(
+            "butlers.chronicler.adapters.owntracks_ssid.get_carryover",
+            new=AsyncMock(return_value=prior_carryover),
+        ),
+        patch.object(adapter, "_fetch_points", new=AsyncMock(return_value=None)),
+        patch.object(
+            adapter,
+            "_tombstone_stale_mapping_episodes",
+            new=AsyncMock(),
+        ) as tombstone,
+    ):
+        result = await adapter.project(AsyncMock(), chronicler_pool=AsyncMock(), since=_NOW)
+
+    assert result.skipped
+    tombstone.assert_not_awaited()
+
+
 async def test_legacy_timestamp_checkpoint_replays_from_start() -> None:
     adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
     conn = AsyncMock()
     conn.fetchval = AsyncMock(return_value=True)
     conn.fetch = AsyncMock(return_value=[])
-    pool = MagicMock()
+    pool = MagicMock(spec=asyncpg.Pool)
     pool.acquire.return_value = _AsyncCtx(conn)
 
     await adapter._fetch_points(pool, _NOW, since_uuid=None)
@@ -259,7 +282,7 @@ async def test_uuid_checkpoint_uses_deterministic_tuple_boundary() -> None:
     conn = AsyncMock()
     conn.fetchval = AsyncMock(return_value=True)
     conn.fetch = AsyncMock(return_value=[])
-    pool = MagicMock()
+    pool = MagicMock(spec=asyncpg.Pool)
     pool.acquire.return_value = _AsyncCtx(conn)
     since_uuid = UUID("00000000-0000-0000-0000-000000000002")
 
@@ -320,15 +343,36 @@ async def test_run_uses_one_transactional_chronicler_connection() -> None:
 
     assert result.watermark == _NOW
     adapter.project.assert_awaited_once_with(
-        pool,
+        conn,
         chronicler_pool=conn,
         since=None,
         since_id=None,
     )
     assert transaction.entered and transaction.exited
     assert acquire.entered and acquire.exited
-    assert conn.execute.await_count == 2
+    assert conn.execute.await_count == 3
     pool.execute.assert_not_awaited()
+
+
+async def test_run_locks_source_before_reading_checkpoint() -> None:
+    adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
+    adapter.project = AsyncMock(return_value=AdapterResult(source_name=SOURCE_NAME, watermark=_NOW))
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+    transaction = _TrackingAsyncCtx(None)
+    conn.transaction = MagicMock(return_value=transaction)
+    pool = MagicMock()
+    pool.acquire.return_value = _TrackingAsyncCtx(conn)
+
+    await adapter.run(pool=pool, chronicler_pool=pool)
+
+    lock_sql, lock_key = conn.execute.await_args_list[0].args
+    assert "pg_advisory_xact_lock" in lock_sql
+    assert lock_key == SOURCE_NAME
+    assert conn.fetchrow.await_args_list[0].args == (
+        "SELECT * FROM projection_checkpoints WHERE source_name = $1 AND subsource = ''",
+        SOURCE_NAME,
+    )
 
 
 async def test_run_releases_transaction_and_connection_before_reporting_failure() -> None:
@@ -353,7 +397,24 @@ async def test_run_releases_transaction_and_connection_before_reporting_failure(
     assert result.error == "injected persistence failure"
     assert transaction.exited and transaction.exit_type is RuntimeError
     assert acquire.exited and acquire.exit_type is RuntimeError
-    conn.execute.assert_not_awaited()
+    assert "pg_advisory_xact_lock" in conn.execute.await_args_list[0].args[0]
+    assert conn.execute.await_count == 1
+    pool.execute.assert_awaited_once()
+
+
+async def test_run_preserves_projection_error_when_failure_metadata_write_fails() -> None:
+    adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
+    adapter.project = AsyncMock(side_effect=RuntimeError("original projection failure"))
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+    conn.transaction = MagicMock(return_value=_TrackingAsyncCtx(None))
+    pool = MagicMock()
+    pool.acquire.return_value = _TrackingAsyncCtx(conn)
+    pool.execute = AsyncMock(side_effect=RuntimeError("failure metadata unavailable"))
+
+    result = await adapter.run(pool=pool, chronicler_pool=pool)
+
+    assert result.error == "original projection failure"
     pool.execute.assert_awaited_once()
 
 
@@ -374,7 +435,8 @@ async def test_run_cancellation_rolls_back_and_releases_without_failure_write() 
 
     assert transaction.exited and transaction.exit_type is asyncio.CancelledError
     assert acquire.exited and acquire.exit_type is asyncio.CancelledError
-    conn.execute.assert_not_awaited()
+    assert "pg_advisory_xact_lock" in conn.execute.await_args_list[0].args[0]
+    assert conn.execute.await_count == 1
     pool.execute.assert_not_awaited()
 
 

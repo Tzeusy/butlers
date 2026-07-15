@@ -303,11 +303,20 @@ class OwnTracksSsidPresenceAdapter(ProjectionAdapter):
         try:
             async with chronicler_pool.acquire() as conn:
                 async with conn.transaction():
+                    await conn.execute(
+                        """
+                        SELECT pg_advisory_xact_lock(
+                            hashtextextended('chronicler.projection:' || $1, 0)
+                        )
+                        """,
+                        self.source_name,
+                    )
                     checkpoint = await get_checkpoint(conn, self.source_name)
                     since = checkpoint.watermark if checkpoint is not None else None
                     since_id = checkpoint.watermark_id if checkpoint is not None else None
+                    source_db = conn if pool is chronicler_pool else pool
                     result = await self.project(
-                        pool,
+                        source_db,
                         chronicler_pool=conn,
                         since=since,
                         since_id=since_id,
@@ -338,17 +347,23 @@ class OwnTracksSsidPresenceAdapter(ProjectionAdapter):
             return result
         except Exception as exc:  # pragma: no cover - exercised by failure injection
             logger.exception("Adapter %s failed", self.source_name)
-            await upsert_checkpoint(
-                chronicler_pool,
-                self.source_name,
-                success=False,
-                error=str(exc),
-            )
+            try:
+                await upsert_checkpoint(
+                    chronicler_pool,
+                    self.source_name,
+                    success=False,
+                    error=str(exc),
+                )
+            except Exception:
+                logger.exception(
+                    "Failed recording failure checkpoint for adapter %s",
+                    self.source_name,
+                )
             return AdapterResult(source_name=self.source_name, error=str(exc))
 
     async def project(
         self,
-        pool: asyncpg.Pool,
+        pool: asyncpg.Pool | asyncpg.Connection,
         *,
         chronicler_pool: asyncpg.Pool | asyncpg.Connection,
         since: datetime | None,
@@ -371,7 +386,7 @@ class OwnTracksSsidPresenceAdapter(ProjectionAdapter):
 
     async def _project_with_connection(
         self,
-        pool: asyncpg.Pool,
+        pool: asyncpg.Pool | asyncpg.Connection,
         *,
         chronicler_conn: asyncpg.Connection,
         since: datetime | None,
@@ -384,10 +399,6 @@ class OwnTracksSsidPresenceAdapter(ProjectionAdapter):
         previous_digest = prior_carryover.get(_MAPPING_DIGEST_KEY)
         mapping_changed = previous_digest is not None and previous_digest != digest
         effective_since = None if mapping_changed else since
-        if mapping_changed:
-            result.warnings.append("SSID place mapping changed; replaying source evidence")
-            await self._tombstone_stale_mapping_episodes(chronicler_conn)
-            prior_carryover = {}
 
         since_uuid = self._uuid_tiebreaker(prior_carryover, effective_since)
         if effective_since is not None and since_uuid is None:
@@ -403,6 +414,11 @@ class OwnTracksSsidPresenceAdapter(ProjectionAdapter):
                 f"{_EVIDENCE_TABLE} not found; OwnTracks evidence surface unavailable"
             )
             return result
+
+        if mapping_changed:
+            result.warnings.append("SSID place mapping changed; replaying source evidence")
+            await self._tombstone_stale_mapping_episodes(chronicler_conn)
+            prior_carryover = {}
 
         if not rows:
             unchanged_carryover = {**prior_carryover, _MAPPING_DIGEST_KEY: digest}
@@ -523,50 +539,71 @@ class OwnTracksSsidPresenceAdapter(ProjectionAdapter):
 
     async def _fetch_points(
         self,
-        pool: asyncpg.Pool,
+        pool: asyncpg.Pool | asyncpg.Connection,
         since: datetime | None,
         *,
         since_uuid: UUID | None,
     ) -> list[asyncpg.Record] | None:
         try:
-            async with pool.acquire() as conn:
-                exists = await conn.fetchval(
-                    """
-                    SELECT EXISTS (
-                        SELECT 1 FROM information_schema.tables
-                        WHERE table_schema = 'connectors'
-                          AND table_name = 'owntracks_points'
-                    )
-                    """
-                )
-                if not exists:
-                    return None
-                if since is None or since_uuid is None:
-                    rows = await conn.fetch(
-                        f"""
-                        SELECT id, ts, endpoint_identity, raw_payload, recorded_at
-                        FROM {_EVIDENCE_TABLE}
-                        ORDER BY ts ASC, id ASC
-                        LIMIT $1
-                        """,
-                        self.batch_limit,
-                    )
-                else:
-                    rows = await conn.fetch(
-                        f"""
-                        SELECT id, ts, endpoint_identity, raw_payload, recorded_at
-                        FROM {_EVIDENCE_TABLE}
-                        WHERE (ts, id) > ($1, $2)
-                        ORDER BY ts ASC, id ASC
-                        LIMIT $3
-                        """,
+            if isinstance(pool, asyncpg.Pool):
+                async with pool.acquire() as conn:
+                    rows = await self._fetch_points_on_connection(
+                        conn,
                         since,
-                        since_uuid,
-                        self.batch_limit,
+                        since_uuid=since_uuid,
                     )
+            else:
+                rows = await self._fetch_points_on_connection(
+                    pool,
+                    since,
+                    since_uuid=since_uuid,
+                )
         except asyncpg.PostgresError:
             logger.exception("Failed reading %s for SSID presence", _EVIDENCE_TABLE)
             return None
+        return rows
+
+    async def _fetch_points_on_connection(
+        self,
+        conn: asyncpg.Connection,
+        since: datetime | None,
+        *,
+        since_uuid: UUID | None,
+    ) -> list[asyncpg.Record] | None:
+        exists = await conn.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'connectors'
+                  AND table_name = 'owntracks_points'
+            )
+            """
+        )
+        if not exists:
+            return None
+        if since is None or since_uuid is None:
+            rows = await conn.fetch(
+                f"""
+                SELECT id, ts, endpoint_identity, raw_payload, recorded_at
+                FROM {_EVIDENCE_TABLE}
+                ORDER BY ts ASC, id ASC
+                LIMIT $1
+                """,
+                self.batch_limit,
+            )
+        else:
+            rows = await conn.fetch(
+                f"""
+                SELECT id, ts, endpoint_identity, raw_payload, recorded_at
+                FROM {_EVIDENCE_TABLE}
+                WHERE (ts, id) > ($1, $2)
+                ORDER BY ts ASC, id ASC
+                LIMIT $3
+                """,
+                since,
+                since_uuid,
+                self.batch_limit,
+            )
         return list(rows)
 
     async def _tombstone_stale_mapping_episodes(self, conn: asyncpg.Connection) -> None:

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import asyncpg
@@ -315,6 +317,187 @@ async def test_equal_timestamp_rows_cross_batches_without_loss_or_duplicates(
     )
     assert len(recovered_rows) == 1
     assert recovered_rows[0]["payload"]["point_count"] == 6
+
+
+async def test_unavailable_source_during_mapping_replay_preserves_prior_projection(
+    pool: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for minute in (0, 10):
+        await _insert_point(pool, minute, "Corp WiFi")
+
+    original_adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
+    original_result = await original_adapter.run(pool=pool, chronicler_pool=pool)
+    assert original_result.success
+    original_checkpoint = await pool.fetchrow(
+        """
+        SELECT watermark, carryover, last_success_at, rows_projected, run_count
+        FROM projection_checkpoints
+        WHERE source_name = $1 AND subsource = ''
+        """,
+        SOURCE_NAME,
+    )
+
+    replay_adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "home"})
+
+    async def unavailable_source(*_: object, **__: object) -> None:
+        return None
+
+    monkeypatch.setattr(replay_adapter, "_fetch_points", unavailable_source)
+    skipped = await replay_adapter.run(pool=pool, chronicler_pool=pool)
+
+    assert skipped.skipped
+    preserved = await pool.fetchrow(
+        """
+        SELECT episode_type, payload, tombstone_at
+        FROM episodes
+        WHERE source_name = $1
+        """,
+        SOURCE_NAME,
+    )
+    assert preserved is not None
+    assert preserved["episode_type"] == EPISODE_TYPE_WORK_PRESENCE
+    assert preserved["payload"]["place"] == "work"
+    assert preserved["tombstone_at"] is None
+    assert (
+        await pool.fetchrow(
+            """
+            SELECT watermark, carryover, last_success_at, rows_projected, run_count
+            FROM projection_checkpoints
+            WHERE source_name = $1 AND subsource = ''
+            """,
+            SOURCE_NAME,
+        )
+        == original_checkpoint
+    )
+    assert (
+        await pool.fetchval(
+            "SELECT active FROM source_adapter_state WHERE source_name = $1",
+            SOURCE_NAME,
+        )
+        is False
+    )
+
+
+async def test_overlapping_runs_wait_for_the_source_transaction_lock(pool: asyncpg.Pool) -> None:
+    adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
+    adapter.project = AsyncMock(
+        return_value=owntracks_ssid_module.AdapterResult(
+            source_name=SOURCE_NAME,
+            watermark=_NOW,
+        )
+    )
+    task: asyncio.Task | None = None
+
+    try:
+        async with pool.acquire() as blocker:
+            async with blocker.transaction():
+                await blocker.execute(
+                    """
+                    SELECT pg_advisory_xact_lock(
+                        hashtextextended('chronicler.projection:' || $1, 0)
+                    )
+                    """,
+                    SOURCE_NAME,
+                )
+                task = asyncio.create_task(adapter.run(pool=pool, chronicler_pool=pool))
+
+                async with asyncio.timeout(5):
+                    while not await pool.fetchval(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM pg_locks
+                            WHERE locktype = 'advisory'
+                              AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                              AND NOT granted
+                        )
+                        """
+                    ):
+                        await asyncio.sleep(0.01)
+
+                adapter.project.assert_not_awaited()
+
+        assert task is not None
+        result = await task
+        assert result.success
+        adapter.project.assert_awaited_once()
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_overlapping_runs_do_not_exhaust_a_two_connection_pool(
+    pool: asyncpg.Pool,
+    migrated_db_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for minute in (0, 10):
+        await _insert_point(pool, minute, "Corp WiFi")
+
+    constrained_pool = await asyncpg.create_pool(
+        migrated_db_url,
+        min_size=2,
+        max_size=2,
+        init=register_jsonb_codec,
+    )
+    first_adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
+    second_adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
+    first_fetch = first_adapter._fetch_points
+    first_project_entered = asyncio.Event()
+    release_first_project = asyncio.Event()
+    tasks: list[asyncio.Task] = []
+
+    async def pause_first_fetch(
+        source: asyncpg.Pool | asyncpg.Connection,
+        since: datetime | None,
+        *,
+        since_uuid: UUID | None,
+    ) -> list[asyncpg.Record] | None:
+        first_project_entered.set()
+        await release_first_project.wait()
+        return await first_fetch(source, since, since_uuid=since_uuid)
+
+    monkeypatch.setattr(first_adapter, "_fetch_points", pause_first_fetch)
+
+    try:
+        tasks.append(
+            asyncio.create_task(
+                first_adapter.run(pool=constrained_pool, chronicler_pool=constrained_pool)
+            )
+        )
+        await first_project_entered.wait()
+        tasks.append(
+            asyncio.create_task(
+                second_adapter.run(pool=constrained_pool, chronicler_pool=constrained_pool)
+            )
+        )
+
+        async with asyncio.timeout(5):
+            while not await pool.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_locks
+                    WHERE locktype = 'advisory'
+                      AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                      AND NOT granted
+                )
+                """
+            ):
+                await asyncio.sleep(0.01)
+
+        release_first_project.set()
+        results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=3)
+        assert all(result.success for result in results)
+    finally:
+        release_first_project.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await constrained_pool.close()
 
 
 @pytest.mark.parametrize(
