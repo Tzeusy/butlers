@@ -400,11 +400,17 @@ class MemoryModule(Module):
             enable_shared_catalog: bool,
         ) -> dict[str, Any]:
             import asyncio
+            import importlib
 
-            from butlers.modules.memory.consolidation import run_consolidation
+            # Keep the LLM-backed consolidation implementation outside the
+            # deterministic Finder's transitive import graph.  MemoryModule is
+            # reachable from relationship tools, while consolidation imports
+            # Spawner and runtime adapters; load it only when this scheduled
+            # hook actually dispatches.
+            consolidation = importlib.import_module("butlers.modules.memory.consolidation")
 
             embedding_engine = await asyncio.to_thread(module._get_embedding_engine)
-            return await run_consolidation(
+            return await consolidation.run_consolidation(
                 pool=module._get_pool(),
                 embedding_engine=embedding_engine,
                 cc_spawner=spawner,
