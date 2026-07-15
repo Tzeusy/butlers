@@ -35,6 +35,7 @@ from __future__ import annotations
 import shutil
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -169,6 +170,8 @@ class TestJobArgsValidation:
 
     async def test_consolidation_batch_size_override_is_validated(self, monkeypatch) -> None:
         captured: dict[str, Any] = {}
+        spawner = object()
+        embedding_engine = object()
 
         async def _fake_run_consolidation(
             *,
@@ -180,6 +183,8 @@ class TestJobArgsValidation:
             source_schema=None,
         ):
             captured["batch_size"] = batch_size
+            captured["cc_spawner"] = cc_spawner
+            captured["embedding_engine"] = embedding_engine
             captured["enable_shared_catalog"] = enable_shared_catalog
             captured["source_schema"] = source_schema
             return {"episodes_processed": 0}
@@ -187,12 +192,18 @@ class TestJobArgsValidation:
         monkeypatch.setattr(
             "butlers.modules.memory.consolidation.run_consolidation", _fake_run_consolidation
         )
+        monkeypatch.setattr("butlers.core.spawn_hooks.get_spawner", lambda: spawner)
+        monkeypatch.setattr(
+            "butlers.modules.memory.tools.get_embedding_engine", lambda: embedding_engine
+        )
 
         # No job_args -> DEFAULT_BATCH_SIZE.
         from butlers.modules.memory.consolidation import DEFAULT_BATCH_SIZE
 
         await _run_memory_consolidation_job(pool=object(), job_args=None)
         assert captured["batch_size"] == DEFAULT_BATCH_SIZE
+        assert captured["cc_spawner"] is spawner
+        assert captured["embedding_engine"] is embedding_engine
         # bu-5ud8p.3: enable_shared_catalog must always be threaded through so
         # consolidation-derived facts/rules aren't silently invisible to the
         # catalog once a real Spawner is wired into this deterministic path.
@@ -871,12 +882,26 @@ async def test_run_decay_sweep_expiry_marks_catalog_entry_stale(core_memory_db_u
 @pytest.mark.integration
 async def test_consolidation_backfill_batch_size_bounds_claim_and_skips_dead_letter(
     core_memory_db_url: str,
+    monkeypatch,
 ) -> None:
     """The memory_consolidation_backfill schedule's larger batch_size only ever
-    claims up to that many *pending* episodes per run, and never reclaims
+    processes up to that many *pending* episodes per run, and never reclaims
     dead_letter'd ones — matching the "bounded batch per run, respect
     dead_letter states" requirement for the backlog-drain job.
     """
+
+    class _SuccessfulSpawner:
+        def __init__(self) -> None:
+            self.trigger_sources: list[str] = []
+
+        async def trigger(self, *, prompt: str, trigger_source: str):
+            self.trigger_sources.append(trigger_source)
+            return SimpleNamespace(success=True, output="{}", error=None)
+
+    spawner = _SuccessfulSpawner()
+    monkeypatch.setattr("butlers.core.spawn_hooks.get_spawner", lambda: spawner)
+    monkeypatch.setattr("butlers.modules.memory.tools.get_embedding_engine", lambda: object())
+
     pool = await _pool_for(core_memory_db_url)
     try:
         for i in range(12):
@@ -893,11 +918,13 @@ async def test_consolidation_backfill_batch_size_bounds_claim_and_skips_dead_let
 
         result = await _run_memory_consolidation_job(pool=pool, job_args={"batch_size": 5})
         assert result["episodes_processed"] == 5
+        assert result["episodes_consolidated"] == 5
+        assert spawner.trigger_sources == ["schedule:consolidation"]
 
-        leased_count = await pool.fetchval(
-            "SELECT count(*) FROM episodes WHERE leased_until IS NOT NULL"
+        consolidated_count = await pool.fetchval(
+            "SELECT count(*) FROM episodes WHERE consolidation_status = 'consolidated'"
         )
-        assert leased_count == 5
+        assert consolidated_count == 5
 
         dead_letter_leased = await pool.fetchval(
             "SELECT leased_until FROM episodes WHERE consolidation_status = 'dead_letter'"

@@ -132,3 +132,37 @@ class TestNativeScheduleDispatch:
             prompt="routine task", trigger_source="schedule:routine"
         )
         assert mock_spawner.trigger.call_args.kwargs["complexity"] is Complexity.WORKHORSE
+
+    async def test_memory_consolidation_job_reuses_daemon_spawner(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The deterministic handler reaches consolidation with the live catalog-backed Spawner."""
+        daemon, mock_spawner = self._make_daemon(tmp_path, "general", 41101)
+        embedding_engine = object()
+        captured = {}
+
+        async def _fake_run_consolidation(**kwargs):
+            captured.update(kwargs)
+            return {"episodes_processed": 2, "groups_consolidated": 1}
+
+        monkeypatch.setattr("butlers.core.spawn_hooks.get_spawner", lambda: mock_spawner)
+        monkeypatch.setattr(
+            "butlers.modules.memory.tools.get_embedding_engine", lambda: embedding_engine
+        )
+        monkeypatch.setattr(
+            "butlers.modules.memory.consolidation.run_consolidation",
+            _fake_run_consolidation,
+        )
+
+        result = await daemon._dispatch_scheduled_task(
+            trigger_source="schedule:memory_consolidation",
+            job_name="memory_consolidation",
+            job_args={"batch_size": 7},
+        )
+
+        assert result == {"episodes_processed": 2, "groups_consolidated": 1}
+        assert captured["pool"] is daemon.db.pool
+        assert captured["cc_spawner"] is mock_spawner
+        assert captured["embedding_engine"] is embedding_engine
+        assert captured["batch_size"] == 7
+        assert captured["enable_shared_catalog"] is True

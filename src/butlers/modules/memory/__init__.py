@@ -46,9 +46,8 @@ logger = logging.getLogger(__name__)
 # `memory_consolidation_backfill` reuses the `memory_consolidation` job_name
 # with a larger `job_args.batch_size` on a tighter cadence — a bounded,
 # incremental catch-up pass for the pending-episode backlog (see
-# `_run_memory_consolidation_job` for the batch_size override and the
-# cc_spawner=None caveat: this claims/groups episodes but does not yet spawn
-# an LLM session to promote them to facts/rules).
+# `_run_memory_consolidation_job` for the batch_size override and live-Spawner
+# wiring that promotes each claimed (tenant_id, butler) group to facts/rules).
 _DEFAULT_MAINTENANCE_SCHEDULES: tuple[dict[str, Any], ...] = (
     {
         "name": "memory_decay_sweep",
