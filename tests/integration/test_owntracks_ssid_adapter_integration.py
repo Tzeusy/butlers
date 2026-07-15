@@ -282,3 +282,34 @@ async def test_equal_timestamp_rows_cross_batches_without_loss_or_duplicates(
         "uuid": str(final_id),
     }
     assert checkpoint["carryover"][_ENDPOINT]["point_count"] == 6
+
+    # Simulate an interruption that persisted the UUID cursor but not its
+    # matching relational watermark. Recovery must replay bounded pages and
+    # converge through the stable source ref rather than duplicate the episode.
+    interrupted_carryover = dict(checkpoint["carryover"])
+    interrupted_carryover["_source_cursor"] = {
+        "watermark": _NOW.isoformat(),
+        "uuid": str(final_id),
+    }
+    await pool.execute(
+        """
+        UPDATE projection_checkpoints
+        SET carryover = $2
+        WHERE source_name = $1 AND subsource = ''
+        """,
+        SOURCE_NAME,
+        interrupted_carryover,
+    )
+
+    recovered = [await adapter.run(pool=pool, chronicler_pool=pool) for _ in range(3)]
+    assert any(
+        "SSID source cursor missing or invalid" in warning for warning in recovered[0].warnings
+    )
+    assert [result.episodes_closed for result in recovered] == [0, 0, 1]
+
+    recovered_rows = await pool.fetch(
+        "SELECT * FROM episodes WHERE source_name = $1 ORDER BY start_at",
+        SOURCE_NAME,
+    )
+    assert len(recovered_rows) == 1
+    assert recovered_rows[0]["payload"]["point_count"] == 6

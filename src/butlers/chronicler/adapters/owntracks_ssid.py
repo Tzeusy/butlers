@@ -307,7 +307,7 @@ class OwnTracksSsidPresenceAdapter(ProjectionAdapter):
         since_uuid = self._uuid_tiebreaker(prior_carryover, effective_since)
         if effective_since is not None and since_uuid is None:
             result.warnings.append(
-                "Timestamp-only SSID checkpoint detected; rebuilding from source evidence"
+                "SSID source cursor missing or invalid; rebuilding from source evidence"
             )
             effective_since = None
             prior_carryover = {}

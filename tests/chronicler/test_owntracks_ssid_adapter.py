@@ -248,6 +248,39 @@ async def test_uuid_checkpoint_uses_deterministic_tuple_boundary() -> None:
     assert args == [_NOW, since_uuid, adapter.batch_limit]
 
 
+def test_matching_uuid_cursor_decodes_tiebreaker() -> None:
+    expected = UUID("00000000-0000-0000-0000-000000000002")
+    carryover = {
+        "_source_cursor": {
+            "watermark": _NOW.isoformat(),
+            "uuid": str(expected),
+        }
+    }
+
+    assert OwnTracksSsidPresenceAdapter._uuid_tiebreaker(carryover, _NOW) == expected
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        {"watermark": "not-a-timestamp", "uuid": "not-a-uuid"},
+        {
+            "watermark": (_NOW - timedelta(minutes=1)).isoformat(),
+            "uuid": "00000000-0000-0000-0000-000000000002",
+        },
+    ],
+    ids=["malformed", "watermark-mismatch"],
+)
+def test_invalid_uuid_cursor_requests_fail_safe_replay(cursor: dict[str, str]) -> None:
+    assert (
+        OwnTracksSsidPresenceAdapter._uuid_tiebreaker(
+            {"_source_cursor": cursor},
+            _NOW,
+        )
+        is None
+    )
+
+
 async def test_upsert_work_presence_stamps_minute_activity_and_medium_confidence() -> None:
     adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
     spans, _ = group_ssid_points(
