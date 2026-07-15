@@ -1063,6 +1063,31 @@ async def test_insight_scan_pretrip_expires_at_is_departure_date(provisioned_pos
         assert expires_at.date() == departure
 
 
+async def test_insight_scan_pretrip_departing_today_has_future_expiry(
+    provisioned_postgres_pool,
+):
+    """A same-day departure remains eligible after UTC midnight."""
+    from butlers.jobs._roster.travel_jobs import run_insight_scan
+
+    async with provisioned_postgres_pool() as pool:
+        await _setup_travel_schema(pool)
+        await _setup_insight_tables(pool)
+        await _insert_trip(
+            pool,
+            start_date=_today(),
+            end_date=_today() + timedelta(days=3),
+        )
+
+        result = await run_insight_scan(pool)
+
+        expires_at = await pool.fetchval(
+            "SELECT expires_at FROM insight_candidates WHERE category = 'pre-trip'"
+        )
+        assert result["candidates_errored"] == 0
+        assert expires_at.date() == _today()
+        assert expires_at > _utcnow()
+
+
 # ---------------------------------------------------------------------------
 # Tests: run_insight_scan — document expiry
 # ---------------------------------------------------------------------------
@@ -1402,6 +1427,47 @@ async def test_insight_scan_medication_prep_uses_health_consumer_once_for_eligib
         }
         assert all("medication supply" in row["message"].lower() for row in rows)
         assert all("Private" not in row["message"] for row in rows)
+
+
+@pytest.mark.parametrize(
+    ("departure_days", "expected_priority"),
+    [(0, 75), (7, 75), (8, 55), (14, 55), (15, None)],
+)
+async def test_insight_scan_medication_prep_honors_departure_window_boundaries(
+    provisioned_postgres_pool,
+    monkeypatch,
+    departure_days: int,
+    expected_priority: int | None,
+):
+    """Today through day 14 are eligible, with the day 7 priority boundary inclusive."""
+    from butlers.jobs._roster.travel_jobs import run_insight_scan
+    from butlers.tools.travel import health as travel_health
+
+    snapshot_reader = AsyncMock(return_value=_active_medication_snapshot())
+    monkeypatch.setattr(travel_health, "request_health_medication_snapshot", snapshot_reader)
+
+    async with provisioned_postgres_pool() as pool:
+        await _setup_travel_schema(pool)
+        await _setup_insight_tables(pool)
+        start_date = _today() + timedelta(days=departure_days)
+        await _insert_trip(
+            pool,
+            start_date=start_date,
+            end_date=start_date + timedelta(days=4),
+        )
+
+        await run_insight_scan(pool)
+
+        row = await pool.fetchrow(
+            "SELECT priority, expires_at FROM insight_candidates WHERE category = 'medication-prep'"
+        )
+        if expected_priority is None:
+            assert row is None
+            snapshot_reader.assert_not_awaited()
+        else:
+            assert row["priority"] == expected_priority
+            assert row["expires_at"].date() == start_date
+            snapshot_reader.assert_awaited_once()
 
 
 @pytest.mark.parametrize(

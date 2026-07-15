@@ -62,6 +62,20 @@ _MEDICATION_PREP_PRIORITY_URGENT = 75
 _MEDICATION_PREP_PRIORITY_INFO = 55
 
 
+def _departure_date_expiry_utc(departure_date: date) -> datetime:
+    """Return the final UTC instant of a departure date."""
+    return (
+        datetime(
+            departure_date.year,
+            departure_date.month,
+            departure_date.day,
+            tzinfo=UTC,
+        )
+        + timedelta(days=1)
+        - timedelta(microseconds=1)
+    )
+
+
 async def run_upcoming_travel_check(db_pool: asyncpg.Pool) -> dict[str, Any]:
     """Check for imminent departures within 7 days and surface pre-trip actions.
 
@@ -454,7 +468,7 @@ async def run_insight_scan(db_pool: asyncpg.Pool) -> dict[str, Any]:
             priority = _PRETRIP_PRIORITY_INFO
 
         dedup_key = f"travel:pre-trip:{trip_id}:{start_d.isoformat()}"
-        expires_at = datetime(start_d.year, start_d.month, start_d.day, tzinfo=UTC)
+        expires_at = _departure_date_expiry_utc(start_d)
         message = (
             f"Trip to {destination} departs in {days_until} day(s) — "
             "review your pre-trip checklist to ensure you're ready."
@@ -593,7 +607,7 @@ async def run_insight_scan(db_pool: asyncpg.Pool) -> dict[str, Any]:
                     if days_until <= _MEDICATION_PREP_URGENT_DAYS
                     else _MEDICATION_PREP_PRIORITY_INFO
                 )
-                expires_at = datetime(start_d.year, start_d.month, start_d.day, tzinfo=UTC)
+                expires_at = _departure_date_expiry_utc(start_d)
                 message = (
                     f"Your {duration_days}-day trip to {destination} departs in "
                     f"{days_until} day(s) — ensure you have enough medication supply "
