@@ -256,6 +256,27 @@ async def medication_list(
     return [_fact_to_medication(dict(r)) for r in rows]
 
 
+async def medication_travel_snapshot(pool: asyncpg.Pool) -> dict[str, Any]:
+    """Return the minimum active-medication view needed for travel preparation."""
+    from butlers.health_medication_contract import (
+        MedicationTravelEntry,
+        MedicationTravelSnapshot,
+    )
+
+    medications = await medication_list(pool, active_only=True)
+    entries = [
+        MedicationTravelEntry(
+            name=medication["name"],
+            dosage=medication["dosage"],
+            frequency=medication["frequency"],
+            schedule=list(medication.get("schedule") or []),
+        )
+        for medication in medications
+        if medication.get("active", True)
+    ]
+    return MedicationTravelSnapshot.success(entries).model_dump(mode="json")
+
+
 async def medication_log_dose(
     pool: asyncpg.Pool,
     medication_id: str,
