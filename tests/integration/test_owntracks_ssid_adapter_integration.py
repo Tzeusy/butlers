@@ -9,6 +9,8 @@ from uuid import UUID
 import asyncpg
 import pytest
 
+from butlers.chronicler import storage
+from butlers.chronicler.adapters import owntracks_ssid as owntracks_ssid_module
 from butlers.chronicler.adapters.owntracks import OwnTracksPointAdapter
 from butlers.chronicler.adapters.owntracks_ssid import (
     EPISODE_TYPE_HOME_PRESENCE,
@@ -313,3 +315,172 @@ async def test_equal_timestamp_rows_cross_batches_without_loss_or_duplicates(
     )
     assert len(recovered_rows) == 1
     assert recovered_rows[0]["payload"]["point_count"] == 6
+
+
+@pytest.mark.parametrize(
+    "failure_boundary",
+    [
+        "after_tombstone",
+        "after_episode",
+        "after_carryover",
+        "after_source_active",
+        "after_checkpoint",
+    ],
+)
+async def test_mapping_replay_failure_rolls_back_every_persistence_boundary(
+    pool: asyncpg.Pool,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_boundary: str,
+) -> None:
+    for minute in (0, 10):
+        await _insert_point(pool, minute, "Corp WiFi")
+
+    original_adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
+    original_result = await original_adapter.run(pool=pool, chronicler_pool=pool)
+    assert original_result.success
+
+    successful_checkpoint = await pool.fetchrow(
+        """
+        SELECT watermark, carryover, last_success_at, rows_projected, run_count
+        FROM projection_checkpoints
+        WHERE source_name = $1 AND subsource = ''
+        """,
+        SOURCE_NAME,
+    )
+    assert successful_checkpoint is not None
+
+    replay_adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "home"})
+    injected_message = f"injected failure {failure_boundary}"
+
+    if failure_boundary == "after_tombstone":
+        original = replay_adapter._tombstone_stale_mapping_episodes
+
+        async def fail_after_tombstone(conn: asyncpg.Connection) -> None:
+            await original(conn)
+            raise RuntimeError(injected_message)
+
+        monkeypatch.setattr(
+            replay_adapter,
+            "_tombstone_stale_mapping_episodes",
+            fail_after_tombstone,
+        )
+    elif failure_boundary == "after_episode":
+        original = replay_adapter._upsert_presence_episode
+
+        async def fail_after_episode(*args: object, **kwargs: object) -> object:
+            await original(*args, **kwargs)
+            raise RuntimeError(injected_message)
+
+        monkeypatch.setattr(replay_adapter, "_upsert_presence_episode", fail_after_episode)
+    elif failure_boundary == "after_carryover":
+        original = storage.save_carryover
+
+        async def fail_after_carryover(*args: object, **kwargs: object) -> None:
+            await original(*args, **kwargs)
+            raise RuntimeError(injected_message)
+
+        monkeypatch.setattr(owntracks_ssid_module, "save_carryover", fail_after_carryover)
+    elif failure_boundary == "after_source_active":
+        original = storage.mark_source_active
+
+        async def fail_after_source_active(*args: object, **kwargs: object) -> None:
+            await original(*args, **kwargs)
+            raise RuntimeError(injected_message)
+
+        monkeypatch.setattr(
+            owntracks_ssid_module,
+            "mark_source_active",
+            fail_after_source_active,
+            raising=False,
+        )
+    else:
+        original = storage.upsert_checkpoint
+        calls = 0
+
+        async def fail_after_success_checkpoint(*args: object, **kwargs: object) -> None:
+            nonlocal calls
+            await original(*args, **kwargs)
+            calls += 1
+            if calls == 1:
+                raise RuntimeError(injected_message)
+
+        monkeypatch.setattr(
+            owntracks_ssid_module,
+            "upsert_checkpoint",
+            fail_after_success_checkpoint,
+            raising=False,
+        )
+
+    failed_result = await replay_adapter.run(pool=pool, chronicler_pool=pool)
+    assert failed_result.error == injected_message
+
+    failed_checkpoint = await pool.fetchrow(
+        """
+        SELECT watermark, carryover, last_success_at, rows_projected, run_count, last_error
+        FROM projection_checkpoints
+        WHERE source_name = $1 AND subsource = ''
+        """,
+        SOURCE_NAME,
+    )
+    assert failed_checkpoint is not None
+    assert failed_checkpoint["watermark"] == successful_checkpoint["watermark"]
+    assert failed_checkpoint["carryover"] == successful_checkpoint["carryover"]
+    assert failed_checkpoint["last_success_at"] == successful_checkpoint["last_success_at"]
+    assert failed_checkpoint["rows_projected"] == successful_checkpoint["rows_projected"]
+    assert failed_checkpoint["run_count"] == successful_checkpoint["run_count"] + 1
+    assert failed_checkpoint["last_error"] == injected_message
+
+    after_failure = await pool.fetch(
+        """
+        SELECT episode_type, payload, tombstone_at
+        FROM episodes
+        WHERE source_name = $1
+        ORDER BY start_at
+        """,
+        SOURCE_NAME,
+    )
+    assert len(after_failure) == 1
+    assert after_failure[0]["episode_type"] == EPISODE_TYPE_WORK_PRESENCE
+    assert after_failure[0]["payload"]["place"] == "work"
+    assert after_failure[0]["tombstone_at"] is None
+    assert (
+        await pool.fetchval(
+            "SELECT active FROM source_adapter_state WHERE source_name = $1",
+            SOURCE_NAME,
+        )
+        is True
+    )
+
+    monkeypatch.undo()
+    recovered = await replay_adapter.run(pool=pool, chronicler_pool=pool)
+    repeated = await replay_adapter.run(pool=pool, chronicler_pool=pool)
+    assert recovered.success and repeated.success
+
+    after_recovery = await pool.fetch(
+        """
+        SELECT episode_type, payload, tombstone_at
+        FROM episodes
+        WHERE source_name = $1
+        ORDER BY start_at
+        """,
+        SOURCE_NAME,
+    )
+    assert len(after_recovery) == 1
+    assert after_recovery[0]["episode_type"] == EPISODE_TYPE_HOME_PRESENCE
+    assert after_recovery[0]["payload"]["place"] == "home"
+    assert after_recovery[0]["tombstone_at"] is None
+
+    recovered_checkpoint = await pool.fetchrow(
+        """
+        SELECT watermark, carryover
+        FROM projection_checkpoints
+        WHERE source_name = $1 AND subsource = ''
+        """,
+        SOURCE_NAME,
+    )
+    assert recovered_checkpoint is not None
+    assert (
+        datetime.fromisoformat(recovered_checkpoint["carryover"]["_source_cursor"]["watermark"])
+        == recovered_checkpoint["watermark"]
+    )
+    assert recovered_checkpoint["carryover"][_ENDPOINT]["point_count"] == 2

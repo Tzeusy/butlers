@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,6 +12,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from butlers.chronicler.adapters.base import AdapterResult
 from butlers.chronicler.adapters.owntracks_ssid import (
     DEFAULT_MAX_GAP_MINUTES,
     EPISODE_TYPE_HOME_PRESENCE,
@@ -38,6 +40,26 @@ class _AsyncCtx:
 
     async def __aexit__(self, *_: object) -> None:
         pass
+
+
+class _TrackingAsyncCtx(_AsyncCtx):
+    def __init__(self, obj: object) -> None:
+        super().__init__(obj)
+        self.entered = False
+        self.exited = False
+        self.exit_type: type[BaseException] | None = None
+
+    async def __aenter__(self) -> object:
+        self.entered = True
+        return await super().__aenter__()
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        *_: object,
+    ) -> None:
+        self.exited = True
+        self.exit_type = exc_type
 
 
 def _row(
@@ -281,6 +303,81 @@ def test_invalid_uuid_cursor_requests_fail_safe_replay(cursor: dict[str, str]) -
     )
 
 
+async def test_run_uses_one_transactional_chronicler_connection() -> None:
+    adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
+    adapter.project = AsyncMock(return_value=AdapterResult(source_name=SOURCE_NAME, watermark=_NOW))
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+    transaction = _TrackingAsyncCtx(None)
+    conn.transaction = MagicMock(return_value=transaction)
+    acquire = _TrackingAsyncCtx(conn)
+    pool = MagicMock()
+    pool.acquire.return_value = acquire
+    pool.fetchrow = AsyncMock(return_value=None)
+    pool.execute = AsyncMock()
+
+    result = await adapter.run(pool=pool, chronicler_pool=pool)
+
+    assert result.watermark == _NOW
+    adapter.project.assert_awaited_once_with(
+        pool,
+        chronicler_pool=conn,
+        since=None,
+        since_id=None,
+    )
+    assert transaction.entered and transaction.exited
+    assert acquire.entered and acquire.exited
+    assert conn.execute.await_count == 2
+    pool.execute.assert_not_awaited()
+
+
+async def test_run_releases_transaction_and_connection_before_reporting_failure() -> None:
+    adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
+    adapter.project = AsyncMock(side_effect=RuntimeError("injected persistence failure"))
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+    transaction = _TrackingAsyncCtx(None)
+    conn.transaction = MagicMock(return_value=transaction)
+    acquire = _TrackingAsyncCtx(conn)
+    pool = MagicMock()
+    pool.acquire.return_value = acquire
+
+    async def record_failure_after_cleanup(*_: object, **__: object) -> None:
+        assert transaction.exited
+        assert acquire.exited
+
+    pool.execute = AsyncMock(side_effect=record_failure_after_cleanup)
+
+    result = await adapter.run(pool=pool, chronicler_pool=pool)
+
+    assert result.error == "injected persistence failure"
+    assert transaction.exited and transaction.exit_type is RuntimeError
+    assert acquire.exited and acquire.exit_type is RuntimeError
+    conn.execute.assert_not_awaited()
+    pool.execute.assert_awaited_once()
+
+
+async def test_run_cancellation_rolls_back_and_releases_without_failure_write() -> None:
+    adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
+    adapter.project = AsyncMock(side_effect=asyncio.CancelledError())
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+    transaction = _TrackingAsyncCtx(None)
+    conn.transaction = MagicMock(return_value=transaction)
+    acquire = _TrackingAsyncCtx(conn)
+    pool = MagicMock()
+    pool.acquire.return_value = acquire
+    pool.execute = AsyncMock()
+
+    with pytest.raises(asyncio.CancelledError):
+        await adapter.run(pool=pool, chronicler_pool=pool)
+
+    assert transaction.exited and transaction.exit_type is asyncio.CancelledError
+    assert acquire.exited and acquire.exit_type is asyncio.CancelledError
+    conn.execute.assert_not_awaited()
+    pool.execute.assert_not_awaited()
+
+
 async def test_upsert_work_presence_stamps_minute_activity_and_medium_confidence() -> None:
     adapter = OwnTracksSsidPresenceAdapter(ssid_places={"Corp WiFi": "work"})
     spans, _ = group_ssid_points(
@@ -289,8 +386,6 @@ async def test_upsert_work_presence_stamps_minute_activity_and_medium_confidence
         max_gap=adapter.max_gap,
     )
     conn = AsyncMock()
-    pool = MagicMock()
-    pool.acquire.return_value = _AsyncCtx(conn)
     owner_id = uuid4()
 
     async def _return_episode(_conn: object, episode: object) -> object:
@@ -307,7 +402,7 @@ async def test_upsert_work_presence_stamps_minute_activity_and_medium_confidence
             new=AsyncMock(),
         ) as owner_link,
     ):
-        episode = await adapter._upsert_presence_episode(pool, spans[0], entity_id=owner_id)
+        episode = await adapter._upsert_presence_episode(conn, spans[0], entity_id=owner_id)
 
     projected = upsert.await_args.args[1]
     assert projected.episode_type == EPISODE_TYPE_WORK_PRESENCE
@@ -333,8 +428,6 @@ async def test_upsert_home_presence_uses_distinct_episode_type() -> None:
         max_gap=adapter.max_gap,
     )
     conn = AsyncMock()
-    pool = MagicMock()
-    pool.acquire.return_value = _AsyncCtx(conn)
 
     async def _return_episode(_conn: object, episode: object) -> object:
         episode.id = uuid4()
@@ -350,7 +443,7 @@ async def test_upsert_home_presence_uses_distinct_episode_type() -> None:
             new=AsyncMock(),
         ),
     ):
-        await adapter._upsert_presence_episode(pool, spans[0], entity_id=None)
+        await adapter._upsert_presence_episode(conn, spans[0], entity_id=None)
 
     assert upsert.await_args.args[1].episode_type == EPISODE_TYPE_HOME_PRESENCE
 
