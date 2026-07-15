@@ -50,30 +50,12 @@ class _TravelPool:
         return None
 
 
-class _InProcessSwitchboardClient:
-    def __init__(self, health_mcp: FastMCP) -> None:
-        self.health_mcp = health_mcp
-        self.calls: list[tuple[str, dict]] = []
+async def test_travel_obtains_minimum_medication_snapshot_through_health_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from butlers.modules._roster_switchboard.tools import register_tools
+    from butlers.tools.switchboard import routing as routing_package
 
-    async def call_tool(self, tool_name: str, args: dict) -> object:
-        self.calls.append((tool_name, args))
-        assert tool_name == "route"
-        assert args["target_butler"] == "health"
-        assert args["tool_name"] == "medication_travel_snapshot"
-        assert args["source_butler"] == "travel"
-
-        async with Client(self.health_mcp) as client:
-            health_result = await client.call_tool(
-                args["tool_name"], args["args"], raise_on_error=True
-            )
-        return SimpleNamespace(
-            is_error=False,
-            data={"result": health_result.data},
-            content=[],
-        )
-
-
-async def test_travel_obtains_minimum_medication_snapshot_through_health_mcp() -> None:
     health_pool = _HealthPool()
     health_module = HealthModule()
     health_mcp = FastMCP("health")
@@ -93,11 +75,47 @@ async def test_travel_obtains_minimum_medication_snapshot_through_health_mcp() -
         SimpleNamespace(pool=travel_pool),
         butler_name="travel",
     )
-    switchboard = _InProcessSwitchboardClient(health_mcp)
-    travel_module.wire_runtime(None, "/repo", switchboard_client=switchboard)
 
-    async with Client(travel_mcp) as client:
-        result = await client.call_tool("health_medication_snapshot", {}, raise_on_error=True)
+    health_tool = await health_mcp.get_tool("medication_travel_snapshot")
+    travel_tool = await travel_mcp.get_tool("health_medication_snapshot")
+    assert health_tool is not None
+    assert travel_tool is not None
+    assert health_tool.parameters["additionalProperties"] is False
+    assert set(health_tool.parameters["properties"]) == {"trace_context"}
+    assert travel_tool.parameters == {
+        "additionalProperties": False,
+        "properties": {},
+        "type": "object",
+    }
+
+    switchboard_calls: list[tuple[str, str, dict, str]] = []
+
+    async def in_process_route(
+        _pool: object,
+        target_butler: str,
+        tool_name: str,
+        args: dict,
+        *,
+        source_butler: str,
+        **_kwargs: object,
+    ) -> dict:
+        switchboard_calls.append((target_butler, tool_name, args, source_butler))
+        async with Client(health_mcp) as client:
+            health_result = await client.call_tool(tool_name, args, raise_on_error=True)
+        return {"result": health_result}
+
+    monkeypatch.setattr(routing_package, "route", in_process_route)
+    switchboard_mcp = FastMCP("switchboard")
+    register_tools(
+        switchboard_mcp,
+        SimpleNamespace(_get_pool=lambda: object()),
+        SimpleNamespace(groups=["routing"]),
+    )
+
+    async with Client(switchboard_mcp) as switchboard_client:
+        travel_module.wire_runtime(None, "/repo", switchboard_client=switchboard_client)
+        async with Client(travel_mcp) as client:
+            result = await client.call_tool("health_medication_snapshot", {}, raise_on_error=True)
 
     assert result.data == {
         "schema_version": "health.medication-travel.v1",
@@ -112,7 +130,7 @@ async def test_travel_obtains_minimum_medication_snapshot_through_health_mcp() -
         ],
         "error": None,
     }
-    assert switchboard.calls
+    assert switchboard_calls == [("health", "medication_travel_snapshot", {}, "travel")]
     assert health_pool.queries and "FROM facts" in health_pool.queries[0]
     assert travel_pool.queries
     assert all("health." not in query.lower() for query in travel_pool.queries)

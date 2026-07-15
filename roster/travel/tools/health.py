@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 import asyncpg
+from pydantic import ValidationError
 
 from butlers.core.permissions import CROSS_BUTLER_PERMISSION, check_permission
 from butlers.health_medication_contract import (
@@ -88,12 +89,31 @@ async def request_health_medication_snapshot(
             retryable=True,
         )
 
-    payload = data.get("result") if isinstance(data, dict) else None
+    routed_result = data.get("result") if isinstance(data, dict) else None
+    if isinstance(routed_result, dict) and routed_result.get("is_error") is True:
+        logger.warning("Health returned an MCP error for the medication request")
+        return _failure(
+            code="health_unavailable",
+            message="Health medication data is temporarily unavailable.",
+            retryable=True,
+        )
+
+    payload = (
+        routed_result.get("data")
+        if isinstance(routed_result, dict) and routed_result.get("is_error") is False
+        else None
+    )
     try:
         snapshot = MedicationTravelSnapshot.model_validate(payload)
-        if snapshot.status != "ok":
-            raise ValueError("Health provider returned an error envelope")
-    except (TypeError, ValueError):
+    except ValidationError:
+        logger.warning("Health returned an invalid medication travel snapshot")
+        return _failure(
+            code="invalid_health_response",
+            message="Health returned an invalid medication response.",
+            retryable=False,
+        )
+
+    if snapshot.status != "ok":
         logger.warning("Health returned an invalid medication travel snapshot")
         return _failure(
             code="invalid_health_response",

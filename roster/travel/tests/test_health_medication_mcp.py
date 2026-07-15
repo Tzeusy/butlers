@@ -24,6 +24,16 @@ def _mcp_result(data: object, *, is_error: bool = False, error_text: str = "") -
     return SimpleNamespace(is_error=is_error, data=data, content=content)
 
 
+def _routed_health_result(payload: object, *, is_error: bool = False) -> dict:
+    """Match FastMCP's serialized CallToolResult inside Switchboard's result."""
+    return {
+        "result": {
+            "data": payload,
+            "is_error": is_error,
+        }
+    }
+
+
 async def test_consumer_routes_fixed_request_through_switchboard() -> None:
     from butlers.tools.travel.health import request_health_medication_snapshot
 
@@ -31,8 +41,8 @@ async def test_consumer_routes_fixed_request_through_switchboard() -> None:
     pool.fetchrow.return_value = None
     client = AsyncMock()
     client.call_tool.return_value = _mcp_result(
-        {
-            "result": _health_snapshot(
+        _routed_health_result(
+            _health_snapshot(
                 medications=[
                     {
                         "name": "Metformin",
@@ -42,7 +52,7 @@ async def test_consumer_routes_fixed_request_through_switchboard() -> None:
                     }
                 ]
             )
-        }
+        )
     )
 
     result = await request_health_medication_snapshot(pool, client)
@@ -123,6 +133,25 @@ async def test_consumer_reports_health_route_failures_as_retryable(call_result: 
     }
 
 
+async def test_consumer_reports_inner_health_mcp_error_as_unavailable() -> None:
+    from butlers.tools.travel.health import request_health_medication_snapshot
+
+    pool = AsyncMock()
+    pool.fetchrow.return_value = None
+    client = AsyncMock()
+    client.call_tool.return_value = _mcp_result(
+        _routed_health_result(_health_snapshot(), is_error=True)
+    )
+
+    result = await request_health_medication_snapshot(pool, client)
+
+    assert result["error"] == {
+        "code": "health_unavailable",
+        "message": "Health medication data is temporarily unavailable.",
+        "retryable": True,
+    }
+
+
 async def test_consumer_reports_timeout_as_retryable_health_unavailability() -> None:
     from butlers.tools.travel.health import request_health_medication_snapshot
 
@@ -154,7 +183,7 @@ async def test_consumer_rejects_malformed_or_privacy_expanded_health_response() 
         ]
     )
     client = AsyncMock()
-    client.call_tool.return_value = _mcp_result({"result": malformed})
+    client.call_tool.return_value = _mcp_result(_routed_health_result(malformed))
 
     result = await request_health_medication_snapshot(pool, client)
 
@@ -168,13 +197,28 @@ async def test_consumer_rejects_malformed_or_privacy_expanded_health_response() 
     assert "notes" not in str(result)
 
 
-async def test_consumer_preserves_successful_empty_response() -> None:
+async def test_consumer_rejects_non_call_tool_result_wrapper() -> None:
     from butlers.tools.travel.health import request_health_medication_snapshot
 
     pool = AsyncMock()
     pool.fetchrow.return_value = None
     client = AsyncMock()
     client.call_tool.return_value = _mcp_result({"result": _health_snapshot()})
+
+    result = await request_health_medication_snapshot(pool, client)
+
+    assert result["status"] == "error"
+    assert result["medications"] == []
+    assert result["error"]["code"] == "invalid_health_response"
+
+
+async def test_consumer_preserves_successful_empty_response() -> None:
+    from butlers.tools.travel.health import request_health_medication_snapshot
+
+    pool = AsyncMock()
+    pool.fetchrow.return_value = None
+    client = AsyncMock()
+    client.call_tool.return_value = _mcp_result(_routed_health_result(_health_snapshot()))
 
     result = await request_health_medication_snapshot(pool, client)
 
@@ -198,7 +242,7 @@ async def test_travel_module_wires_and_registers_parameterless_consumer() -> Non
     pool.fetchrow.return_value = None
     db = SimpleNamespace(pool=pool)
     client = AsyncMock()
-    client.call_tool.return_value = _mcp_result({"result": _health_snapshot()})
+    client.call_tool.return_value = _mcp_result(_routed_health_result(_health_snapshot()))
     module = TravelModule()
 
     await module.register_tools(_Mcp(), {}, db, butler_name="travel")

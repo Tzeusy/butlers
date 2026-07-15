@@ -52,7 +52,9 @@ Travel registers `health_medication_snapshot`. Its implementation:
 1. Checks `public.permissions` for Travel's `cross_butler` capability using the Travel pool.
 2. Calls the connected Switchboard client's `route` MCP tool with `target_butler = "health"`,
    `tool_name = "medication_travel_snapshot"`, and `source_butler = "travel"`.
-3. Unwraps the Switchboard result and validates it against the strict shared contract.
+3. Unwraps only the Switchboard route tool's serialized `CallToolResult` payload at
+   `result.data` and validates it against the strict shared contract. A missing or malformed
+   wrapper fails closed rather than treating wrapper fields or text content as Health data.
 4. Returns the validated success envelope or a structured error envelope with an error code and
    retryability flag.
 
@@ -75,6 +77,11 @@ Errors are normalized as follows:
 - missing Switchboard client: `switchboard_unavailable`, retryable;
 - timeout, MCP failure, or Health routing failure: `health_unavailable`, retryable;
 - response contract mismatch: `invalid_health_response`, not retryable.
+
+An outer Switchboard MCP error or an inner Health `CallToolResult` with `is_error = true` is
+provider unavailability. A successful wrapper whose `result.data` is absent or malformed is an
+invalid response. Travel never falls back to parsing `content` text because that would create a
+second, less strict health-data path.
 
 Alternative considered: raise every failure as an MCP transport error. Rejected because downstream
 jobs need deterministic, typed handling while preserving successful-empty behavior.

@@ -92,7 +92,8 @@ caller-selected target butler, tool name, scope, or raw query.
 
 #### Scenario: Malformed provider response fails closed
 - **WHEN** Health returns an envelope with an unknown version, missing required field, wrong field
-  type, or extra field
+  type, or extra field, or the Switchboard response lacks the serialized `result.data`
+  `CallToolResult` shape
 - **THEN** Travel SHALL return `status = "error"`, error code `invalid_health_response`, and an empty
   medication list
 - **AND** it SHALL NOT pass the malformed or extra data to its caller

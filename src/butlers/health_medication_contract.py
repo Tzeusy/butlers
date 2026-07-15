@@ -19,7 +19,7 @@ MedicationTravelErrorCode = Literal[
 class MedicationTravelEntry(BaseModel):
     """Minimum medication fields needed to prepare for travel."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     name: str
     dosage: str
@@ -30,7 +30,7 @@ class MedicationTravelEntry(BaseModel):
 class MedicationTravelError(BaseModel):
     """Structured failure returned by the Travel-side consumer."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     code: MedicationTravelErrorCode
     message: str
@@ -40,7 +40,7 @@ class MedicationTravelError(BaseModel):
 class MedicationTravelSnapshot(BaseModel):
     """Versioned Health-to-Travel medication snapshot response."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     schema_version: Literal["health.medication-travel.v1"] = MEDICATION_TRAVEL_SCHEMA_VERSION
     status: Literal["ok", "error"]

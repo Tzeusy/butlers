@@ -71,6 +71,14 @@ def test_success_contract_allows_an_empty_medication_list() -> None:
     assert snapshot.error is None
 
 
+def test_success_contract_rejects_coercible_wrong_field_types() -> None:
+    payload = _success_payload()
+    payload["medications"][0]["schedule"] = ("08:00", "20:00")
+
+    with pytest.raises(ValidationError):
+        MedicationTravelSnapshot.model_validate(payload)
+
+
 def test_success_contract_rejects_an_error_object() -> None:
     payload = _success_payload()
     payload["error"] = {
