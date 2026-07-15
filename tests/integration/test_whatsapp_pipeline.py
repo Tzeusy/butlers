@@ -705,6 +705,24 @@ class TestDashboardPairAPI:
         assert response.status_code == 200
         assert response.json()["state"] == "disconnected"
 
+    async def test_health_maps_bridge_uptime_s_to_api_uptime_seconds(self, client):
+        """The dashboard health response preserves uptime from the Go bridge contract."""
+        with patch(
+            "butlers.api.routers.whatsapp._bridge_get",
+            new=AsyncMock(
+                return_value={
+                    "state": "connected",
+                    "connected": True,
+                    "logged_in": True,
+                    "uptime_s": 3600.5,
+                }
+            ),
+        ):
+            response = await client.get("/api/connectors/whatsapp/health")
+
+        assert response.status_code == 200
+        assert response.json()["uptime_seconds"] == 3600.5
+
     async def test_pair_poll_states(self, client):
         """GET /pair/poll returns correct state for waiting/paired/expired/bridge-down."""
         # Waiting
