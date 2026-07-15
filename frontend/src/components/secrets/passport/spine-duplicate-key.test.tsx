@@ -18,7 +18,10 @@ import { Spine } from "./Spine.tsx";
 import { buildSpineEntries } from "./spine-builder.ts";
 import { MOCK_INVENTORY } from "./mock-data.ts";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 function renderSpine() {
   // Owner-default: pass every identity so both google creds (tze + wei) land in
@@ -68,7 +71,6 @@ describe("Spine duplicate-key (bu-ffjig)", () => {
       ),
     );
     expect(dupeWarning).toBe(false);
-    errorSpy.mockRestore();
   });
 
   it("keeps entry.key provider-level so focus deep-links still resolve", () => {
