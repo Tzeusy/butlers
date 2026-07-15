@@ -13,7 +13,8 @@
  *   3. Workbench toggle → three rails render; provenance grid sortable;
  *      duplicate panel → compare.
  *   4. Finder: Cmd-K → type → preview pane populates; Tab lands on
- *      /entities?center=... (the Plex); empty-query owner-pinned set renders.
+ *      /entities?center=... (the Plex); empty-query owner-pinned set renders;
+ *      shared-Dialog focus/dismissal behavior works in a real browser.
  *   5. Closeout gaps (PR #2239): concentration provenance marks
  *      (data-testid=concentration-provenance), Index keyboard cursor focus
  *      (tr[data-cursor]), delta-since-last-visit fact-row highlight
@@ -860,6 +861,50 @@ test.describe("entity-v3: Cmd-K finder", () => {
     await expect(
       page.getByTestId("entity-finder-preview-relation").first(),
     ).toBeVisible({ timeout: TIMEOUT_MS });
+  });
+
+  test("shared Dialog traps and restores focus and dismisses by Escape or outside pointer", async ({
+    page,
+  }) => {
+    await installFinderStubs(page);
+    // Keep the active result null after typing so Tab exercises the Dialog's
+    // focus scope instead of EntityFinder's intentional entity Tab-to-hop.
+    await page.route("**/api/relationship/entities/search**", (route) =>
+      json(route, { results: [], total: 0, q: "contacts", limit: 8 }),
+    );
+    await page.goto("/", { timeout: TIMEOUT_MS });
+
+    const trigger = page.getByRole("button", { name: "Open command menu" });
+    const initialH1Count = await page.locator("h1").count();
+    expect(initialH1Count).toBeLessThanOrEqual(1);
+
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: "Command menu" });
+    const input = page.getByTestId("entity-finder-input");
+    await expect(dialog).toHaveCount(1);
+    await expect(dialog).toHaveAttribute("data-slot", "dialog-content");
+    await expect(input).toBeFocused();
+    await expect(page.locator("h1")).toHaveCount(initialH1Count);
+
+    await input.fill("contacts");
+    await expect(page.getByTestId("entity-finder-page-item").first()).toBeVisible({
+      timeout: TIMEOUT_MS,
+    });
+    await input.press("Tab");
+    await expect(input).toBeFocused();
+    await input.press("Shift+Tab");
+    await expect(input).toBeFocused();
+
+    await input.press("Escape");
+    await expect(dialog).not.toBeVisible();
+    await expect(trigger).toBeFocused();
+
+    await trigger.click();
+    await expect(input).toBeFocused();
+    await page.mouse.click(4, 4);
+    await expect(dialog).not.toBeVisible();
+    await expect(trigger).toBeFocused();
+    await expect(page.locator("h1")).toHaveCount(initialH1Count);
   });
 
   test("Tab on the active result lands on /entities?center=<id>", async ({
