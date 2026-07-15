@@ -21,13 +21,15 @@ pytestmark = [
 # they differ by a day and date-anchored assertions flake (e.g.
 # ``assert days_until_departure == 5`` failing 4 or 6, or an
 # ``expiry_date=_today()`` doc landing at -1 days and dropping out of the scan).
-# Sharing one frozen clock eliminates the off-by-one regardless of wall time.
-_TODAY = date.today()
+# Sharing one frozen UTC clock eliminates the off-by-one regardless of wall time
+# or the process-local timezone. In particular, do not pair ``date.today()``
+# (local date) with ``datetime.now(UTC)``: those dates differ for part of every
+# day outside UTC.
 _NOW = datetime.now(UTC)
 
 
 def _today() -> date:
-    return _TODAY
+    return _NOW.date()
 
 
 def _utcnow() -> datetime:
@@ -51,7 +53,7 @@ class _RealInstanceCheck(type):
 class _FrozenDate(date, metaclass=_RealInstanceCheck):
     @classmethod
     def today(cls) -> date:
-        return _TODAY
+        return _NOW.date()
 
 
 class _FrozenDateTime(datetime, metaclass=_RealInstanceCheck):
