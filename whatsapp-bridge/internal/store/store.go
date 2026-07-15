@@ -59,25 +59,6 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// EnsureTable creates the whatsapp_sessions table if it does not exist.
-// This is a fallback; migrations are normally handled by Alembic.
-func (s *Store) EnsureTable(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS messenger.whatsapp_sessions (
-			id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			phone_number TEXT NOT NULL,
-			device_id    TEXT NOT NULL DEFAULT '',
-			session_data JSONB NOT NULL DEFAULT '{}',
-			paired_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			active       BOOLEAN NOT NULL DEFAULT TRUE
-		);
-		CREATE UNIQUE INDEX IF NOT EXISTS uq_whatsapp_sessions_active_phone
-			ON messenger.whatsapp_sessions (phone_number) WHERE active = TRUE;
-	`)
-	return err
-}
-
 // GetActive returns the active session for the given phone number.
 // Returns ErrNoSession if no active session exists.
 func (s *Store) GetActive(ctx context.Context, phone string) (*Session, error) {
