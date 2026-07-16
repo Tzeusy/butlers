@@ -96,6 +96,7 @@ from butlers.api.conversations import (
     conversation_unarchive_if_needed,
     conversation_update,
     message_create,
+    message_create_idempotent,
     message_find_reply_since,
     message_list,
 )
@@ -311,9 +312,9 @@ async def _stream_conversation_response(
 
     if accepted is None:
         # The user message is already persisted (step 0, before this
-        # generator started) — a client retry re-submits the same message,
-        # which carries the same normalized_text/sender/thread and is
-        # deduplicated idempotently by the Switchboard ingest boundary.
+        # generator started) — a client retry re-submits its stable message
+        # identity, so Switchboard deduplicates by external event ID even if
+        # the retry crosses an hourly content-hash bucket or context changes.
         yield _sse_error("SWITCHBOARD_UNAVAILABLE", "Switchboard offline — retry")
         yield _sse_done()
         return
@@ -408,6 +409,40 @@ async def _stream_conversation_response(
         },
     )
     yield _sse_done()
+
+
+async def _persist_dashboard_user_message(
+    pool: Any,
+    *,
+    conversation_id: UUID,
+    message: str,
+    message_id: UUID | None,
+) -> tuple[dict[str, Any], bool]:
+    """Persist a dashboard user message, reusing a retry's stable identity."""
+    if message_id is None:
+        return (
+            await message_create(
+                pool,
+                conversation_id=conversation_id,
+                role="user",
+                content=message,
+            ),
+            True,
+        )
+
+    try:
+        return await message_create_idempotent(
+            pool,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            role="user",
+            content=message,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "MESSAGE_ID_CONFLICT", "message": str(exc)},
+        ) from exc
 
 
 async def _lookup_timed_out_session_id(
@@ -594,16 +629,17 @@ async def create_conversation(
     conv = await conversation_create(pool, butler_name=name, first_message=body.message)
     conversation_id: UUID = conv["id"]
 
-    # Persist user message
-    user_msg = await message_create(
+    # Persist user message. A retry reuses its client-generated message ID,
+    # avoiding a duplicate user row and preserving the ingest event identity.
+    user_msg, user_message_is_new = await _persist_dashboard_user_message(
         pool,
         conversation_id=conversation_id,
-        role="user",
-        content=body.message,
+        message=body.message,
+        message_id=body.message_id,
     )
 
-    # Increment conversation message count for the user message
-    await conversation_message_count_increment(pool, conversation_id, butler_name=name)
+    if user_message_is_new:
+        await conversation_message_count_increment(pool, conversation_id, butler_name=name)
 
     # Build ingest envelope
     envelope = build_dashboard_envelope(
@@ -730,16 +766,17 @@ async def send_message(
     # Fetch conversation history for context (up to last 10 exchange pairs = 20 msgs)
     history_rows, _ = await message_list(pool, conversation_id, limit=20, offset=0)
 
-    # Persist user message
-    user_msg = await message_create(
+    # Reusing ``message_id`` makes retry persistence and the downstream
+    # Switchboard external_event_id idempotent.
+    user_msg, user_message_is_new = await _persist_dashboard_user_message(
         pool,
         conversation_id=conversation_id,
-        role="user",
-        content=body.message,
+        message=body.message,
+        message_id=body.message_id,
     )
 
-    # Increment conversation message count for the user message
-    await conversation_message_count_increment(pool, conversation_id, butler_name=name)
+    if user_message_is_new:
+        await conversation_message_count_increment(pool, conversation_id, butler_name=name)
 
     # Sticky routing: a Switchboard-addressed conversation that has already
     # routed once pins follow-ups directly to that butler; otherwise (not yet

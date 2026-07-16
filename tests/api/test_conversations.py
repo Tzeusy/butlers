@@ -32,6 +32,7 @@ from butlers.api.conversation_envelope import build_dashboard_envelope
 from butlers.api.conversations import (
     conversation_reply_create,
     conversation_set_routed_butler,
+    message_create_idempotent,
     message_find_reply_since,
 )
 from butlers.api.db import DatabaseManager
@@ -318,6 +319,39 @@ async def test_conversation_reply_create_returns_none_for_missing_conversation()
 
     assert result is None
     pool.execute.assert_not_awaited()
+
+
+async def test_message_create_idempotent_returns_existing_message_without_incrementing():
+    message_id = uuid4()
+    existing = {
+        "id": message_id,
+        "conversation_id": _CONV_ID,
+        "role": "user",
+        "content": "Retry me",
+        "created_at": _NOW,
+        "session_id": None,
+        "model_name": None,
+        "input_tokens": None,
+        "output_tokens": None,
+        "duration_ms": None,
+        "tool_calls": None,
+        "error": None,
+        "request_id": None,
+    }
+    pool = AsyncMock()
+    pool.fetchrow = AsyncMock(side_effect=[None, existing])
+
+    message, is_new = await message_create_idempotent(
+        pool,
+        message_id=message_id,
+        conversation_id=_CONV_ID,
+        role="user",
+        content="Retry me",
+    )
+
+    assert is_new is False
+    assert message == existing
+    assert pool.fetchrow.await_count == 2
 
 
 async def test_conversation_set_routed_butler_scopes_to_null_column():
