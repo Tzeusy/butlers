@@ -30,7 +30,7 @@ Endpoints
 GET /api/secrets/inventory?identity=<uuid>
     Aggregated read across all butler schemas + public.entity_info.
     Returns ApiResponse<InventoryData> with cli/system/user arrays and
-    meta.failing_count / meta.unverified_count computed server-side
+    aggregate plus family-specific failing/unverified counts computed server-side
     (bu-976n0 tri-state split — failing vs merely-unverified).
 
 GET /api/secrets/user/<provider>?identity=<uuid>
@@ -1780,8 +1780,8 @@ async def get_inventory(
         identities = await _fetch_identity_info(shared_pool, seen_eids)
 
     # --- Build response ---
-    # meta.failing_count / meta.unverified_count (bu-976n0) must be computed
-    # over a DEDUPLICATED row set: the System family returns one row PER
+    # State counts (aggregate and family-specific) must be computed over a
+    # DEDUPLICATED row set: the System family returns one row PER
     # BUTLER SCHEMA, and User can return more than one entity_info row for the
     # same provider (e.g. distinct home_assistant_token / home_assistant_url
     # type suffixes). The frontend already collapses both before rendering
@@ -1789,17 +1789,24 @@ async def get_inventory(
     # use-secrets-inventory.ts) — counting the raw per-butler rows previously
     # disagreed with what the grouped UI actually shows (29 raw rows vs 19
     # grouped rows was the originally reported symptom).
-    deduped_items: list[Any] = [
-        *_dedupe_most_severe(cli_secrets, lambda c: c.key),
-        *_dedupe_most_severe(system_secrets, lambda s: s.key),
-        *_dedupe_most_severe(
+    deduped_by_family: dict[str, list[Any]] = {
+        "cli": _dedupe_most_severe(cli_secrets, lambda c: c.key),
+        "system": _dedupe_most_severe(system_secrets, lambda s: s.key),
+        "user": _dedupe_most_severe(
             user_secrets, lambda u: (u.entity_id, _infer_provider_from_type(u.type))
         ),
-    ]
+    }
+    deduped_items = [item for items in deduped_by_family.values() for item in items]
 
     counts = _count_severity(deduped_items)
     failing = _failing_count(deduped_items)
     unverified = _unverified_count(deduped_items)
+    failing_by_family = {
+        family: _failing_count(items) for family, items in deduped_by_family.items()
+    }
+    unverified_by_family = {
+        family: _unverified_count(items) for family, items in deduped_by_family.items()
+    }
     severity = {k: v for k, v in counts.items() if v > 0}
 
     data = InventoryData(
@@ -1811,10 +1818,10 @@ async def get_inventory(
     )
 
     # ApiMeta has extra="allow" so extra kwargs are serialised.
-    # meta.failing_count / meta.unverified_count are computed server-side from
-    # the deduplicated row set (bu-976n0 tri-state split — replaces the prior
-    # single meta.needs_hand_count, which conflated genuine failures with
-    # merely-unverified rows and double-counted per-butler duplicates).
+    # The aggregate and family-specific state counts are computed server-side
+    # from the same deduplicated row set. The passport uses the family values
+    # for its captions and the aggregate value for header urgency, so no client
+    # grouping/provider-inference logic can make the two disagree.
     # meta.sources_degraded (bu-38ae1) names any butler/pool whose system-secrets
     # fetch genuinely failed (fleet-wide degraded-envelope convention — see
     # CLAUDE.md "API Conventions"); only set when non-empty so the common
@@ -1822,6 +1829,8 @@ async def get_inventory(
     meta_kwargs: dict[str, Any] = {
         "failing_count": failing,
         "unverified_count": unverified,
+        "failing_count_by_family": failing_by_family,
+        "unverified_count_by_family": unverified_by_family,
         "severity": severity,
     }
     if tracker.failed:
