@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from butlers.connectors.spotify import (
@@ -25,6 +26,7 @@ from butlers.connectors.spotify import (
     ListeningSessionTracker,
     SpotifyConnector,
     SpotifyConnectorConfig,
+    _classify_source_api_error,
     build_context_start_envelope,
     build_listening_digest_envelope,
     build_session_summary_envelope,
@@ -762,3 +764,65 @@ async def test_submission_error_retains_raw_payload() -> None:
     row = rows[0]
     assert row[8] == "error"
     assert row[9]["payload"]["raw"] == expected_raw
+
+
+# ---------------------------------------------------------------------------
+# Source API health classification (bu-q2m3n)
+# ---------------------------------------------------------------------------
+
+
+def _spotify_http_error(payload: dict[str, Any], status_code: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://accounts.spotify.com/api/token")
+    response = httpx.Response(status_code, json=payload, request=request)
+    return httpx.HTTPStatusError("error", request=request, response=response)
+
+
+@pytest.mark.parametrize(
+    ("payload", "status_code", "is_auth_revocation"),
+    [
+        (
+            {"error": "invalid_grant", "error_description": "Refresh token revoked"},
+            400,
+            True,
+        ),
+        (
+            {"error": "invalid_client", "error_description": "Client authentication failed"},
+            401,
+            True,
+        ),
+        ({"error": "server_error", "error_description": "Try again later"}, 503, False),
+    ],
+)
+def test_classify_source_api_error_distinguishes_spotify_revocation_from_transient_failure(
+    payload: dict[str, Any], status_code: int, is_auth_revocation: bool
+) -> None:
+    """Only Spotify's structured action-required token errors stop polling."""
+    classified, detail = _classify_source_api_error(_spotify_http_error(payload, status_code))
+
+    assert classified is is_auth_revocation
+    assert payload["error"] in detail
+
+
+def test_spotify_health_reports_revocation_as_error_and_api_failure_as_degraded() -> None:
+    connector = SpotifyConnector(
+        SpotifyConnectorConfig(switchboard_mcp_url="http://switchboard.test/mcp")
+    )
+    connector._record_source_api_failure(
+        _spotify_http_error({"error": "server_error", "error_description": "Try again later"}, 503)
+    )
+
+    assert connector._get_health_state() == (
+        "degraded",
+        "error=server_error, description=Try again later",
+    )
+
+    connector._record_source_api_failure(
+        _spotify_http_error(
+            {"error": "invalid_grant", "error_description": "Refresh token revoked"}, 400
+        )
+    )
+
+    assert connector._get_health_state() == (
+        "error",
+        "error=invalid_grant, description=Refresh token revoked",
+    )
