@@ -1352,7 +1352,8 @@ class SpotifyConnector:
         """Call a Spotify API GET endpoint with token refresh and rate-limit handling.
 
         Returns the parsed JSON response body.
-        Raises SpotifyCredentialError on unrecoverable auth failure.
+        Raises SpotifyCredentialError only when locally detected credentials or a
+        token-endpoint response require operator action.
         Raises SpotifyRateLimitError on HTTP 429.
         Raises RuntimeError on other unrecoverable errors.
         """
@@ -1398,9 +1399,12 @@ class SpotifyConnector:
                 continue
 
             if resp.status_code == 401:
-                error = SpotifyCredentialError(
-                    "Spotify authorization failed after token refresh. "
-                    "Re-connect via dashboard settings."
+                # A resource-API 401 after a successful refresh is not proof
+                # that the refresh token was revoked. Preserve its response so
+                # source health remains degraded unless the token endpoint
+                # itself returned an action-required OAuth error.
+                error = _http_status_error(
+                    resp, "Spotify API authorization failed after token refresh"
                 )
                 self._record_source_api_failure(error)
                 raise error

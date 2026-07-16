@@ -826,3 +826,36 @@ def test_spotify_health_reports_revocation_as_error_and_api_failure_as_degraded(
         "error",
         "error=invalid_grant, description=Refresh token revoked",
     )
+
+
+@pytest.mark.asyncio
+async def test_spotify_resource_401_after_successful_refresh_stays_degraded() -> None:
+    """A resource-API rejection is not token-endpoint proof of revocation."""
+    connector = SpotifyConnector(
+        SpotifyConnectorConfig(switchboard_mcp_url="http://switchboard.test/mcp")
+    )
+    connector._access_token = "old-access-token"
+    connector._token_expires_at = datetime.now(UTC) + timedelta(hours=1)
+
+    request = httpx.Request("GET", "https://api.spotify.com/v1/me/player/currently-playing")
+    response = httpx.Response(
+        401,
+        json={"error": {"status": 401, "message": "The access token expired"}},
+        request=request,
+    )
+    connector._http_client = AsyncMock()
+    connector._http_client.get = AsyncMock(side_effect=[response, response])
+
+    async def _refresh() -> str:
+        connector._access_token = "refreshed-access-token"
+        connector._token_expires_at = datetime.now(UTC) + timedelta(hours=1)
+        return connector._access_token
+
+    connector._refresh_access_token = AsyncMock(side_effect=_refresh)  # type: ignore[method-assign]
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await connector._spotify_get("/me/player/currently-playing")
+
+    state, detail = connector._get_health_state()
+    assert state == "degraded"
+    assert detail is not None and "401" in detail
