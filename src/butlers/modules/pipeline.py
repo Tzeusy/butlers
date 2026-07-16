@@ -765,6 +765,7 @@ _VALID_DECOMP_CONFIDENCE = ("HIGH", "MEDIUM", "LOW")
 # ingestion entry point that owns the Switchboard-to-calendar MCP call.
 _CALENDAR_PROPOSAL_SIGNAL_TYPE = "events"
 _CALENDAR_PROPOSAL_TOOL = "calendar_propose_event"
+_CALENDAR_PROPOSAL_TARGET_BUTLER = "general"
 _CALENDAR_PROPOSAL_CONFIDENCE_SCORES = {"HIGH": 0.9, "MEDIUM": 0.5, "LOW": 0.2}
 _CALENDAR_PROPOSAL_CONFIDENCE_FLOOR = 0.7
 _CALENDAR_PROPOSAL_SNIPPET_MAX_CHARS = 500
@@ -2641,6 +2642,10 @@ class MessagePipeline:
                                 _sig["signal_type"] == _CALENDAR_PROPOSAL_SIGNAL_TYPE
                                 and _sig_tool == _CALENDAR_PROPOSAL_TOOL
                             ):
+                                # Calendar proposals belong to the general butler's
+                                # shared calendar; extraction output cannot select
+                                # another calendar-owning schema.
+                                _target = _CALENDAR_PROPOSAL_TARGET_BUTLER
                                 _proposal_confidence = _CALENDAR_PROPOSAL_CONFIDENCE_SCORES[
                                     _sig["confidence"]
                                 ]

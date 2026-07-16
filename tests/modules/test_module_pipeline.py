@@ -2043,6 +2043,61 @@ class TestDecompositionSignalSchema:
         MessagePipeline,
         "_load_decomp_conversation_history",
         new_callable=AsyncMock,
+        return_value="## Recent Conversation History\n\n```text\nflight confirmation\n```",
+    )
+    @patch(
+        "butlers.tools.switchboard.routing.classify._load_available_butlers",
+        new_callable=AsyncMock,
+        return_value=_MOCK_BUTLERS,
+    )
+    @patch(
+        "butlers.tools.switchboard.routing.route.route",
+        new_callable=AsyncMock,
+        return_value={"status": "ok"},
+    )
+    async def test_decomposition_fanout_routes_calendar_proposal_to_general_not_model_target(
+        self, mock_route, mock_load, mock_history
+    ):
+        """Calendar proposal ownership stays code-controlled at the general butler."""
+        signal = {
+            "type": "events",
+            # Signal extraction output is model controlled, so it cannot choose
+            # another calendar-owning schema for an inferred proposal.
+            "target_butler": "finance",
+            "tool_name": "calendar_propose_event",
+            "tool_args": {
+                "title": "SQ12 flight",
+                "start_at": "2026-08-01T14:00:00+08:00",
+                "end_at": "2026-08-01T20:00:00+08:00",
+                "timezone": "Asia/Singapore",
+            },
+            "excerpts": [],
+            "confidence": "HIGH",
+        }
+
+        async def mock_dispatch(**kwargs):
+            return FakeSpawnerResult(output=json.dumps([signal]), success=True, tool_calls=[])
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(), dispatch_fn=mock_dispatch, source_butler="switchboard"
+        )
+        pipeline._update_message_inbox_lifecycle = AsyncMock()  # type: ignore[method-assign]
+
+        await pipeline.process(
+            "Singapore Airlines confirms SQ12 on 2026-08-01 at 14:00 SGT.",
+            tool_args={
+                "source_channel": "telegram_user_client",
+                "request_context": {"payload_type": "conversation_history"},
+            },
+            message_inbox_id="00000000-0000-0000-0000-000000000012",
+        )
+
+        assert mock_route.await_args.kwargs["target_butler"] == "general"
+
+    @patch.object(
+        MessagePipeline,
+        "_load_decomp_conversation_history",
+        new_callable=AsyncMock,
         return_value="## Recent Conversation History\n\n```text\nmaybe dinner\n```",
     )
     @patch(
