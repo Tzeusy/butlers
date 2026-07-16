@@ -219,6 +219,14 @@ describe("ActivityStripe: optional bar interaction", () => {
     expect(screen.getAllByRole("button")[0].className).toContain("min-h-6")
   })
 
+  it("renders a two-pixel focus indicator for each interactive slot", () => {
+    render(<ActivityStripe counts={zeros()} onBarClick={() => {}} />)
+
+    const firstBar = screen.getAllByRole("button")[0]
+    expect(firstBar.className).toContain("focus-visible:ring-2")
+    expect(firstBar.className).toContain("focus-visible:ring-offset-2")
+  })
+
   it("uses the supplied window end to label interactive slots accurately", () => {
     render(
       <ActivityStripe

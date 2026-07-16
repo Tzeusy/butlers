@@ -68,7 +68,7 @@ export function ActivityStripe({ counts, windowEnd, className, onBarClick }: Act
 
   const ariaLabel = `24-hour activity, total ${total} sessions, peak ${max} at ${peakLabel}:00 UTC`
   const interactiveBarClassName = onBarClick
-    ? "min-h-6 min-w-6 shrink-0 cursor-pointer border-0 p-0 transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1"
+    ? "min-h-6 min-w-6 shrink-0 cursor-pointer border-0 p-0 transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
     : ""
 
   function slotAriaLabel(index: number, count: number): string {
