@@ -354,17 +354,24 @@ export default function EntityFinder() {
   // (prefix match) above a coincidental substring hit elsewhere.
   // -------------------------------------------------------------------------
   const lowerQuery = trimmedQuery.toLowerCase();
-  const { data: butlersResponse } = useButlers();
+  const {
+    data: butlersResponse,
+    isLoading: butlersLoading,
+    isError: butlersError,
+  } = useButlers();
   const installedButlers = useMemo(
     () => new Set((butlersResponse?.data ?? []).map((butler) => butler.name)),
     [butlersResponse],
   );
-  // Routes declared for a butler are unavailable until that butler appears in
-  // the live roster. This keeps the Pages group from advertising dead domain
-  // pages while retaining every global route.
+  // A roster request that has not resolved cannot prove a butler is absent.
+  // Keep the existing page index available until the live roster is known;
+  // once it is, omit routes owned by absent butlers.
   const availablePages = useMemo(
-    () => ALL_PAGES.filter((page) => !page.butler || installedButlers.has(page.butler)),
-    [installedButlers],
+    () =>
+      butlersLoading || butlersError || !butlersResponse
+        ? ALL_PAGES
+        : ALL_PAGES.filter((page) => !page.butler || installedButlers.has(page.butler)),
+    [butlersError, butlersLoading, butlersResponse, installedButlers],
   );
   const pageMatches: PageEntry[] =
     lowerQuery.length >= 1

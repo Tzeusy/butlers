@@ -1192,6 +1192,80 @@ describe("EntityFinder", () => {
     );
   });
 
+  it("keeps roster-owned pages reachable until the installed roster is known", async () => {
+    vi.mocked(useButlers).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+    } as unknown as UseButlersResult);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <MemoryRouter>
+            <EntityFinder />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      await flush();
+    });
+
+    await act(async () => {
+      dispatchOpenEntityFinder();
+      await flush();
+    });
+
+    const input = document.body.querySelector(
+      "[data-testid='entity-finder-input']",
+    ) as HTMLInputElement;
+    await act(async () => {
+      typeInto(input, "measurements");
+      await flush();
+    });
+
+    const pageItem = document.body.querySelector("[data-testid='entity-finder-page-item']");
+    expect(pageItem).not.toBeNull();
+    expect(pageItem?.textContent).toContain("Measurements");
+  });
+
+  it("keeps roster-owned pages reachable when the installed roster fails", async () => {
+    vi.mocked(useButlers).mockReturnValue({
+      data: { data: [], meta: {} },
+      isLoading: false,
+      isError: true,
+    } as unknown as UseButlersResult);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <MemoryRouter>
+            <EntityFinder />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      await flush();
+    });
+
+    await act(async () => {
+      dispatchOpenEntityFinder();
+      await flush();
+    });
+
+    const input = document.body.querySelector(
+      "[data-testid='entity-finder-input']",
+    ) as HTMLInputElement;
+    await act(async () => {
+      typeInto(input, "measurements");
+      await flush();
+    });
+
+    const pageItem = document.body.querySelector("[data-testid='entity-finder-page-item']");
+    expect(pageItem).not.toBeNull();
+    expect(pageItem?.textContent).toContain("Measurements");
+  });
+
   it("treats a missing roster data array as an empty installed roster", async () => {
     vi.mocked(useButlers).mockReturnValue({
       data: { data: undefined },
