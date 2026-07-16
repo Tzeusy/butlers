@@ -1401,9 +1401,9 @@ class GoogleHealthConnector:
     async def _mark_account_revoked(self, account_uuid: uuid.UUID) -> None:
         """Mark a google account row as revoked.
 
-        Called when the connector observes a persistent 401 after token refresh
-        for a specific account.  The dashboard picks up the new status and
-        surfaces a re-consent CTA.  Non-fatal — failure is logged and swallowed.
+        Called only when Google's token endpoint reports ``invalid_grant`` for
+        a specific account. The dashboard picks up the new status and surfaces
+        a re-consent CTA. Non-fatal — failure is logged and swallowed.
         """
         if self._shared_pool is None:
             return
