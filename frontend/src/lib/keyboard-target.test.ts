@@ -22,4 +22,11 @@ describe("isEditableKeyboardTarget", () => {
   it("returns false for a non-editable target", () => {
     expect(isEditableKeyboardTarget(document.body)).toBe(false);
   });
+
+  it("returns false for non-HTMLElement event targets", () => {
+    expect(isEditableKeyboardTarget(document)).toBe(false);
+    expect(
+      isEditableKeyboardTarget(document.createElementNS("http://www.w3.org/2000/svg", "svg")),
+    ).toBe(false);
+  });
 });
