@@ -82,10 +82,11 @@ async def test_notification_stats_flags_source_unavailable_when_pool_unreachable
 
 
 @pytest.mark.parametrize("path", ["/api/notifications", "/api/butlers/finance/notifications"])
-async def test_notification_list_query_failure_returns_degraded_envelope(app, path):
-    """A live pool can still fail while executing the notification query."""
+@pytest.mark.parametrize("query_method", ["fetchval", "fetch"], ids=["count", "rows"])
+async def test_notification_list_query_failure_returns_degraded_envelope(app, path, query_method):
+    """A live pool can fail during either notification-list database query."""
     mock_db, pool = _make_available_db()
-    pool.fetchval.side_effect = ConnectionError("connection reset by peer")
+    getattr(pool, query_method).side_effect = ConnectionError("connection reset by peer")
     app.dependency_overrides[_get_db_manager] = lambda: mock_db
 
     async with httpx.AsyncClient(
