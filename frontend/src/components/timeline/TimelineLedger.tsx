@@ -170,6 +170,7 @@ function groupByHour(events: TimelineEvent[]): HourGroup[] {
 // ---------------------------------------------------------------------------
 
 const ROW_GRID = "96px 120px 92px 1fr 18px";
+const ROW_DISCLOSURE_GRID = "96px 120px 92px minmax(0, 1fr)";
 
 function EventRow({
   event,
@@ -182,41 +183,40 @@ function EventRow({
 }) {
   const sessionLink = isSessionEvent(event) ? sessionDetailHref(event) : null;
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (e.target !== e.currentTarget) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onToggle();
-    }
-  }
-
   return (
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- this is a mouse-only click-anywhere convenience; the nested native button is the row's keyboard-accessible disclosure control, and the sibling session link remains independently operable.
     <div
       className={[
         "grid items-center gap-x-3 px-3 py-2 border-b border-border/50 text-[13px] transition-colors cursor-pointer group",
-        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset",
         isOpen ? "bg-muted/20" : "hover:bg-muted/10",
       ].join(" ")}
       style={{ gridTemplateColumns: ROW_GRID }}
       onClick={onToggle}
-      onKeyDown={handleKeyDown}
-      tabIndex={0}
-      role="button"
-      aria-expanded={isOpen}
       data-testid="timeline-row"
       data-event-id={event.id}
     >
-      <Time
-        value={event.timestamp}
-        mode="absolute"
-        precision="time-seconds"
-        className="font-mono tabular-nums text-[11px] text-muted-foreground"
-      />
-      <span className="font-mono text-[11px] text-muted-foreground truncate">{event.butler}</span>
-      <TypeBadge type={event.type} failed={isFailedNotification(event)} />
-      <span className="truncate font-serif text-[13px] leading-[1.5]" title={event.summary}>
-        {event.summary}
-      </span>
+      <button
+        type="button"
+        className="col-span-4 grid min-w-0 items-center gap-x-3 bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+        style={{ gridTemplateColumns: ROW_DISCLOSURE_GRID }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle();
+        }}
+        aria-expanded={isOpen}
+      >
+        <Time
+          value={event.timestamp}
+          mode="absolute"
+          precision="time-seconds"
+          className="font-mono tabular-nums text-[11px] text-muted-foreground"
+        />
+        <span className="font-mono text-[11px] text-muted-foreground truncate">{event.butler}</span>
+        <TypeBadge type={event.type} failed={isFailedNotification(event)} />
+        <span className="truncate font-serif text-[13px] leading-[1.5]" title={event.summary}>
+          {event.summary}
+        </span>
+      </button>
       {sessionLink ? (
         <Link
           to={sessionLink}
