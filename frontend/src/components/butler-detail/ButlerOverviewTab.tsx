@@ -11,7 +11,7 @@
 // the prototype rhythm while using container-boundary-safe process facts.
 // ---------------------------------------------------------------------------
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Link, useNavigate } from "react-router"
 
 import {
@@ -211,7 +211,7 @@ function ActionRow({
           type="button"
           variant="outline"
           size="xs"
-          className="h-6 rounded-[3px] px-2 font-mono text-[10px] uppercase tracking-[0.06em] text-destructive hover:text-destructive"
+          className="h-6 rounded-[3px] px-2 font-mono text-[10px] uppercase tracking-[0.06em] text-[var(--red-text)] hover:text-[var(--red-text)]"
           aria-label={`Reject ${actionLabel}`}
           onClick={() => onReject(action.id)}
           disabled={isDeciding}
@@ -267,6 +267,7 @@ export default function ButlerOverviewTab({ butlerName }: ButlerOverviewTabProps
     isLoading: activityFeedLoading,
     isError: activityFeedError,
   } = useButlerActivityFeed(butlerName, 5)
+  const pendingActions = approvalsQuery.data?.data
 
   // Session drawer state for the "recent events" door (bu-86c4c.18): clicking
   // a session_completed row opens its transcript in place instead of leaving
@@ -277,6 +278,27 @@ export default function ButlerOverviewTab({ butlerName }: ButlerOverviewTabProps
   )
   const pendingDecisionIds = useRef<Set<string>>(new Set())
   const { approveMut, denyMut } = useApprovalDecisionMutations()
+
+  // Keep an approved/rejected row disabled until the action-preview query has
+  // reconciled it away. mutateAsync resolves once the endpoint responds, but
+  // this preview remains stale until its invalidation refetch returns; clearing
+  // earlier would expose a duplicate decision button for that interval.
+  useEffect(() => {
+    if (!pendingActions) return
+
+    const previewActionIds = new Set(pendingActions.map((action) => action.id))
+    setPendingDecisions((current) => {
+      let next: Map<string, PendingDecision> | undefined
+      for (const id of current.keys()) {
+        if (previewActionIds.has(id)) continue
+        pendingDecisionIds.current.delete(id)
+        next ??= new Map(current)
+        next.delete(id)
+      }
+      return next ?? current
+    })
+  }, [pendingActions])
+
   const runDecision = useCallback(
     (id: string, decision: PendingDecision, mutate: () => Promise<unknown>) => {
       if (pendingDecisionIds.current.has(id)) return
@@ -284,12 +306,11 @@ export default function ButlerOverviewTab({ butlerName }: ButlerOverviewTabProps
       pendingDecisionIds.current.add(id)
       setPendingDecisions((current) => new Map(current).set(id, decision))
 
-      // The shared mutation hook owns the success/error toast. This local map
-      // deliberately tracks every in-flight row, whereas one useMutation
-      // observer only exposes the most recently-started mutation.
+      // The shared mutation hook owns success/error toasts. Keep a successful
+      // row pending until the effect above sees its refetched preview disappear;
+      // a failed mutation restores only this row's controls.
       void mutate()
-        .catch(() => undefined)
-        .finally(() => {
+        .catch(() => {
           pendingDecisionIds.current.delete(id)
           setPendingDecisions((current) => {
             if (!current.has(id)) return current
@@ -328,14 +349,14 @@ export default function ButlerOverviewTab({ butlerName }: ButlerOverviewTabProps
   const skills = butler?.skills ?? []
   const sessions24h = row?.sessions24h ?? butler?.sessions_24h ?? 0
   const costToday = costQuery.data?.data?.by_butler?.[butlerName] ?? 0
-  const pendingActions = approvalsQuery.data?.data ?? []
+  const visiblePendingActions = pendingActions ?? []
   const recentEvents = activityFeedData?.events ?? []
   const stripe = row?.hourlyStripe ?? Array(24).fill(0)
   const status = butler?.status ?? row?.status
   // meta.total (not the page-size-capped result length) is the true count of
   // pending approvals -- the KPI previously read "5" when 20 were pending
   // because it counted the preview page instead of the real total.
-  const awaitingCount = approvalsQuery.data?.meta?.total ?? pendingActions.length
+  const awaitingCount = approvalsQuery.data?.meta?.total ?? visiblePendingActions.length
 
   return (
     <>
@@ -427,11 +448,11 @@ export default function ButlerOverviewTab({ butlerName }: ButlerOverviewTabProps
           </div>
         ) : approvalsQuery.isError ? (
           <ErrorLine>Could not load approvals.</ErrorLine>
-        ) : pendingActions.length === 0 ? (
+        ) : visiblePendingActions.length === 0 ? (
           <MonoLabel color="dim">no items pending review</MonoLabel>
         ) : (
           <div>
-            {pendingActions.map((action) => (
+            {visiblePendingActions.map((action) => (
               <ActionRow
                 key={action.id}
                 action={action}

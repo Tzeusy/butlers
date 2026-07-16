@@ -4,7 +4,7 @@ import { useRef, useState } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter, useLocation } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 
 import ButlerOverviewTab from "@/components/butler-detail/ButlerOverviewTab"
 
@@ -406,6 +406,13 @@ describe("ButlerOverviewTab -- doors", () => {
     expect(denyMutate).toHaveBeenCalledWith({ id: "approval-1" })
   })
 
+  it("uses the text-safe red token for the inline reject action", () => {
+    const html = renderOverview()
+
+    expect(html).toContain("text-[var(--red-text)]")
+    expect(html).not.toContain("text-destructive")
+  })
+
   it("keeps each row pending when two approvals start before either request settles", () => {
     vi.mocked(useApprovalActions).mockReturnValue({
       data: {
@@ -450,6 +457,32 @@ describe("ButlerOverviewTab -- doors", () => {
     expect(secondApprove.textContent).toBe("Approving…")
     expect(firstApprove.hasAttribute("disabled")).toBe(true)
     expect(secondApprove.hasAttribute("disabled")).toBe(true)
+  })
+
+  it("keeps a successful decision disabled until the stale preview row is reconciled", async () => {
+    let resolveApproval: (() => void) | undefined
+    approveMutate.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveApproval = resolve
+        }),
+    )
+
+    renderOverviewLive()
+
+    const approve = screen.getByRole("button", { name: "Approve Send draft follow-up" })
+    fireEvent.click(approve)
+    expect(approve.textContent).toBe("Approving…")
+
+    if (!resolveApproval) throw new Error("Expected the approval request to start")
+    const resolvePendingApproval = resolveApproval
+    await act(async () => {
+      resolvePendingApproval()
+      await Promise.resolve()
+    })
+
+    expect(approve.textContent).toBe("Approving…")
+    expect(approve.hasAttribute("disabled")).toBe(true)
   })
 
   it("restores a row's controls after an inline decision fails", async () => {
