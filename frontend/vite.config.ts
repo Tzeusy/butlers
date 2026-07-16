@@ -7,6 +7,47 @@ import tailwindcss from '@tailwindcss/vite'
 
 const frontendRoot = path.dirname(fileURLToPath(import.meta.url))
 
+const CHUNK_WARNING_LIMIT_KB = 1_500
+
+/**
+ * Keep the app shell and the few measured third-party domains independently
+ * cacheable. Do not add a catch-all node_modules rule: it would make future
+ * lazy feature dependencies eager by accident.
+ */
+function manualChunks(id: string): string | undefined {
+  if (!id.includes('/node_modules/')) return undefined
+
+  // MapWidgetInner is already React.lazy-loaded. Its rendering dependencies
+  // must stay on that boundary rather than joining an eager shared vendor chunk.
+  if (id.includes('/maplibre-gl/') || id.includes('/h3-js/')) return 'vendor-map'
+
+  if (id.includes('/recharts/') || id.includes('/d3-')) return 'vendor-charts'
+  if (id.includes('/@xyflow/') || id.includes('/@dagrejs/dagre/')) return 'vendor-graph'
+  if (
+    id.includes('/react/') ||
+    id.includes('/react-dom/') ||
+    id.includes('/react-router/') ||
+    id.includes('/@tanstack/') ||
+    id.includes('/scheduler/')
+  ) {
+    return 'vendor-framework'
+  }
+  if (id.includes('/date-fns/') || id.includes('/date-fns-tz/')) return 'vendor-date'
+  if (
+    id.includes('/@radix-ui/') ||
+    id.includes('/radix-ui/') ||
+    id.includes('/lucide-react/') ||
+    id.includes('/sonner/') ||
+    id.includes('/tailwind-merge/') ||
+    id.includes('/class-variance-authority/') ||
+    id.includes('/clsx/')
+  ) {
+    return 'vendor-ui'
+  }
+
+  return undefined
+}
+
 // When the app is served under a non-root base (e.g. `--base /butlers-dev/`
 // behind the Tailscale `/butlers-dev` path mount), the Vite dev server 404s a
 // request for the bare base path *without* a trailing slash (`/butlers-dev`)
@@ -40,6 +81,15 @@ export default defineConfig({
   // Dependencies are shared between worktrees through a node_modules symlink,
   // so generated Vite artifacts must live in the writable worktree instead.
   cacheDir: '.vite',
+  build: {
+    // The statically routed app shell and the intentionally lazy map renderer
+    // each remain below this measured budget after the explicit domain splits.
+    // Keep the warning active for meaningful growth in either boundary.
+    chunkSizeWarningLimit: CHUNK_WARNING_LIMIT_KB,
+    rollupOptions: {
+      output: { manualChunks },
+    },
+  },
   test: {
     // Pin the runner timezone to UTC so date/time-sensitive specs are
     // deterministic on any machine. Several CalendarWorkspacePage grid-drag and
