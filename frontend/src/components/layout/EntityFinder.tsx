@@ -356,8 +356,8 @@ export default function EntityFinder() {
   const lowerQuery = trimmedQuery.toLowerCase();
   const { data: butlersResponse } = useButlers();
   const installedButlers = useMemo(
-    () => new Set(butlersResponse?.data.map((butler) => butler.name) ?? []),
-    [butlersResponse?.data],
+    () => new Set((butlersResponse?.data ?? []).map((butler) => butler.name)),
+    [butlersResponse],
   );
   // Routes declared for a butler are unavailable until that butler appears in
   // the live roster. This keeps the Pages group from advertising dead domain

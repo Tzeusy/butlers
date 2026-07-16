@@ -1192,6 +1192,46 @@ describe("EntityFinder", () => {
     );
   });
 
+  it("treats a missing roster data array as an empty installed roster", async () => {
+    vi.mocked(useButlers).mockReturnValue({
+      data: { data: undefined },
+    } as unknown as UseButlersResult);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <MemoryRouter>
+            <EntityFinder />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      await flush();
+    });
+
+    await act(async () => {
+      dispatchOpenEntityFinder();
+      await flush();
+    });
+
+    const input = document.body.querySelector(
+      "[data-testid='entity-finder-input']",
+    ) as HTMLInputElement;
+    await act(async () => {
+      typeInto(input, "contacts");
+      await flush();
+    });
+    expect(document.body.querySelector("[data-testid='entity-finder-page-item']")?.textContent).toContain(
+      "Contacts",
+    );
+
+    await act(async () => {
+      typeInto(input, "measurements");
+      await flush();
+    });
+    expect(document.body.querySelector("[data-testid='entity-finder-page-item']")).toBeNull();
+  });
+
   it("shows pages owned by an installed butler", async () => {
     mockButlers(["health"]);
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
