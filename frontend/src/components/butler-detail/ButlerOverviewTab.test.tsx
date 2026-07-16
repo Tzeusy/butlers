@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { renderToStaticMarkup } from "react-dom/server"
-import { MemoryRouter } from "react-router"
+import { MemoryRouter, useLocation } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 
 import ButlerOverviewTab from "@/components/butler-detail/ButlerOverviewTab"
 
@@ -21,6 +23,10 @@ vi.mock("@/hooks/use-approvals", () => ({
   useApprovalActions: vi.fn(),
 }))
 
+vi.mock("@/hooks/use-approval-decisions", () => ({
+  useApprovalDecisionMutations: vi.fn(),
+}))
+
 vi.mock("@/hooks/use-butler-analytics", () => ({
   useButlerActivityFeed: vi.fn(),
 }))
@@ -37,7 +43,16 @@ import { useButler } from "@/hooks/use-butlers"
 import { useButlerStatusBoard } from "@/hooks/use-butler-status-board"
 import { useSpendSummary } from "@/hooks/use-spend"
 import { useApprovalActions } from "@/hooks/use-approvals"
+import { useApprovalDecisionMutations } from "@/hooks/use-approval-decisions"
 import { useButlerActivityFeed } from "@/hooks/use-butler-analytics"
+
+let approveMutate: ReturnType<typeof vi.fn>
+let denyMutate: ReturnType<typeof vi.fn>
+
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location-search">{location.search}</output>
+}
 
 function renderOverview(): string {
   const queryClient = new QueryClient()
@@ -50,7 +65,30 @@ function renderOverview(): string {
   )
 }
 
+function renderOverviewLive() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/butlers/general"]}>
+        <ButlerOverviewTab butlerName="general" />
+        <LocationProbe />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
 beforeEach(() => {
+  approveMutate = vi.fn()
+  denyMutate = vi.fn()
+  vi.mocked(useApprovalDecisionMutations).mockReturnValue({
+    approveMut: { mutate: approveMutate, isPending: false, variables: undefined },
+    denyMut: { mutate: denyMutate, isPending: false, variables: undefined },
+    deferMut: { mutate: vi.fn(), isPending: false, variables: undefined },
+    scheduledDecisions: new Map(),
+    scheduleDecision: vi.fn(),
+    cancelDecision: vi.fn(),
+  } as unknown as ReturnType<typeof useApprovalDecisionMutations>)
+
   vi.mocked(useButler).mockReturnValue({
     data: {
       data: {
@@ -180,6 +218,8 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof useButlerActivityFeed>)
 })
 
+afterEach(() => cleanup())
+
 describe("ButlerOverviewTab target overview grid", () => {
   it("renders the redesigned panel set", () => {
     const html = renderOverview()
@@ -292,10 +332,15 @@ describe("ButlerOverviewTab -- awaiting KPI uses meta.total", () => {
 // ---------------------------------------------------------------------------
 
 describe("ButlerOverviewTab -- doors", () => {
-  it("activity-stripe bars link to the Activity tab's Sessions section", () => {
-    const html = renderOverview()
-    expect(html).toContain('data-testid="activity-stripe-bar"')
-    expect(html).toContain("tab=activity&amp;section=sessions")
+  it("activity-stripe bars navigate to the Activity tab's Sessions section", () => {
+    renderOverviewLive()
+
+    const stripe = screen.getByRole("group", { name: /24-hour activity/i })
+    fireEvent.click(within(stripe).getAllByRole("button")[0])
+
+    expect(screen.getByTestId("location-search").textContent).toContain(
+      "tab=activity&section=sessions",
+    )
   })
 
   it("session_completed recent-event rows render as a button (opens the session drawer)", () => {
@@ -309,5 +354,15 @@ describe("ButlerOverviewTab -- doors", () => {
   it("awaiting-your-action rows deep-link to /approvals scoped to butler and id", () => {
     const html = renderOverview()
     expect(html).toContain("/approvals?butler=general&amp;id=approval-1")
+  })
+
+  it("approves and rejects an awaiting action inline", () => {
+    renderOverviewLive()
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve Send draft follow-up" }))
+    fireEvent.click(screen.getByRole("button", { name: "Reject Send draft follow-up" }))
+
+    expect(approveMutate).toHaveBeenCalledWith("approval-1")
+    expect(denyMutate).toHaveBeenCalledWith({ id: "approval-1" })
   })
 })
