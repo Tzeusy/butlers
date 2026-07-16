@@ -1572,6 +1572,77 @@ async def test_mutate_user_event_success_response_has_empty_conflict_lists(app):
     assert data["suggested_slots"] == []
 
 
+async def test_mutate_user_event_forwards_explicit_entity_clear(app):
+    """The workspace API preserves the explicit clear signal for the MCP tool."""
+    mcp_result = {
+        "status": "updated",
+        "provider": "google",
+        "calendar_id": "primary",
+        "event": {"event_id": "evt-1"},
+    }
+    mock_client = AsyncMock()
+    mock_client.call_tool = AsyncMock(return_value=_mock_mcp_result(mcp_result))
+
+    async def _get_client(name: str):
+        return mock_client
+
+    app, _, mock_mgr = _build_app(app)
+    mock_mgr.get_client = AsyncMock(side_effect=_get_client)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/calendar/workspace/user-events",
+            json={
+                "butler_name": "general",
+                "action": "update",
+                "request_id": "req-clear-people-1",
+                "payload": {
+                    "event_id": "evt-1",
+                    "calendar_id": "primary",
+                    "entity_ids": [],
+                    "clear_entity_ids": True,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    tool_name, arguments = mock_client.call_tool.await_args_list[0].args
+    assert tool_name == "calendar_update_event"
+    assert arguments == {
+        "event_id": "evt-1",
+        "calendar_id": "primary",
+        "entity_ids": [],
+        "clear_entity_ids": True,
+        "request_id": "req-clear-people-1",
+    }
+
+
+async def test_mutate_user_event_rejects_ambiguous_entity_clear(app):
+    """A destructive clear must carry exactly the empty replacement it authorizes."""
+    app, _, mock_mgr = _build_app(app)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/calendar/workspace/user-events",
+            json={
+                "butler_name": "general",
+                "action": "update",
+                "payload": {
+                    "event_id": "evt-1",
+                    "entity_ids": ["e1"],
+                    "clear_entity_ids": True,
+                },
+            },
+        )
+
+    assert response.status_code == 422
+    mock_mgr.get_client.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # Audit trail — GET /api/calendar/workspace/audit
 # ---------------------------------------------------------------------------

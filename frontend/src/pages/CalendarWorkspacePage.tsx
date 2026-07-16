@@ -1941,14 +1941,16 @@ function CalendarEntryDetailPanel({
   function handlePeopleChange(next: SelectedPerson[]) {
     setPeopleDraft(next);
     if (!isUserEvent) return;
-    // Round-trip the full set as entity_ids so existing links are preserved and
-    // new ones added (the update path is REPLACE on a non-empty list).
-    // KNOWN LIMITATION (bu-ya8uv): an empty entity_ids is a backend no-op that
-    // PRESERVES the current links (there is no explicit-clear signal yet), so
-    // removing the last person cannot clear the event. The picker enforces this
-    // honestly via preserveLast (last-remove disabled), so `next` is never empty
-    // here once any link exists. A follow-up will add the explicit-clear path.
-    fireUserUpdate({ entity_ids: next.map((p) => p.entity_id) }, "people");
+    // Non-empty edits replace the linked set. A zero-length replacement carries
+    // an explicit destructive signal so omitted or incidental empty values still
+    // preserve the existing links on the backend.
+    const entityIds = next.map((person) => person.entity_id);
+    fireUserUpdate(
+      entityIds.length === 0
+        ? { entity_ids: [], clear_entity_ids: true }
+        : { entity_ids: entityIds },
+      "people",
+    );
   }
 
   const startFmt = entry.all_day
@@ -2152,7 +2154,6 @@ function CalendarEntryDetailPanel({
             value={peopleDraft}
             onChange={handlePeopleChange}
             disabled={isPending}
-            preserveLast
           />
         </div>
       ) : entry.linked_people && entry.linked_people.length > 0 ? (

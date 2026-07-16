@@ -1761,3 +1761,9 @@ The read MUST be fail-open and honest: a resolution-query failure SHALL NOT drop
 - **WHEN** a client that predates this change reads the workspace response
 - **THEN** it observes the prior `UnifiedCalendarEntry` shape unchanged, with entry-level `linked_people` defaulting to `[]`, and the response envelope's `people_source_available` defaulting to `true` (both optional/additive)
 
+#### Scenario: User event removes its final linked person
+- **WHEN** `POST /api/calendar/workspace/user-events` receives an `action="update"` payload with `entity_ids: []` and `clear_entity_ids: true`
+- **THEN** the dashboard API forwards both values unchanged to `calendar_update_event`
+- **AND** the calendar projection removes the event's existing people links
+- **AND** the API rejects a clear signal paired with omitted or non-empty `entity_ids`
+- **AND** a title-only update, or an empty `entity_ids` value without the explicit flag, preserves existing people links

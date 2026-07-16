@@ -2202,7 +2202,14 @@ async def mutate_user_event(
     mgr: MCPClientManager = Depends(get_mcp_manager),
     db: DatabaseManager = Depends(_get_db_manager),
 ) -> ApiResponse[CalendarWorkspaceMutationResponse]:
-    """Create/update/delete user-view provider events through calendar MCP tools."""
+    """Create, update, or delete a user-view provider event through calendar MCP.
+
+    Side effects: dispatches the owning butler's calendar tool and records the
+    workspace mutation audit entry. Idempotency: forwarded ``request_id`` keys
+    replay handling in the calendar module. Failure: request validation rejects
+    an ambiguous people clear with HTTP 422; MCP failures retain the existing
+    HTTP error behavior.
+    """
     tool_name = {
         "create": "calendar_create_event",
         "update": "calendar_update_event",

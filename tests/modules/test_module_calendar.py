@@ -927,6 +927,33 @@ class TestReversibleMutationPreStateCapture:
         # Reuses the single pre-write get_event — no extra provider round-trip.
         assert len(provider.get_calls) == 1
 
+    async def test_update_explicit_entity_clear_forwards_to_projection(self) -> None:
+        """An explicit empty replacement reaches the projection as a clear request."""
+        existing = _make_event(event_id="evt-1", title="Original")
+        mod, provider, mcp = await self._make_module_with_event(existing)
+
+        with (
+            patch(
+                "butlers.modules.calendar.require_permission",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(
+                mod, "_project_provider_mutation", new_callable=AsyncMock
+            ) as project_mutation,
+        ):
+            result = await mcp.tools["calendar_update_event"](
+                event_id="evt-1",
+                entity_ids=[],
+                clear_entity_ids=True,
+            )
+
+        assert result["status"] == "updated"
+        assert provider.update_calls[0]["patch"].entity_ids == []
+        project_mutation.assert_awaited_once()
+        assert project_mutation.await_args.kwargs["clear_entity_ids"] is True
+        assert project_mutation.await_args.kwargs["updated_events"][0].entity_ids == []
+
     async def test_delete_captures_pre_state(self) -> None:
         existing = _make_event(event_id="evt-2", title="To delete", location="Hall")
 
@@ -1066,6 +1093,29 @@ class TestProjectionPersistence:
         )
 
         assert _calendar_events_fetchrow_args(pool)[-2] == "health"
+
+    async def test_project_provider_changes_applies_explicit_empty_clear(self):
+        """Only an explicit signal lets a zero-length set reach the link helper."""
+        mod = CalendarModule()
+        event_id = uuid.uuid4()
+        mod._upsert_projection_event = AsyncMock(return_value=event_id)
+        mod._upsert_projection_instance = AsyncMock(return_value=uuid.uuid4())
+        mod._upsert_event_entities = AsyncMock()
+
+        await mod._project_provider_changes(
+            source_id=uuid.uuid4(),
+            provider_name="google",
+            calendar_id="primary",
+            updated_events=[_make_event(entity_ids=[])],
+            cancelled_ids=[],
+            clear_entity_ids=True,
+        )
+
+        mod._upsert_event_entities.assert_awaited_once_with(
+            event_id=event_id,
+            entity_ids=[],
+            clear_entity_ids=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2435,6 +2485,33 @@ class TestEntityAssociationHelpers:
         await mod._upsert_event_entities(event_id=event_id, entity_ids=[])
 
         mock_pool.acquire.assert_not_called()
+
+    async def test_upsert_event_entities_explicitly_clears_empty_list(self):
+        """An explicit clear deletes all links without attempting an empty insert."""
+        mod = CalendarModule()
+        event_id = uuid.uuid4()
+
+        mock_conn = AsyncMock()
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+        mock_tx = AsyncMock()
+        mock_tx.__aenter__ = AsyncMock(return_value=mock_tx)
+        mock_tx.__aexit__ = AsyncMock(return_value=False)
+        mock_conn.transaction = MagicMock(return_value=mock_tx)
+        mock_pool = MagicMock()
+        mock_pool.acquire = MagicMock(return_value=mock_conn)
+        mod._db = SimpleNamespace(pool=mock_pool)
+
+        await mod._upsert_event_entities(
+            event_id=event_id,
+            entity_ids=[],
+            clear_entity_ids=True,
+        )
+
+        mock_conn.execute.assert_awaited_once()
+        delete_sql = mock_conn.execute.call_args[0][0]
+        assert "DELETE FROM calendar_event_entities" in delete_sql
+        mock_conn.executemany.assert_not_awaited()
 
     async def test_fetch_event_entity_ids_no_pool_returns_empty(self):
         """Gracefully returns [] when no DB pool is available."""

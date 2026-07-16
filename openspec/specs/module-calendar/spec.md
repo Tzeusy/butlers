@@ -138,9 +138,17 @@ The canonical `CalendarEvent` model SHALL be provider-neutral with fields: `even
 
 #### Scenario: Entity association on create and update
 
-- **WHEN** `calendar_create_event`, `calendar_update_event`, or `calendar_update_butler_event` is called with `entity_ids`
+- **WHEN** `calendar_create_event`, `calendar_update_event`, or `calendar_update_butler_event` is called with a non-empty `entity_ids` set
 - **THEN** the junction table `calendar_event_entities` is updated via `_upsert_event_entities`
 - **AND** existing entity links for the event are replaced with the new set (full replace, not additive)
+
+#### Scenario: Explicitly clear every entity association
+
+- **WHEN** `calendar_update_event` is called with `entity_ids=[]` and `clear_entity_ids=true`
+- **THEN** `_upsert_event_entities` deletes every existing `calendar_event_entities` row for that event without attempting an empty insert
+- **AND** the eager projection write-through carries the same explicit-clear signal so the workspace reflects the removal before the next provider sync
+- **AND** `clear_entity_ids=true` with an omitted or non-empty `entity_ids` value is rejected as ambiguous
+- **AND** an omitted `entity_ids`, or an empty list without `clear_entity_ids=true`, remains a no-op that preserves existing links
 
 #### Scenario: Entity association on read
 

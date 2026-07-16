@@ -3571,6 +3571,7 @@ class CalendarModule(Module):
             calendar_id: str | None = None,
             conflict_policy: CalendarConflictPolicy | None = None,
             entity_ids: list[uuid.UUID] | None = None,
+            clear_entity_ids: bool = False,
             request_id: str | None = None,
             _approval_bypass: bool = False,
         ) -> dict[str, Any]:
@@ -3581,9 +3582,17 @@ class CalendarModule(Module):
             occurrence named by ``instance_start_at``; ``following`` edits that
             occurrence and every later one (splitting the series at the boundary).
             ``this`` / ``following`` require ``instance_start_at``.
+
+            ``entity_ids`` replaces a non-empty link set. To remove every linked
+            entity, callers must pass ``entity_ids=[]`` with
+            ``clear_entity_ids=True``; an omitted or empty list without that
+            explicit signal preserves existing links.
+
             Fail-closed: provider errors return a structured error dict rather than
             silently dropping the mutation (spec section 4.4 / 15.2).
             """
+            if clear_entity_ids and entity_ids != []:
+                raise ValueError("clear_entity_ids requires entity_ids=[]")
             if recurrence_scope != "series":
                 return await module._apply_occurrence_update(
                     event_id=event_id,
@@ -3600,6 +3609,7 @@ class CalendarModule(Module):
                     color_id=color_id,
                     calendar_id=calendar_id,
                     entity_ids=entity_ids,
+                    clear_entity_ids=clear_entity_ids,
                     request_id=request_id,
                     tool_name="calendar_update_event",
                     approval_bypass=_approval_bypass,
@@ -3631,6 +3641,7 @@ class CalendarModule(Module):
                 "calendar_id": resolved_calendar_id,
                 "conflict_policy": resolved_conflict_policy,
                 "entity_ids": [str(e) for e in entity_ids] if entity_ids is not None else None,
+                "clear_entity_ids": clear_entity_ids,
             }
             idempotency_key, replay = await module._prepare_workspace_mutation(
                 action_type="workspace_user_update",
@@ -3814,6 +3825,7 @@ class CalendarModule(Module):
                             "entity_ids": (
                                 [str(e) for e in entity_ids] if entity_ids is not None else None
                             ),
+                            "clear_entity_ids": clear_entity_ids,
                         },
                         conflicts=conflict_result["conflicts"],
                         provider_name=provider.name,
@@ -3912,6 +3924,7 @@ class CalendarModule(Module):
                 source_id=source_id,
                 calendar_id=resolved_calendar_id,
                 updated_events=[event],
+                clear_entity_ids=clear_entity_ids,
             )
             result["projection_freshness"] = await module._refresh_user_projection(
                 resolved_calendar_id
@@ -7095,16 +7108,17 @@ class CalendarModule(Module):
         *,
         event_id: uuid.UUID,
         entity_ids: list[uuid.UUID],
+        clear_entity_ids: bool = False,
     ) -> None:
         """Replace entity associations for a calendar event.
 
-        Deletes all existing links for the event and inserts the new set.
-        When entity_ids is empty, this is a no-op — existing links are
-        preserved.  Callers that intend to clear all associations must avoid
-        calling this method with an empty list; explicit clearing requires a
-        direct DELETE without a subsequent INSERT.
+        Deletes all existing links for the event and inserts the new set. An
+        empty list is a no-op unless ``clear_entity_ids`` explicitly authorizes
+        removal of every existing association.
         """
-        if not entity_ids:
+        if clear_entity_ids and entity_ids:
+            raise ValueError("clear_entity_ids requires entity_ids=[]")
+        if not entity_ids and not clear_entity_ids:
             return
         pool = getattr(self._db, "pool", None) if self._db is not None else None
         if pool is None:
@@ -7115,14 +7129,15 @@ class CalendarModule(Module):
                     "DELETE FROM calendar_event_entities WHERE event_id = $1",
                     event_id,
                 )
-                await conn.executemany(
-                    """
-                    INSERT INTO calendar_event_entities (event_id, entity_id)
-                    VALUES ($1, $2)
-                    ON CONFLICT DO NOTHING
-                    """,
-                    [(event_id, eid) for eid in entity_ids],
-                )
+                if entity_ids:
+                    await conn.executemany(
+                        """
+                        INSERT INTO calendar_event_entities (event_id, entity_id)
+                        VALUES ($1, $2)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        [(event_id, eid) for eid in entity_ids],
+                    )
 
     async def _fetch_event_entity_ids(
         self,
@@ -7321,12 +7336,16 @@ class CalendarModule(Module):
         calendar_id: str,
         updated_events: list[CalendarEvent] | None = None,
         cancelled_ids: list[str] | None = None,
+        clear_entity_ids: bool = False,
     ) -> None:
         """Write a provider mutation directly to projection tables.
 
         Bypasses the sync-from-Google round-trip to avoid Google indexing
         latency race conditions.  The next sync cycle reconciles any
-        discrepancies.  Fail-open: errors are logged but do not propagate.
+        discrepancies.  ``clear_entity_ids`` is reserved for an explicit
+        workspace update that intentionally replaces an event's people set
+        with zero links; ordinary provider syncs keep their preserve-on-empty
+        behavior. Fail-open: errors are logged but do not propagate.
         """
         if source_id is None:
             return
@@ -7340,6 +7359,7 @@ class CalendarModule(Module):
                 calendar_id=calendar_id,
                 updated_events=updated_events or [],
                 cancelled_ids=cancelled_ids or [],
+                clear_entity_ids=clear_entity_ids,
             )
         except Exception as exc:
             logger.warning(
@@ -7356,6 +7376,7 @@ class CalendarModule(Module):
         calendar_id: str,
         updated_events: list[CalendarEvent],
         cancelled_ids: list[str],
+        clear_entity_ids: bool = False,
     ) -> None:
         # NOTE: butler-generated events pulled back from Google were created
         # via calendar_create_event (workspace mutations), NOT via the
@@ -7405,13 +7426,14 @@ class CalendarModule(Module):
                 source_butler=event.source_butler or event.butler_name or self._butler_name,
                 source_session_id=event.source_session_id,
             )
-            # Only write entity links when the event carries explicit associations.
-            # Skipping on empty list prevents sync cycles from clearing links that
-            # were attached outside of this projection path (e.g. direct mutations).
-            if event.entity_ids:
+            # Sync cycles preserve links on empty entity sets. A workspace update
+            # must opt in with the explicit clear signal before a zero-length set
+            # can delete the existing links.
+            if event.entity_ids or clear_entity_ids:
                 await self._upsert_event_entities(
                     event_id=event_db_id,
                     entity_ids=event.entity_ids,
+                    clear_entity_ids=clear_entity_ids,
                 )
             origin_instance_ref = f"{event.event_id}:{event.start_at.isoformat()}"
             await self._upsert_projection_instance(
@@ -9020,6 +9042,7 @@ class CalendarModule(Module):
         entity_ids: list[uuid.UUID] | None,
         request_id: str | None,
         tool_name: str,
+        clear_entity_ids: bool = False,
         approval_bypass: bool = False,
     ) -> dict[str, Any]:
         """Edit a single occurrence (``this``) or this-and-following of a series.
@@ -9030,6 +9053,8 @@ class CalendarModule(Module):
         new recurring event (carrying the edits) from the boundary onward.
         """
         await self._require_calendar_write_permission()
+        if clear_entity_ids and entity_ids != []:
+            raise ValueError("clear_entity_ids requires entity_ids=[]")
         normalized_event_id = event_id.strip()
         if not normalized_event_id:
             raise ValueError("event_id must be a non-empty string")
@@ -9056,6 +9081,8 @@ class CalendarModule(Module):
             "end_at": end_at,
             "timezone": timezone,
             "location": location,
+            "entity_ids": [str(e) for e in entity_ids] if entity_ids is not None else None,
+            "clear_entity_ids": clear_entity_ids,
         }
         idempotency_key, replay = await self._prepare_workspace_mutation(
             action_type="workspace_user_update",
@@ -9111,6 +9138,8 @@ class CalendarModule(Module):
                 "recurrence_scope": recurrence_scope,
                 "title": title,
                 "calendar_id": resolved_calendar_id,
+                "entity_ids": [str(e) for e in entity_ids] if entity_ids is not None else None,
+                "clear_entity_ids": clear_entity_ids,
             },
             request_id=normalized_request_id,
             idempotency_key=idempotency_key,

@@ -1326,6 +1326,9 @@ describe("CalendarWorkspacePage", () => {
     expect(
       (titleCall?.[0] as { payload: Record<string, unknown> }).payload,
     ).not.toHaveProperty("entity_ids");
+    expect(
+      (titleCall?.[0] as { payload: Record<string, unknown> }).payload,
+    ).not.toHaveProperty("clear_entity_ids");
   });
 
   it("round-trips entity_ids when a linked person is removed from the picker", async () => {
@@ -1357,6 +1360,37 @@ describe("CalendarWorkspacePage", () => {
     expect(
       (peopleCall?.[0] as { payload: { entity_ids: string[] } }).payload.entity_ids,
     ).toEqual(["e2"]);
+  });
+
+  it("explicitly clears linked people when the final person is removed", async () => {
+    openDetailForEntryWithPeople([
+      { entity_id: "e1", display_label: "Ada Lovelace" },
+    ]);
+    await openDetailPanel();
+
+    const picker = container.querySelector(
+      '[data-testid="detail-linked-people"] [data-testid="event-people-picker"]',
+    ) as HTMLElement;
+    const removeButton = picker.querySelector(
+      '[data-testid="people-remove-chip"]',
+    ) as HTMLButtonElement;
+    expect(removeButton.disabled).toBe(false);
+
+    await act(async () => {
+      removeButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flush();
+    });
+
+    const peopleCall = mutateUserEvent.mock.calls.find((call) =>
+      Object.prototype.hasOwnProperty.call(
+        (call[0] as { payload?: Record<string, unknown> }).payload ?? {},
+        "clear_entity_ids",
+      ),
+    );
+    expect(peopleCall).toBeDefined();
+    expect(
+      (peopleCall?.[0] as { payload: Record<string, unknown> }).payload,
+    ).toMatchObject({ entity_ids: [], clear_entity_ids: true });
   });
 
   // -------------------------------------------------------------------------
