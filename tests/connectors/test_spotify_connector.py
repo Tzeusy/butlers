@@ -803,6 +803,28 @@ def test_classify_source_api_error_distinguishes_spotify_revocation_from_transie
     assert payload["error"] in detail
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.spotify.com/v1/me",
+        "https://accounts.spotify.com/api/token",
+    ],
+)
+def test_spotify_non_post_token_response_never_proves_token_revocation(url: str) -> None:
+    """A resource response cannot enter the credential-recheck state by shape alone."""
+    request = httpx.Request("GET", url)
+    response = httpx.Response(
+        401,
+        json={"error": "invalid_grant", "error_description": "Synthetic resource failure"},
+        request=request,
+    )
+    error = httpx.HTTPStatusError("resource API failure", request=request, response=response)
+
+    classified, _ = _classify_source_api_error(error)
+
+    assert classified is False
+
+
 def test_spotify_health_reports_revocation_as_error_and_api_failure_as_degraded() -> None:
     connector = SpotifyConnector(
         SpotifyConnectorConfig(switchboard_mcp_url="http://switchboard.test/mcp")

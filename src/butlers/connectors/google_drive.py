@@ -151,10 +151,19 @@ def _classify_source_api_error(exc: Exception) -> tuple[bool, str]:
     is_auth_revocation = False
     if isinstance(response, httpx.Response):
         try:
+            request = response.request
+        except RuntimeError:
+            request = None
+        try:
             payload = response.json()
         except Exception:
             payload = None
-        if isinstance(payload, dict):
+        if (
+            request is not None
+            and request.method == "POST"
+            and str(request.url) == _GOOGLE_TOKEN_URL
+            and isinstance(payload, dict)
+        ):
             error_code = payload.get("error")
             if isinstance(error_code, str) and error_code in _OAUTH_ACTION_REQUIRED_ERROR_CODES:
                 is_auth_revocation = True

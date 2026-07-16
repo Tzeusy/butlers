@@ -676,6 +676,28 @@ def test_classify_source_api_error_distinguishes_google_revocation_from_api_fail
         assert str(status_code) in detail
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+        "https://oauth2.googleapis.com/token",
+    ],
+)
+def test_calendar_non_post_token_response_never_proves_token_revocation(url: str) -> None:
+    """Calendar data APIs must not promote a payload-shaped transient failure."""
+    request = httpx.Request("GET", url)
+    response = httpx.Response(
+        401,
+        json={"error": "invalid_grant", "error_description": "Synthetic resource failure"},
+        request=request,
+    )
+    error = httpx.HTTPStatusError("resource API failure", request=request, response=response)
+
+    classified, _ = _classify_source_api_error(error)
+
+    assert classified is False
+
+
 def test_calendar_health_reports_revocation_as_error_and_api_failure_as_degraded(
     account_config: CalendarAccountConfig,
 ) -> None:
