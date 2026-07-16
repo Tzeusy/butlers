@@ -2505,9 +2505,9 @@ async def get_breaks_catalogue(
             "(migration core_107 may not have run)"
         )
         return ApiResponse[list[BreakEntry]](data=[], meta=ApiMeta())
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("breaks-catalogue: query failed: %s", exc)
-        raise HTTPException(status_code=503, detail="Catalogue query failed") from exc
+    except Exception:  # noqa: BLE001
+        logger.warning("breaks-catalogue: query failed; degrading", exc_info=True)
+        return ApiResponse[list[BreakEntry]](data=[], meta=ApiMeta(catalogue_available=False))
 
     entries: list[BreakEntry] = []
     by_provider: dict[str, list[dict]] = {}
