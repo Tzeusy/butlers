@@ -28,7 +28,8 @@ export function toneColor(tone: string): string {
 }
 
 /** Map a state tone to an AA-safe CSS foreground token. */
-function toneTextColor(tone: string): string {
+// eslint-disable-next-line react-refresh/only-export-components
+export function toneTextColor(tone: string): string {
   return tone === "amber" ? "var(--amber-text)" : toneColor(tone);
 }
 
