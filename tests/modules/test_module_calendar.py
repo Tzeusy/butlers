@@ -3654,6 +3654,38 @@ class TestRecurrenceScopedMutation:
         mark.assert_awaited_once()
         assert mark.await_args.kwargs["occurrence_start"] == datetime(2026, 3, 3, 14, 0, tzinfo=UTC)
 
+    async def test_update_occurrence_forwards_explicit_entity_clear_to_projection(self) -> None:
+        """An occurrence update preserves the explicit clear through write-through."""
+        provider = _RecurringProviderDouble(
+            event=self._recurring_event(), recurrence=["RRULE:FREQ=WEEKLY;BYDAY=TU"]
+        )
+        mod, mcp = await self._make_module(provider)
+        with (
+            patch(
+                "butlers.modules.calendar.require_permission",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch.object(mod, "_finalize_workspace_mutation", new_callable=AsyncMock),
+            patch.object(mod, "_mark_instances_exception", new_callable=AsyncMock),
+            patch.object(mod, "_project_provider_mutation", new_callable=AsyncMock) as projection,
+        ):
+            result = await mcp.tools["calendar_update_event"](
+                event_id="evt-1",
+                recurrence_scope="this",
+                instance_start_at=datetime(2026, 3, 3, 14, 0, tzinfo=UTC),
+                entity_ids=[],
+                clear_entity_ids=True,
+            )
+
+        assert result["status"] == "updated"
+        assert projection.await_count == 2
+        master_projection, detached_projection = projection.await_args_list
+        assert master_projection.kwargs["updated_events"][0].event_id == "evt-1"
+        assert master_projection.kwargs.get("clear_entity_ids", False) is False
+        assert detached_projection.kwargs["updated_events"][0].event_id == "evt-detached"
+        assert detached_projection.kwargs["clear_entity_ids"] is True
+
     async def test_update_following_carries_recurrence(self) -> None:
         provider = _RecurringProviderDouble(
             event=self._recurring_event(), recurrence=["RRULE:FREQ=WEEKLY;BYDAY=TU"]

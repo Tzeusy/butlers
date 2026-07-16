@@ -9213,10 +9213,18 @@ class CalendarModule(Module):
         await self._emit_calendar_audit(
             "update", detached_event.title or existing_event.title, resolved_calendar_id
         )
+        # The recurrence master keeps its existing links for untouched occurrences.
+        # The detached/remainder event alone owns the explicit replacement signal.
         await self._project_provider_mutation(
             source_id=source_id,
             calendar_id=resolved_calendar_id,
-            updated_events=[updated_master, detached_event],
+            updated_events=[updated_master],
+        )
+        await self._project_provider_mutation(
+            source_id=source_id,
+            calendar_id=resolved_calendar_id,
+            updated_events=[detached_event],
+            clear_entity_ids=clear_entity_ids,
         )
         await self._mark_instances_exception(
             source_id=source_id,

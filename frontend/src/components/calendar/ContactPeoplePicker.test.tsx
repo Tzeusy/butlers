@@ -121,6 +121,11 @@ describe("ContactPeoplePicker", () => {
 
     const removeButton = screen.getByTestId("people-remove-chip") as HTMLButtonElement;
     expect(removeButton.disabled).toBe(false);
+    expect(removeButton.tagName).toBe("BUTTON");
+    expect(removeButton.getAttribute("aria-label")).toBe("Remove Ada Lovelace");
+    expect(removeButton.className).toContain("h-6");
+    expect(removeButton.className).toContain("w-6");
+    expect(removeButton.className).toContain("focus-visible:ring-2");
     expect(screen.queryByTestId("people-preserve-last-note")).toBeNull();
     fireEvent.click(removeButton);
     expect(onChange).toHaveBeenCalledWith([]);
