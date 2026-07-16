@@ -2638,14 +2638,14 @@ class MessagePipeline:
                             # A direct MessagePipeline caller without a persisted
                             # ingress row cannot establish the required provenance
                             # link, so it must not create an untraceable proposal.
-                            if (
-                                _sig["signal_type"] == _CALENDAR_PROPOSAL_SIGNAL_TYPE
-                                and _sig_tool == _CALENDAR_PROPOSAL_TOOL
-                            ):
+                            if _sig["signal_type"] == _CALENDAR_PROPOSAL_SIGNAL_TYPE:
                                 # Calendar proposals belong to the general butler's
-                                # shared calendar; extraction output cannot select
-                                # another calendar-owning schema.
+                                # shared calendar. The signal type is the
+                                # code-owned calendar contract, so neither the
+                                # target nor tool name in model output can turn an
+                                # inferred event into a provider write.
                                 _target = _CALENDAR_PROPOSAL_TARGET_BUTLER
+                                _sig_tool = _CALENDAR_PROPOSAL_TOOL
                                 _proposal_confidence = _CALENDAR_PROPOSAL_CONFIDENCE_SCORES[
                                     _sig["confidence"]
                                 ]
@@ -2684,10 +2684,7 @@ class MessagePipeline:
                                     "confidence": _sig["confidence"],
                                 },
                             }
-                            if (
-                                _sig["signal_type"] == _CALENDAR_PROPOSAL_SIGNAL_TYPE
-                                and _sig_tool == _CALENDAR_PROPOSAL_TOOL
-                            ):
+                            if _sig["signal_type"] == _CALENDAR_PROPOSAL_SIGNAL_TYPE:
                                 _route_args.update(
                                     {
                                         "butler_name": _CALENDAR_PROPOSAL_TARGET_BUTLER,
