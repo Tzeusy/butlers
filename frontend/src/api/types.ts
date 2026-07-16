@@ -3080,6 +3080,7 @@ export interface AutonomySuggestion {
   id: string;
   suggestion_type: "promotion" | "demotion";
   pattern_fingerprint: string;
+  fingerprint_version: number;
   tool_name: string;
   representative_args: Record<string, unknown>;
   status: "pending" | "confirmed" | "dismissed" | "superseded";

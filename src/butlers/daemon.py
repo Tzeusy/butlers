@@ -1403,6 +1403,9 @@ class ButlerDaemon:
         for mod in self._active_modules:
             if mod.name == "approvals" and hasattr(mod, "set_approval_policy"):
                 mod.set_approval_policy(approval_config)
+                set_tool_metadata = getattr(mod, "set_tool_metadata", None)
+                if callable(set_tool_metadata):
+                    set_tool_metadata(tool_metadata)
                 break
 
         # Wire the originals into the ApprovalsModule if it's loaded,
