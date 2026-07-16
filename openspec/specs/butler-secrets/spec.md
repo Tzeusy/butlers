@@ -33,9 +33,9 @@ The page is rendered in the binding **Dispatch** design language specified in `o
 - **THEN** the spine omits the `needs-hand` group entirely (no empty-state stub) and the page renders **zero red and zero amber pixels**, even if `warn`-state (stale/unverified) rows are present in their own quiet group
 
 #### Scenario: Imminent expiry uses the canonical state
-- **WHEN** a credential expires within its configured imminent-expiry lead time but has not yet expired
-- **AND** its most recent probe did not fail
-- **THEN** the inventory returns state `expiring`
+- **WHEN** a set credential expires within its configured imminent-expiry lead time but has not yet expired
+- **AND** its most recent probe succeeded, or no probe has run
+- **THEN** the inventory returns state `expiring` rather than `warn` in the no-probe case
 - **AND** the passport treats `expiring` as a `needs-hand` state
 - **AND** `expiring` is the sole imminent-expiry state name in both contracts
 
