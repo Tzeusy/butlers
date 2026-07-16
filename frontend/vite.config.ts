@@ -9,38 +9,51 @@ const frontendRoot = path.dirname(fileURLToPath(import.meta.url))
 
 const CHUNK_WARNING_LIMIT_KB = 1_500
 
+function packageNameFromModuleId(id: string): string | undefined {
+  const nodeModulesMarker = '/node_modules/'
+  const nodeModulesIndex = id.lastIndexOf(nodeModulesMarker)
+  if (nodeModulesIndex === -1) return undefined
+
+  const segments = id.slice(nodeModulesIndex + nodeModulesMarker.length).split('/')
+  const [scopeOrName, name] = segments
+  if (!scopeOrName) return undefined
+
+  return scopeOrName.startsWith('@') && name ? `${scopeOrName}/${name}` : scopeOrName
+}
+
 /**
  * Keep the app shell and the few measured third-party domains independently
  * cacheable. Do not add a catch-all node_modules rule: it would make future
  * lazy feature dependencies eager by accident.
  */
-function manualChunks(id: string): string | undefined {
-  if (!id.includes('/node_modules/')) return undefined
+export function manualChunks(id: string): string | undefined {
+  const packageName = packageNameFromModuleId(id)
+  if (!packageName) return undefined
 
   // MapWidgetInner is already React.lazy-loaded. Its rendering dependencies
   // must stay on that boundary rather than joining an eager shared vendor chunk.
-  if (id.includes('/maplibre-gl/') || id.includes('/h3-js/')) return 'vendor-map'
+  if (packageName === 'maplibre-gl' || packageName === 'h3-js') return 'vendor-map'
 
-  if (id.includes('/recharts/') || id.includes('/d3-')) return 'vendor-charts'
-  if (id.includes('/@xyflow/') || id.includes('/@dagrejs/dagre/')) return 'vendor-graph'
+  if (packageName === 'recharts' || packageName.startsWith('d3-')) return 'vendor-charts'
+  if (packageName.startsWith('@xyflow/') || packageName === '@dagrejs/dagre') return 'vendor-graph'
   if (
-    id.includes('/react/') ||
-    id.includes('/react-dom/') ||
-    id.includes('/react-router/') ||
-    id.includes('/@tanstack/') ||
-    id.includes('/scheduler/')
+    packageName === 'react' ||
+    packageName === 'react-dom' ||
+    packageName === 'react-router' ||
+    packageName.startsWith('@tanstack/') ||
+    packageName === 'scheduler'
   ) {
     return 'vendor-framework'
   }
-  if (id.includes('/date-fns/') || id.includes('/date-fns-tz/')) return 'vendor-date'
+  if (packageName === 'date-fns' || packageName === 'date-fns-tz') return 'vendor-date'
   if (
-    id.includes('/@radix-ui/') ||
-    id.includes('/radix-ui/') ||
-    id.includes('/lucide-react/') ||
-    id.includes('/sonner/') ||
-    id.includes('/tailwind-merge/') ||
-    id.includes('/class-variance-authority/') ||
-    id.includes('/clsx/')
+    packageName.startsWith('@radix-ui/') ||
+    packageName === 'radix-ui' ||
+    packageName === 'lucide-react' ||
+    packageName === 'sonner' ||
+    packageName === 'tailwind-merge' ||
+    packageName === 'class-variance-authority' ||
+    packageName === 'clsx'
   ) {
     return 'vendor-ui'
   }
