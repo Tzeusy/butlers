@@ -198,7 +198,7 @@ from urllib.parse import quote, urlencode
 from uuid import UUID
 
 import httpx
-from asyncpg.exceptions import PostgresError, UndefinedTableError
+from asyncpg.exceptions import InvalidSchemaNameError, PostgresError, UndefinedTableError
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -2498,10 +2498,10 @@ async def get_breaks_catalogue(
             rows = await pool.fetch(query, *params)
         else:
             rows = await pool.fetch(query)
-    except UndefinedTableError:
+    except (UndefinedTableError, InvalidSchemaNameError):
         # Migration core_107 not yet run — graceful empty response.
         logger.debug(
-            "breaks-catalogue: provider_feature_catalogue not found "
+            "breaks-catalogue: provider_feature_catalogue table or schema not found "
             "(migration core_107 may not have run)"
         )
         return ApiResponse[list[BreakEntry]](data=[], meta=ApiMeta())
