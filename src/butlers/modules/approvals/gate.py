@@ -147,7 +147,7 @@ def match_standing_rule(
         normalized.setdefault("description", "")
         normalized.setdefault("created_from", None)
         normalized.setdefault("created_at", now)
-        normalized.setdefault("arg_constraints", "{}")
+        normalized.setdefault("arg_constraints", {})
         normalized.setdefault("active", True)
         normalized.setdefault("use_count", 0)
         normalized_rules.append(normalized)
