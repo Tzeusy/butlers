@@ -2690,6 +2690,7 @@ class MessagePipeline:
                             ):
                                 _route_args.update(
                                     {
+                                        "butler_name": _CALENDAR_PROPOSAL_TARGET_BUTLER,
                                         "source_event_id": str(message_inbox_id),
                                         "source_snippet": message_text[
                                             :_CALENDAR_PROPOSAL_SNIPPET_MAX_CHARS

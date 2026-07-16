@@ -2070,6 +2070,9 @@ class TestDecompositionSignalSchema:
                 "start_at": "2026-08-01T14:00:00+08:00",
                 "end_at": "2026-08-01T20:00:00+08:00",
                 "timezone": "Asia/Singapore",
+                # This separately model-controlled field must not mislabel a
+                # proposal after the route target has been pinned to general.
+                "butler_name": "finance",
             },
             "excerpts": [],
             "confidence": "HIGH",
@@ -2092,7 +2095,9 @@ class TestDecompositionSignalSchema:
             message_inbox_id="00000000-0000-0000-0000-000000000012",
         )
 
-        assert mock_route.await_args.kwargs["target_butler"] == "general"
+        route_kwargs = mock_route.await_args.kwargs
+        assert route_kwargs["target_butler"] == "general"
+        assert route_kwargs["args"]["butler_name"] == "general"
 
     @patch.object(
         MessagePipeline,
