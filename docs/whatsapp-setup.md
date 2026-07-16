@@ -134,10 +134,10 @@ WhatsApp invalidates sessions when the account is active on too many devices, wh
 manually unlinks a device, or after prolonged inactivity. You can detect an expired session via:
 
 **Dashboard:** A new, never-paired device shows `pair_required`. A temporarily
-disconnected device may still show `disconnected`, but a previously paired device
-that remains link-dead in `disconnected` or `connecting` is surfaced as
-`pair_required` after the invalidated-session threshold (five minutes by default),
-so it has an actionable recovery path.
+link-dead device may still show `disconnected`, but a previously paired device
+whose live link remains down is surfaced as `pair_required` after the
+invalidated-session threshold (five minutes by default), even when its stale
+event-driven state still says `connected`, so it has an actionable recovery path.
 
 **Logs:** The Go bridge logs a session-invalid exit (exit code 2):
 
@@ -175,11 +175,11 @@ connector treats this as a recoverable outage at first; if it persists for the
 configured `WHATSAPP_INVALIDATED_SESSION_THRESHOLD_S` (300 seconds by default),
 it classifies the outage as terminal and requires a new QR pair.
 
-For a persistent `disconnected` or `connecting` bridge, the dashboard status
-surfaces `pair_required`; the connector sends a best-effort Telegram alert once
-per invalidation episode with the recovery action. This is distinct from
-first-time setup: a new device can wait in `pair_required` without an
-invalidated-session alert.
+For any persistent link-dead bridge, the dashboard status surfaces
+`pair_required`; the connector sends a best-effort Telegram alert once per
+invalidation episode with the recovery action. This is distinct from first-time
+setup: a new device can wait in `pair_required` without an invalidated-session
+alert.
 
 #### 2.1.2 Session taken over by another device (StreamReplaced)
 
