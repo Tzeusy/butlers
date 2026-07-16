@@ -1654,6 +1654,46 @@ def _dedupe_most_severe(items: list[Any], key_fn: Callable[[Any], Any]) -> list[
     return list(best.values())
 
 
+_PROVIDER_MANAGED_SYSTEM_CATEGORIES = frozenset({"owntracks", "spotify"})
+
+
+def _is_cli_auth_system_secret(secret: SystemSecret) -> bool:
+    """Match the Passport adapter's legacy cli-auth relocation predicate."""
+    return secret.category == "cli-auth" or secret.key.startswith("cli-auth/")
+
+
+def _dedupe_display_families(
+    *,
+    cli_secrets: list[CliRuntime],
+    system_secrets: list[SystemSecret],
+    user_secrets: list[UserSecret],
+) -> dict[str, list[Any]]:
+    """Return the same conceptual credential families the Passport displays.
+
+    The API exposes raw system rows so existing per-credential actions retain
+    their source metadata.  Before rendering, the Passport adapter relocates
+    legacy ``cli-auth`` rows to CLI and hides OwnTracks/Spotify rows owned by
+    provider drawers.  KPI metadata must use that display projection as well,
+    or a count can name a family with no corresponding visible credential.
+    """
+    deduped_system = _dedupe_most_severe(system_secrets, lambda secret: secret.key)
+    cli_from_system = [secret for secret in deduped_system if _is_cli_auth_system_secret(secret)]
+    visible_system = [
+        secret
+        for secret in deduped_system
+        if not _is_cli_auth_system_secret(secret)
+        and secret.category not in _PROVIDER_MANAGED_SYSTEM_CATEGORIES
+    ]
+
+    return {
+        "cli": _dedupe_most_severe([*cli_secrets, *cli_from_system], lambda secret: secret.key),
+        "system": visible_system,
+        "user": _dedupe_most_severe(
+            user_secrets, lambda secret: (secret.entity_id, _infer_provider_from_type(secret.type))
+        ),
+    }
+
+
 #: Backend states that count as "genuinely needs hand" — mirrors the
 #: frontend's NEEDS_HAND_STATES (constants.ts) restricted to the subset
 #: _derive_state can actually emit. Excludes "warn": set-but-never-probed is
@@ -1789,13 +1829,11 @@ async def get_inventory(
     # use-secrets-inventory.ts) — counting the raw per-butler rows previously
     # disagreed with what the grouped UI actually shows (29 raw rows vs 19
     # grouped rows was the originally reported symptom).
-    deduped_by_family: dict[str, list[Any]] = {
-        "cli": _dedupe_most_severe(cli_secrets, lambda c: c.key),
-        "system": _dedupe_most_severe(system_secrets, lambda s: s.key),
-        "user": _dedupe_most_severe(
-            user_secrets, lambda u: (u.entity_id, _infer_provider_from_type(u.type))
-        ),
-    }
+    deduped_by_family = _dedupe_display_families(
+        cli_secrets=cli_secrets,
+        system_secrets=system_secrets,
+        user_secrets=user_secrets,
+    )
     deduped_items = [item for items in deduped_by_family.values() for item in items]
 
     counts = _count_severity(deduped_items)

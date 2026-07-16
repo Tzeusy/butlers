@@ -353,6 +353,32 @@ describe("adaptInventoryResponse: provider-managed system credentials are hidden
   });
 });
 
+describe("adaptInventoryResponse: server KPI family contract", () => {
+  it("preserves server counts through cli-auth relocation and provider-row hiding", () => {
+    const result = adaptInventoryResponse({
+      cli: [],
+      system: [
+        makeSystem({ key: "cli-auth/codex", category: "cli-auth", state: "failing" }),
+        makeSystem({ key: "OWNTRACKS_WEBHOOK_TOKEN", category: "owntracks", state: "failing" }),
+        makeSystem({ key: "SPOTIFY_ACCESS_TOKEN", category: "spotify", state: "warn" }),
+      ],
+      user: [],
+      identities: [],
+      failing_count: 1,
+      unverified_count: 0,
+      failing_count_by_family: { cli: 1, system: 0, user: 0 },
+      unverified_count_by_family: { cli: 0, system: 0, user: 0 },
+    });
+
+    expect(result.cli).toHaveLength(1);
+    expect(result.system).toHaveLength(0);
+    expect(result.failingCount).toBe(1);
+    expect(result.unverifiedCount).toBe(0);
+    expect(result.failingCountByFamily).toEqual({ cli: 1, system: 0, user: 0 });
+    expect(result.unverifiedCountByFamily).toEqual({ cli: 0, system: 0, user: 0 });
+  });
+});
+
 describe("adaptInventoryResponse: identity mapping from backend", () => {
   it("maps backend identities[] to frontend Identity[] with real names and roles", () => {
     const result = adaptInventoryResponse({

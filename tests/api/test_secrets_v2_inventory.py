@@ -893,6 +893,78 @@ def test_inventory_family_counts_split_all_display_families():
     }
 
 
+def test_inventory_family_counts_relocate_per_butler_cli_auth_rows_to_cli():
+    """The server-side CLI KPI follows the Passport's cli-auth relocation."""
+    cli_auth_failure = _make_system_row(
+        key="cli-auth/codex",
+        category="cli-auth",
+        last_test_ok=False,
+    )
+    cli_auth_unverified = _make_system_row(
+        key="cli-auth/claude",
+        category="cli-auth",
+        last_test_ok=None,
+    )
+    mock_db = _make_db_manager(
+        butler_names=["switchboard"],
+        system_rows=[cli_auth_failure, cli_auth_unverified],
+    )
+    client = _build_app(mock_db)
+
+    resp = client.get("/api/secrets/inventory")
+
+    assert resp.status_code == 200, resp.text
+    meta = resp.json()["meta"]
+    assert meta["failing_count"] == 1
+    assert meta["failing_count_by_family"] == {
+        "cli": 1,
+        "system": 0,
+        "user": 0,
+    }
+    assert meta["unverified_count"] == 1
+    assert meta["unverified_count_by_family"] == {
+        "cli": 1,
+        "system": 0,
+        "user": 0,
+    }
+
+
+def test_inventory_family_counts_exclude_hidden_provider_managed_system_rows():
+    """Hidden provider-drawer rows do not inflate visible Passport KPIs."""
+    owntracks_failure = _make_system_row(
+        key="OWNTRACKS_WEBHOOK_TOKEN",
+        category="owntracks",
+        last_test_ok=False,
+    )
+    spotify_unverified = _make_system_row(
+        key="SPOTIFY_ACCESS_TOKEN",
+        category="spotify",
+        last_test_ok=None,
+    )
+    mock_db = _make_db_manager(
+        butler_names=["switchboard"],
+        system_rows=[owntracks_failure, spotify_unverified],
+    )
+    client = _build_app(mock_db)
+
+    resp = client.get("/api/secrets/inventory")
+
+    assert resp.status_code == 200, resp.text
+    meta = resp.json()["meta"]
+    assert meta["failing_count"] == 0
+    assert meta["unverified_count"] == 0
+    assert meta["failing_count_by_family"] == {
+        "cli": 0,
+        "system": 0,
+        "user": 0,
+    }
+    assert meta["unverified_count_by_family"] == {
+        "cli": 0,
+        "system": 0,
+        "user": 0,
+    }
+
+
 def test_inventory_never_set_credential():
     """A row with empty value gets state=never_set."""
     empty_row = _make_system_row(key="UNSET_KEY", value="", last_test_ok=None)
