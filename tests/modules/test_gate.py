@@ -128,6 +128,22 @@ class TestMatchStandingRule:
         assert matched["id"] == rule_id
         assert matched["arg_constraints"] == {}
 
+    def test_non_mapping_arg_constraints_do_not_widen_a_rule(self) -> None:
+        """A malformed stored value must not become an unconstrained approval."""
+        matched = match_standing_rule(
+            "telegram_send_message",
+            {"chat_id": "12345", "message": "hello"},
+            [
+                {
+                    "id": uuid.uuid4(),
+                    "tool_name": "telegram_send_message",
+                    "arg_constraints": None,
+                }
+            ],
+        )
+
+        assert matched is None
+
 
 # ---------------------------------------------------------------------------
 # is_primary_contact unit tests
