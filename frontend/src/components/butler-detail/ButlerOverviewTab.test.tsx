@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { useRef, useState } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { MemoryRouter, useLocation } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 
 import ButlerOverviewTab from "@/components/butler-detail/ButlerOverviewTab"
 
@@ -49,6 +50,29 @@ import { useButlerActivityFeed } from "@/hooks/use-butler-analytics"
 let approveMutate: ReturnType<typeof vi.fn>
 let denyMutate: ReturnType<typeof vi.fn>
 
+function useConcurrentApprovalDecisionMock() {
+  const [latestPendingId, setLatestPendingId] = useState<string | undefined>(undefined)
+  const neverSettles = useRef(new Promise<never>(() => {}))
+  const startApproval = (id: string) => {
+    setLatestPendingId(id)
+    return neverSettles.current
+  }
+
+  return {
+    approveMut: {
+      mutate: startApproval,
+      mutateAsync: startApproval,
+      isPending: latestPendingId !== undefined,
+      variables: latestPendingId,
+    },
+    denyMut: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, variables: undefined },
+    deferMut: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, variables: undefined },
+    scheduledDecisions: new Map(),
+    scheduleDecision: vi.fn(),
+    cancelDecision: vi.fn(),
+  } as unknown as ReturnType<typeof useApprovalDecisionMutations>
+}
+
 function LocationProbe() {
   const location = useLocation()
   return <output data-testid="location-search">{location.search}</output>
@@ -78,11 +102,21 @@ function renderOverviewLive() {
 }
 
 beforeEach(() => {
-  approveMutate = vi.fn()
-  denyMutate = vi.fn()
+  approveMutate = vi.fn().mockResolvedValue(undefined)
+  denyMutate = vi.fn().mockResolvedValue(undefined)
   vi.mocked(useApprovalDecisionMutations).mockReturnValue({
-    approveMut: { mutate: approveMutate, isPending: false, variables: undefined },
-    denyMut: { mutate: denyMutate, isPending: false, variables: undefined },
+    approveMut: {
+      mutate: approveMutate,
+      mutateAsync: approveMutate,
+      isPending: false,
+      variables: undefined,
+    },
+    denyMut: {
+      mutate: denyMutate,
+      mutateAsync: denyMutate,
+      isPending: false,
+      variables: undefined,
+    },
     deferMut: { mutate: vi.fn(), isPending: false, variables: undefined },
     scheduledDecisions: new Map(),
     scheduleDecision: vi.fn(),
@@ -356,13 +390,90 @@ describe("ButlerOverviewTab -- doors", () => {
     expect(html).toContain("/approvals?butler=general&amp;id=approval-1")
   })
 
-  it("approves and rejects an awaiting action inline", () => {
+  it("approves an awaiting action inline", () => {
     renderOverviewLive()
 
     fireEvent.click(screen.getByRole("button", { name: "Approve Send draft follow-up" }))
-    fireEvent.click(screen.getByRole("button", { name: "Reject Send draft follow-up" }))
 
     expect(approveMutate).toHaveBeenCalledWith("approval-1")
+  })
+
+  it("rejects an awaiting action inline", () => {
+    renderOverviewLive()
+
+    fireEvent.click(screen.getByRole("button", { name: "Reject Send draft follow-up" }))
+
     expect(denyMutate).toHaveBeenCalledWith({ id: "approval-1" })
+  })
+
+  it("keeps each row pending when two approvals start before either request settles", () => {
+    vi.mocked(useApprovalActions).mockReturnValue({
+      data: {
+        data: [
+          {
+            id: "approval-1",
+            butler: "general",
+            tool_name: "send_email",
+            tool_args: {},
+            status: "pending",
+            requested_at: "2026-05-13T12:01:00Z",
+            agent_summary: "Prepare first report",
+          },
+          {
+            id: "approval-2",
+            butler: "general",
+            tool_name: "send_email",
+            tool_args: {},
+            status: "pending",
+            requested_at: "2026-05-13T12:02:00Z",
+            agent_summary: "Prepare second report",
+          },
+        ],
+        meta: { total: 2, offset: 0, limit: 5, has_more: false },
+      },
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useApprovalActions>)
+
+    vi.mocked(useApprovalDecisionMutations).mockImplementation(useConcurrentApprovalDecisionMock)
+
+    renderOverviewLive()
+
+    const firstApprove = screen.getByRole("button", { name: "Approve Prepare first report" })
+    const secondApprove = screen.getByRole("button", { name: "Approve Prepare second report" })
+    fireEvent.click(firstApprove)
+    expect(firstApprove.textContent).toBe("Approving…")
+
+    fireEvent.click(secondApprove)
+
+    expect(firstApprove.textContent).toBe("Approving…")
+    expect(secondApprove.textContent).toBe("Approving…")
+    expect(firstApprove.hasAttribute("disabled")).toBe(true)
+    expect(secondApprove.hasAttribute("disabled")).toBe(true)
+  })
+
+  it("restores a row's controls after an inline decision fails", async () => {
+    let rejectApproval: ((reason?: unknown) => void) | undefined
+    approveMutate.mockImplementationOnce(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectApproval = reject
+        }),
+    )
+
+    renderOverviewLive()
+
+    const approve = screen.getByRole("button", { name: "Approve Send draft follow-up" })
+    fireEvent.click(approve)
+    expect(approve.textContent).toBe("Approving…")
+    expect(approve.hasAttribute("disabled")).toBe(true)
+
+    if (!rejectApproval) throw new Error("Expected the approval request to start")
+    rejectApproval(new Error("network failure"))
+
+    await waitFor(() => {
+      expect(approve.textContent).toBe("Approve")
+      expect(approve.hasAttribute("disabled")).toBe(false)
+    })
   })
 })

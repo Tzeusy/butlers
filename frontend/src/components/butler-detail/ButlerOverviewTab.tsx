@@ -11,7 +11,7 @@
 // the prototype rhythm while using container-boundary-safe process facts.
 // ---------------------------------------------------------------------------
 
-import { useCallback, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import { Link, useNavigate } from "react-router"
 
 import {
@@ -168,22 +168,24 @@ function EventRow({
   )
 }
 
+type PendingDecision = "approve" | "reject"
+
 function ActionRow({
   action,
   butlerName,
   onApprove,
   onReject,
-  approving,
-  rejecting,
+  pendingDecision,
 }: {
   action: ApprovalAction
   butlerName: string
   onApprove: (id: string) => void
   onReject: (id: string) => void
-  approving: boolean
-  rejecting: boolean
+  pendingDecision: PendingDecision | undefined
 }) {
   const actionLabel = action.agent_summary || action.tool_name
+  const approving = pendingDecision === "approve"
+  const rejecting = pendingDecision === "reject"
   const isDeciding = approving || rejecting
 
   return (
@@ -270,7 +272,43 @@ export default function ButlerOverviewTab({ butlerName }: ButlerOverviewTabProps
   // a session_completed row opens its transcript in place instead of leaving
   // the operator on a dead-end line of text.
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [pendingDecisions, setPendingDecisions] = useState<Map<string, PendingDecision>>(
+    () => new Map(),
+  )
+  const pendingDecisionIds = useRef<Set<string>>(new Set())
   const { approveMut, denyMut } = useApprovalDecisionMutations()
+  const runDecision = useCallback(
+    (id: string, decision: PendingDecision, mutate: () => Promise<unknown>) => {
+      if (pendingDecisionIds.current.has(id)) return
+
+      pendingDecisionIds.current.add(id)
+      setPendingDecisions((current) => new Map(current).set(id, decision))
+
+      // The shared mutation hook owns the success/error toast. This local map
+      // deliberately tracks every in-flight row, whereas one useMutation
+      // observer only exposes the most recently-started mutation.
+      void mutate()
+        .catch(() => undefined)
+        .finally(() => {
+          pendingDecisionIds.current.delete(id)
+          setPendingDecisions((current) => {
+            if (!current.has(id)) return current
+            const next = new Map(current)
+            next.delete(id)
+            return next
+          })
+        })
+    },
+    [],
+  )
+  const handleApprove = useCallback(
+    (id: string) => runDecision(id, "approve", () => approveMut.mutateAsync(id)),
+    [approveMut, runDecision],
+  )
+  const handleReject = useCallback(
+    (id: string) => runDecision(id, "reject", () => denyMut.mutateAsync({ id })),
+    [denyMut, runDecision],
+  )
   const handleActivityStripeClick = useCallback((index: number) => {
     const { since, until } = stripeSlotWindow(index)
     navigate(
@@ -398,10 +436,9 @@ export default function ButlerOverviewTab({ butlerName }: ButlerOverviewTabProps
                 key={action.id}
                 action={action}
                 butlerName={butlerName}
-                onApprove={(id) => approveMut.mutate(id)}
-                onReject={(id) => denyMut.mutate({ id })}
-                approving={approveMut.isPending && approveMut.variables === action.id}
-                rejecting={denyMut.isPending && denyMut.variables?.id === action.id}
+                onApprove={handleApprove}
+                onReject={handleReject}
+                pendingDecision={pendingDecisions.get(action.id)}
               />
             ))}
           </div>
