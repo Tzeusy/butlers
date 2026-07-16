@@ -2091,8 +2091,8 @@ class GDriveConnectorManager:
         """Return (state, error_message) tuple for heartbeat reporting (task 12.5)."""
         health = self.get_health()
         error_msg: str | None = None
-        if health.status == "error":
-            # Aggregate first error message from account loops
+        if health.status in {"degraded", "error"}:
+            # Surface the first unhealthy account's diagnostic in the aggregate heartbeat.
             for account in health.account_health:
                 if account.error:
                     error_msg = account.error
@@ -2172,7 +2172,7 @@ class GDriveConnectorManager:
                     for account in health.account_health:
                         endpoint_id = account.endpoint_identity
                         state = account.status
-                        error_msg = account.error if state == "error" else None
+                        error_msg = account.error if state in {"degraded", "error"} else None
                         await conn.execute(
                             """
                             UPDATE switchboard.connector_registry

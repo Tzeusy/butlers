@@ -24,6 +24,7 @@ from butlers.connectors.google_drive import (
     _CHANGE_TYPE_TRASHED,
     GDriveAccountConfig,
     GDriveAccountLoop,
+    GDriveConnectorManager,
     _build_ingest_envelope,
     _classify_source_api_error,
     _detect_change_type,
@@ -350,3 +351,25 @@ def test_drive_account_health_reports_revocation_as_error_and_api_failure_as_deg
     health = account.get_health()
     assert health.status == "error"
     assert health.error == "error=invalid_grant, description=Token expired or revoked"
+
+
+def test_drive_manager_heartbeat_preserves_degraded_source_error() -> None:
+    """A recoverable Drive outage remains diagnosable in the dashboard heartbeat."""
+    config = GDriveAccountConfig(
+        email=_FAKE_EMAIL,
+        client_id="client-id",
+        client_secret="client-secret",
+        refresh_token="refresh-token",
+        switchboard_mcp_url="http://switchboard.test/mcp",
+    )
+    account = GDriveAccountLoop(_FAKE_EMAIL, config)
+    account._record_source_api_failure(
+        _google_token_http_error({"error": {"code": 503, "message": "Backend Error"}}, 503)
+    )
+    manager = GDriveConnectorManager(db_pool=None, credential_store=object())
+    manager._loops[_FAKE_EMAIL] = account
+
+    assert manager._get_health_state_for_heartbeat() == (
+        "degraded",
+        "code=503, message=Backend Error",
+    )
