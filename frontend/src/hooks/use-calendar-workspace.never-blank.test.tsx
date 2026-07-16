@@ -53,10 +53,10 @@ function lastQueryOptions(): { placeholderData?: (previousData: unknown) => unkn
   return options as ReturnType<typeof lastQueryOptions>;
 }
 
-const keyedHooks: Array<{ name: string; render: () => void }> = [
+const keyedHooks: Array<{ name: string; useHook: () => void }> = [
   {
     name: "overlays window",
-    render: () => {
+    useHook: () => {
       useCalendarOverlays({
         start: "2026-07-01T00:00:00Z",
         end: "2026-07-08T00:00:00Z",
@@ -66,25 +66,25 @@ const keyedHooks: Array<{ name: string; render: () => void }> = [
   },
   {
     name: "day briefing parameters",
-    render: () => {
+    useHook: () => {
       useCalendarDayBriefing({ date: "2026-07-02", timezone: "UTC" });
     },
   },
   {
     name: "meeting-prep event",
-    render: () => {
+    useHook: () => {
       useCalendarMeetingPrep("event-1");
     },
   },
   {
     name: "workspace search phrase",
-    render: () => {
+    useHook: () => {
       useCalendarWorkspaceSearch({ q: "planning", view: "user", timezone: "UTC" });
     },
   },
   {
     name: "duplicate-review window",
-    render: () => {
+    useHook: () => {
       useCalendarDuplicates({
         view: "user",
         start: "2026-07-01T00:00:00Z",
@@ -95,7 +95,7 @@ const keyedHooks: Array<{ name: string; render: () => void }> = [
   },
   {
     name: "conflict-radar window",
-    render: () => {
+    useHook: () => {
       useCalendarConflicts({
         start: "2026-07-01T00:00:00Z",
         end: "2026-07-08T00:00:00Z",
@@ -105,7 +105,7 @@ const keyedHooks: Array<{ name: string; render: () => void }> = [
   },
   {
     name: "activity audit page",
-    render: () => {
+    useHook: () => {
       useCalendarWorkspaceAudit({ limit: 50, offset: 50 });
     },
   },
@@ -116,8 +116,8 @@ describe("calendar workspace keyed hooks — never-blank floor (bu-plib7)", () =
     vi.clearAllMocks();
   });
 
-  it.each(keyedHooks)("keeps previous data for the $name", ({ render }) => {
-    renderHook(render);
+  it.each(keyedHooks)("keeps previous data for the $name", ({ useHook }) => {
+    renderHook(useHook);
 
     const options = lastQueryOptions();
     const previous = { data: { marker: "previous result" } };
