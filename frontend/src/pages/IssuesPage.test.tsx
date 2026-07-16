@@ -339,6 +339,7 @@ describe("IssuesPage — j/k list-triage (bu-qvnce.11 slice 4)", () => {
     act(() => press("j"));
     act(() => press("a"));
 
+    expect(undismissMutate).toHaveBeenCalledTimes(1);
     expect(undismissMutate).toHaveBeenCalledWith(issue.issue_key);
     expect(dismissMutate).not.toHaveBeenCalled();
     expect(container.textContent).toContain("Restore selected");
