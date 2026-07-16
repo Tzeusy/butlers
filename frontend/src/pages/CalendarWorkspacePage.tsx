@@ -1695,6 +1695,7 @@ interface CalendarEntryDetailPanelProps {
     patch: Record<string, unknown>,
     label: string,
     onCancel?: () => void,
+    onFailure?: () => void,
   ) => void;
   userMutation: ReturnType<typeof useMutateCalendarWorkspaceUserEvent>;
   butlerMutation: ReturnType<typeof useMutateCalendarWorkspaceButlerEvent>;
@@ -1830,13 +1831,14 @@ function CalendarEntryDetailPanel({
     patch: Record<string, unknown>,
     label: string,
     onRecurringCancel?: () => void,
+    onFailure?: () => void,
   ) {
     const { butlerName, calendarId } = resolveOwnerFromEntry(entry);
     if (!butlerName || !entry.provider_event_id) return;
     // A recurring occurrence must first ask the user which occurrences the edit
     // applies to (this / following / series); defer to the parent scope sheet.
     if (isRecurringUserEntry(entry) && onRecurringEdit) {
-      onRecurringEdit(entry, patch, label, onRecurringCancel);
+      onRecurringEdit(entry, patch, label, onRecurringCancel, onFailure);
       return;
     }
     setSaveStatus("idle");
@@ -1858,6 +1860,7 @@ function CalendarEntryDetailPanel({
             toast.error(
               `Failed to update ${label}: ${calendarMutationErrorMessage(result, "Update failed.")}`,
             );
+            onFailure?.();
             setSaveStatus("error");
             return;
           }
@@ -1870,6 +1873,7 @@ function CalendarEntryDetailPanel({
               ? error.message
               : `Failed to update ${label}.`,
           );
+          onFailure?.();
           setSaveStatus("error");
         },
       },
@@ -1944,19 +1948,21 @@ function CalendarEntryDetailPanel({
   }
 
   function handlePeopleChange(next: SelectedPerson[]) {
+    if (!canMutateUser) return;
     const previous = peopleDraft;
     setPeopleDraft(next);
-    if (!isUserEvent) return;
     // Non-empty edits replace the linked set. A zero-length replacement carries
     // an explicit destructive signal so omitted or incidental empty values still
     // preserve the existing links on the backend.
     const entityIds = next.map((person) => person.entity_id);
+    const restorePeople = () => setPeopleDraft(previous);
     fireUserUpdate(
       entityIds.length === 0
         ? { entity_ids: [], clear_entity_ids: true }
         : { entity_ids: entityIds },
       "people",
-      () => setPeopleDraft(previous),
+      restorePeople,
+      restorePeople,
     );
   }
 
@@ -2160,7 +2166,7 @@ function CalendarEntryDetailPanel({
           <ContactPeoplePicker
             value={peopleDraft}
             onChange={handlePeopleChange}
-            disabled={isPending}
+            disabled={isPending || !canMutateUser}
           />
         </div>
       ) : entry.linked_people && entry.linked_people.length > 0 ? (
@@ -2844,6 +2850,7 @@ export default function CalendarWorkspacePage() {
     patch: Record<string, unknown>;
     label: string;
     onCancel?: () => void;
+    onFailure?: () => void;
   } | null>(null);
   const [editScope, setEditScope] = useState<RecurrenceScope>("this");
   const [userEventForm, setUserEventForm] = useState<UserEventFormState | null>(
@@ -4169,13 +4176,20 @@ export default function CalendarWorkspacePage() {
     patch: Record<string, unknown>,
     label: string,
     onCancel?: () => void,
+    onFailure?: () => void,
   ) {
     setEditScope("this");
-    setRecurringEdit({ entry, patch, label, onCancel });
+    setRecurringEdit({ entry, patch, label, onCancel, onFailure });
   }
 
   function cancelRecurringEdit() {
     recurringEdit?.onCancel?.();
+    setRecurringEdit(null);
+  }
+
+  function failRecurringEdit() {
+    if (!recurringEdit?.onFailure) return;
+    recurringEdit.onFailure();
     setRecurringEdit(null);
   }
 
@@ -4190,6 +4204,7 @@ export default function CalendarWorkspacePage() {
     const { butlerName, calendarId } = resolveOwnerFromEntry(entry);
     if (!butlerName || !entry.provider_event_id) {
       toast.error("Could not resolve calendar owner for this event.");
+      failRecurringEdit();
       return;
     }
 
@@ -4220,12 +4235,14 @@ export default function CalendarWorkspacePage() {
         toast.error(
           `Could not update ${label}: the new time conflicts with another event.`,
         );
+        failRecurringEdit();
         return;
       }
       if (!isCalendarMutationOk(result)) {
         toast.error(
           `Failed to update ${label}: ${calendarMutationErrorMessage(result, "Update failed.")}`,
         );
+        failRecurringEdit();
         return;
       }
       toast.success(`Event ${label} updated.`);
@@ -4234,6 +4251,7 @@ export default function CalendarWorkspacePage() {
       toast.error(
         error instanceof Error ? error.message : `Failed to update ${label}.`,
       );
+      failRecurringEdit();
     }
   }
 

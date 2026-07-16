@@ -3077,7 +3077,7 @@ _UNDO_LOOKUP_SQL = """
 
 def _undo_update_args(pre_state: dict[str, Any]) -> dict[str, Any]:
     """Build inverse calendar_update_event args that restore the pre-state."""
-    return {
+    arguments: dict[str, Any] = {
         "event_id": pre_state.get("event_id"),
         "title": pre_state.get("title"),
         "start_at": pre_state.get("start_at"),
@@ -3091,11 +3091,17 @@ def _undo_update_args(pre_state: dict[str, Any]) -> dict[str, Any]:
         "color_id": pre_state.get("color_id"),
         "calendar_id": pre_state.get("calendar_id"),
     }
+    entity_ids = pre_state.get("entity_ids")
+    if isinstance(entity_ids, list):
+        arguments["entity_ids"] = entity_ids
+        if not entity_ids:
+            arguments["clear_entity_ids"] = True
+    return arguments
 
 
 def _undo_create_args(pre_state: dict[str, Any]) -> dict[str, Any]:
     """Build inverse calendar_create_event args that recreate the deleted event."""
-    return {
+    arguments: dict[str, Any] = {
         "title": pre_state.get("title"),
         "start_at": pre_state.get("start_at"),
         "end_at": pre_state.get("end_at"),
@@ -3108,6 +3114,10 @@ def _undo_create_args(pre_state: dict[str, Any]) -> dict[str, Any]:
         "color_id": pre_state.get("color_id"),
         "calendar_id": pre_state.get("calendar_id"),
     }
+    entity_ids = pre_state.get("entity_ids")
+    if isinstance(entity_ids, list):
+        arguments["entity_ids"] = entity_ids
+    return arguments
 
 
 def _reconstruct_action_result(value: object) -> dict[str, Any]:

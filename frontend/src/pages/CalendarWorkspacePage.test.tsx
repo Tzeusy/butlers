@@ -1249,6 +1249,7 @@ describe("CalendarWorkspacePage", () => {
   function openDetailForEntryWithPeople(
     people: Array<{ entity_id: string; display_label: string }>,
     rrule: string | null = null,
+    editable = true,
   ) {
     setEntryDetailState({
       data: {
@@ -1273,7 +1274,7 @@ describe("CalendarWorkspacePage", () => {
           until_at: null,
           status: "active",
           sync_state: "fresh",
-          editable: true,
+          editable,
           metadata: {},
           linked_people: people,
         },
@@ -1298,6 +1299,28 @@ describe("CalendarWorkspacePage", () => {
     expect(chips?.length).toBe(2);
     expect(picker?.textContent).toContain("Ada Lovelace");
     expect(picker?.textContent).toContain("Alan Turing");
+  });
+
+  it("keeps linked people read-only for a non-editable user event", async () => {
+    openDetailForEntryWithPeople(
+      [{ entity_id: "e1", display_label: "Ada Lovelace" }],
+      null,
+      false,
+    );
+    await openDetailPanel();
+
+    const picker = container.querySelector(
+      '[data-testid="detail-linked-people"] [data-testid="event-people-picker"]',
+    ) as HTMLElement;
+    const removeButton = picker.querySelector(
+      '[data-testid="people-remove-chip"]',
+    ) as HTMLButtonElement;
+    const searchInput = picker.querySelector(
+      '[data-testid="people-search-input"]',
+    ) as HTMLInputElement;
+
+    expect(removeButton.disabled).toBe(true);
+    expect(searchInput.disabled).toBe(true);
   });
 
   it("preserves linked people when only the title is edited (bu-ya8uv regression)", async () => {
@@ -1394,6 +1417,36 @@ describe("CalendarWorkspacePage", () => {
     ).toMatchObject({ entity_ids: [], clear_entity_ids: true });
   });
 
+  it("restores the final linked person when the explicit clear soft-fails", async () => {
+    openDetailForEntryWithPeople([
+      { entity_id: "e1", display_label: "Ada Lovelace" },
+    ]);
+    await openDetailPanel();
+
+    const picker = container.querySelector(
+      '[data-testid="detail-linked-people"] [data-testid="event-people-picker"]',
+    ) as HTMLElement;
+    const removeButton = picker.querySelector(
+      '[data-testid="people-remove-chip"]',
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      removeButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flush();
+    });
+
+    const [, callbacks] = mutateUserEvent.mock.calls.at(-1) as [
+      unknown,
+      { onSuccess?: (response: unknown) => void },
+    ];
+    await act(async () => {
+      callbacks.onSuccess?.({ data: { result: { status: "error" } } });
+      await flush();
+    });
+
+    expect(picker.textContent).toContain("Ada Lovelace");
+  });
+
   it("keeps linked people visible when a recurring edit is cancelled", async () => {
     openDetailForEntryWithPeople(
       [{ entity_id: "e1", display_label: "Ada Lovelace" }],
@@ -1426,6 +1479,51 @@ describe("CalendarWorkspacePage", () => {
 
     expect(picker.textContent).toContain("Ada Lovelace");
     expect(mutateUserEvent).not.toHaveBeenCalled();
+  });
+
+  it("restores the final linked person when a recurring clear soft-fails", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({
+      data: { result: { status: "error" } },
+      meta: {},
+    });
+    setUserMutationState({ mutateAsync } as Partial<UseUserMutationResult>);
+    openDetailForEntryWithPeople(
+      [{ entity_id: "e1", display_label: "Ada Lovelace" }],
+      "FREQ=WEEKLY;BYDAY=SA",
+    );
+    await openDetailPanel();
+
+    const picker = container.querySelector(
+      '[data-testid="detail-linked-people"] [data-testid="event-people-picker"]',
+    ) as HTMLElement;
+    const removeButton = picker.querySelector(
+      '[data-testid="people-remove-chip"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      removeButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flush();
+    });
+
+    const recurrenceDialog = findDialogByTitle("Edit recurring event");
+    const saveButton = Array.from(
+      recurrenceDialog?.querySelectorAll("button") ?? [],
+    ).find((button) => button.textContent?.trim() === "Save changes");
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flush();
+    });
+
+    expect(mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "update",
+        payload: expect.objectContaining({
+          entity_ids: [],
+          clear_entity_ids: true,
+          recurrence_scope: "this",
+        }),
+      }),
+    );
+    expect(picker.textContent).toContain("Ada Lovelace");
   });
 
   // -------------------------------------------------------------------------

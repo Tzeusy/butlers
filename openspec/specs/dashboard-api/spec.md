@@ -1593,7 +1593,11 @@ undone, or whose pre-state is unavailable.
   pre-mutation event state
 - **THEN** an inverse `calendar_update_event` is dispatched that restores the
   event's pre-state fields (title, start/end, timezone, location, description,
-  attendees, recurrence, calendar id) with a freshly generated `request_id`
+  attendees, recurrence, calendar id, and linked people) with a freshly generated
+  `request_id`
+- **AND** an empty captured people set is dispatched as `entity_ids: []` plus
+  `clear_entity_ids: true`, so undo restores an originally-unlinked event rather
+  than preserving newly added links
 - **AND** the undo dispatch is itself recorded in `calendar_action_log` (so it is
   idempotent and appears in the audit trail)
 - **AND** the response reports the undone `action_id`, the inverse tool invoked,
@@ -1604,7 +1608,8 @@ undone, or whose pre-state is unavailable.
 - **WHEN** the undone row is an `applied` `workspace_user_delete` whose
   `action_result` carries the pre-deletion event state
 - **THEN** an inverse `calendar_create_event` is dispatched from the captured
-  pre-image with a fresh `request_id`, recreating the event on its home calendar
+  pre-image with a fresh `request_id`, recreating the event and its linked people
+  on its home calendar
 
 #### Scenario: Undo a create deletes the created event
 

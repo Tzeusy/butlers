@@ -3860,6 +3860,16 @@ class CalendarModule(Module):
                 entity_ids=entity_ids,
                 etag=existing_event.etag,
             )
+            pre_state_entity_ids = await module._fetch_pre_state_entity_ids(
+                source_id=source_id,
+                origin_ref=normalized_event_id,
+                fallback=existing_event.entity_ids,
+            )
+            pre_state = module._capture_event_pre_state(
+                existing_event,
+                resolved_calendar_id,
+                entity_ids=pre_state_entity_ids,
+            )
             try:
                 event = await provider.update_event(
                     calendar_id=resolved_calendar_id,
@@ -3930,11 +3940,9 @@ class CalendarModule(Module):
                 resolved_calendar_id
             )
             # Capture the pre-mutation pre-image so the dashboard undo endpoint
-            # can reverse-apply an inverse calendar_update_event. Reuses the
-            # already-fetched existing_event — no extra provider round-trip.
-            result["pre_state"] = module._capture_event_pre_state(
-                existing_event, resolved_calendar_id
-            )
+            # can reverse-apply an inverse calendar_update_event. It reuses the
+            # already-fetched provider event plus its local projection links.
+            result["pre_state"] = pre_state
             await module._finalize_workspace_mutation(
                 idempotency_key=idempotency_key,
                 action_type="workspace_user_update",
@@ -4060,6 +4068,16 @@ class CalendarModule(Module):
                 )
                 return result
 
+            pre_state_entity_ids = await module._fetch_pre_state_entity_ids(
+                source_id=source_id,
+                origin_ref=normalized_event_id,
+                fallback=existing_event.entity_ids,
+            )
+            pre_state = module._capture_event_pre_state(
+                existing_event,
+                resolved_calendar_id,
+                entity_ids=pre_state_entity_ids,
+            )
             try:
                 await provider.delete_event(
                     calendar_id=resolved_calendar_id,
@@ -4113,11 +4131,8 @@ class CalendarModule(Module):
             )
             # Capture the pre-deletion pre-image so the dashboard undo endpoint
             # can reverse-apply an inverse calendar_create_event that recreates
-            # the event on its home calendar. Reuses the already-fetched
-            # existing_event — no extra provider round-trip.
-            result["pre_state"] = module._capture_event_pre_state(
-                existing_event, resolved_calendar_id
-            )
+            # the event and its local links on its home calendar.
+            result["pre_state"] = pre_state
             await module._finalize_workspace_mutation(
                 idempotency_key=idempotency_key,
                 action_type="workspace_user_delete",
@@ -7153,6 +7168,43 @@ class CalendarModule(Module):
             event_id,
         )
         return [row["entity_id"] for row in rows]
+
+    async def _fetch_pre_state_entity_ids(
+        self,
+        *,
+        source_id: uuid.UUID | None,
+        origin_ref: str,
+        fallback: list[uuid.UUID],
+    ) -> list[uuid.UUID]:
+        """Load local links for an undo pre-image, with a provider-data fallback.
+
+        Provider event payloads do not carry the local
+        ``calendar_event_entities`` associations.  The projection is therefore
+        authoritative when available; an unavailable or not-yet-projected row
+        falls back to the provider payload so mutations remain fail-open.
+        """
+        if source_id is None:
+            return list(fallback)
+        pool = getattr(self._db, "pool", None) if self._db is not None else None
+        if pool is None:
+            return list(fallback)
+        try:
+            row = await pool.fetchrow(
+                "SELECT id FROM calendar_events WHERE source_id = $1 AND origin_ref = $2",
+                source_id,
+                origin_ref,
+            )
+            if row is None:
+                return list(fallback)
+            return await self._fetch_event_entity_ids(event_id=row["id"])
+        except Exception as exc:
+            logger.warning(
+                "Failed to load projected entity links for calendar undo pre-state "
+                "(origin_ref=%s): %s",
+                origin_ref,
+                exc,
+            )
+            return list(fallback)
 
     async def _update_butler_event_entities(
         self,
@@ -10276,14 +10328,21 @@ class CalendarModule(Module):
         return payload
 
     @staticmethod
-    def _capture_event_pre_state(event: CalendarEvent, calendar_id: str) -> dict[str, Any]:
+    def _capture_event_pre_state(
+        event: CalendarEvent,
+        calendar_id: str,
+        *,
+        entity_ids: list[uuid.UUID] | None = None,
+    ) -> dict[str, Any]:
         """Capture the pre-mutation event pre-image for reversible mutations.
 
         Stored under the ``pre_state`` key of a mutation's ``action_result`` so the
         dashboard undo endpoint can reverse-apply an inverse mutation
         (``calendar_update_event`` to restore, or ``calendar_create_event`` to
         recreate) without an extra provider round-trip.  Reuses the
-        already-fetched ``existing_event`` — no additional provider call.
+        already-fetched ``existing_event`` — no additional provider call. Local
+        entity links may be supplied from the projection because providers do not
+        return them in their event payloads.
 
         Only the fields an inverse mutation needs are captured; attendees are
         flattened to their email addresses (the shape both inverse tools accept).
@@ -10301,6 +10360,10 @@ class CalendarModule(Module):
             "attendees": [a.email for a in event.attendees],
             "recurrence_rule": event.recurrence_rule,
             "color_id": event.color_id,
+            "entity_ids": [
+                str(entity_id)
+                for entity_id in (event.entity_ids if entity_ids is None else entity_ids)
+            ],
         }
 
     @staticmethod

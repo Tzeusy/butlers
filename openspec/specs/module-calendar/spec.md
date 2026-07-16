@@ -751,10 +751,12 @@ the dashboard undo endpoint reverse-applies.
 - **WHEN** `calendar_update_event` resolves an existing event and applies a patch
 - **THEN** the finalized `action_result` for the `workspace_user_update` row
   includes the pre-mutation event state (at least title, start_at, end_at,
-  timezone, location, description, attendees, recurrence_rule, and the resolved
-  calendar id) under a stable key, alongside the existing post-mutation outcome
-- **AND** the pre-state is captured from the `existing_event` already fetched
-  before the PATCH, adding no extra provider round-trip
+  timezone, location, description, attendees, recurrence_rule, the resolved
+  calendar id, and `entity_ids`) under a stable key, alongside the existing
+  post-mutation outcome
+- **AND** the pre-state reuses the `existing_event` already fetched before the
+  PATCH and reads local `entity_ids` from the projection when available, adding
+  no extra provider round-trip
 
 #### Scenario: Delete captures the pre-deletion event state
 
@@ -763,7 +765,8 @@ the dashboard undo endpoint reverse-applies.
   includes the pre-deletion event state (the fields needed to recreate the event)
   under the same stable key
 - **AND** the captured pre-image is sufficient for an inverse
-  `calendar_create_event` to recreate the event on its home calendar
+  `calendar_create_event` to recreate the event and its linked people on its home
+  calendar
 
 #### Scenario: Pre-state is absent for non-reversible or non-applied outcomes
 
