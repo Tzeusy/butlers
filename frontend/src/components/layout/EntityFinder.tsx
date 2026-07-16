@@ -89,12 +89,14 @@ interface PageEntry {
   label: string;
   path: string;
   section: string;
+  butler?: string;
 }
 
 const ALL_PAGES: PageEntry[] = ALL_ROUTES.map((r) => ({
   label: r.label,
   path: r.path,
   section: r.section,
+  butler: r.butler,
 }));
 
 // ---------------------------------------------------------------------------
@@ -352,9 +354,21 @@ export default function EntityFinder() {
   // (prefix match) above a coincidental substring hit elsewhere.
   // -------------------------------------------------------------------------
   const lowerQuery = trimmedQuery.toLowerCase();
+  const { data: butlersResponse } = useButlers();
+  const installedButlers = useMemo(
+    () => new Set(butlersResponse?.data.map((butler) => butler.name) ?? []),
+    [butlersResponse?.data],
+  );
+  // Routes declared for a butler are unavailable until that butler appears in
+  // the live roster. This keeps the Pages group from advertising dead domain
+  // pages while retaining every global route.
+  const availablePages = useMemo(
+    () => ALL_PAGES.filter((page) => !page.butler || installedButlers.has(page.butler)),
+    [installedButlers],
+  );
   const pageMatches: PageEntry[] =
     lowerQuery.length >= 1
-      ? fuzzyFilter(trimmedQuery, ALL_PAGES, {
+      ? fuzzyFilter(trimmedQuery, availablePages, {
           getLabel: (p) => p.label,
           getKeywords: (p) => [p.path],
           limit: 8,
@@ -370,7 +384,6 @@ export default function EntityFinder() {
   // Butlers group — client-side instant match, absorbed from the legacy
   // CommandPalette (bu-86c4c.7). Navigates to the butler detail page.
   // -------------------------------------------------------------------------
-  const { data: butlersResponse } = useButlers();
   const butlerMatches =
     lowerQuery.length >= 1 && butlersResponse?.data
       ? fuzzyFilter(trimmedQuery, butlersResponse.data, { getLabel: (b) => b.name, limit: 5 })
