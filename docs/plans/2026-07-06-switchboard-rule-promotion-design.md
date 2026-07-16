@@ -177,10 +177,12 @@ paths):
   per resolved `route_to_butler` target with `verdict_source='llm'`. The
   structured fast lane and CLI-session path both terminate at this extraction
   call, so one hook point covers both execution paths uniformly. Current LLM
-  classification has no `skip` or `metadata_only` action: the structured fast
-  lane offers `route_to_butler` (and dashboard-only `file_bug_report`)
-  (`roster/switchboard/tools/routing/structured_classify.py`). A no-route
-  fallback is a last-resort text/default route rather than an explicit LLM
+  classification has no `skip` or `metadata_only` action: both the structured
+  fast lane and standard CLI-session path offer `route_to_butler`; their
+  dashboard-only classification variant also offers `file_bug_report`
+  (`roster/switchboard/tools/routing/structured_classify.py`;
+  `src/butlers/modules/pipeline.py`). A no-route fallback is a last-resort
+  text/default route rather than an explicit LLM
   verdict and is deliberately excluded from promotion mining.
 
   **Future scope:** an LLM-level `skip` or `metadata_only` decision would need
