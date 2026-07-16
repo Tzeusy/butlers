@@ -67,8 +67,8 @@ The dashboard provides a guided pairing flow at **Settings → WhatsApp**.
 8. The Go bridge begins streaming messages to the connector immediately after pairing.
 
 **QR refresh:** If the QR code expires before you scan it, click **Refresh QR** in the modal.
-Each refresh generates a fresh code by calling `POST /api/connectors/whatsapp/pair/start` on
-the bridge.
+Each refresh generates a fresh code through the dashboard API at
+`POST /api/connectors/whatsapp/pair/start`, which proxies to the bridge's `/pair/start` endpoint.
 
 **Session persistence:** Whatsmeow stores the resumable protocol session in its own
 `public.whatsmeow_*` tables. The bridge separately records pair history and active-session
@@ -233,10 +233,10 @@ For an expired or invalidated session, use the dashboard recovery path:
 2. If the bridge is already in QR mode, the dashboard shows a QR code immediately.
    If it reports that an invalidated session is being cleared and restarted, wait
    up to one minute, then click **Pair device** again to request the QR code.
-3. The first request records the owner-approved reset. The connector clears the
-   stale protocol device, restarts the bridge into QR-pairing mode, and leaves it
-   there for the new scan. This destructive reset is deliberately not automatic
-   when the invalidation is detected.
+3. For an invalidated stored session, the first request records the dashboard-requested
+   reset. The connector clears the stale protocol device, restarts the bridge into QR-pairing
+   mode, and leaves it there for the new scan. This destructive reset is deliberately not
+   automatic when the invalidation is detected.
 4. Do **not** manually delete `public.whatsmeow_device`, edit
    `messenger.whatsapp_sessions`, or stop/restart the connector for this recovery.
    The dashboard route is the supported owner-triggered path. In a headless
