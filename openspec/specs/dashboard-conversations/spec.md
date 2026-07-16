@@ -46,7 +46,7 @@ The `public.dashboard_messages` table stores individual messages within a conver
 
 - **WHEN** the migration creates the `public.dashboard_messages` table
 - **THEN** the table SHALL contain the following columns:
-  - `id` (UUID7, primary key) — time-ordered unique identifier
+  - `id` (UUID, primary key) — server-generated UUID7 by default, or a client-generated UUID when a dashboard submission needs a stable retry identity
   - `conversation_id` (UUID, NOT NULL, FK to `public.dashboard_conversations.id` ON DELETE CASCADE) — parent conversation
   - `role` (TEXT, NOT NULL) — one of `user`, `assistant`
   - `content` (TEXT, NOT NULL) — message text (markdown for assistant responses)
@@ -108,6 +108,13 @@ Starting a new conversation creates a conversation record and sends the first us
 
 - **WHEN** a conversation is created
 - **THEN** the title is set to the first 80 characters of the first user message, truncated at word boundary with ellipsis if needed
+
+#### Scenario: Retry initial conversation before its SSE response is received
+
+- **WHEN** a client retries `POST /api/butlers/{name}/conversations` with the same `message_id` after losing the initial SSE response
+- **THEN** the API SHALL reuse that message's existing conversation rather than insert a second conversation or user-message row
+- **AND** the retried envelope SHALL retain the original `source.endpoint_identity` and `event.external_event_id`
+- **AND** a request that reuses a `message_id` for another butler, role, or message content SHALL return `409` with `code: "MESSAGE_ID_CONFLICT"`
 
 ### Requirement: Continue Conversation
 

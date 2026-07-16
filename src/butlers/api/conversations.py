@@ -497,6 +497,24 @@ async def message_create_idempotent(
     return message, False
 
 
+async def message_get_by_id(
+    pool: asyncpg.Pool,
+    message_id: UUID,
+) -> dict[str, Any] | None:
+    """Fetch a dashboard message by its client-provided identity."""
+    row = await pool.fetchrow(
+        """
+        SELECT id, conversation_id, role, content, created_at,
+               session_id, model_name, input_tokens, output_tokens,
+               duration_ms, tool_calls, error, request_id
+        FROM public.dashboard_messages
+        WHERE id = $1
+        """,
+        message_id,
+    )
+    return dict(row) if row else None
+
+
 async def conversation_reply_create(
     pool: asyncpg.Pool,
     conversation_id: UUID,

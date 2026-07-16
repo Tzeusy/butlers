@@ -98,6 +98,7 @@ from butlers.api.conversations import (
     message_create,
     message_create_idempotent,
     message_find_reply_since,
+    message_get_by_id,
     message_list,
 )
 from butlers.api.db import DatabaseManager
@@ -625,18 +626,42 @@ async def create_conversation(
     except (KeyError, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail=f"Shared database unavailable: {exc}") from exc
 
-    # Create conversation record
-    conv = await conversation_create(pool, butler_name=name, first_message=body.message)
-    conversation_id: UUID = conv["id"]
-
-    # Persist user message. A retry reuses its client-generated message ID,
-    # avoiding a duplicate user row and preserving the ingest event identity.
-    user_msg, user_message_is_new = await _persist_dashboard_user_message(
-        pool,
-        conversation_id=conversation_id,
-        message=body.message,
-        message_id=body.message_id,
+    existing_user_msg = (
+        await message_get_by_id(pool, body.message_id) if body.message_id is not None else None
     )
+    if existing_user_msg is not None:
+        conversation_id: UUID = existing_user_msg["conversation_id"]
+        conv = await conversation_get(pool, conversation_id, butler_name=name)
+        if (
+            conv is None
+            or existing_user_msg["role"] != "user"
+            or existing_user_msg["content"] != body.message
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "MESSAGE_ID_CONFLICT",
+                    "message": (
+                        "message_id is already associated with a different dashboard message"
+                    ),
+                },
+            )
+        user_msg = existing_user_msg
+        user_message_is_new = False
+    else:
+        # Create conversation record only when this is not a retry of an
+        # initial message whose client-generated identity already exists.
+        conv = await conversation_create(pool, butler_name=name, first_message=body.message)
+        conversation_id = conv["id"]
+
+        # Persist user message. A retry reuses its client-generated message ID,
+        # avoiding a duplicate user row and preserving the ingest event identity.
+        user_msg, user_message_is_new = await _persist_dashboard_user_message(
+            pool,
+            conversation_id=conversation_id,
+            message=body.message,
+            message_id=body.message_id,
+        )
 
     if user_message_is_new:
         await conversation_message_count_increment(pool, conversation_id, butler_name=name)

@@ -39,6 +39,7 @@ from butlers.api.conversations import (
     conversation_set_routed_butler,
     message_create_idempotent,
     message_find_reply_since,
+    message_get_by_id,
 )
 
 pytestmark = [
@@ -149,6 +150,7 @@ async def test_message_create_idempotent_reuses_the_original_user_row(
         assert first_is_new is True
         assert retry_is_new is False
         assert retry == first
+        assert await message_get_by_id(pool, message_id) == first
         assert (
             await pool.fetchval(
                 "SELECT count(*) FROM public.dashboard_messages WHERE id = $1", message_id

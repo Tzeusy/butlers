@@ -37,6 +37,7 @@ import type { StreamingState } from "./MessageThread.tsx";
 import { MessageInput } from "./MessageInput.tsx";
 import { SendErrorBanner } from "./send-error.tsx";
 import { classifySendError, type SendError } from "./send-error-utils.ts";
+import { createClientMessageId } from "./message-id.ts";
 import {
   conversationKeys,
   useConversations,
@@ -213,7 +214,7 @@ export function ChatContent({ butlerName }: ChatContentProps) {
 
       setSendError(null);
       const isNew = activeConversationId == null;
-      const messageId = retryMessageId ?? crypto.randomUUID();
+      const messageId = retryMessageId ?? createClientMessageId();
       const controller = new AbortController();
       abortRef.current = controller;
 
