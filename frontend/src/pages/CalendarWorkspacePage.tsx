@@ -1694,6 +1694,7 @@ interface CalendarEntryDetailPanelProps {
     entry: UnifiedCalendarEntry,
     patch: Record<string, unknown>,
     label: string,
+    onCancel?: () => void,
   ) => void;
   userMutation: ReturnType<typeof useMutateCalendarWorkspaceUserEvent>;
   butlerMutation: ReturnType<typeof useMutateCalendarWorkspaceButlerEvent>;
@@ -1825,13 +1826,17 @@ function CalendarEntryDetailPanel({
     };
   }, [freshEntry]);
 
-  function fireUserUpdate(patch: Record<string, unknown>, label: string) {
+  function fireUserUpdate(
+    patch: Record<string, unknown>,
+    label: string,
+    onRecurringCancel?: () => void,
+  ) {
     const { butlerName, calendarId } = resolveOwnerFromEntry(entry);
     if (!butlerName || !entry.provider_event_id) return;
     // A recurring occurrence must first ask the user which occurrences the edit
     // applies to (this / following / series); defer to the parent scope sheet.
     if (isRecurringUserEntry(entry) && onRecurringEdit) {
-      onRecurringEdit(entry, patch, label);
+      onRecurringEdit(entry, patch, label, onRecurringCancel);
       return;
     }
     setSaveStatus("idle");
@@ -1939,6 +1944,7 @@ function CalendarEntryDetailPanel({
   }
 
   function handlePeopleChange(next: SelectedPerson[]) {
+    const previous = peopleDraft;
     setPeopleDraft(next);
     if (!isUserEvent) return;
     // Non-empty edits replace the linked set. A zero-length replacement carries
@@ -1950,6 +1956,7 @@ function CalendarEntryDetailPanel({
         ? { entity_ids: [], clear_entity_ids: true }
         : { entity_ids: entityIds },
       "people",
+      () => setPeopleDraft(previous),
     );
   }
 
@@ -2836,6 +2843,7 @@ export default function CalendarWorkspacePage() {
     entry: UnifiedCalendarEntry;
     patch: Record<string, unknown>;
     label: string;
+    onCancel?: () => void;
   } | null>(null);
   const [editScope, setEditScope] = useState<RecurrenceScope>("this");
   const [userEventForm, setUserEventForm] = useState<UserEventFormState | null>(
@@ -4160,9 +4168,15 @@ export default function CalendarWorkspacePage() {
     entry: UnifiedCalendarEntry,
     patch: Record<string, unknown>,
     label: string,
+    onCancel?: () => void,
   ) {
     setEditScope("this");
-    setRecurringEdit({ entry, patch, label });
+    setRecurringEdit({ entry, patch, label, onCancel });
+  }
+
+  function cancelRecurringEdit() {
+    recurringEdit?.onCancel?.();
+    setRecurringEdit(null);
   }
 
   /**
@@ -7002,7 +7016,7 @@ export default function CalendarWorkspacePage() {
 
       <Dialog
         open={!!recurringEdit}
-        onOpenChange={(open) => (!open ? setRecurringEdit(null) : null)}
+        onOpenChange={(open) => (!open ? cancelRecurringEdit() : null)}
       >
         <DialogContent>
           <DialogHeader>
@@ -7032,7 +7046,7 @@ export default function CalendarWorkspacePage() {
           ) : null}
           <DialogFooter>
             <PillButton
-              onClick={() => setRecurringEdit(null)}
+              onClick={cancelRecurringEdit}
               disabled={userEventMutation.isPending}
             >
               Cancel

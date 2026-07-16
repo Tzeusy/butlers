@@ -1248,6 +1248,7 @@ describe("CalendarWorkspacePage", () => {
 
   function openDetailForEntryWithPeople(
     people: Array<{ entity_id: string; display_label: string }>,
+    rrule: string | null = null,
   ) {
     setEntryDetailState({
       data: {
@@ -1267,7 +1268,7 @@ describe("CalendarWorkspacePage", () => {
           butler_name: "general",
           schedule_id: null,
           reminder_id: null,
-          rrule: null,
+          rrule,
           cron: null,
           until_at: null,
           status: "active",
@@ -1391,6 +1392,40 @@ describe("CalendarWorkspacePage", () => {
     expect(
       (peopleCall?.[0] as { payload: Record<string, unknown> }).payload,
     ).toMatchObject({ entity_ids: [], clear_entity_ids: true });
+  });
+
+  it("keeps linked people visible when a recurring edit is cancelled", async () => {
+    openDetailForEntryWithPeople(
+      [{ entity_id: "e1", display_label: "Ada Lovelace" }],
+      "FREQ=WEEKLY;BYDAY=SA",
+    );
+    await openDetailPanel();
+
+    const picker = container.querySelector(
+      '[data-testid="detail-linked-people"] [data-testid="event-people-picker"]',
+    ) as HTMLElement;
+    const removeButton = picker.querySelector(
+      '[data-testid="people-remove-chip"]',
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      removeButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flush();
+    });
+
+    const recurrenceDialog = findDialogByTitle("Edit recurring event");
+    const cancelButton = Array.from(
+      recurrenceDialog?.querySelectorAll("button") ?? [],
+    ).find((button) => button.textContent?.trim() === "Cancel");
+    expect(cancelButton).toBeDefined();
+
+    await act(async () => {
+      cancelButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flush();
+    });
+
+    expect(picker.textContent).toContain("Ada Lovelace");
+    expect(mutateUserEvent).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
