@@ -162,6 +162,12 @@ describe("adaptInventoryResponse: user provider derivation", () => {
       "github",
       "google",
     ]);
+    expect(result.user.map((credential) => credential.sourceTypes)).toEqual([
+      ["home_assistant_token"],
+      ["telegram_user_session"],
+      ["github_token"],
+      ["google_oauth_refresh"],
+    ]);
     for (const credential of result.user) {
       expect(result.providers[credential.provider]?.kind).toBeDefined();
     }
@@ -202,6 +208,7 @@ describe("adaptInventoryResponse: user provider derivation", () => {
 
     expect(result.user.map((credential) => credential.provider)).toEqual(["telegram_bot", "google"]);
     expect(result.user.filter((credential) => credential.provider === "telegram_bot")).toHaveLength(1);
+    expect(result.user[0].sourceTypes).toEqual(["telegram_api_hash", "telegram_user_session"]);
     expect(result.user[0].state).toBe("warn");
   });
 });
