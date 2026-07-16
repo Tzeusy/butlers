@@ -195,8 +195,8 @@ function EventRow({
     >
       <button
         type="button"
-        className="col-span-4 grid min-h-6 min-w-0 items-center gap-x-3 bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
-        style={{ gridTemplateColumns: ROW_DISCLOSURE_GRID }}
+        className={`${sessionLink ? "col-span-4" : "col-span-5"} grid min-h-6 min-w-0 items-center gap-x-3 bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset`}
+        style={{ gridTemplateColumns: sessionLink ? ROW_DISCLOSURE_GRID : ROW_GRID }}
         onClick={onToggle}
         aria-expanded={isOpen}
       >
@@ -211,6 +211,11 @@ function EventRow({
         <span className="truncate font-serif text-[13px] leading-[1.5]" title={event.summary}>
           {event.summary}
         </span>
+        {!sessionLink && (
+          <span className="font-mono text-[10px] text-muted-foreground select-none">
+            {isOpen ? "▲" : "▼"}
+          </span>
+        )}
       </button>
       {sessionLink ? (
         <Link
@@ -221,11 +226,7 @@ function EventRow({
         >
           ↗
         </Link>
-      ) : (
-        <span className="font-mono text-[10px] text-muted-foreground select-none">
-          {isOpen ? "▲" : "▼"}
-        </span>
-      )}
+      ) : null}
     </div>
   );
 }

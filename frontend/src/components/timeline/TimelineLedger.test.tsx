@@ -188,6 +188,19 @@ describe("TimelineLedger — drawer", () => {
     expect(container.querySelector('[data-testid="timeline-event-drawer"]')).not.toBeNull();
   });
 
+  it("keeps a non-session row's disclosure chevron inside its native button", () => {
+    const events = [makeEvent("n1", "2026-07-04T15:10:00Z", { type: "notification" })];
+    renderLedger({ events });
+    const row = container.querySelector('[data-testid="timeline-row"]') as HTMLElement;
+    const disclosure = row.querySelector('button[aria-expanded="false"]') as HTMLButtonElement;
+
+    expect(disclosure.textContent).toContain("▼");
+    act(() => {
+      disclosure.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(disclosure.textContent).toContain("▲");
+  });
+
   it("keeps the session detail link outside the native disclosure", () => {
     const events = [makeEvent("e1", "2026-07-04T15:10:00Z")];
     renderLedger({ events });
