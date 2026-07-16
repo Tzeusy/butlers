@@ -169,7 +169,7 @@ function groupByHour(events: TimelineEvent[]): HourGroup[] {
 // Row
 // ---------------------------------------------------------------------------
 
-const ROW_GRID = "96px 120px 92px 1fr 18px";
+const ROW_GRID = "96px 120px 92px 1fr 24px";
 const ROW_DISCLOSURE_GRID = "96px 120px 92px minmax(0, 1fr)";
 
 function EventRow({
@@ -184,25 +184,20 @@ function EventRow({
   const sessionLink = isSessionEvent(event) ? sessionDetailHref(event) : null;
 
   return (
-    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- this is a mouse-only click-anywhere convenience; the nested native button is the row's keyboard-accessible disclosure control, and the sibling session link remains independently operable.
     <div
       className={[
-        "grid items-center gap-x-3 px-3 py-2 border-b border-border/50 text-[13px] transition-colors cursor-pointer group",
+        "grid items-center gap-x-3 px-3 py-2 border-b border-border/50 text-[13px] transition-colors group",
         isOpen ? "bg-muted/20" : "hover:bg-muted/10",
       ].join(" ")}
       style={{ gridTemplateColumns: ROW_GRID }}
-      onClick={onToggle}
       data-testid="timeline-row"
       data-event-id={event.id}
     >
       <button
         type="button"
-        className="col-span-4 grid min-w-0 items-center gap-x-3 bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+        className="col-span-4 grid min-h-6 min-w-0 items-center gap-x-3 bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
         style={{ gridTemplateColumns: ROW_DISCLOSURE_GRID }}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggle();
-        }}
+        onClick={onToggle}
         aria-expanded={isOpen}
       >
         <Time
@@ -220,8 +215,7 @@ function EventRow({
       {sessionLink ? (
         <Link
           to={sessionLink}
-          onClick={(e) => e.stopPropagation()}
-          className="font-mono text-[10px] text-muted-foreground select-none hover:text-foreground transition-colors"
+          className="inline-flex size-6 items-center justify-center font-mono text-[10px] text-muted-foreground select-none transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
           data-testid="row-session-link"
           aria-label="View session"
         >
