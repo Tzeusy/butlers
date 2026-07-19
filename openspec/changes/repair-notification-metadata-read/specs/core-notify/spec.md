@@ -73,7 +73,7 @@ Scope: v1-mandatory
   or executing the repair
 
 ### Requirement: Bounded Switchboard Historical Metadata Repair
-After the serving-writer evidence gate succeeds, the next Switchboard migration SHALL capture one repair-start cutoff and atomically repair only `notifications` rows created before that cutoff whose metadata is a JSONB string. A valid one-layer encoded object SHALL become an object; a malformed or one-layer non-object string SHALL become `{"_raw": <the original string>}`. The migration SHALL leave all non-string metadata values and all other columns untouched, use an absent-relation guard that succeeds as an aggregate no-op when the Switchboard relation is absent, emit aggregate-only repair evidence, and retain an intentional data no-op downgrade.
+After the serving-writer evidence gate succeeds, the next Switchboard migration SHALL capture one repair-start cutoff and atomically repair only `notifications` rows created before that cutoff whose metadata is a JSONB string. A valid one-layer encoded object SHALL become an object; a malformed or one-layer non-object string SHALL become `{"_raw": <the original string>}`. To prevent malformed inner JSON from aborting that atomic repair, the migration SHALL use a session-local exception-safe parser that attempts exactly one parse of the outer string and catches only `invalid_text_representation` (SQLSTATE `22P02`); a parse failure and every parsed non-object SHALL follow the `_raw` path, with no recursive parse. The migration SHALL leave all non-string metadata values and all other columns untouched, use an absent-relation guard that succeeds as an aggregate no-op when the Switchboard relation is absent, emit aggregate-only repair evidence, and retain an intentional data no-op downgrade.
 
 ID: REQ-core-notify-003
 Source: RFC 0006 Database Schema and Isolation; [Observed] roster/switchboard/migrations/001_switchboard_messaging.py; design.md D3
@@ -87,6 +87,16 @@ Scope: v1-mandatory
   malformed or non-object strings under `_raw`
 - **AND** a migration failure leaves the candidate rows unchanged because the
   transaction rolls back
+
+#### Scenario: Malformed inner JSON cannot abort the atomic repair
+
+- **WHEN** a migration regression seeds pre-cutoff JSONB string candidates with
+  both a valid encoded object and malformed inner text such as `{"broken":`
+- **THEN** the exception-safe one-layer parser lets the one set-based repair
+  complete: the valid candidate becomes an object and the malformed candidate's
+  `_raw` member equals the exact original outer text `{"broken":`
+- **AND** the parser does not recursively decode either candidate or swallow an
+  error outside the malformed-input parse case
 
 #### Scenario: The repair excludes post-cutoff and non-string rows
 

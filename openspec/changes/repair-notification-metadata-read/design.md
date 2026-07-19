@@ -99,6 +99,18 @@ aggregate-only: cutoff/candidate-band bounds and counts of converted and
 `_raw`-preserved rows, never message bodies, recipients, identifiers, or
 metadata payloads.
 
+The one-layer parser is explicit and exception-safe. A session-local `pg_temp`
+PL/pgSQL helper receives only an eligible JSONB string's outer text and attempts
+exactly one `::jsonb` parse. It catches `invalid_text_representation` (SQLSTATE
+`22P02`) for malformed inner JSON and returns SQL `NULL`; it does not catch
+unrelated errors. The set-based update consumes that one result: a parsed object
+replaces `metadata`, while a parse failure or any parsed non-object produces
+`jsonb_build_object('_raw', <original outer text>)`. Thus malformed input is a
+deterministic `_raw` case rather than a transaction abort, with no recursive
+parse. Keeping the helper in `pg_temp` avoids adding a durable function to the
+Switchboard schema, and any error outside the malformed-input parse path still
+rolls back the atomic repair.
+
 The downgrade is intentionally a data no-op. Canonicalized objects and `_raw`
 fallbacks are not re-encoded into ambiguous legacy strings, so downgrade cannot
 recreate the corrupted representation or claim a reversible historical repair.
@@ -145,9 +157,9 @@ from another worktree can keep the unfixed writer live.
   API surface; operational evidence and migration notices remain aggregate-only
   and never print payloads.
 - **[Risk]** a malformed legacy value could abort an all-or-nothing migration.
-  **Mitigation:** malformed and non-object strings are valid repair inputs that
-  map deterministically to `_raw`, so only an actual migration failure rolls
-  the transaction back.
+  **Mitigation:** the one-layer parser catches only the malformed-input
+  `22P02` case and maps it deterministically to `_raw`; unrelated migration
+  failures still roll the transaction back.
 - **[Risk]** a writer remains stale after the source fix merged. **Mitigation:**
   the repair gate fails closed on actual process/image/mount evidence and a
   bounded clean observation window.

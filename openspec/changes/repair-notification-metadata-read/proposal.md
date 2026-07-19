@@ -24,7 +24,8 @@ descendant.
   post-deploy window, and blocks historical repair on any incomplete or stale
   evidence.
 - Define a single transactional, Switchboard-only historical-repair migration
-  for pre-cutoff JSONB string rows, including an absent-relation no-op guard,
+  for pre-cutoff JSONB string rows, including an exception-safe one-layer
+  parser for malformed inner JSON, an absent-relation no-op guard,
   aggregate-only evidence, and an intentional no-op downgrade.
 - Define focused API, migration, writer-regression, documentation, and
   operational-evidence verification work without executing a repair in this
