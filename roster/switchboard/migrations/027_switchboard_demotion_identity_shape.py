@@ -84,6 +84,7 @@ def _replace_kind_shape(shape: str) -> None:
 def upgrade() -> None:
     # sw_020 allowed these fields on demotion rows. They have no stable
     # semantics: target_rule_id, not a single spot-check event, defines scope.
+    op.execute("LOCK TABLE rule_promotion_suggestions IN SHARE ROW EXCLUSIVE MODE")
     op.execute(
         """
         UPDATE rule_promotion_suggestions
