@@ -15,11 +15,14 @@
 
 import { Link } from "react-router";
 
+import { Button } from "@/components/ui/button";
 import { Section } from "./Section";
 import type { OverviewNowRow } from "./model";
 
 interface OperationsNowListProps {
   rows: OverviewNowRow[];
+  includeInternal?: boolean;
+  onToggleInternal?: () => void;
 }
 
 const KIND_LABELS: Record<OverviewNowRow["kind"], string> = {
@@ -30,9 +33,26 @@ const KIND_LABELS: Record<OverviewNowRow["kind"], string> = {
   error: "unavail",
 };
 
-export function OperationsNowList({ rows }: OperationsNowListProps) {
+export function OperationsNowList({
+  rows,
+  includeInternal = false,
+  onToggleInternal,
+}: OperationsNowListProps) {
   return (
     <Section eyebrow="Now">
+      <div className="flex justify-end">
+        <Button
+          type="button"
+          variant={includeInternal ? "secondary" : "outline"}
+          size="xs"
+          onClick={onToggleInternal}
+          aria-pressed={includeInternal}
+          aria-label={includeInternal ? "Hide internal activity" : "Show internal activity"}
+          data-testid="dashboard-internal-lens"
+        >
+          Internal
+        </Button>
+      </div>
       {rows.length === 0 ? (
         <p
           style={{

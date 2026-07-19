@@ -318,9 +318,11 @@ function setDefaultData(
   } as AnyMock);
 }
 
-function renderPage({ basename = "" }: { basename?: string } = {}): string {
+function renderPage(
+  { basename = "", initialEntry }: { basename?: string; initialEntry?: string } = {},
+): string {
   const queryClient = new QueryClient();
-  const initialEntries = basename ? [`${basename}/`] : ["/"];
+  const initialEntries = [initialEntry ?? (basename ? `${basename}/` : "/")];
   return renderToStaticMarkup(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter basename={basename} initialEntries={initialEntries}>
@@ -770,6 +772,49 @@ describe("DashboardPage -- OperationsNowList", () => {
   it("renders 'Nothing scheduled.' when no now signals are active", () => {
     const html = renderPage();
     expect(html).toContain("Nothing scheduled.");
+  });
+
+  it("keeps maintenance out of Now by default and exposes it through the URL-backed Internal lens", () => {
+    vi.mocked(useTimeline).mockReturnValue({
+      data: {
+        data: [
+          {
+            id: "maintenance-1",
+            type: "session",
+            butler: "memory",
+            timestamp: "2026-05-14T11:59:00.000Z",
+            summary: "Scheduled: consolidation",
+            machine_class: "maintenance",
+            is_heartbeat: false,
+            data: {},
+          },
+          {
+            id: "maintenance-2",
+            type: "session",
+            butler: "memory",
+            timestamp: "2026-05-14T11:58:00.000Z",
+            summary: "Scheduled: memory decay sweep",
+            machine_class: "maintenance",
+            is_heartbeat: false,
+            data: {},
+          },
+        ],
+        meta: { cursor: null, has_more: false },
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as AnyMock);
+
+    const ownerLens = renderPage();
+    expect(ownerLens).toContain('data-testid="dashboard-internal-lens"');
+    expect(ownerLens).toContain('aria-pressed="false"');
+    expect(ownerLens).not.toContain("memory: 2 maintenance runs");
+
+    const internalLens = renderPage({ initialEntry: "/?internal=1" });
+    expect(internalLens).toContain('aria-pressed="true"');
+    expect(internalLens).toContain("memory: 2 maintenance runs");
+    expect(internalLens).toContain('href="/timeline?internal=1"');
   });
 
   it("renders pending approvals row when approvals are pending", () => {
