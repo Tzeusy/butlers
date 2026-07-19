@@ -3,12 +3,14 @@
 ### Requirement: Internal maintenance rollup in Dashboard Now
 
 Dashboard Now SHALL remain owner-focused by default and SHALL not use
-successful maintenance runs as ordinary recent activity. It SHALL provide the
-same accessible, URL-backed Internal lens as the Timeline. When enabled,
-Dashboard Now SHALL render compact per-butler maintenance rollups from the
-Timeline event machine class and link them to the Timeline with its Internal
-lens enabled. Failed maintenance sessions SHALL remain visible as error
-activity while the lens is disabled.
+maintenance runs whose `data.success` is exactly `true` as ordinary recent
+activity. A `false` value is a failure, while `null`, missing, and nonboolean
+values are running or unknown and SHALL remain ordinary activity while the
+lens is disabled. It SHALL provide the same accessible, URL-backed Internal
+lens as the Timeline. When enabled, Dashboard Now SHALL render compact
+per-butler maintenance rollups from the Timeline event machine class and link
+them to the Timeline with its Internal lens enabled. Failed maintenance
+sessions SHALL remain visible as error activity while the lens is disabled.
 
 #### Scenario: Dashboard Now defaults to owner activity
 
@@ -16,6 +18,13 @@ activity while the lens is disabled.
   the URL does not include `internal=1`
 - **THEN** it does not render those events as ordinary activity rows
 - **AND** it continues to render owner activity and error rows
+
+#### Scenario: Dashboard Now keeps running and unknown maintenance visible
+
+- **WHEN** Dashboard Now receives a maintenance Timeline event whose
+  `data.success` is `null`, absent, or nonboolean and the URL does not include
+  `internal=1`
+- **THEN** it renders that event as ordinary recent activity
 
 #### Scenario: Internal Dashboard Now lens groups maintenance by butler
 

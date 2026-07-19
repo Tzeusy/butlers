@@ -33,6 +33,7 @@ import type { TimelineEvent } from "@/api/types.ts";
 import {
   isFailedMaintenanceEvent,
   isSuccessfulMaintenanceEvent,
+  maintenanceRunStatus,
   timelineMachineClass,
 } from "@/lib/timeline-machine-class";
 import { TimelineEventDrawer } from "./TimelineEventDrawer";
@@ -150,7 +151,7 @@ function groupLedgerEntries(events: TimelineEvent[], includeInternal: boolean): 
           entries.push(group);
         }
       } else if (!isSuccessfulMaintenanceEvent(event)) {
-        // Failures stay on the owner-facing lens as ordinary error activity.
+        // Failed, running, and unknown runs remain visible in the owner lens.
         entries.push({ kind: "single", event });
       }
       continue;
@@ -357,14 +358,18 @@ function MaintenanceGroupRow({ butler, events }: { butler: string; events: Timel
       {expanded && (
         <div className="pl-[96px] pb-2 space-y-1">
           {events.map((event) => {
-            const failedRun = isFailedMaintenanceEvent(event);
+            const status = maintenanceRunStatus(event);
+            const failedRun = status === "failed";
             return (
               <div key={event.id} className="flex items-center gap-2 px-3 text-[11px] text-muted-foreground">
                 <span className="font-mono w-[100px] shrink-0">
                   <Time value={event.timestamp} mode="absolute" precision="time-seconds" />
                 </span>
-                <span className={failedRun ? "font-mono text-destructive" : "font-mono"}>
-                  {failedRun ? "failed" : "completed"}
+                <span
+                  className={failedRun ? "font-mono text-destructive" : "font-mono"}
+                  data-testid="maintenance-run-status"
+                >
+                  {status}
                 </span>
                 <span className="truncate" title={event.summary}>
                   {event.summary}

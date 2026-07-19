@@ -1080,25 +1080,29 @@ describe("deriveOverviewTriageModel", () => {
     });
   });
 
-  it("keeps a running maintenance session in Now by default", () => {
-    const runningMaintenance = {
-      id: "maintenance-running",
+  it.each([
+    ["running", "maintenance-running", { success: null }],
+    ["unknown without a success value", "maintenance-unknown-missing", {}],
+    ["unknown with a nonboolean success value", "maintenance-unknown-nonboolean", { success: "pending" }],
+  ])("keeps %s maintenance in Now by default", (_state, id, data) => {
+    const maintenance = {
+      id,
       type: "session",
       butler: "memory",
       timestamp: "2026-05-14T11:59:00.000Z",
       summary: "Scheduled: consolidation",
       is_heartbeat: false,
       machine_class: "maintenance" as const,
-      data: { success: null },
+      data,
     } satisfies TimelineEvent;
 
     const model = deriveOverviewTriageModel(
-      { timeline: [runningMaintenance] },
+      { timeline: [maintenance] },
       { maxTimelineRows: 5 },
     );
 
     expect(model.nowRows).toContainEqual({
-      id: "now:activity:maintenance-running",
+      id: `now:activity:${id}`,
       kind: "activity",
       label: "Scheduled: consolidation",
       detail: "memory · session",

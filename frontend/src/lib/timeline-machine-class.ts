@@ -22,14 +22,30 @@ export function isMaintenanceEvent(event: TimelineEvent): boolean {
   return timelineMachineClass(event) === "maintenance";
 }
 
+export type MaintenanceRunStatus = "completed" | "failed" | "running" | "unknown";
+
+/**
+ * Interpret the session outcome strictly from the Timeline payload. A missing
+ * or malformed value must remain visible rather than being inferred as a
+ * completed run from its event type.
+ */
+export function maintenanceRunStatus(event: TimelineEvent): MaintenanceRunStatus {
+  switch (event.data?.["success"]) {
+    case true:
+      return "completed";
+    case false:
+      return "failed";
+    case null:
+      return "running";
+    default:
+      return "unknown";
+  }
+}
+
 export function isFailedMaintenanceEvent(event: TimelineEvent): boolean {
-  return isMaintenanceEvent(event) && (event.type === "error" || event.data?.success === false);
+  return isMaintenanceEvent(event) && maintenanceRunStatus(event) === "failed";
 }
 
 export function isSuccessfulMaintenanceEvent(event: TimelineEvent): boolean {
-  return (
-    isMaintenanceEvent(event) &&
-    event.data?.success === true &&
-    !isFailedMaintenanceEvent(event)
-  );
+  return isMaintenanceEvent(event) && maintenanceRunStatus(event) === "completed";
 }

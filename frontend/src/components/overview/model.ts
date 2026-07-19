@@ -885,7 +885,7 @@ function deriveTimelineNowRows(
       grouped.push(event);
       maintenanceByButler.set(butler, grouped);
     } else if (!isSuccessfulMaintenanceEvent(event)) {
-      // Failed and still-running internal runs are operationally meaningful
+      // Failed, running, and unknown internal runs are operationally meaningful
       // on the owner lens, so they retain ordinary Timeline activity rows.
       ownerLensEvents.push(event);
     }

@@ -185,6 +185,7 @@ describe("TimelineLedger — Internal maintenance lens", () => {
     const failedMaintenance = makeMaintenanceEvent("maintenance-failed", "2026-07-04T15:03:00Z", {
       type: "error",
       summary: "Scheduled: consolidation",
+      data: { success: false },
     });
 
     renderLedger({ events: [failedMaintenance] });
@@ -192,18 +193,74 @@ describe("TimelineLedger — Internal maintenance lens", () => {
     expect(row?.textContent).toContain("Scheduled: consolidation");
   });
 
-  it("keeps a running maintenance session visible when the Internal lens is off", () => {
-    const runningMaintenance = makeMaintenanceEvent("maintenance-running", "2026-07-04T15:03:00Z", {
-      summary: "Scheduled: consolidation",
-      data: { success: null },
+  it("keeps running and unknown maintenance visible when the Internal lens is off", () => {
+    const events = [
+      makeMaintenanceEvent("maintenance-running", "2026-07-04T15:03:00Z", {
+        summary: "Scheduled: running",
+        data: { success: null },
+      }),
+      makeMaintenanceEvent("maintenance-unknown-missing", "2026-07-04T15:02:00Z", {
+        summary: "Scheduled: unknown missing",
+        data: {},
+      }),
+      makeMaintenanceEvent("maintenance-unknown-nonboolean", "2026-07-04T15:01:00Z", {
+        summary: "Scheduled: unknown nonboolean",
+        data: { success: "pending" },
+      }),
+    ];
+
+    renderLedger({ events });
+
+    expect(
+      Array.from(container.querySelectorAll('[data-testid="timeline-row"]')).map((row) =>
+        row.getAttribute("data-event-id"),
+      ),
+    ).toEqual([
+      "maintenance-running",
+      "maintenance-unknown-missing",
+      "maintenance-unknown-nonboolean",
+    ]);
+    expect(container.querySelector('[data-testid="maintenance-group-row"]')).toBeNull();
+  });
+
+  it("labels the strict maintenance success matrix in the enabled Internal expansion", () => {
+    const events = [
+      makeMaintenanceEvent("maintenance-completed", "2026-07-04T15:05:00Z", {
+        summary: "Scheduled: completed",
+        data: { success: true },
+      }),
+      makeMaintenanceEvent("maintenance-failed", "2026-07-04T15:04:00Z", {
+        summary: "Scheduled: failed",
+        data: { success: false },
+      }),
+      makeMaintenanceEvent("maintenance-running", "2026-07-04T15:03:00Z", {
+        summary: "Scheduled: running",
+        data: { success: null },
+      }),
+      makeMaintenanceEvent("maintenance-unknown-missing", "2026-07-04T15:02:00Z", {
+        summary: "Scheduled: unknown missing",
+        data: {},
+      }),
+      makeMaintenanceEvent("maintenance-unknown-nonboolean", "2026-07-04T15:01:00Z", {
+        summary: "Scheduled: unknown nonboolean",
+        type: "error",
+        data: { success: "pending" },
+      }),
+    ];
+
+    renderLedger({ events, includeInternal: true });
+    const group = container.querySelector('[data-testid="maintenance-group-row"]');
+
+    act(() => {
+      group?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    renderLedger({ events: [runningMaintenance] });
-
-    const row = container.querySelector('[data-testid="timeline-row"]');
-    expect(row?.getAttribute("data-event-id")).toBe("maintenance-running");
-    expect(row?.textContent).toContain("Scheduled: consolidation");
-    expect(container.querySelector('[data-testid="maintenance-group-row"]')).toBeNull();
+    expect(
+      Array.from(container.querySelectorAll('[data-testid="maintenance-run-status"]')).map(
+        (status) => status.textContent,
+      ),
+    ).toEqual(["completed", "failed", "running", "unknown", "unknown"]);
+    expect(group?.getAttribute("aria-label")).toContain("1 failed");
   });
 
   it("retains Load older when the owner lens has filtered a maintenance-only page", () => {

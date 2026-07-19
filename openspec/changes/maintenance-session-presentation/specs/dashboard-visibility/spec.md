@@ -32,13 +32,18 @@ as maintenance. The API SHALL retain `is_heartbeat`, set to true exactly when
 
 ### Requirement: Internal maintenance Timeline lens
 
-The Timeline SHALL default to an owner-focused lens that suppresses successful
-maintenance events. It SHALL offer a keyboard-operable Internal control with a
-visible pressed state and accessible name; `internal=1` SHALL enable the lens.
-When enabled, the Timeline SHALL render maintenance events as expandable,
-per-butler rollups within their hour group, using only loaded event data for
-the displayed count. Failed maintenance sessions SHALL remain visible as
-errors when the Internal lens is disabled.
+The Timeline SHALL default to an owner-focused lens that suppresses only
+maintenance events whose `data.success` is exactly `true`. A `data.success`
+value of `false` SHALL be a failed run; `null` SHALL be a running run; and a
+missing or nonboolean value SHALL be unknown. Running and unknown maintenance
+events SHALL remain visible in the default lens. The Timeline SHALL offer a
+keyboard-operable Internal control with a visible pressed state and accessible
+name; `internal=1` SHALL enable the lens. When enabled, the Timeline SHALL
+render maintenance events as expandable, per-butler rollups within their hour
+group, using only loaded event data for the displayed count. Each expanded run
+SHALL present its strict outcome state and SHALL NOT label a running or unknown
+run as completed. Failed maintenance sessions SHALL remain visible as errors
+when the Internal lens is disabled.
 
 #### Scenario: Default Timeline hides successful maintenance activity
 
@@ -55,3 +60,12 @@ errors when the Internal lens is disabled.
   rollup with their exact loaded-event count and failed-run count
 - **AND** the rollup can be expanded by keyboard to inspect its safe event
   summaries
+
+#### Scenario: Running and unknown maintenance remains truthful in both lenses
+
+- **WHEN** a maintenance event has `data.success` equal to `null`, absent, or
+  nonboolean
+- **THEN** the default Timeline renders it as ordinary activity rather than
+  suppressing it
+- **AND** an expanded Internal rollup labels `null` as running and absent or
+  nonboolean values as unknown, never completed
