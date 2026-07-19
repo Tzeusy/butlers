@@ -218,7 +218,7 @@ Run: `npm run lint && npm run build`
 
 Run: `openspec validate make-dashboard-attention-current --strict`
 
-- [ ] **Step 3: Commit and publish the reviewable branch**
+- [x] **Step 3: Commit and publish the reviewable branch**
 
 ```bash
 git add openspec/changes/make-dashboard-attention-current docs/superpowers/plans/2026-07-19-dashboard-attention-current.md src/butlers/api/routers/dashboard_briefing.py src/butlers/api/routers/qa.py tests/dashboard/test_briefing.py tests/dashboard/test_briefing_attention_contract.py tests/dashboard/test_briefing_cache_invalidation.py frontend/src/components/overview/model.ts frontend/src/components/overview/model.test.ts frontend/src/components/overview/model.contract.test.ts frontend/src/components/overview/__fixtures__/attention-contract-scenarios.json frontend/src/pages/DashboardPage.tsx frontend/src/pages/DashboardPage.test.tsx
