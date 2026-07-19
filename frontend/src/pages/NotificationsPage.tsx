@@ -41,8 +41,12 @@ const FREE_TEXT_DEBOUNCE_MS = 300;
 /** Module-level so Date.now() is not called directly during render (the
  * react-hooks/purity ESLint rule flags impure calls inline in a component/
  * hook body, even inside a useMemo factory). */
-function cutoffIsoForWindow(hours: number): string {
-  return new Date(Date.now() - hours * 3_600_000).toISOString();
+function closedWindowForHours(hours: number): { since: string; until: string } {
+  const until = new Date(Date.now());
+  return {
+    since: new Date(until.getTime() - hours * 3_600_000).toISOString(),
+    until: until.toISOString(),
+  };
 }
 
 const CHANNEL_OPTIONS = [
@@ -51,12 +55,13 @@ const CHANNEL_OPTIONS = [
   { value: "email", label: "Email" },
 ] as const;
 
-// Exported for tests: the status filter must surface read/retried so those rows
-// are not hidden from the review-the-stream view (bu-5gf99).
+// Exported for tests: the status filter must surface terminal failures/read/
+// retried so the dashboard's count predicate and review stream stay explicit.
 export const STATUS_OPTIONS = [
   { value: "all", label: "All statuses" },
   { value: "sent", label: "Sent" },
   { value: "failed", label: "Failed" },
+  { value: "terminal_failed", label: "Terminal failures" },
   { value: "pending", label: "Pending" },
   { value: "read", label: "Read" },
   { value: "retried", label: "Retried" },
@@ -163,19 +168,19 @@ export default function NotificationsPage() {
   const { data: statsResponse, isLoading: statsLoading } =
     useNotificationStats();
   // Verdict opener's own windowed stats (bu-y0v0c, JARVIS pursuit move 9
-  // slice 3) -- a separate query, keyed on its own since/until, so it caches
-  // independently of the all-time stats bar above. The cutoff is memoized
-  // once per mount so the query key stays stable across renders (a fresh
-  // Date.now() every render would key-thrash the query cache).
-  const verdictSinceIso = useMemo(
-    () => cutoffIsoForWindow(NOTIFICATIONS_VERDICT_WINDOW_HOURS),
+  // slice 3) -- a separate query, keyed on its own closed interval, so it
+  // caches independently of the all-time stats bar above. The interval is
+  // memoized once per mount so its predicate-carrying doors name the exact
+  // set counted by this response instead of re-evaluating "last 24h" on click.
+  const verdictWindow = useMemo(
+    () => closedWindowForHours(NOTIFICATIONS_VERDICT_WINDOW_HOURS),
     [],
   );
   const {
     data: verdictStatsResponse,
     isLoading: verdictStatsLoading,
     isError: verdictStatsError,
-  } = useNotificationStats({ since: verdictSinceIso });
+  } = useNotificationStats(verdictWindow);
   const {
     data: notificationsResponse,
     isLoading: notificationsLoading,
@@ -355,6 +360,8 @@ export default function NotificationsPage() {
           stats={verdictStatsResponse?.data}
           isLoading={verdictStatsLoading}
           isError={verdictStatsError}
+          since={verdictWindow.since}
+          until={verdictWindow.until}
         />
       </div>
 

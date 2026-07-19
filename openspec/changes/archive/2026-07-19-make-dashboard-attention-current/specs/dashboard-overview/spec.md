@@ -65,8 +65,9 @@ table.
   bounded response has `failed` greater than zero
 - **THEN** the list renders a medium-severity notification row naming the failed count in
   the last 24 hours
-- **AND** its link preserves the failed-status filter and both boundaries of that same
-  closed interval
+- **AND** its link preserves the `terminal_failed` status filter and both boundaries of
+  that same closed interval, so it resolves the exact terminal-failure set counted by
+  `NotificationStats.failed` rather than including attempts later superseded by a retry
 - **AND** the Notifications destination renders that exact boundary in its visible local
   date-time filter rather than silently applying an undisclosed filter
 - **WHEN** the bounded response has `failed = 0` while all-time failures exist
@@ -177,7 +178,8 @@ The acceptable first-source set is:
   greater than zero
 - **THEN** `Now` renders an immediate item naming the failed notification count in the
   last 24 hours
-- **AND** the item is labelled as a notification item
+- **AND** the item is labelled as a notification item and links to the same
+  `terminal_failed` window predicate
 
 #### Scenario: Recent activity appears in Now
 

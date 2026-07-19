@@ -246,6 +246,27 @@ describe("NotificationsPage", () => {
     expect(html).toContain("5");
   });
 
+  it("requests the verdict with one exact closed 24-hour interval", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T00:37:00.000Z"));
+    try {
+      setStatsState({ data: undefined });
+      setNotificationsState({ data: undefined });
+
+      renderPage();
+
+      const verdictArgs = vi
+        .mocked(useNotificationStats)
+        .mock.calls.find(([params]) => params !== undefined)?.[0];
+      expect(verdictArgs).toEqual({
+        since: "2026-07-18T00:37:00.000Z",
+        until: "2026-07-19T00:37:00.000Z",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("renders loading skeleton when notifications are loading", () => {
     setStatsState({ isLoading: false, data: undefined });
     setNotificationsState({ isLoading: true });
@@ -255,11 +276,12 @@ describe("NotificationsPage", () => {
     expect(html).not.toContain("No notifications found");
   });
 
-  it("exposes Read and Retried in the status filter options", () => {
-    // The status filter must surface read/retried so those rows are not hidden
+  it("exposes terminal failures, Read, and Retried in the status filter options", () => {
+    // The status filter must surface terminal failures/read/retried so those rows are not hidden
     // (bu-5gf99). Assert against the exported options directly — the Radix
     // <Select> portals its items, so closed-state SSR markup omits them.
     const values = STATUS_OPTIONS.map((o) => o.value);
+    expect(values).toContain("terminal_failed");
     expect(values).toContain("read");
     expect(values).toContain("retried");
     expect(values).toContain("sent");

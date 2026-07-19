@@ -593,9 +593,9 @@ function notificationAttentionRows(
       severity: "medium",
       title: `${failed} failed notification${failed === 1 ? "" : "s"} in the last 24 hours`,
       detail: "Delivery pressure in the last 24 hours needs review.",
-      // Predicate-carrying door (bu-qvnce.13): the row names failed
-      // notifications from a bounded window specifically -- the link lands
-      // on that same pre-filtered window, not the all-time stream.
+      // Predicate-carrying door (bu-qvnce.13): stats counts terminal failures,
+      // so the link uses the same lifecycle predicate and bounded window, not
+      // the raw failed-attempt or all-time stream.
       href: failedNotificationsHref(notificationSince, notificationUntil),
       count: failed,
     },
@@ -606,7 +606,7 @@ function failedNotificationsHref(
   notificationSince: string | undefined,
   notificationUntil: string | undefined,
 ): string {
-  const params = new URLSearchParams({ status: "failed" });
+  const params = new URLSearchParams({ status: "terminal_failed" });
   if (notificationSince) params.set("since", notificationSince);
   if (notificationUntil) params.set("until", notificationUntil);
   return `/notifications?${params.toString()}`;

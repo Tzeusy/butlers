@@ -799,12 +799,48 @@ describe("DashboardPage -- OperationsNowList", () => {
     // Predicate-carrying door: retains both failed status and the 24-hour
     // window that produced this count, rather than opening an all-time feed.
     expect(html).toContain(
-      'href="/notifications?status=failed&amp;since=2026-05-13T12%3A00%3A00.000Z&amp;until=2026-05-14T12%3A00%3A00.000Z"',
+      'href="/notifications?status=terminal_failed&amp;since=2026-05-13T12%3A00%3A00.000Z&amp;until=2026-05-14T12%3A00%3A00.000Z"',
     );
     expect(useNotificationStats).toHaveBeenCalledWith({
       since: "2026-05-13T12:00:00.000Z",
       until: "2026-05-14T12:00:00.000Z",
     });
+  });
+
+  it("rolls the notification window while the dashboard remains mounted", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const queryClient = new QueryClient();
+    document.body.appendChild(container);
+
+    try {
+      act(() => {
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <MemoryRouter>
+              <DashboardPage />
+            </MemoryRouter>
+          </QueryClientProvider>,
+        );
+      });
+      expect(useNotificationStats).toHaveBeenLastCalledWith({
+        since: "2026-05-13T12:00:00.000Z",
+        until: "2026-05-14T12:00:00.000Z",
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(60_000);
+      });
+      expect(useNotificationStats).toHaveBeenLastCalledWith({
+        since: "2026-05-13T12:01:00.000Z",
+        until: "2026-05-14T12:01:00.000Z",
+      });
+    } finally {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    }
   });
 
   it("renders a completed QA dispatch as last-24-hours activity, not active follow-up", () => {

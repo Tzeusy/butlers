@@ -366,6 +366,31 @@ describe("deriveOverviewTriageModel", () => {
     expect(model.hiddenOldIssueGroups).toBe(1);
   });
 
+  it.each([
+    ["at the twelve-hour start", "2026-05-14T00:00:00.000Z", true],
+    ["at now", "2026-05-14T12:00:00.000Z", true],
+    ["one millisecond before the start", "2026-05-13T23:59:59.999Z", false],
+    ["one millisecond after now", "2026-05-14T12:00:00.001Z", false],
+  ])("uses a closed twelve-hour issue window %s", (_label, lastSeenAt, isCurrent) => {
+    const description = "Issue-boundary sentinel";
+    const model = deriveOverviewTriageModel(
+      {
+        issues: [
+          issue({
+            severity: "high",
+            description,
+            last_seen_at: lastSeenAt,
+          }),
+        ],
+      },
+      { now: NOW },
+    );
+
+    expect(model.attentionRows.some((row) => row.title === description)).toBe(
+      isCurrent,
+    );
+  });
+
   it("caps visible issue groups and summarizes hidden groups behind the issues link", () => {
     const model = deriveOverviewTriageModel(
       {
@@ -686,7 +711,7 @@ describe("deriveOverviewTriageModel", () => {
     ).toMatchObject({
       title: "2 failed notifications in the last 24 hours",
       detail: "Delivery pressure in the last 24 hours needs review.",
-      href: `/notifications?status=failed&since=${encodeURIComponent(notificationSince)}&until=${encodeURIComponent(notificationUntil)}`,
+      href: `/notifications?status=terminal_failed&since=${encodeURIComponent(notificationSince)}&until=${encodeURIComponent(notificationUntil)}`,
       count: 2,
     });
     expect(
@@ -694,7 +719,7 @@ describe("deriveOverviewTriageModel", () => {
     ).toMatchObject({
       label: "2 failed notifications in the last 24 hours",
       detail: "Delivery failures occurred in the last 24 hours.",
-      href: `/notifications?status=failed&since=${encodeURIComponent(notificationSince)}&until=${encodeURIComponent(notificationUntil)}`,
+      href: `/notifications?status=terminal_failed&since=${encodeURIComponent(notificationSince)}&until=${encodeURIComponent(notificationUntil)}`,
     });
   });
 
@@ -782,6 +807,29 @@ describe("deriveOverviewTriageModel", () => {
     });
   });
 
+  it("keeps novel QA findings out of attention and labels them as time-bounded activity", () => {
+    const model = deriveOverviewTriageModel(
+      {
+        qaSummary: qaSummary({
+          stats_24h: {
+            ...qaSummary().stats_24h,
+            novel_findings: 1,
+            dispatched_investigations: 0,
+          },
+          kpis: { ...qaSummary().kpis, active_cases_now: 0 },
+        }),
+      },
+      { now: NOW },
+    );
+
+    expect(model.attentionRows.some((row) => row.kind === "qa")).toBe(false);
+    expect(model.nowRows.find((row) => row.kind === "qa")).toMatchObject({
+      label: "1 novel QA finding in the last 24 hours",
+      detail: "Recorded in the last 24 hours.",
+      count: 1,
+    });
+  });
+
   it("does not surface a failed QA patrol that is older than one day", () => {
     const model = deriveOverviewTriageModel(
       {
@@ -830,6 +878,37 @@ describe("deriveOverviewTriageModel", () => {
 
     expect(model.attentionRows.some((row) => row.kind === "qa")).toBe(false);
     expect(model.nowRows.some((row) => row.kind === "qa")).toBe(false);
+  });
+
+  it.each([
+    ["at the twenty-four-hour start", "2026-05-13T12:00:00.000Z", true],
+    ["at now", "2026-05-14T12:00:00.000Z", true],
+    ["one millisecond before the start", "2026-05-13T11:59:59.999Z", false],
+    ["one millisecond after now", "2026-05-14T12:00:00.001Z", false],
+  ])("uses a closed twenty-four-hour QA patrol window %s", (_label, startedAt, isCurrent) => {
+    const model = deriveOverviewTriageModel(
+      {
+        qaSummary: qaSummary({
+          last_patrol: {
+            id: "patrol-boundary",
+            started_at: startedAt,
+            completed_at: startedAt,
+            status: "failed",
+            findings_count: 0,
+            novel_count: 0,
+            dispatched_count: 0,
+            log_lookback_minutes: 60,
+            sources_polled: ["sessions"],
+            error_detail: "boundary sentinel",
+          },
+        }),
+      },
+      { now: NOW },
+    );
+
+    expect(model.attentionRows.some((row) => row.kind === "qa")).toBe(
+      isCurrent,
+    );
   });
 
   it("uses current butlers only for promoted runtime KPIs", () => {

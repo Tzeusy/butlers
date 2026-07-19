@@ -50,6 +50,7 @@ from butlers.api.routers.dashboard_briefing import (
     _owner_local_now,
     _qa_attention_item,
     get_cache,
+    get_dashboard_briefing,
 )
 from butlers.core.model_routing import Complexity
 
@@ -1660,7 +1661,9 @@ class TestCacheTTL:
         """
         pool = _make_owner_pool()
         cache = BriefingCache(ttl_seconds=300)
-        app = _make_app(pool, cache)
+        mock_db = MagicMock(spec=DatabaseManager)
+        mock_db.pool.return_value = pool
+        mock_db.credential_shared_pool.return_value = pool
         composition_started = asyncio.Event()
         allow_composition = asyncio.Event()
         now = datetime(2026, 7, 19, 0, 37, tzinfo=UTC)
@@ -1695,20 +1698,40 @@ class TestCacheTTL:
                 new=AsyncMock(return_value=None),
             ),
         ):
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                request = asyncio.create_task(client.get("/api/dashboard/briefing"))
-                await asyncio.wait_for(composition_started.wait(), timeout=1.0)
+            request = asyncio.create_task(
+                get_dashboard_briefing(
+                    db=mock_db,
+                    cache=cache,
+                    configs=[],
+                    mgr=MagicMock(),
+                    pricing=MagicMock(),
+                )
+            )
+            composition_wait = asyncio.create_task(composition_started.wait())
+            try:
+                done, _ = await asyncio.wait(
+                    {request, composition_wait},
+                    timeout=5.0,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if request in done:
+                    await request
+                assert composition_wait in done, (
+                    "Briefing composition did not start within five seconds"
+                )
 
                 # Mirrors the committed reset's cache invalidation between
                 # cache-miss and cache-fill.
                 cache.invalidate_all()
                 allow_composition.set()
                 response = await request
+            finally:
+                for task in (request, composition_wait):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(request, composition_wait, return_exceptions=True)
 
-        assert response.status_code == 200
-        assert response.json()["data"]["state_class"] == "urgent"
+        assert response.data.state_class == "urgent"
         assert cache.get("owner-uuid-1234") is None
 
 

@@ -20,3 +20,5 @@
 
 - [x] 4.1 Update dashboard briefing and Overview delta specifications to document the selected current-attention semantics.
 - [x] 4.2 Run focused backend/frontend tests, lint, type/build, OpenSpec validation, and a targeted review of the changed contract scenarios.
+- [x] 4.3 Align terminal-failure drill-down and notification verdict predicates and
+  exact windows with the bounded stats count.
