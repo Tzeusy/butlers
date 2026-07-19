@@ -2498,6 +2498,45 @@ class TestGoogleEventParserBodyMapping:
         assert event.title == "Team Sync"
 
 
+class TestGoogleDateOnlyProjection:
+    """Google's date-only boundaries must remain all-day through projection."""
+
+    @staticmethod
+    def _date_only_payload() -> dict[str, object]:
+        return {
+            "id": "google-all-day-1",
+            "summary": "Public holiday",
+            "start": {"date": "2026-07-01", "timeZone": "Asia/Singapore"},
+            "end": {"date": "2026-07-02", "timeZone": "Asia/Singapore"},
+        }
+
+    def test_google_date_only_payload_is_marked_all_day(self) -> None:
+        event = _google_event_to_calendar_event(self._date_only_payload(), fallback_timezone="UTC")
+
+        assert event is not None
+        assert event.all_day is True
+
+    async def test_google_date_only_projection_preserves_all_day_flag(self) -> None:
+        event = _google_event_to_calendar_event(self._date_only_payload(), fallback_timezone="UTC")
+        assert event is not None
+
+        module = CalendarModule()
+        module._butler_name = "general"
+        module._upsert_projection_event = AsyncMock(return_value=uuid.uuid4())
+        module._upsert_projection_instance = AsyncMock(return_value=uuid.uuid4())
+        module._prune_superseded_provider_instances = AsyncMock()
+
+        await module._project_provider_changes(
+            source_id=uuid.uuid4(),
+            provider_name="google",
+            calendar_id="primary",
+            updated_events=[event],
+            cancelled_ids=[],
+        )
+
+        assert module._upsert_projection_event.await_args.kwargs["all_day"] is True
+
+
 class TestEventToPayloadNewFields:
     """_event_to_payload includes body, source_butler, source_session_id, entity_ids."""
 
@@ -3099,6 +3138,10 @@ class _FakeRecord:
 
 def _make_module_with_pool(pool) -> CalendarModule:
     mod = CalendarModule()
+    # Internal source registration now requires a real roster identity. Most
+    # projection tests exercise a running general-butler module, not the
+    # CalendarModule's unconfigured sentinel default.
+    mod._butler_name = "general"
     db = MagicMock()
     db.pool = pool
     mod._db = db
