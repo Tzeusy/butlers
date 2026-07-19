@@ -1024,7 +1024,7 @@ describe("deriveOverviewTriageModel", () => {
         summary: "Scheduled: consolidation",
         is_heartbeat: false,
         machine_class: "maintenance" as const,
-        data: {},
+        data: { success: true },
       },
       {
         id: "maintenance-2",
@@ -1034,7 +1034,7 @@ describe("deriveOverviewTriageModel", () => {
         summary: "Scheduled: memory decay sweep",
         is_heartbeat: false,
         machine_class: "maintenance" as const,
-        data: {},
+        data: { success: true },
       },
     ] satisfies TimelineEvent[];
     const failedMaintenance = {
@@ -1045,7 +1045,7 @@ describe("deriveOverviewTriageModel", () => {
       summary: "Scheduled: consolidation",
       is_heartbeat: false,
       machine_class: "maintenance" as const,
-      data: {},
+      data: { success: false },
     } satisfies TimelineEvent;
     const ownerEvent: TimelineEvent = {
       id: "owner-1",
@@ -1077,6 +1077,32 @@ describe("deriveOverviewTriageModel", () => {
       detail: "Internal activity · 1 failed",
       href: "/timeline?internal=1",
       count: 3,
+    });
+  });
+
+  it("keeps a running maintenance session in Now by default", () => {
+    const runningMaintenance = {
+      id: "maintenance-running",
+      type: "session",
+      butler: "memory",
+      timestamp: "2026-05-14T11:59:00.000Z",
+      summary: "Scheduled: consolidation",
+      is_heartbeat: false,
+      machine_class: "maintenance" as const,
+      data: { success: null },
+    } satisfies TimelineEvent;
+
+    const model = deriveOverviewTriageModel(
+      { timeline: [runningMaintenance] },
+      { maxTimelineRows: 5 },
+    );
+
+    expect(model.nowRows).toContainEqual({
+      id: "now:activity:maintenance-running",
+      kind: "activity",
+      label: "Scheduled: consolidation",
+      detail: "memory · session",
+      href: "/timeline",
     });
   });
 

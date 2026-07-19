@@ -786,7 +786,7 @@ describe("DashboardPage -- OperationsNowList", () => {
             summary: "Scheduled: consolidation",
             machine_class: "maintenance",
             is_heartbeat: false,
-            data: {},
+            data: { success: true },
           },
           {
             id: "maintenance-2",
@@ -796,7 +796,7 @@ describe("DashboardPage -- OperationsNowList", () => {
             summary: "Scheduled: memory decay sweep",
             machine_class: "maintenance",
             is_heartbeat: false,
-            data: {},
+            data: { success: true },
           },
         ],
         meta: { cursor: null, has_more: false },

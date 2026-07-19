@@ -11,6 +11,7 @@ import { NEEDS_YOU_ACTIVITIES } from "@/hooks/use-butler-status-board";
 import {
   isFailedMaintenanceEvent,
   isMaintenanceEvent,
+  isSuccessfulMaintenanceEvent,
 } from "@/lib/timeline-machine-class";
 
 export type OverviewSeverity = "critical" | "high" | "medium" | "low" | "info";
@@ -883,9 +884,9 @@ function deriveTimelineNowRows(
       const grouped = maintenanceByButler.get(butler) ?? [];
       grouped.push(event);
       maintenanceByButler.set(butler, grouped);
-    } else if (isFailedMaintenanceEvent(event)) {
-      // A failed internal run is operationally meaningful even on the owner
-      // lens, so it retains its ordinary Timeline activity row.
+    } else if (!isSuccessfulMaintenanceEvent(event)) {
+      // Failed and still-running internal runs are operationally meaningful
+      // on the owner lens, so they retain ordinary Timeline activity rows.
       ownerLensEvents.push(event);
     }
   }

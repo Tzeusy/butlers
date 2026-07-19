@@ -43,7 +43,7 @@ function makeMaintenanceEvent(
   overrides: Partial<TimelineEvent> = {},
 ): MaintenanceTimelineEvent {
   return {
-    ...makeEvent(id, timestamp, overrides),
+    ...makeEvent(id, timestamp, { data: { success: true }, ...overrides }),
     machine_class: "maintenance",
   };
 }
@@ -190,6 +190,20 @@ describe("TimelineLedger — Internal maintenance lens", () => {
     renderLedger({ events: [failedMaintenance] });
     const row = container.querySelector('[data-testid="timeline-row"]');
     expect(row?.textContent).toContain("Scheduled: consolidation");
+  });
+
+  it("keeps a running maintenance session visible when the Internal lens is off", () => {
+    const runningMaintenance = makeMaintenanceEvent("maintenance-running", "2026-07-04T15:03:00Z", {
+      summary: "Scheduled: consolidation",
+      data: { success: null },
+    });
+
+    renderLedger({ events: [runningMaintenance] });
+
+    const row = container.querySelector('[data-testid="timeline-row"]');
+    expect(row?.getAttribute("data-event-id")).toBe("maintenance-running");
+    expect(row?.textContent).toContain("Scheduled: consolidation");
+    expect(container.querySelector('[data-testid="maintenance-group-row"]')).toBeNull();
   });
 
   it("retains Load older when the owner lens has filtered a maintenance-only page", () => {

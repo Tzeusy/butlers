@@ -27,5 +27,9 @@ export function isFailedMaintenanceEvent(event: TimelineEvent): boolean {
 }
 
 export function isSuccessfulMaintenanceEvent(event: TimelineEvent): boolean {
-  return isMaintenanceEvent(event) && !isFailedMaintenanceEvent(event);
+  return (
+    isMaintenanceEvent(event) &&
+    event.data?.success === true &&
+    !isFailedMaintenanceEvent(event)
+  );
 }
