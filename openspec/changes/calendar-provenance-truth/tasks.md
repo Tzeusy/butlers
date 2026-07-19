@@ -25,5 +25,5 @@
 
 - [x] 4.1 Run strict OpenSpec validation, focused unit and migrated tests, and
   touched-file formatting/lint checks.
-- [ ] 4.2 Review the diff for projection visibility, cascade preservation, and
+- [x] 4.2 Review the diff for projection visibility, cascade preservation, and
   context-bus-producers compatibility; commit, push, and open the focused PR.
