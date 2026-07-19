@@ -31,6 +31,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { cleanup, render, screen } from "@testing-library/react"
+import { MemoryRouter } from "react-router"
 
 // ---------------------------------------------------------------------------
 // Mock hooks and sub-components BEFORE importing the component under test
@@ -55,6 +56,8 @@ vi.mock("@/hooks/use-spend", () => ({
 import { useButlerStatusBoard } from "@/hooks/use-butler-status-board"
 import type { StatusBoardRow, StatusBoardAggregates } from "@/hooks/use-butler-status-board"
 import { useButler } from "@/hooks/use-butlers"
+import { useSchedules } from "@/hooks/use-schedules"
+import type { Schedule } from "@/api/types"
 import { ButlerDetailHeader } from "./ButlerDetailHeader"
 
 // ---------------------------------------------------------------------------
@@ -125,12 +128,38 @@ function makeRow(
   }
 }
 
+function makeSchedule(overrides: Partial<Schedule> = {}): Schedule {
+  return {
+    id: "schedule-1",
+    name: "Daily check-in",
+    cron: "0 9 * * *",
+    prompt: "Check in",
+    source: "butler",
+    enabled: true,
+    next_run_at: null,
+    last_run_at: null,
+    created_at: "2026-07-20T00:00:00.000Z",
+    updated_at: "2026-07-20T00:00:00.000Z",
+    ...overrides,
+  }
+}
+
+function mockSchedules(schedules: Schedule[]) {
+  vi.mocked(useSchedules).mockReturnValue({
+    data: { data: schedules },
+  } as unknown as ReturnType<typeof useSchedules>)
+}
+
 // ---------------------------------------------------------------------------
 // Render helper
 // ---------------------------------------------------------------------------
 
 function renderHeader(butlerName = "relationship") {
-  return render(<ButlerDetailHeader butler={butlerName} />)
+  return render(
+    <MemoryRouter>
+      <ButlerDetailHeader butler={butlerName} />
+    </MemoryRouter>,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +167,7 @@ function renderHeader(butlerName = "relationship") {
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
+  mockSchedules([])
   vi.mocked(useButler).mockReturnValue({
     data: {
       data: {
@@ -370,6 +400,109 @@ describe("Scenario F: header facts replace port/uptime trivia", () => {
     renderHeader("relationship")
     const facts = screen.getByTestId("butler-header-facts")
     expect(facts.textContent).toContain("--")
+  })
+})
+
+describe("Scenario G: truthful schedule header facts", () => {
+  const NOW = new Date("2026-07-20T12:00:00.000Z")
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("G1: renders the earliest enabled future timestamp as the next fact", () => {
+    mockSchedules([
+      makeSchedule({
+        id: "later",
+        name: "Later run",
+        next_run_at: "2026-07-20T14:00:00.000Z",
+      }),
+      makeSchedule({
+        id: "earlier",
+        name: "Earlier run",
+        next_run_at: "2026-07-20T13:00:00.000Z",
+      }),
+    ])
+
+    renderHeader()
+
+    const facts = screen.getByTestId("butler-header-facts")
+    expect(facts.textContent).toContain("next in 1h")
+    expect(facts.textContent).not.toContain("in 2h")
+    expect(facts.textContent).not.toContain("overdue")
+  })
+
+  it("G2: renders a named amber overdue link instead of a stale next fact", () => {
+    mockSchedules([
+      makeSchedule({
+        id: "stale",
+        name: "Morning review",
+        next_run_at: "2026-07-20T09:00:00.000Z",
+      }),
+    ])
+
+    renderHeader()
+
+    const overdue = screen.getByRole("link", {
+      name: "Overdue Morning review, 3h ago. Open schedules.",
+    })
+    expect(overdue.getAttribute("href")).toBe("/butlers/relationship?tab=system&section=schedules")
+    expect(overdue.className).toContain("text-[var(--amber-text)]")
+    expect(screen.getByTestId("butler-header-facts").textContent).not.toContain("next 3h ago")
+  })
+
+  it("G3: keeps the oldest overdue fact and the earliest future fact together", () => {
+    mockSchedules([
+      makeSchedule({
+        id: "most-overdue",
+        name: "Daily digest",
+        next_run_at: "2026-07-20T09:00:00.000Z",
+      }),
+      makeSchedule({
+        id: "less-overdue",
+        name: "Recent digest",
+        next_run_at: "2026-07-20T11:00:00.000Z",
+      }),
+      makeSchedule({
+        id: "future-earliest",
+        name: "Soon run",
+        next_run_at: "2026-07-20T13:00:00.000Z",
+      }),
+      makeSchedule({
+        id: "future-later",
+        name: "Later run",
+        next_run_at: "2026-07-20T14:00:00.000Z",
+      }),
+    ])
+
+    renderHeader()
+
+    const facts = screen.getByTestId("butler-header-facts")
+    expect(facts.textContent).toContain("overdue: Daily digest 3h ago")
+    expect(facts.textContent).not.toContain("Recent digest")
+    expect(facts.textContent).toContain("next in 1h")
+    expect(facts.textContent).not.toContain("in 2h")
+  })
+
+  it.each([
+    ["disabled", makeSchedule({ enabled: false, next_run_at: "2026-07-20T09:00:00.000Z" })],
+    ["null", makeSchedule({ next_run_at: null })],
+    ["malformed", makeSchedule({ next_run_at: "not-a-timestamp" })],
+  ])("G4: does not fabricate a schedule fact for a %s timestamp", (_kind, schedule) => {
+    mockSchedules([schedule])
+
+    renderHeader()
+
+    const facts = screen.getByTestId("butler-header-facts")
+    expect(facts.textContent).toContain("next --")
+    expect(facts.textContent).not.toContain("overdue")
+    expect(facts.textContent).not.toContain("not-a-timestamp")
+    expect(screen.queryByRole("link", { name: /Open schedules/ })).toBeNull()
   })
 })
 
