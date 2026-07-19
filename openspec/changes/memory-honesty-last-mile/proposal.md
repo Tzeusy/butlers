@@ -17,12 +17,15 @@ look like calm and leave an otherwise durable lifecycle incomplete.
   paging. A page-local bounded union must never be represented as a global
   total, and a total from only reachable pools must be visibly qualified while
   sources are degraded.
-- Define the episode consolidation lifecycle: retry-eligible `failed` rows
-  respect backoff, `dead_letter` rows are never auto-claimed, and the owner
-  can queue one dead-letter episode for a future scheduled write-up through a
-  dashboard-only requeue transition.
-- Define the public episode dossier fields and the owner requeue API's
-  authorization, atomicity, lifecycle-event, error, and concurrency contracts.
+- Define the episode consolidation lifecycle for recovery-eligible memory
+  sources: retry-eligible `failed` rows respect backoff, `dead_letter` rows
+  are never auto-claimed, and the owner can queue one eligible dead-letter
+  episode for a future scheduled write-up through a dashboard-only requeue
+  transition. Chronicler's private `chronicler_mem` store remains outside this
+  recovery slice.
+- Define the public episode dossier fields, typed paginated memory metadata,
+  and the owner requeue API's authorization, eligible-source boundary,
+  atomicity, lifecycle-event, error, and concurrency contracts.
 - Require dashboard detail, register, and search surfaces to retain source
   failure context; require accessible queued/not-running requeue feedback and
   accessible success/failure feedback for fact Confirm and Retract mutations.

@@ -22,6 +22,17 @@ tenant context from their source episodes.
 - **AND** existing active facts (up to 100) and rules (up to 50) for each
   butler MUST be fetched for dedup context, scoped to the same `tenant_id`
 
+#### Scenario: Private memory schemas are excluded from new recovery behavior
+
+- **WHEN** this change's failed-retry claimant or dashboard requeue resolver
+  selects recovery sources
+- **THEN** it MUST select only a pool whose memory relation is in its owning
+  butler schema, not a distinct private `memory_schema` override
+- **AND** it MUST exclude Chronicler's private `(chronicler, chronicler_mem)`
+  mapping from failed retries and requeue discovery or mutation
+- **AND** it MUST NOT treat that intentional exclusion as a failed source or
+  alter the private pool's existing module-local behavior
+
 #### Scenario: Consolidation with LLM spawner
 
 - **WHEN** a `cc_spawner` is provided to `run_consolidation`
@@ -45,7 +56,8 @@ tenant context from their source episodes.
 - **AND** database and embedding resolution MUST use the active memory module's
   runtime pool and configured embedding-engine lifecycle, including any private
   `memory_schema`, rather than the daemon's domain pool or the embedding
-  helper's default model
+  helper's default model; private-pool plumbing alone MUST NOT make that source
+  eligible for the new retry or requeue behavior below
 - **AND** the handler's returned consolidation statistics or raised error MUST
   remain the scheduled task result recorded by the scheduler
 
@@ -110,8 +122,9 @@ public contract.
 - **WHEN** the authorized dashboard recovery path requeues one dead-letter
   episode
 - **THEN** it MUST atomically change only that episode from `dead_letter` to
-  `pending`, clear `consolidation_attempts`, `last_consolidation_error`,
-  `dead_letter_reason`, `next_consolidation_retry_at`, and any lease fields
+  `pending`, reset the non-null integer `consolidation_attempts` to `0`, and
+  clear `last_consolidation_error`, `dead_letter_reason`,
+  `next_consolidation_retry_at`, and any lease fields
 - **AND** it MUST record exactly one sanitized
   `episode_consolidation_requeued` lifecycle event in the same transaction
 - **AND** it MUST NOT call a spawner, execute consolidation, claim another

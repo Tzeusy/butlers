@@ -46,8 +46,10 @@ into a calm empty, not-found, or all-clear state.
 - **THEN** its range and next/previous availability MUST derive from API
   `meta.total`, `meta.offset`, `meta.limit`, and `meta.has_more`, not from the
   current row count
-- **AND** search MUST preserve the existing URL-backed `q`, `kind`, and
-  `offset` state when changing pages
+- **AND** search MUST preserve the existing URL-backed `q` and `kind` state
+  while changing `offset` for the next or previous page
+- **AND** registers and inspect search MUST consume `meta.pools_failed` through
+  typed `MemoryPaginationMeta`, not an unsafe cast or untyped metadata access
 - **WHEN** `meta.pools_failed` is non-empty
 - **THEN** any displayed total/range MUST identify it as records available from
   reachable sources and appear with the named degradation note

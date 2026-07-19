@@ -57,6 +57,18 @@ schema as a failed source.
 - **AND** the globally ordered page MUST contain only the requested offset
   range, not one independently paginated range per source
 
+#### Scenario: Paginated memory metadata is typed for register and inspect clients
+
+- **WHEN** a memory episode, fact, rule, or inspect response crosses the
+  frontend client boundary
+- **THEN** the client contract MUST expose `MemoryPaginatedResponse<T>` with
+  `meta: MemoryPaginationMeta`, where `MemoryPaginationMeta` extends
+  `PaginationMeta` with typed `pools_failed?: string[]`
+- **AND** an absent `pools_failed` MUST be treated as an empty list while a
+  non-empty list names genuinely failed selected pools
+- **AND** register and inspect consumers MUST be able to render the typed value
+  without an unsafe cast or untyped metadata access
+
 #### Scenario: Degraded total is explicitly scoped to reachable sources
 
 - **WHEN** a paginated memory response includes non-empty `meta.pools_failed`
@@ -71,7 +83,10 @@ schema as a failed source.
 The dashboard SHALL expose `POST /api/memory/episodes/{episode_id}/requeue` as
 the only public manual recovery verb for one memory episode. It SHALL be an
 owner-authorized dashboard state transition, not an MCP tool, background job,
-or direct execution endpoint.
+or direct execution endpoint. Its target lookup and mutation SHALL be limited
+to recovery-eligible sources: a pool whose memory relation is in its owning
+butler schema, excluding a distinct private override such as Chronicler's
+`chronicler_mem`.
 
 #### Scenario: Authorized owner queues a dead-letter episode
 
@@ -80,7 +95,7 @@ or direct execution endpoint.
 - **THEN** the endpoint MUST atomically transition that one episode from
   `dead_letter` to `pending` and return 200 as `ApiResponse[Episode]`
 - **AND** the returned episode MUST expose the reset public lifecycle fields
-  and `consolidation_status='pending'`
+  including `consolidation_attempts=0` and `consolidation_status='pending'`
 - **AND** response metadata MUST state that the episode is queued for a future
   scheduled write-up and that no consolidation run was started by the request
 
@@ -107,15 +122,27 @@ or direct execution endpoint.
 - **WHEN** an authorized caller supplies a malformed episode UUID
 - **THEN** the endpoint MUST return 400
 - **WHEN** the UUID has no row after every resolvable memory source answers and
-  known absent schemas are skipped
+  known absent or recovery-ineligible private schemas are skipped
 - **THEN** the endpoint MUST return 404
-- **WHEN** no usable memory source exists or a named failed source leaves the
-  target's ownership unresolved
+- **WHEN** no usable recovery-eligible memory source exists or a named failed
+  eligible source leaves the target's ownership unresolved
 - **THEN** the endpoint MUST return 503 with safe named-source context
 - **WHEN** a reachable source owns the episode but its status is not
   `dead_letter`
 - **THEN** the endpoint MUST return 409 without changing lifecycle fields or
   writing a requeue event
+
+#### Scenario: Requeue leaves private Chronicler memory outside this slice
+
+- **WHEN** an authorized caller supplies an episode identifier that exists only
+  in Chronicler's private `chronicler_mem` source
+- **THEN** the requeue resolver MUST NOT inspect, claim, or mutate that private
+  row
+- **AND** it MUST treat the resource as absent from the recovery-eligible
+  collection and return the existing clean 404 outcome after eligible sources
+  resolve cleanly
+- **AND** it MUST NOT report the intentional private-source exclusion as a 503
+  or `pools_failed`
 
 #### Scenario: Concurrent requeue requests produce one transition
 
