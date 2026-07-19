@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { cleanup, render, screen } from "@testing-library/react"
+import { act, cleanup, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router"
 
 // ---------------------------------------------------------------------------
@@ -59,6 +59,7 @@ import { useButler } from "@/hooks/use-butlers"
 import { useSchedules } from "@/hooks/use-schedules"
 import type { Schedule } from "@/api/types"
 import { ButlerDetailHeader } from "./ButlerDetailHeader"
+import { getScheduleHeaderFacts } from "./schedule-header-facts"
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -453,6 +454,13 @@ describe("Scenario G: truthful schedule header facts", () => {
     })
     expect(overdue.getAttribute("href")).toBe("/butlers/relationship?tab=system&section=schedules")
     expect(overdue.className).toContain("text-[var(--amber-text)]")
+    expect(overdue.classList.contains("underline")).toBe(true)
+    expect(overdue.classList.contains("decoration-[var(--border-strong)]")).toBe(true)
+    expect(overdue.classList.contains("underline-offset-4")).toBe(true)
+    expect(overdue.classList.contains("focus-visible:outline")).toBe(true)
+    expect(overdue.classList.contains("focus-visible:outline-2")).toBe(true)
+    expect(overdue.classList.contains("focus-visible:outline-offset-2")).toBe(true)
+    expect(overdue.classList.contains("focus-visible:outline-fg")).toBe(true)
     expect(screen.getByTestId("butler-header-facts").textContent).not.toContain("next 3h ago")
   })
 
@@ -503,6 +511,86 @@ describe("Scenario G: truthful schedule header facts", () => {
     expect(facts.textContent).not.toContain("overdue")
     expect(facts.textContent).not.toContain("not-a-timestamp")
     expect(screen.queryByRole("link", { name: /Open schedules/ })).toBeNull()
+  })
+
+  it("G5: crosses a cached future schedule into overdue on the minute ticker", () => {
+    mockSchedules([
+      makeSchedule({
+        id: "boundary",
+        name: "Minute boundary review",
+        next_run_at: "2026-07-20T12:01:00.000Z",
+      }),
+    ])
+
+    renderHeader()
+
+    const facts = screen.getByTestId("butler-header-facts")
+    expect(facts.textContent).toContain("next in 1m")
+    expect(screen.queryByRole("link", { name: /Open schedules/ })).toBeNull()
+
+    act(() => {
+      vi.advanceTimersByTime(60_000)
+    })
+
+    expect(screen.getByRole("link", {
+      name: "Overdue Minute boundary review, now. Open schedules.",
+    })).toBeDefined()
+    expect(facts.textContent).toContain("overdue: Minute boundary review now")
+    expect(facts.textContent).not.toContain("next in 1m")
+  })
+
+  it("G6: keeps the overdue link age on the header clock between ticker updates", () => {
+    mockSchedules([
+      makeSchedule({
+        id: "clock-boundary",
+        name: "Clock-boundary review",
+        next_run_at: "2026-07-20T11:59:00.000Z",
+      }),
+    ])
+
+    const { rerender } = renderHeader()
+    expect(screen.getByRole("link", {
+      name: "Overdue Clock-boundary review, 1m ago. Open schedules.",
+    }).textContent).toContain("1m ago")
+
+    vi.setSystemTime(new Date("2026-07-20T12:05:00.000Z"))
+    rerender(
+      <MemoryRouter>
+        <ButlerDetailHeader butler="relationship" />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole("link", {
+      name: "Overdue Clock-boundary review, 1m ago. Open schedules.",
+    }).textContent).toContain("1m ago")
+  })
+
+  it("G7: selects equal schedule instants by name and then id", () => {
+    const facts = getScheduleHeaderFacts([
+      makeSchedule({
+        id: "z-overdue",
+        name: "Alpha overdue",
+        next_run_at: "2026-07-20T11:00:00.000Z",
+      }),
+      makeSchedule({
+        id: "a-overdue",
+        name: "Bravo overdue",
+        next_run_at: "2026-07-20T11:00:00.000Z",
+      }),
+      makeSchedule({
+        id: "z-next",
+        name: "Shared next",
+        next_run_at: "2026-07-20T13:00:00.000Z",
+      }),
+      makeSchedule({
+        id: "a-next",
+        name: "Shared next",
+        next_run_at: "2026-07-20T13:00:00.000Z",
+      }),
+    ], NOW.getTime())
+
+    expect(facts.overdue).toMatchObject({ id: "z-overdue", name: "Alpha overdue" })
+    expect(facts.next).toMatchObject({ id: "a-next", name: "Shared next" })
   })
 })
 
