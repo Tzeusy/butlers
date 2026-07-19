@@ -1073,10 +1073,11 @@ describe("deriveOverviewTriageModel", () => {
     expect(internalModel.nowRows).toContainEqual({
       id: "now:maintenance:memory",
       kind: "activity",
-      label: "memory: 3 maintenance runs",
+      label: "memory: 3 maintenance runs · 1 failed",
       detail: "Internal activity · 1 failed",
       href: "/timeline?internal=1",
       count: 3,
+      isFailure: true,
     });
   });
 

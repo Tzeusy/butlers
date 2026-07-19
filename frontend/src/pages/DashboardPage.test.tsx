@@ -817,6 +817,61 @@ describe("DashboardPage -- OperationsNowList", () => {
     expect(internalLens).toContain('href="/timeline?internal=1"');
   });
 
+  it("renders failed maintenance as a failure in both Dashboard Now lenses", () => {
+    vi.mocked(useTimeline).mockReturnValue({
+      data: {
+        data: [
+          {
+            id: "maintenance-success",
+            type: "session",
+            butler: "memory",
+            timestamp: "2026-05-14T11:59:00.000Z",
+            summary: "Scheduled: consolidation",
+            machine_class: "maintenance",
+            is_heartbeat: false,
+            data: { success: true },
+          },
+          {
+            id: "maintenance-failed",
+            type: "error",
+            butler: "memory",
+            timestamp: "2026-05-14T11:58:00.000Z",
+            summary: "Scheduled: memory decay sweep",
+            machine_class: "maintenance",
+            is_heartbeat: false,
+            data: { success: false },
+          },
+        ],
+        meta: { cursor: null, has_more: false },
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as AnyMock);
+
+    const ownerLens = renderPage();
+    const failedRowStart = ownerLens.indexOf("Scheduled: memory decay sweep");
+    expect(failedRowStart).toBeGreaterThan(-1);
+    const ownerRowStart = ownerLens.lastIndexOf('role="listitem"', failedRowStart);
+    expect(ownerRowStart).toBeGreaterThan(-1);
+    const ownerFailure = ownerLens.slice(ownerRowStart, failedRowStart + 240);
+    expect(ownerFailure).toContain(">failed<");
+    expect(ownerFailure).toContain('role="alert"');
+    expect(ownerFailure).toContain("color:var(--destructive)");
+    expect(ownerLens).not.toContain("memory: 2 maintenance runs");
+
+    const internalLens = renderPage({ initialEntry: "/?internal=1" });
+    const internalRollupStart = internalLens.indexOf("memory: 2 maintenance runs");
+    expect(internalRollupStart).toBeGreaterThan(-1);
+    const internalRowStart = internalLens.lastIndexOf('role="listitem"', internalRollupStart);
+    expect(internalRowStart).toBeGreaterThan(-1);
+    const internalFailure = internalLens.slice(internalRowStart, internalRollupStart + 280);
+    expect(internalFailure).toContain("1 failed");
+    expect(internalFailure).toContain(">failed<");
+    expect(internalFailure).toContain('role="alert"');
+    expect(internalFailure).toContain("color:var(--destructive)");
+  });
+
   it("renders pending approvals row when approvals are pending", () => {
     vi.mocked(useApprovalMetrics).mockReturnValue({
       data: { data: { total_pending: 2 }, meta: {} },

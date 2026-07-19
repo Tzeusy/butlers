@@ -17,6 +17,9 @@
       failed-maintenance visibility, and Internal per-butler rollups.
 - [x] 2.4 Implement Dashboard Now machine-class consumption and its
       URL-backed accessible Internal control.
+- [x] 2.5 Correct the rendered Dashboard Now failure treatment so an exact
+      `success === false` has a visible failure marker in both the owner and
+      Internal lenses, including the Internal failed-run count.
 
 ## 3. Verification
 

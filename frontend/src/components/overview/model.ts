@@ -149,6 +149,8 @@ export interface OverviewNowRow {
   detail: string;
   href: string | null;
   count?: number;
+  /** True only for a confirmed operational failure, never an unknown outcome. */
+  isFailure?: boolean;
 }
 
 export interface OverviewTriageModel {
@@ -893,13 +895,17 @@ function deriveTimelineNowRows(
 
   const rows = ownerLensEvents
     .slice(0, maxTimelineRows)
-    .map((event): OverviewNowRow => ({
-      id: `now:activity:${event.id}`,
-      kind: "activity",
-      label: event.summary,
-      detail: `${event.butler} · ${event.type}`,
-      href: "/timeline",
-    }));
+    .map((event): OverviewNowRow => {
+      const isFailure = isFailedMaintenanceEvent(event);
+      return {
+        id: `now:activity:${event.id}`,
+        kind: "activity",
+        label: event.summary,
+        detail: `${event.butler} · ${event.type}`,
+        href: "/timeline",
+        ...(isFailure ? { isFailure: true } : {}),
+      };
+    });
 
   if (!includeInternal) return rows;
 
@@ -914,10 +920,13 @@ function deriveTimelineNowRows(
       return {
         id: `now:maintenance:${butler}`,
         kind: "activity",
-        label: `${butler}: ${runs} maintenance ${runs === 1 ? "run" : "runs"}`,
+        label: `${butler}: ${runs} maintenance ${runs === 1 ? "run" : "runs"}${
+          failed > 0 ? ` · ${failed} failed` : ""
+        }`,
         detail: failed > 0 ? `Internal activity · ${failed} failed` : "Internal activity",
         href: "/timeline?internal=1",
         count: runs,
+        ...(failed > 0 ? { isFailure: true } : {}),
       };
     }),
   ];

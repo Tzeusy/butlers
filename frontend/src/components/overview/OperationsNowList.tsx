@@ -89,9 +89,11 @@ function NowRow({ row, isFirst }: NowRowProps) {
   // child of role="list" is a listitem) stays intact (bu-86c4c.2, JARVIS
   // audit move 1b).
   const isSourceError = row.kind === "error";
+  const isFailure = row.isFailure === true;
+  const isAlert = isSourceError || isFailure;
   const inner = (
     <div
-      role={isSourceError ? "alert" : undefined}
+      role={isAlert ? "alert" : undefined}
       style={{
         display: "grid",
         gridTemplateColumns: "auto 1fr auto",
@@ -108,15 +110,15 @@ function NowRow({ row, isFirst }: NowRowProps) {
         style={{
           fontFamily: "var(--font-mono)",
           fontSize: "9px",
-          color: "var(--muted-foreground)",
-          border: "1px solid var(--border)",
+          color: isFailure ? "var(--destructive)" : "var(--muted-foreground)",
+          border: isFailure ? "1px solid var(--destructive)" : "1px solid var(--border)",
           borderRadius: "var(--radius-sm)",
           padding: "2px 5px",
           lineHeight: 1,
           whiteSpace: "nowrap",
         }}
       >
-        {KIND_LABELS[row.kind]}
+        {isFailure ? "failed" : KIND_LABELS[row.kind]}
       </span>
 
       {/* Label */}
@@ -125,11 +127,13 @@ function NowRow({ row, isFirst }: NowRowProps) {
           fontFamily: "var(--font-sans)",
           fontSize: "13px",
           color:
-            row.kind === "error"
-              ? "var(--muted-foreground)"
-              : row.href
-                ? "var(--foreground)"
-                : "var(--muted-foreground)",
+            isFailure
+              ? "var(--destructive)"
+              : row.kind === "error"
+                ? "var(--muted-foreground)"
+                : row.href
+                  ? "var(--foreground)"
+                  : "var(--muted-foreground)",
           fontStyle: row.kind === "error" ? "italic" : undefined,
           lineHeight: 1.4,
         }}
