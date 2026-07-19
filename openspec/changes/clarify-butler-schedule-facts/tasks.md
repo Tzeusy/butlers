@@ -15,4 +15,4 @@
 
 - [x] 3.1 Strictly validate the OpenSpec delta, run focused frontend tests,
   lint, typecheck/build, and review the final diff for the read-only boundary.
-- [ ] 3.2 Commit, push the focused branch, and open a PR for exact-head review.
+- [x] 3.2 Commit, push the focused branch, and open a PR for exact-head review.
