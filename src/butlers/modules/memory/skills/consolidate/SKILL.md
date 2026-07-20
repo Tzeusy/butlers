@@ -17,6 +17,15 @@ You are performing memory consolidation for the butler ecosystem. Review the epi
 
 4. **Confirmations**: If episodes support existing facts without changing them, list those fact IDs.
 
+5. **Temporal Facts**: Facts about events, interactions, measurements, or other
+   time-bound observations MUST include `valid_at` as an ISO-8601 timestamp for
+   when the fact is or was true. A registered temporal predicate cannot be
+   stored without `valid_at`, because doing so would destroy history through
+   property-fact supersession. Use the event time stated in the episode; use
+   the episode timestamp only when it is the actual observation time. Never
+   invent a timestamp. If no reliable time is available, omit the temporal
+   extraction.
+
 ## Output Format
 
 Respond with a JSON block:
@@ -24,11 +33,11 @@ Respond with a JSON block:
 ```json
 {
   "new_facts": [
-    {"subject": "...", "predicate": "...", "content": "...", "permanence": "...", "importance": 5.0, "tags": [], "entity_id": "<uuid of subject entity>"},
+    {"subject": "...", "predicate": "...", "content": "...", "permanence": "...", "importance": 5.0, "tags": [], "entity_id": "<uuid of subject entity>", "valid_at": "<ISO-8601 timestamp>"},
     {"subject": "...", "predicate": "...", "content": "...", "permanence": "...", "importance": 5.0, "tags": [], "entity_id": "<uuid of subject entity>", "object_entity_id": "<uuid of target entity>"}
   ],
   "updated_facts": [
-    {"target_id": "uuid-of-existing-fact", "subject": "...", "predicate": "...", "content": "...", "permanence": "...", "entity_id": "<uuid of subject entity>"}
+    {"target_id": "uuid-of-existing-fact", "subject": "...", "predicate": "...", "content": "...", "permanence": "...", "entity_id": "<uuid of subject entity>", "valid_at": "<ISO-8601 timestamp>"}
   ],
   "new_rules": [
     {"content": "...", "tags": []}
