@@ -43,7 +43,6 @@ class UpdatedFact:
     content: str
     permanence: str = "standard"
     entity_id: str | None = None
-    valid_at: datetime | None = None
 
 
 @dataclass
@@ -208,6 +207,12 @@ def _parse_new_fact(raw: dict, errors: list[str]) -> NewFact | None:
 
 def _parse_updated_fact(raw: dict, errors: list[str]) -> UpdatedFact | None:
     """Parse a single updated_fact entry. Returns None if required fields missing."""
+    if raw.get("valid_at") is not None:
+        msg = "Skipping updated_fact: temporal observations must use new_facts"
+        logger.warning(msg)
+        errors.append(msg)
+        return None
+
     target_id = raw.get("target_id")
     subject = raw.get("subject")
     predicate = raw.get("predicate")
@@ -241,9 +246,6 @@ def _parse_updated_fact(raw: dict, errors: list[str]) -> UpdatedFact | None:
     entity_id = (
         entity_id_raw if isinstance(entity_id_raw, str) and _is_uuid(entity_id_raw) else None
     )
-    valid_at, valid_at_ok = _parse_valid_at(raw, "updated_fact", errors)
-    if not valid_at_ok:
-        return None
 
     return UpdatedFact(
         target_id=target_id,
@@ -252,7 +254,6 @@ def _parse_updated_fact(raw: dict, errors: list[str]) -> UpdatedFact | None:
         content=content,
         permanence=permanence,
         entity_id=entity_id,
-        valid_at=valid_at,
     )
 
 

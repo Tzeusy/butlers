@@ -19,9 +19,10 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_execute_consolidation_forwards_temporal_fact_timestamps(monkeypatch) -> None:
+async def test_execute_consolidation_forwards_new_temporal_timestamp_only(monkeypatch) -> None:
+    # Regression for the live relationship consolidation failure: a *new*
+    # upcoming_event needs valid_at forwarded to store_fact.
     new_valid_at = datetime(2026, 7, 21, 9, 30, tzinfo=UTC)
-    updated_valid_at = datetime(2026, 7, 22, 10, 45, tzinfo=UTC)
     stored_kwargs: list[dict] = []
 
     async def _store_fact(*args, **kwargs):
@@ -48,9 +49,8 @@ async def test_execute_consolidation_forwards_temporal_fact_timestamps(monkeypat
             UpdatedFact(
                 target_id=str(uuid.uuid4()),
                 subject="person",
-                predicate="upcoming_event",
-                content="updated event details",
-                valid_at=updated_valid_at,
+                predicate="current_city",
+                content="Singapore",
             )
         ],
     )
@@ -66,4 +66,5 @@ async def test_execute_consolidation_forwards_temporal_fact_timestamps(monkeypat
     assert result["errors"] == []
     assert result["facts_created"] == 1
     assert result["facts_updated"] == 1
-    assert [call["valid_at"] for call in stored_kwargs] == [new_valid_at, updated_valid_at]
+    assert stored_kwargs[0]["valid_at"] == new_valid_at
+    assert "valid_at" not in stored_kwargs[1]
