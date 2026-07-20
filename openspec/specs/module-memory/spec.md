@@ -206,7 +206,9 @@ The consolidation executor SHALL apply parsed consolidation results to the datab
 #### Scenario: Updated facts trigger supersession with tenant context
 
 - **WHEN** the executor processes a property `updated_facts` entry without `valid_at`
-- **THEN** `store_fact` MUST be called with `tenant_id` from the episode group (which auto-supersedes the existing fact via the uniqueness key)
+- **THEN** it MUST reload the live target fact identified by `target_id`, scoped to the same tenant and source butler
+- **AND** it MUST use the target fact's persisted subject, predicate, entity ID, and scope as the supersession identity key rather than trusting repeated model-output identity fields
+- **AND** `store_fact` MUST be called with `tenant_id` from the episode group (which auto-supersedes the existing fact via the uniqueness key)
 - **AND** a `derived_from` link MUST be created from the new fact to each source episode
 
 #### Scenario: Temporal observations are not updated facts

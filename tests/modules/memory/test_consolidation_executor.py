@@ -37,6 +37,12 @@ async def test_execute_consolidation_forwards_new_temporal_timestamp_only(monkey
         "_lookup_episode_ttl_days",
         AsyncMock(return_value=7),
     )
+    pool.fetchrow.return_value = {
+        "subject": "person",
+        "predicate": "current_city",
+        "entity_id": None,
+        "scope": "relationship",
+    }
 
     parsed = ConsolidationResult(
         new_facts=[
@@ -76,6 +82,12 @@ async def test_execute_consolidation_forwards_new_temporal_timestamp_only(monkey
 async def test_execute_consolidation_skips_registered_temporal_updated_fact(monkeypatch) -> None:
     target_id = str(uuid.uuid4())
     pool = AsyncMock()
+    pool.fetchrow.return_value = {
+        "subject": "system",
+        "predicate": "status_event",
+        "entity_id": uuid.uuid4(),
+        "scope": "travel",
+    }
     pool.fetchval.return_value = True
     store_fact_mock = AsyncMock(
         return_value={"id": uuid.uuid4(), "supersedes_id": None},
@@ -124,6 +136,12 @@ async def test_execute_consolidation_skips_temporal_updated_fact_by_predicate_al
 ) -> None:
     target_id = str(uuid.uuid4())
     pool = AsyncMock()
+    pool.fetchrow.return_value = {
+        "subject": "system",
+        "predicate": "status",
+        "entity_id": uuid.uuid4(),
+        "scope": "travel",
+    }
     pool.fetchval.side_effect = lambda query, _predicate: "aliases" in query
     store_fact_mock = AsyncMock(
         return_value={"id": uuid.uuid4(), "supersedes_id": None},
@@ -238,3 +256,66 @@ async def test_execute_consolidation_rejects_registry_relational_edge(monkeypatc
     assert result["facts_created"] == 0
     assert result["errors"] == ["Failed to store new fact (person/works_at)"]
     store_fact_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_updated_fact_uses_persisted_target_identity(monkeypatch) -> None:
+    """Model-supplied identity fields cannot retarget an existing fact update."""
+    target_id = uuid.uuid4()
+    persisted_entity_id = uuid.uuid4()
+    stale_entity_id = uuid.uuid4()
+    pool = AsyncMock()
+    pool.fetchrow.return_value = {
+        "subject": "persisted subject",
+        "predicate": "persisted_predicate",
+        "entity_id": persisted_entity_id,
+        "scope": "persisted_scope",
+    }
+    pool.fetchval.return_value = False
+    stored_kwargs: list[dict] = []
+    stored_args: list[tuple] = []
+
+    async def _store_fact(*args, **kwargs):
+        stored_args.append(args)
+        stored_kwargs.append(kwargs)
+        return {"id": uuid.uuid4(), "supersedes_id": target_id}
+
+    monkeypatch.setattr(consolidation_executor, "store_fact", _store_fact)
+    monkeypatch.setattr(
+        consolidation_executor,
+        "_lookup_episode_ttl_days",
+        AsyncMock(return_value=7),
+    )
+
+    parsed = ConsolidationResult(
+        updated_facts=[
+            UpdatedFact(
+                target_id=str(target_id),
+                subject="model subject",
+                predicate="model_predicate",
+                content="new value",
+                entity_id=str(stale_entity_id),
+            )
+        ]
+    )
+
+    result = await consolidation_executor.execute_consolidation(
+        pool=pool,
+        embedding_engine=object(),
+        parsed=parsed,
+        source_episode_ids=[],
+        butler_name="travel",
+        tenant_id="shared",
+    )
+
+    assert result["errors"] == []
+    assert result["facts_updated"] == 1
+    pool.fetchrow.assert_awaited_once()
+    assert pool.fetchrow.await_args.args[1:] == (target_id, "shared", "travel")
+    assert stored_args[0][1:4] == (
+        "persisted subject",
+        "persisted_predicate",
+        "new value",
+    )
+    assert stored_kwargs[0]["entity_id"] == persisted_entity_id
+    assert stored_kwargs[0]["scope"] == "persisted_scope"
