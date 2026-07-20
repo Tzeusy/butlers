@@ -210,7 +210,10 @@ export default function MeasurementChart() {
   const { data, isLoading, isError, refetch } = useMeasurements(params, {
     enabled: chartQueryEnabled,
   });
-  const measurements = useMemo(() => data?.data ?? [], [data]);
+  const measurements = useMemo(
+    () => (invalidChartUrl ? [] : data?.data ?? []),
+    [data, invalidChartUrl],
+  );
 
   function setChartParam(key: "type" | "since" | "until", value: string) {
     setSearchParams(

@@ -141,6 +141,11 @@ describe("MeasurementsPage — URL query gates", () => {
       ),
     ).toBe(false);
     expect(trackerReadCall()?.[1]).toEqual({ enabled: false });
+    expect(
+      screen.getByText("That reading-log link has invalid type or date filters."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/No measurements logged yet/i)).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Clear" })).toHaveLength(2);
 
     const query = new URL(path, "https://butlers.test").search;
     expect(screen.getByTestId("measurements-page-location").textContent).toBe(query);

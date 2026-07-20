@@ -9,12 +9,13 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, useLocation } from "react-router";
+import { MemoryRouter, useLocation, useNavigate } from "react-router";
 
 import MeasurementChart from "@/components/health/MeasurementChart";
 
 const refetch = vi.fn();
 const useMeasurementsMock = vi.fn();
+let rawMeasurements: Array<Record<string, unknown>> = [];
 
 const vocabulary = {
   types: [
@@ -61,7 +62,7 @@ vi.mock("@/hooks/use-health", () => ({
   useMeasurements: (...args: unknown[]) => {
     useMeasurementsMock(...args);
     return {
-      data: { data: [] },
+      data: { data: rawMeasurements },
       isLoading: false,
       isError: false,
       refetch,
@@ -80,11 +81,26 @@ function LocationSearch() {
   return <output data-testid="measurement-chart-location">{location.search}</output>;
 }
 
+function NavigateToInvalidRange() {
+  const navigate = useNavigate();
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        navigate("/health/measurements?keep=present&type=hrv&since=2026-07-20&until=2026-07-01")
+      }
+    >
+      Use invalid range
+    </button>
+  );
+}
+
 function renderChart(initialPath: string) {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <MeasurementChart />
       <LocationSearch />
+      <NavigateToInvalidRange />
     </MemoryRouter>,
   );
 }
@@ -96,6 +112,7 @@ function currentParams(): URLSearchParams {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  rawMeasurements = [];
 });
 
 describe("MeasurementChart — URL-authoritative state", () => {
@@ -160,5 +177,28 @@ describe("MeasurementChart — URL-authoritative state", () => {
     expect(currentParams().get("since")).toBe(new URL(path, "https://butlers.test").searchParams.get("since"));
     expect(currentParams().get("until")).toBe(new URL(path, "https://butlers.test").searchParams.get("until"));
     expect(currentParams().get("keep")).toBe("present");
+  });
+
+  it("hides warm raw data after navigation changes the URL to an invalid range", async () => {
+    rawMeasurements = [
+      {
+        id: "warm-reading",
+        type: "hrv",
+        value: { value: 31.5 },
+        measured_at: "2026-07-01T12:00:00Z",
+        notes: "Warm cached reading",
+      },
+    ];
+    renderChart("/health/measurements?keep=present&type=hrv");
+
+    fireEvent.click(screen.getByRole("button", { name: "Show raw data" }));
+    expect(screen.getByText("Warm cached reading")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use invalid range" }));
+    await waitFor(() => expect(currentParams().get("since")).toBe("2026-07-20"));
+
+    expect(screen.getByText(/invalid type or date filters/i)).toBeTruthy();
+    expect(screen.queryByText("Warm cached reading")).toBeNull();
+    expect(screen.queryByRole("button", { name: /raw data/i })).toBeNull();
   });
 });
