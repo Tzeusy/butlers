@@ -1202,14 +1202,24 @@ class OwnTracksConnector:
             )
             return
 
+        identity_prefix = f"{_CONNECTOR_TYPE}:"
+        restored_count = 0
         for row in rows:
-            identity = str(row["endpoint_identity"])
-            await self._get_or_create_device(identity)
+            identity = row["endpoint_identity"]
+            if (
+                not isinstance(identity, str)
+                or not identity.startswith(identity_prefix)
+                or _TID_PATTERN.fullmatch(identity.removeprefix(identity_prefix)) is None
+            ):
+                continue
 
-        if rows:
+            await self._get_or_create_device(identity)
+            restored_count += 1
+
+        if restored_count:
             logger.info(
                 "OwnTracksConnector: restored %d registered device heartbeat(s)",
-                len(rows),
+                restored_count,
             )
 
     async def _get_or_create_device(self, identity: str) -> _OwnTracksDeviceState:

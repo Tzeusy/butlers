@@ -271,6 +271,31 @@ async def test_restart_restores_heartbeat_for_registered_devices() -> None:
         await _stop_all_heartbeats(connector)
 
 
+async def test_restart_skips_invalid_registered_device_identities() -> None:
+    """Persisted rows must not bypass the device-reported TID boundary."""
+    cursor_pool = _FakeCursorPool(
+        registered_identities=[
+            "owntracks:a",
+            "owntracks:b2",
+            "owntracks:abc",
+            "owntracks:phone",
+            "owntracks:a!",
+            "owntracks:a:b",
+            "owntracks:",
+            "telegram:a",
+        ]
+    )
+    connector = _make_connector(cursor_pool=cursor_pool)
+
+    try:
+        await connector._restore_registered_devices()
+
+        assert connector._devices.keys() == {"owntracks:a", "owntracks:b2"}
+        assert connector._mcp_client.call_tool.await_count == 2
+    finally:
+        await _stop_all_heartbeats(connector)
+
+
 async def test_new_device_heartbeat_does_not_stop_existing_devices_heartbeat() -> None:
     """Resolving a second device must not touch the first device's heartbeat task.
 
