@@ -401,14 +401,21 @@ class TestQuietHoursLedgerRecording:
         self, butler_dir: Path
     ) -> None:
         """An explicit owner recipient must deliver despite an active owner quiet window."""
+        import butlers.core.approvals_hooks as approval_hooks
+        from butlers.modules.approvals.email_guard import check_recipient
+
         mock_pool = _make_mock_pool(approvals_policy_row=_IN_WINDOW_QUIET_POLICY)
         patches = _patch_infra(mock_pool)
         daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
         daemon.switchboard_client = _make_mock_client()
+        owner_resolver = AsyncMock(return_value=MagicMock(roles=["owner"]))
 
-        with patch(
-            "butlers.identity.resolve_contact_by_channel",
-            new=AsyncMock(return_value=MagicMock(roles=["owner"])),
+        with (
+            patch.object(approval_hooks, "_recipient_guard_hook", new=check_recipient),
+            patch(
+                "butlers.identity.resolve_contact_by_channel",
+                new=owner_resolver,
+            ),
         ):
             result = await notify_fn(
                 channel="telegram",
@@ -419,6 +426,7 @@ class TestQuietHoursLedgerRecording:
             )
 
         assert result["status"] == "ok"
+        owner_resolver.assert_awaited_once_with(mock_pool, "telegram", "explicit-owner-chat")
         assert _deferred_notification_insert_calls(mock_pool) == []
         daemon.switchboard_client.call_tool.assert_awaited_once()
         notify_request = daemon.switchboard_client.call_tool.await_args.args[1]["notify_request"]
@@ -428,14 +436,19 @@ class TestQuietHoursLedgerRecording:
         self, butler_dir: Path
     ) -> None:
         """An explicit entity target must not be treated as an implicit owner default."""
+        import butlers.core.approvals_hooks as approval_hooks
+        from butlers.modules.approvals.email_guard import check_recipient
+
         mock_pool = _make_mock_pool(approvals_policy_row=_IN_WINDOW_QUIET_POLICY)
         patches = _patch_infra(mock_pool)
         daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
         daemon.switchboard_client = _make_mock_client()
         entity_id = uuid.UUID("00000000-0000-0000-0000-000000000042")
         entity_resolver = AsyncMock(return_value="entity-owner-chat")
+        owner_resolver = AsyncMock(return_value=MagicMock(roles=["owner"]))
 
         with (
+            patch.object(approval_hooks, "_recipient_guard_hook", new=check_recipient),
             patch.object(
                 daemon,
                 "_resolve_entity_channel_identifier",
@@ -443,7 +456,7 @@ class TestQuietHoursLedgerRecording:
             ),
             patch(
                 "butlers.identity.resolve_contact_by_channel",
-                new=AsyncMock(return_value=MagicMock(roles=["owner"])),
+                new=owner_resolver,
             ),
         ):
             result = await notify_fn(
@@ -460,6 +473,7 @@ class TestQuietHoursLedgerRecording:
             channel="telegram",
             msg_context=None,
         )
+        owner_resolver.assert_awaited_once_with(mock_pool, "telegram", "entity-owner-chat")
         assert _deferred_notification_insert_calls(mock_pool) == []
         daemon.switchboard_client.call_tool.assert_awaited_once()
         notify_request = daemon.switchboard_client.call_tool.await_args.args[1]["notify_request"]
@@ -479,7 +493,10 @@ class TestQuietHoursLedgerRecording:
             message="Acknowledged.",
             intent="reply",
             request_context={
+                "request_id": "01900000-0000-0000-0000-000000000000",
+                "source_channel": "telegram",
                 "source_endpoint_identity": "telegram:reply-target-chat",
+                "source_sender_identity": "owner",
                 "source_thread_identity": "telegram-thread-42",
             },
         )
