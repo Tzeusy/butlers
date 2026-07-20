@@ -26,6 +26,7 @@ _ACCOUNT_TYPE_LABELS: dict[str, tuple[str, ...]] = {
     "savings": ("savings",),
     "investment": ("investment",),
 }
+_MIN_FUZZY_ACCOUNT_LABEL_LENGTH = 4
 
 
 def _is_uuid(value: str) -> bool:
@@ -93,14 +94,16 @@ def _unique_account_match(rows: list[Any], raw: str) -> str | None:
 
     aliases = [(row, *_account_row_aliases(row)) for row in rows]
     match_groups = (
-        [row for row, direct, _, _ in aliases if normalized_raw in direct],
-        [row for row, _, composite, _ in aliases if normalized_raw in composite],
-        [
+        (row for row, direct, _, _ in aliases if normalized_raw in direct),
+        (row for row, _, composite, _ in aliases if normalized_raw in composite),
+    )
+    if len(normalized_raw) >= _MIN_FUZZY_ACCOUNT_LABEL_LENGTH:
+        fuzzy_matches = (
             row
             for row, _, _, fuzzy in aliases
             if any(normalized_raw in alias for alias in fuzzy if alias != normalized_raw)
-        ],
-    )
+        )
+        match_groups = (*match_groups, fuzzy_matches)
 
     for matches in match_groups:
         unique_matches = {str(row["id"]): row for row in matches}

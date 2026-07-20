@@ -49,3 +49,17 @@ def test_composite_label_rejects_ambiguous_accounts() -> None:
 
     with pytest.raises(ValueError, match="ambiguous"):
         _unique_account_match(rows, "example-bank-card")
+
+
+def test_short_fuzzy_partial_label_does_not_select_an_account() -> None:
+    """A short substring must not silently resolve a uniquely matching alias."""
+    row = _account_row(institution="Alpha Bank")
+
+    assert _unique_account_match([row], "a") is None
+
+
+def test_four_character_fuzzy_partial_label_matches_unique_account() -> None:
+    """A sufficiently specific partial label retains intended unique matching."""
+    row = _account_row(institution="Alpha Bank")
+
+    assert _unique_account_match([row], "alph") == str(row["id"])
