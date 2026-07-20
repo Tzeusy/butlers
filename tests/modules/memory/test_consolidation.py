@@ -87,6 +87,23 @@ class TestValidParsing:
         assert result.new_facts[0].valid_at == datetime.fromisoformat("2026-07-21T09:30:00+08:00")
         assert result.parse_errors == []
 
+    def test_temporal_fact_timestamp_with_surrounding_whitespace_is_parsed(self) -> None:
+        payload = {
+            "new_facts": [
+                {
+                    "subject": "s",
+                    "predicate": "event",
+                    "content": "c",
+                    "valid_at": " \t2026-07-21T01:30:00Z\n",
+                }
+            ],
+        }
+
+        result = parse(_json(payload))
+
+        assert result.new_facts[0].valid_at == datetime(2026, 7, 21, 1, 30, tzinfo=UTC)
+        assert result.parse_errors == []
+
     def test_temporal_updated_fact_is_rejected_as_new_observation(self) -> None:
         payload = {
             "updated_facts": [

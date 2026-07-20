@@ -141,7 +141,7 @@ def _parse_valid_at(
         parsed = None
     else:
         try:
-            parsed = datetime.fromisoformat(value)
+            parsed = datetime.fromisoformat(value.strip())
         except ValueError:
             parsed = None
     if parsed is None:
