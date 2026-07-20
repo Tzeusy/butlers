@@ -7,6 +7,11 @@ radar builds candidates without event metadata. As a result, date-only events
 and explicit butler-generated provider events can be interpreted as human
 meetings.
 
+The initial reversible-mutation implementation captures `all_day` in a
+pre-image, but the dashboard inverse builders and update PATCH model omit it.
+Undo can therefore send all-day midnight values back to Google as `dateTime`
+boundaries and alter provider event semantics.
+
 The completed `context-bus-producers` change owns the existence, writer, and
 TTL semantics of the general calendar producer. This change narrows only the
 truthfulness of the producer and radar inputs. The workspace remains the
@@ -18,6 +23,8 @@ faithful provider projection required by `module-calendar`.
 
 - Carry Google date-only provenance through parser and projection as
   `all_day=true`.
+- Preserve nullable all-day truth through undo so date-only events remain
+  date-only across update and delete inverses.
 - Give context and radar one deterministic, testable eligibility rule for
   explicit generated metadata and legacy all-day-shaped rows.
 - Preserve timed human event behavior when provenance is absent or malformed.
@@ -43,6 +50,13 @@ faithful provider projection required by `module-calendar`.
 true only when both provider boundaries are date-only, and
 `_project_provider_changes` forwards that value to the existing event upsert.
 This preserves a true provider fact rather than guessing from duration.
+
+The same fact is part of reversible action pre-state. The dashboard inverse
+builders pass it unchanged to `calendar_update_event` and
+`calendar_create_event`; the update model and Google PATCH serializer use it
+to emit `start.date`/`end.date` rather than `dateTime`. This correction leaves
+the existing `this`, `following`, and `series` recurrence-instance behavior
+unchanged.
 
 The >=24-hour local-midnight rule is a defensive read-time analysis heuristic,
 not a projection rewrite. It protects old rows without reclassifying legitimate
@@ -109,6 +123,9 @@ violate the bounded cleanup contract.
   remains fail-open/no-write.
 - [Source cleanup cascades] → Exact-key delete intentionally retains database
   cascade behavior, while focused tests protect valid source rows.
+- [All-day pre-state contains midnight datetimes] → The explicit `all_day`
+  truth selects Google date-only serialization, so undo does not reinterpret
+  those boundaries as timed values.
 
 ## Migration Plan
 

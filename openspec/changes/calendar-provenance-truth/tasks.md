@@ -27,3 +27,13 @@
   touched-file formatting/lint checks.
 - [x] 4.2 Review the diff for projection visibility, cascade preservation, and
   context-bus-producers compatibility; commit, push, and open the focused PR.
+
+## 5. All-day reversible-mutation fidelity correction
+
+- [x] 5.1 Carry nullable `all_day` through inverse update/create arguments,
+  the update tool/model/action/approval payloads, and Google PATCH
+  serialization without changing recurrence-instance semantics.
+- [x] 5.2 Add update-undo and delete-undo regressions covering `all_day=true`
+  plus date-only Google boundaries with no `dateTime` serialization.
+- [x] 5.3 Re-run strict OpenSpec validation and focused calendar verification
+  after the correction, then review the amended PR diff.

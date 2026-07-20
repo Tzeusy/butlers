@@ -62,6 +62,8 @@ from butlers.modules.calendar import (
     CalendarSyncState,
     CalendarSyncTokenExpiredError,
     CalendarTokenRefreshError,
+    _build_google_event_body,
+    _build_google_event_patch_body,
     _coerce_expires_in_seconds,
     _compute_free_slots,
     _extract_google_credential_value,
@@ -2535,6 +2537,68 @@ class TestGoogleDateOnlyProjection:
         )
 
         assert module._upsert_projection_event.await_args.kwargs["all_day"] is True
+
+    def test_google_all_day_create_body_uses_date_boundaries(self) -> None:
+        body = _build_google_event_body(
+            CalendarEventCreate(
+                title="Public holiday",
+                start_at=datetime(2026, 7, 1, 0, 0, tzinfo=UTC),
+                end_at=datetime(2026, 7, 2, 0, 0, tzinfo=UTC),
+                all_day=True,
+                timezone="Asia/Singapore",
+            )
+        )
+
+        assert body["start"] == {"date": "2026-07-01"}
+        assert body["end"] == {"date": "2026-07-02"}
+        assert "dateTime" not in body["start"]
+        assert "dateTime" not in body["end"]
+
+    def test_google_all_day_update_patch_uses_date_boundaries(self) -> None:
+        body = _build_google_event_patch_body(
+            CalendarEventUpdate(
+                start_at=datetime(2026, 7, 1, 0, 0, tzinfo=UTC),
+                end_at=datetime(2026, 7, 2, 0, 0, tzinfo=UTC),
+                all_day=True,
+                timezone="Asia/Singapore",
+            )
+        )
+
+        assert body["start"] == {"date": "2026-07-01"}
+        assert body["end"] == {"date": "2026-07-02"}
+        assert "dateTime" not in body["start"]
+        assert "dateTime" not in body["end"]
+
+    async def test_google_all_day_update_reuses_existing_date_boundaries(self) -> None:
+        provider = _google_provider()
+        existing = _make_event(
+            event_id="google-all-day-1",
+            title="Public holiday",
+            start_at=datetime(2026, 7, 1, 0, 0, tzinfo=UTC),
+            end_at=datetime(2026, 7, 2, 0, 0, tzinfo=UTC),
+            all_day=True,
+        )
+        provider.get_event = AsyncMock(return_value=existing)
+        provider._request_google_json = AsyncMock(
+            return_value={
+                "id": "google-all-day-1",
+                "summary": "Public holiday",
+                "start": {"date": "2026-07-01"},
+                "end": {"date": "2026-07-02"},
+            }
+        )
+
+        await provider.update_event(
+            calendar_id="primary",
+            event_id="google-all-day-1",
+            patch=CalendarEventUpdate(all_day=True),
+        )
+
+        body = provider._request_google_json.await_args.kwargs["json_body"]
+        assert body["start"] == {"date": "2026-07-01"}
+        assert body["end"] == {"date": "2026-07-02"}
+        assert "dateTime" not in body["start"]
+        assert "dateTime" not in body["end"]
 
 
 class TestEventToPayloadNewFields:
