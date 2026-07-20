@@ -151,6 +151,46 @@ async def test_measurement_types_observe_mixed_active_types_from_health_facts() 
     assert "butler_name" not in sql
 
 
+async def test_measurement_types_treats_overflowing_numeric_metadata_as_not_chartable() -> None:
+    """Pathological fact metadata must not turn the vocabulary endpoint into a 500."""
+    latest = datetime(2026, 7, 20, 1, 2, 3, tzinfo=UTC)
+    overflowing_value = 10**309
+    rows = [
+        _row(
+            {
+                "predicate": "measurement_overflowing_integer",
+                "latest_at": latest,
+                "metadata": {"value": overflowing_value},
+                "sample_count": 1,
+            }
+        ),
+        _row(
+            {
+                "predicate": "measurement_overflowing_numeric_text",
+                "latest_at": latest,
+                "metadata": {"value": str(overflowing_value)},
+                "sample_count": 1,
+            }
+        ),
+    ]
+    app, _, _ = _make_app(rows=rows)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/api/health/measurements/types")
+
+    assert response.status_code == 200
+    chart_eligibility = {
+        measurement["type"]: measurement["chart_eligible"]
+        for measurement in response.json()["types"]
+    }
+    assert chart_eligibility == {
+        "overflowing_integer": False,
+        "overflowing_numeric_text": False,
+    }
+
+
 async def test_measurement_types_returns_an_empty_vocabulary_when_no_active_facts() -> None:
     app, _, _ = _make_app(rows=[])
 

@@ -294,12 +294,10 @@ def _contains_chartable_number(value: object) -> bool:
     """Return whether a scalar or compound value contains a finite number."""
     if isinstance(value, bool):
         return False
-    if isinstance(value, (int, float)):
-        return isfinite(float(value))
-    if isinstance(value, str):
+    if isinstance(value, (int, float, str)):
         try:
             return isfinite(float(value))
-        except ValueError:
+        except (OverflowError, ValueError):
             return False
     if isinstance(value, dict):
         return any(_contains_chartable_number(child) for child in value.values())
