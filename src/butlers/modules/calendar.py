@@ -10531,6 +10531,7 @@ class CalendarModule(Module):
             "start_at": event.start_at.isoformat(),
             "end_at": event.end_at.isoformat(),
             "timezone": event.timezone,
+            "all_day": event.all_day,
             "description": event.description,
             "body": event.body,
             "location": event.location,

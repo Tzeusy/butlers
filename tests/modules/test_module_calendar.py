@@ -310,10 +310,14 @@ class TestModuleStartup:
 
 
 class TestCalendarReadTools:
-    async def test_list_and_get_tool_wiring(self):
+    async def test_list_and_get_tool_wiring_preserves_date_only_all_day_truth(self):
         event = _make_event(
             event_id="evt-123",
-            title="Dentist",
+            title="Public holiday",
+            start_at=datetime(2026, 7, 1, 0, 0, tzinfo=UTC),
+            end_at=datetime(2026, 7, 2, 0, 0, tzinfo=UTC),
+            timezone="Asia/Singapore",
+            all_day=True,
             attendees=[AttendeeInfo(email="alex@example.com")],
         )
         provider = _ProviderDouble(events=[event], event=event)
@@ -335,6 +339,8 @@ class TestCalendarReadTools:
         assert provider.get_calls[0]["event_id"] == "evt-123"
         assert list_result["events"][0]["event_id"] == "evt-123"
         assert get_result["event"]["event_id"] == "evt-123"
+        assert list_result["events"][0]["all_day"] is True
+        assert get_result["event"]["all_day"] is True
 
     async def test_calendar_id_override_applied(self):
         provider = _ProviderDouble()
@@ -415,6 +421,67 @@ class TestCalendarReadTools:
 
 
 class TestCalendarWriteTools:
+    async def test_create_event_response_preserves_date_only_all_day_truth(self):
+        created = _make_event(
+            event_id="date-only-create",
+            title="BUTLER: Public holiday",
+            start_at=datetime(2026, 7, 1, 0, 0, tzinfo=UTC),
+            end_at=datetime(2026, 7, 2, 0, 0, tzinfo=UTC),
+            timezone="Asia/Singapore",
+            all_day=True,
+            butler_generated=True,
+            butler_name="general",
+        )
+        provider = _ProviderDouble(event=created)
+        mcp = _StubMCP()
+        mod = CalendarModule()
+        mod._provider = provider
+        mod._resolved_calendar_id = "primary"
+        await mod.register_tools(
+            mcp=mcp,
+            config={"provider": "google", "calendar_id": "primary"},
+            db=SimpleNamespace(db_name="butlers", db_schema="general"),
+            butler_name="test-butler",
+        )
+
+        result = await mcp.tools["calendar_create_event"](
+            title="Public holiday",
+            start_at=datetime(2026, 7, 1, 0, 0, tzinfo=UTC),
+            end_at=datetime(2026, 7, 2, 0, 0, tzinfo=UTC),
+            all_day=True,
+            timezone="Asia/Singapore",
+        )
+
+        assert result["event"]["all_day"] is True
+
+    async def test_update_event_response_preserves_date_only_all_day_truth(self):
+        updated = _make_event(
+            event_id="date-only-update",
+            title="Public holiday (updated)",
+            start_at=datetime(2026, 7, 1, 0, 0, tzinfo=UTC),
+            end_at=datetime(2026, 7, 2, 0, 0, tzinfo=UTC),
+            timezone="Asia/Singapore",
+            all_day=True,
+        )
+        provider = _ProviderDouble(event=updated)
+        mcp = _StubMCP()
+        mod = CalendarModule()
+        mod._provider = provider
+        mod._resolved_calendar_id = "primary"
+        await mod.register_tools(
+            mcp=mcp,
+            config={"provider": "google", "calendar_id": "primary"},
+            db=SimpleNamespace(db_name="butlers", db_schema="general"),
+            butler_name="test-butler",
+        )
+
+        result = await mcp.tools["calendar_update_event"](
+            event_id="date-only-update",
+            title="Public holiday (updated)",
+        )
+
+        assert result["event"]["all_day"] is True
+
     async def test_create_event_adds_butler_prefix_and_metadata(self):
         created = _make_event(
             title="BUTLER: Team Sync", butler_generated=True, butler_name="general"
