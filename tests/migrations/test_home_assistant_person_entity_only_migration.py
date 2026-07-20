@@ -52,12 +52,27 @@ def test_migration_chain_and_guards() -> None:
     assert "column_name = 'entity_id'" in sql
     assert "column_name = 'contact_id'" in sql
     assert "is_nullable = 'NO'" in sql
+    assert "FROM pg_constraint AS fk" in sql
+    assert "fk.contype = 'f'" in sql
+    assert "fk.convalidated" in sql
+    assert "target_schema.nspname = 'public'" in sql
+    assert "target_table.relname = 'entities'" in sql
+    assert "source_column.attname = 'entity_id'" in sql
+    assert "target_column.attname = 'id'" in sql
     assert "ALTER COLUMN contact_id DROP NOT NULL" in sql
 
 
 @pytest.fixture(scope="module")
 def pre_repair_core_db_url(postgres_container) -> str:
     """A real contacts-absent core database immediately before core_179."""
+    db_url = create_migration_db(postgres_container, migration_db_name())
+    command.upgrade(_build_alembic_config(db_url, chains=["core"]), "core@core_178")
+    return db_url
+
+
+@pytest.fixture(scope="module")
+def pre_repair_core_without_entity_fk_db_url(postgres_container) -> str:
+    """A second pre-core_179 database for the malformed no-FK guard case."""
     db_url = create_migration_db(postgres_container, migration_db_name())
     command.upgrade(_build_alembic_config(db_url, chains=["core"]), "core@core_178")
     return db_url
@@ -174,5 +189,88 @@ async def test_contacts_absent_schema_preserves_legacy_rows_and_allows_entity_on
         assert legacy_row is not None
         assert legacy_row["contact_id"] == legacy_contact_id
         assert legacy_row["entity_id"] == legacy_entity_id
+    finally:
+        await pool.close()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _DOCKER_AVAILABLE, reason="Docker not available")
+@pytest.mark.asyncio(loop_scope="session")
+async def test_contacts_absent_without_entity_fk_keeps_legacy_contact_requirement(
+    pre_repair_core_without_entity_fk_db_url: str,
+) -> None:
+    """An arbitrary UUID cannot bypass the legacy anchor without an entity FK."""
+    pre_repair_pool = await asyncpg.create_pool(
+        pre_repair_core_without_entity_fk_db_url,
+        min_size=1,
+        max_size=2,
+    )
+    try:
+        assert await pre_repair_pool.fetchval("SELECT to_regclass('public.contacts')") is None
+        await pre_repair_pool.execute(
+            "ALTER TABLE connectors.home_assistant_persons "
+            "DROP CONSTRAINT home_assistant_persons_entity_id_fkey"
+        )
+        assert not await pre_repair_pool.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_constraint AS fk
+                JOIN pg_class AS source_table ON source_table.oid = fk.conrelid
+                JOIN pg_namespace AS source_schema ON source_schema.oid = source_table.relnamespace
+                JOIN pg_class AS target_table ON target_table.oid = fk.confrelid
+                JOIN pg_namespace AS target_schema ON target_schema.oid = target_table.relnamespace
+                JOIN pg_attribute AS source_column
+                  ON source_column.attrelid = fk.conrelid
+                 AND source_column.attnum = fk.conkey[1]
+                WHERE fk.contype = 'f'
+                  AND cardinality(fk.conkey) = 1
+                  AND source_schema.nspname = 'connectors'
+                  AND source_table.relname = 'home_assistant_persons'
+                  AND source_column.attname = 'entity_id'
+                  AND target_schema.nspname = 'public'
+                  AND target_table.relname = 'entities'
+            )
+            """
+        )
+    finally:
+        await pre_repair_pool.close()
+
+    command.upgrade(
+        _build_alembic_config(pre_repair_core_without_entity_fk_db_url, chains=["core"]),
+        "core@core_179",
+    )
+
+    pool = await asyncpg.create_pool(
+        pre_repair_core_without_entity_fk_db_url,
+        min_size=1,
+        max_size=2,
+    )
+    try:
+        assert (
+            await pool.fetchval(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_schema = 'connectors' "
+                "AND table_name = 'home_assistant_persons' "
+                "AND column_name = 'contact_id'"
+            )
+            == "NO"
+        )
+
+        arbitrary_entity_id = uuid4()
+        assert (
+            await pool.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM public.entities WHERE id = $1)",
+                arbitrary_entity_id,
+            )
+            is False
+        )
+        with pytest.raises(asyncpg.NotNullViolationError):
+            await pool.execute(
+                "INSERT INTO connectors.home_assistant_persons (ha_entity_id, entity_id) "
+                "VALUES ($1, $2)",
+                "person.no_entity_fk_migration_fixture",
+                arbitrary_entity_id,
+            )
     finally:
         await pool.close()

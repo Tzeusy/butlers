@@ -12,7 +12,8 @@ otherwise valid ``(ha_entity_id, entity_id)`` row.
 
 This forward-only repair changes no mapping data.  Existing legacy contact IDs
 remain intact; it only permits the canonical entity-only representation once
-the contacts table is gone.
+the contacts table is gone and ``entity_id`` has a verified direct foreign key
+to ``public.entities(id)``.
 """
 
 from __future__ import annotations
@@ -50,6 +51,39 @@ BEGIN
           AND column_name = 'entity_id'
     ) THEN
         RAISE NOTICE 'core_179: entity_id absent — skipping legacy constraint repair';
+        RETURN;
+    END IF;
+
+    -- A column alone is not an entity anchor.  Relax the legacy requirement
+    -- only after the direct, validated entity FK proves that a new mapping
+    -- cannot accept an arbitrary UUID.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint AS fk
+        JOIN pg_class AS source_table ON source_table.oid = fk.conrelid
+        JOIN pg_namespace AS source_schema ON source_schema.oid = source_table.relnamespace
+        JOIN pg_class AS target_table ON target_table.oid = fk.confrelid
+        JOIN pg_namespace AS target_schema ON target_schema.oid = target_table.relnamespace
+        JOIN pg_attribute AS source_column
+          ON source_column.attrelid = fk.conrelid
+         AND source_column.attnum = fk.conkey[1]
+        JOIN pg_attribute AS target_column
+          ON target_column.attrelid = fk.confrelid
+         AND target_column.attnum = fk.confkey[1]
+        WHERE fk.contype = 'f'
+          AND fk.convalidated
+          AND cardinality(fk.conkey) = 1
+          AND cardinality(fk.confkey) = 1
+          AND source_schema.nspname = 'connectors'
+          AND source_table.relname = 'home_assistant_persons'
+          AND source_column.attname = 'entity_id'
+          AND target_schema.nspname = 'public'
+          AND target_table.relname = 'entities'
+          AND target_column.attname = 'id'
+    ) THEN
+        RAISE NOTICE '%',
+            'core_179: entity_id lacks a validated FK to public.entities(id) — '
+            || 'skipping legacy constraint repair';
         RETURN;
     END IF;
 
