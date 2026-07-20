@@ -180,9 +180,9 @@ The page MUST contain:
   named compound exception: it MUST render `systolic` and `diastolic` as two lines. Another
   chart-eligible compound type MAY expose its raw data, but it MUST NOT guess a numeric key or invent
   a line series; it MUST state that no unambiguous series is available instead. The line palette MUST
-  be driven by the health hue token `--category-4` (bridged to a literal color for recharts via a read
+  be driven by the health hue token `--category-5` (bridged to a literal color for recharts via a read
   of the computed CSS variable), not a hardcoded hex. Where two lines are shown
-  (systolic/diastolic), the second line MUST use a distinguishable shade derived from `--category-4`
+  (systolic/diastolic), the second line MUST use a distinguishable shade derived from `--category-5`
   (e.g. a reduced-opacity or lightened variant of the same hue) so the two lines remain visually
   separable while staying within the single health hue.
 - The trend rule-list as the primary surface, sourced from `GET /api/health/measurements/trend`
