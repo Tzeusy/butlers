@@ -728,7 +728,7 @@ class TestFetchQaState:
         pool = AsyncMock()
 
         pool.fetchrow = AsyncMock(
-            return_value=_make_record({"status": "error", "error_detail": None})
+            return_value=_make_record({"status": "clean", "error_detail": None})
         )
         pool.fetch = AsyncMock(return_value=[_make_record({"status": "failed"}) for _ in range(5)])
         pool.fetchval = AsyncMock(return_value=0)
@@ -740,7 +740,7 @@ class TestFetchQaState:
         assert qa_state == {
             "circuit_breaker_tripped": True,
             "circuit_breaker_consecutive_failures": 5,
-            "last_patrol_failed": True,
+            "last_patrol_failed": False,
             "active_cases_now": 0,
         }
 
