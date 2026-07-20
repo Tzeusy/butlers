@@ -978,7 +978,7 @@ describe("DashboardPage -- OperationsNowList", () => {
             id: "p-dispatched",
             started_at: "2026-05-14T11:00:00.000Z",
             completed_at: "2026-05-14T11:01:00.000Z",
-            status: "completed",
+            status: "findings_dispatched",
             findings_count: 1,
             novel_count: 0,
             dispatched_count: 1,
