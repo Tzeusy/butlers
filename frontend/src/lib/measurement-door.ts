@@ -27,6 +27,19 @@ export function hasValidMeasurementDateBounds(since: string, until: string): boo
 }
 
 /**
+ * Raw URL state is query-safe only when its optional type is chart-eligible
+ * and its optional date bounds are real and ordered.
+ */
+export function hasValidMeasurementUrlState(
+  type: string,
+  since: string,
+  until: string,
+  chartEligibleTypes: ReadonlySet<string>,
+): boolean {
+  return (!type || chartEligibleTypes.has(type)) && hasValidMeasurementDateBounds(since, until);
+}
+
+/**
  * Narrow untrusted insight metadata to the only typed measurement-door contract
  * the dashboard may use for navigation.
  */

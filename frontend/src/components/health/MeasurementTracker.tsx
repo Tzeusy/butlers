@@ -41,6 +41,7 @@ import {
   useMeasurements,
   useMeasurementTypes,
 } from "@/hooks/use-health";
+import { hasValidMeasurementUrlState } from "@/lib/measurement-door";
 
 const PAGE_SIZE = 50;
 
@@ -232,6 +233,15 @@ export default function MeasurementTracker() {
     () => normaliseMeasurementTypes(measurementTypesData?.types ?? []),
     [measurementTypesData],
   );
+  const chartEligibleTypes = useMemo(
+    () =>
+      new Set(
+        measurementTypes
+          .filter((measurementType) => measurementType.chart_eligible)
+          .map((measurementType) => measurementType.type),
+      ),
+    [measurementTypes],
+  );
   const typeLabels = useMemo(
     () =>
       new Map(
@@ -270,6 +280,12 @@ export default function MeasurementTracker() {
     offset: page * PAGE_SIZE,
     limit: PAGE_SIZE,
   };
+  const readingsQueryEnabled = hasValidMeasurementUrlState(
+    typeFilter,
+    since,
+    until,
+    chartEligibleTypes,
+  );
 
   function setUrlFilter(key: "type" | "since" | "until", value: string) {
     // replace: true — since/until are native date inputs that can fire
@@ -287,7 +303,9 @@ export default function MeasurementTracker() {
     setPage(0);
   }
 
-  const { data, isLoading, isError, error, refetch } = useMeasurements(params);
+  const { data, isLoading, isError, error, refetch } = useMeasurements(params, {
+    enabled: readingsQueryEnabled,
+  });
 
   const measurements = data?.data ?? [];
   const total = data?.meta?.total ?? 0;

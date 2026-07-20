@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { SourceDegradedNote } from "@/components/ui/query-boundary";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Time } from "@/components/ui/time";
-import { hasValidMeasurementDateBounds } from "@/lib/measurement-door";
+import { hasValidMeasurementUrlState } from "@/lib/measurement-door";
 import { chartableMeasurementTypes } from "@/lib/measurement-vocabulary";
 import { cn } from "@/lib/utils";
 import {
@@ -158,6 +158,10 @@ export default function MeasurementChart() {
     () => chartableMeasurementTypes(measurementTypesData?.types ?? []),
     [measurementTypesData],
   );
+  const chartEligibleTypes = useMemo(
+    () => new Set(chartTypes.map((measurementType) => measurementType.type)),
+    [chartTypes],
+  );
   const requestedTypeInfo = useMemo<MeasurementTypeInfo | undefined>(
     () => chartTypes.find((measurementType) => measurementType.type === requestedType),
     [chartTypes, requestedType],
@@ -169,9 +173,12 @@ export default function MeasurementChart() {
   const activeType = activeTypeInfo?.type ?? "";
   const typeLabel = (activeTypeInfo?.label ?? activeType) || "measurement";
   const vocabularyReady = !measurementTypesLoading && !measurementTypesError;
-  const invalidChartUrl =
-    (Boolean(requestedType) && !requestedTypeInfo) ||
-    !hasValidMeasurementDateBounds(since, until);
+  const invalidChartUrl = !hasValidMeasurementUrlState(
+    requestedType,
+    since,
+    until,
+    chartEligibleTypes,
+  );
   const chartQueryEnabled = vocabularyReady && !!activeType && !invalidChartUrl;
   const isBP = activeType === "blood_pressure";
   // The trend endpoint aggregates metadata.value as a scalar float. Compound
