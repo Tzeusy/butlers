@@ -145,10 +145,12 @@ function makeSchedule(overrides: Partial<Schedule> = {}): Schedule {
   }
 }
 
-function mockSchedules(schedules: Schedule[]) {
-  vi.mocked(useSchedules).mockReturnValue({
+function mockSchedules(schedules: Schedule[]): ReturnType<typeof useSchedules> {
+  const response = {
     data: { data: schedules },
-  } as unknown as ReturnType<typeof useSchedules>)
+  } as unknown as ReturnType<typeof useSchedules>
+  vi.mocked(useSchedules).mockReturnValue(response)
+  return response
 }
 
 // ---------------------------------------------------------------------------
@@ -513,8 +515,8 @@ describe("Scenario G: truthful schedule header facts", () => {
     expect(screen.queryByRole("link", { name: /Open schedules/ })).toBeNull()
   })
 
-  it("G5: crosses a cached future schedule into overdue on the minute ticker", () => {
-    mockSchedules([
+  it("G5: crosses cached schedule data into overdue on the minute ticker without a query update", () => {
+    const cachedResponse = mockSchedules([
       makeSchedule({
         id: "boundary",
         name: "Minute boundary review",
@@ -527,16 +529,20 @@ describe("Scenario G: truthful schedule header facts", () => {
     const facts = screen.getByTestId("butler-header-facts")
     expect(facts.textContent).toContain("next in 1m")
     expect(screen.queryByRole("link", { name: /Open schedules/ })).toBeNull()
+    const callsBeforeTick = vi.mocked(useSchedules).mock.calls.length
 
     act(() => {
       vi.advanceTimersByTime(60_000)
     })
 
+    expect(vi.mocked(useSchedules)).toHaveBeenCalledTimes(callsBeforeTick + 1)
+    expect(vi.mocked(useSchedules)).toHaveLastReturnedWith(cachedResponse)
     expect(screen.getByRole("link", {
       name: "Overdue Minute boundary review, now. Open schedules.",
     })).toBeDefined()
     expect(facts.textContent).toContain("overdue: Minute boundary review now")
     expect(facts.textContent).not.toContain("next in 1m")
+    expect(facts.textContent).toContain("next --")
   })
 
   it("G6: keeps the overdue link age on the header clock between ticker updates", () => {
@@ -565,18 +571,30 @@ describe("Scenario G: truthful schedule header facts", () => {
     }).textContent).toContain("1m ago")
   })
 
-  it("G7: selects equal schedule instants by name and then id", () => {
-    const facts = getScheduleHeaderFacts([
-      makeSchedule({
-        id: "z-overdue",
-        name: "Alpha overdue",
-        next_run_at: "2026-07-20T11:00:00.000Z",
-      }),
+  it("G7: renders the name-stable overdue fact when equal instants arrive in reverse order", () => {
+    mockSchedules([
       makeSchedule({
         id: "a-overdue",
         name: "Bravo overdue",
         next_run_at: "2026-07-20T11:00:00.000Z",
       }),
+      makeSchedule({
+        id: "z-overdue",
+        name: "Alpha overdue",
+        next_run_at: "2026-07-20T11:00:00.000Z",
+      }),
+    ])
+
+    renderHeader()
+
+    expect(screen.getByRole("link", {
+      name: "Overdue Alpha overdue, 1h ago. Open schedules.",
+    })).toBeDefined()
+    expect(screen.getByTestId("butler-header-facts").textContent).not.toContain("Bravo overdue")
+  })
+
+  it("G8: selects equal future instants by id independent of source order", () => {
+    const facts = getScheduleHeaderFacts([
       makeSchedule({
         id: "z-next",
         name: "Shared next",
@@ -589,7 +607,7 @@ describe("Scenario G: truthful schedule header facts", () => {
       }),
     ], NOW.getTime())
 
-    expect(facts.overdue).toMatchObject({ id: "z-overdue", name: "Alpha overdue" })
+    expect(facts.overdue).toBeNull()
     expect(facts.next).toMatchObject({ id: "a-next", name: "Shared next" })
   })
 })
