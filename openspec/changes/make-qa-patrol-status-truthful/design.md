@@ -20,7 +20,7 @@ and permits no new motion for this interaction.
   request-filter validation.
 - Preserve read-only visibility of corrupt or future persisted values so the UI can
   signal them instead of turning a response into an opaque server error.
-- Give overview and detail consumers one total frontend presentation function with
+- Give every patrol-status consumer one total frontend presentation function with
   accessible labels and a fail-closed unknown fallback.
 - Keep polling and concurrent patrol writes presentation-only: the client reads the
   latest returned row and performs no patrol mutation.
@@ -53,11 +53,12 @@ not fail response serialisation and disappear behind a generic request error.
 
 ### Frontend presentation is one total pure mapping
 
-Introduce a frontend QA-patrol-status helper used by both `QaOverviewPage` and
-`QaPatrolDetailPage`. The API types distinguish the known filter vocabulary from a
-read status that can also contain an arbitrary server value. The helper returns a
-human label and dot token for every known value, plus a destructive `unknown patrol
-status` fallback for every other string.
+Introduce a frontend QA-patrol-status helper used by `QaOverviewPage`,
+`QaPatrolDetailPage`, and the QA butler detail's patrol cadence stripe. The API types
+distinguish the known filter vocabulary from a read status that can also contain an
+arbitrary server value. The helper returns a human label and semantic token for every
+known value, plus a destructive `unknown patrol status` fallback for every other
+string.
 
 The overview retains its single dot affordance visually, but each patrol link gets
 an accessible name using the human label and its tooltip uses the same label. The

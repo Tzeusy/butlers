@@ -16,7 +16,8 @@
 - [x] 2.2 Add failing table-driven Vitest coverage for every canonical status and an
   unknown value in the patrol-detail caption, asserting the same human label.
 - [x] 2.3 Add typed frontend status/filter types and one pure total presentation
-  mapping; use it from both QA pages without adding motion or overview actions.
+  mapping; use it from the overview, patrol detail, and QA butler patrol cadence
+  stripe without adding motion or overview actions.
 
 ## 3. Verification and handoff
 

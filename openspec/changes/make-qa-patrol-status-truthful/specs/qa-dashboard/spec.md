@@ -52,6 +52,17 @@ change SHALL NOT add a status value or alter how the QA patrol loop chooses one.
 - **AND** an unknown persisted value renders `unknown patrol status`, not the raw
   storage identifier or a clean label
 
+#### Scenario: QA butler patrol cadence uses the total status presentation
+
+- **WHEN** an operator opens the QA butler detail's recent-patrol cadence stripe
+- **THEN** each status badge renders the same human-readable label as the shared
+  patrol-status mapping for every canonical value
+- **AND** only `clean` is green; `findings_dispatched` and `suppressed` use amber
+  attention semantics; `error` and an unknown persisted value are destructive; and
+  `running` and `skipped_overlap` remain explicit muted non-success states
+- **AND** an unknown persisted value renders `unknown patrol status`, never its raw
+  storage identifier or a healthy presentation
+
 #### Scenario: Status meaning is accessible without motion
 
 - **WHEN** an operator reaches a recent-patrol link by keyboard or assistive

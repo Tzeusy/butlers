@@ -32,7 +32,8 @@ None.
 
 - Backend: `src/butlers/modules/qa/__init__.py`, the shared QA status vocabulary, and
   `src/butlers/api/routers/qa.py`.
-- Frontend: QA API types, patrol-list filter typing, and the overview/detail patrol renderers.
+- Frontend: QA API types, patrol-list filter typing, and the overview, detail, and QA butler
+  patrol renderers.
 - Tests: QA API, module, and Vitest page coverage.
 - No database migration, patrol-dispatch policy change, new patrol status, overview action, or
   case-rail change is introduced.
