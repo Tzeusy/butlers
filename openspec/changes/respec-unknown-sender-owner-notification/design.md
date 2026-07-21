@@ -45,10 +45,10 @@ name `create_temp_contact()`.
 The notification is deduplicated per newly surfaced sender identity and must
 not repeat for later messages that resolve to the same entity. Delivery failure
 must not block routing or expose raw inbound message content; a failed attempt
-is still sealed against notification storms. The notice may include the safe
-display label and source channel needed to review the transitory entity, but
-must direct the owner to the unidentified-entity review flow rather than a
-contact-table record.
+is still sealed against notification storms. The notice must identify the
+sender only with the safe display label and source channel needed to review the
+transitory entity, and must direct the owner to the unidentified-entity review
+flow rather than a contact-table record.
 
 ### Runtime activation stays separate
 
