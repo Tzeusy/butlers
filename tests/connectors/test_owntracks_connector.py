@@ -90,6 +90,25 @@ class _PurgePool:
         return _PurgeAcquire(self._connection)
 
 
+class _ChangingFailureStreakRetention(OwnTracksRetention):
+    """Retention fixture that simulates a concurrent streak update between reads."""
+
+    def __init__(self) -> None:
+        self._failure_streak_values = iter((1, 2, 3))
+        self._failure_streak_reads = 0
+
+    def __getattribute__(self, name: str) -> object:
+        if name == "_consecutive_failures":
+            reads = object.__getattribute__(self, "_failure_streak_reads")
+            object.__setattr__(self, "_failure_streak_reads", reads + 1)
+            return next(object.__getattribute__(self, "_failure_streak_values"))
+        return object.__getattribute__(self, name)
+
+    @property
+    def failure_streak_reads(self) -> int:
+        return self._failure_streak_reads
+
+
 def _make_retention(*outcomes: str | Exception) -> OwnTracksRetention:
     return OwnTracksRetention(
         OwnTracksRetentionConfig(retention_days=30),
@@ -175,6 +194,16 @@ async def test_retention_purge_failures_stay_retryable_and_degrade_connector_hea
         "degraded",
         "OwnTracks retention purge has failed 2 consecutive times",
     )
+
+
+def test_retention_health_diagnostic_uses_one_failure_streak_snapshot() -> None:
+    retention = _ChangingFailureStreakRetention()
+
+    assert (
+        retention.health_degradation_message
+        == "OwnTracks retention purge has failed 1 consecutive time"
+    )
+    assert retention.failure_streak_reads == 1
 
 
 async def test_successful_retention_purge_resets_degraded_connector_health() -> None:

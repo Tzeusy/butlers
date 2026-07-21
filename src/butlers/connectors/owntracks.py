@@ -475,13 +475,11 @@ class OwnTracksRetention:
     @property
     def health_degradation_message(self) -> str | None:
         """Return a sanitized health diagnostic for consecutive purge failures."""
-        if self._consecutive_failures == 0:
+        failures = self._consecutive_failures
+        if failures == 0:
             return None
-        occurrence = "time" if self._consecutive_failures == 1 else "times"
-        return (
-            "OwnTracks retention purge has failed "
-            f"{self._consecutive_failures} consecutive {occurrence}"
-        )
+        occurrence = "time" if failures == 1 else "times"
+        return f"OwnTracks retention purge has failed {failures} consecutive {occurrence}"
 
     def start(self) -> None:
         """Schedule the background purge loop as an asyncio task.
