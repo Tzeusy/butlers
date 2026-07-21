@@ -9,10 +9,11 @@ all-clear.
 
 ## What Changes
 
-- Define a bootstrap-only `CREATEDB` boundary: the migration/connecting role
-  may receive the capability during database bootstrap, while every butler and
-  connector runtime role remains `NOCREATEDB` and no API exposes a privileged
-  database credential.
+- Replace the dashboard-api's shared database credential for restore work with
+  a dedicated restore-drill executor. Only that executor receives a distinct
+  `LOGIN CREATEDB` role through a file-backed orchestration secret; the shared
+  `POSTGRES_USER`, every butler/connector role, and the dashboard remain
+  `NOCREATEDB`.
 - Define the scratch-database restore lifecycle, its no-live-mutation
   prerequisite, and the current single-deployment guard; a future
   multi-replica deployment must add a cross-process concurrency guard before
@@ -35,8 +36,9 @@ None.
 
 ### Modified Capabilities
 
-- `database-security`: add the least-privilege bootstrap boundary for a
-  restore-drill database-creation capability.
+- `database-security`: define the purpose-bound executor credential, its
+  explicitly accepted privileged-runtime threat boundary, and the unchanged
+  least-privilege boundary for dashboard, butler, and connector roles.
 - `deployment-hardening`: make the documented restore path operationally safe,
   lifecycle-bounded, and result-aware.
 - `system-overview-page`: expose truthful restore result provenance, cadence,
@@ -48,9 +50,12 @@ None.
 
 ## Impact
 
-Future implementation will touch bootstrap SQL, the restore-drill job and its
+Future implementation will touch privileged bootstrap provisioning, a dedicated
+executor/service with a private secret mount, the restore-drill job and its
 audit/attention records, the system API and frontend types/tile, operations
-documentation, and focused unit, API/frontend, migration/role, and Docker
-testcontainer tests. It does not introduce a live drill, alter a live role,
-deploy or restart services, perform manual data repair, or broaden database
-privileges at runtime.
+documentation, and focused unit, API/frontend, migration/role, compose, and
+Docker testcontainer tests. This planning-only change does not execute a live
+drill, alter a live role, deploy or restart services, or perform manual data
+repair. The eventual implementation must not widen the dashboard, butler, or
+connector runtime credentials; its sole new `CREATEDB` capability is the
+separately isolated executor.

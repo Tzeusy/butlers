@@ -9,13 +9,17 @@ treats every recorded outcome alike for the seven-day cadence. Consequently a
 the owner has no durable attention event or failure age.
 
 The existing role model is schema-scoped at runtime (`SET ROLE
-butler_<schema>_rw` and `connector_writer`) but has a bootstrap/migration
-connecting role controlled by `scripts/init-db.sql`. A restore drill needs
-database creation through that bootstrap-managed connection, not a privilege
-grant to a runtime role. RFC 0006 and the security doctrine require this
-least-privilege distinction; RFC 0005 requires structured failure evidence
-without secrets or high-cardinality metric labels; RFC 0007 requires the
-dashboard to distinguish unavailable information from a truthful empty state.
+butler_<schema>_rw` and `connector_writer`), while the dashboard-api loop calls
+`db_params_from_env()` before it launches `createdb`/`psql` subprocesses.
+Compose supplies that process with the shared `POSTGRES_USER`. Therefore
+granting `CREATEDB` to the migration/connecting user would also give the
+always-on dashboard process a `CREATEDB`-capable subprocess: `SET ROLE` scopes
+its asyncpg connections, not the subprocess credential. This change rejects
+that false bootstrap-only boundary. RFC 0006 and the security doctrine require
+a real least-privilege distinction; RFC 0005 requires structured failure
+evidence without secrets or high-cardinality metric labels; RFC 0007 requires
+the dashboard to distinguish unavailable information from a truthful empty
+state.
 
 ## Goals / Non-Goals
 
@@ -23,8 +27,9 @@ dashboard to distinguish unavailable information from a truthful empty state.
 
 - Make the restore drill a bounded proof that never writes to the live
   application database.
-- Preserve runtime-role least privilege while establishing the bootstrap-only
-  `CREATEDB` prerequisite.
+- Preserve dashboard, butler, and connector least privilege through a distinct,
+  isolated restore-drill credential and execution boundary rather than a
+  bootstrap-only grant to their shared connecting user.
 - Make missing, failed, passed, and recovered drill states truthful in
   scheduling, stored provenance, the system API, and the dashboard.
 - Require real PostgreSQL client/testcontainer proof of success, permission
@@ -36,27 +41,46 @@ dashboard to distinguish unavailable information from a truthful empty state.
   service, or repairing data by hand.
 - Adding an API that reveals a privileged database credential or a manual
   operator workaround that creates the scratch database.
+- Retaining restore-drill execution in dashboard-api or mounting its credential
+  through shared `POSTGRES_*`/`DATABASE_URL` runtime configuration.
 - Sending an owner notification, changing the normal backup cadence, or adding
   multi-replica restore-drill execution in this change.
 
 ## Decisions
 
-### 1. Bootstrap owns `CREATEDB`; runtime roles never do
+### 1. A dedicated executor owns a purpose-bound `CREATEDB` credential
 
-`scripts/init-db.sql` is the sole managed bootstrap path that may grant
-`CREATEDB`, and it grants it only to the configured migration/connecting role
-used by the restore command. Every `butler_*_rw` role and `connector_writer`
-must remain `NOCREATEDB`; no dashboard route, runtime configuration, or
-credential surface may provide a substitute privileged connection. This keeps
-the capability at the owner-controlled bootstrap boundary and preserves the
-`SET ROLE` isolation contract.
+The current dashboard loop cannot safely use a `CREATEDB` migration/connecting
+user: it resolves the shared `POSTGRES_USER` through `db_params_from_env()` and
+passes it to CLI subprocesses. The future implementation therefore moves both
+due-time execution and the scratch lifecycle into a dedicated deterministic
+restore-drill executor. Dashboard-api only reads the recorded result through
+its ordinary pool; it never receives, resolves, or launches a process with the
+executor credential.
 
-The alternative of granting `CREATEDB` to a runtime role would make every
-runtime connection able to create arbitrary databases. The alternative of
-asking an operator to run `ALTER ROLE` or pre-create a scratch database during
-an incident turns a recovery proof into an untracked live mutation. Both are
-rejected. The operations guide must state the bootstrap prerequisite and direct
-operators to the managed bootstrap process, not an ad hoc SQL workaround.
+Privileged bootstrap provisions one distinct executor login with `LOGIN`,
+`CREATEDB`, `NOINHERIT`, `NOSUPERUSER`, `NOCREATEROLE`, `NOREPLICATION`, and no
+membership in a butler, connector, or migration role. The password is a Tier-0
+deployment secret mounted as a file only in that executor; it is never placed
+in git, a dashboard/API response, `DATABASE_URL`, or the shared
+`POSTGRES_USER`/`POSTGRES_PASSWORD` environment anchor. The executor receives
+only non-secret endpoint configuration plus that secret file, uses an explicit
+maintenance database for `createdb`/`dropdb`, and has no general live-schema
+grants. Its only live-database interface is a narrow migration-owned,
+fixed-`search_path` security-definer read/write surface for restore-drill
+schedule state, result persistence, and truthful attention provenance.
+
+This is deliberately a privileged *runtime* boundary, not a bootstrap-only
+claim: compromise of the executor can create scratch databases and read the
+backup artifact required for recovery proof. The containment is explicit: the
+executor is the sole service with that credential, joins only the `db` network,
+mounts backups read-only, has no listener, Docker socket, `backend`, `frontend`,
+or `egress` membership, and runs no LLM session. The dashboard, butlers, and
+connectors remain `NOCREATEDB`; their shared credential is tested as unable to
+create a scratch database. Granting `CREATEDB` to that shared user is rejected
+because `SET ROLE` cannot constrain its subprocesses. Ad hoc `ALTER ROLE` or a
+manually pre-created scratch database are rejected because they turn a recovery
+proof into an untracked live mutation.
 
 ### 2. The scratch database has an explicit, single-executor lifecycle
 
@@ -72,11 +96,11 @@ distinguishes the lifecycle stage (`pre_cleanup`, `create`, `backup_read`,
 or `scratch_cleanup_failed`.
 
 The fixed scratch name is retained because it lets the next attempt recover a
-leftover from a killed prior attempt. This release assumes exactly one
-dashboard-api restore-drill executor. Before any deployment can run more than
-one executor, it must add a cross-process exclusive guard (for example a
-database advisory lock) around the whole lifecycle; no best-effort timing
-assumption is sufficient.
+leftover from a killed prior attempt. This release assumes exactly one dedicated
+restore-drill executor. Before any deployment can run more than one executor,
+it must add a cross-process exclusive guard (for example a database advisory
+lock) around the whole lifecycle; no best-effort timing assumption is
+sufficient.
 
 ### 3. Persisted result fields drive cadence and the failure epoch
 
@@ -133,9 +157,10 @@ depending on color alone.
 
 ## Risks / Trade-offs
 
-- **Bootstrap privilege is broader than a runtime role** → Restrict it to the
-  existing bootstrap/migration connecting role, assert all runtime roles are
-  `NOCREATEDB`, and expose no new credential or API path.
+- **A recovery executor is a deliberately privileged runtime** → Isolate its
+  distinct `CREATEDB` login and file-backed secret to the db-only deterministic
+  executor, give it only the narrow restore-drill database interface, and assert
+  that dashboard, butler, and connector credentials remain `NOCREATEDB`.
 - **A fixed scratch name collides across replicas** → Keep the current
   single-executor assumption explicit and block multi-replica enablement until
   a cross-process lock is implemented.
@@ -152,21 +177,29 @@ depending on color alone.
 
 ## Migration Plan
 
-1. Update the idempotent bootstrap SQL and its role-boundary tests so the
-   migration/connecting role receives `CREATEDB` while runtime roles remain
-   `NOCREATEDB`; update the operator procedure before enabling the repair.
-2. Add a core migration that expands the `attention_ledger` source vocabulary
-   to `restore_drill`, preserving existing rows and targeted grants. The
-   restore result uses existing audit metadata, so no data backfill or live
-   repair is needed.
-3. Ship structured result writing, result-aware scheduling, attention recording,
-   API/types/UI updates, and focused tests together after the prerequisite
-   migration is available.
-4. Roll back application code without restoring a dump into the live database.
+1. Add the checked-in privileged bootstrap provisioner and idempotent bootstrap
+   SQL support for the distinct executor login, its file-backed deployment
+   secret contract, and its narrow restore-drill database interface. The shared
+   migration/connecting user and all runtime roles remain `NOCREATEDB`; update
+   the operator procedure before enabling the executor.
+2. Add `core_180_restore_drill_executor_contract.py` from the current
+   `core_179` head. It expands the `attention_ledger` source vocabulary to
+   `restore_drill`, preserves existing rows, and creates/grants the bounded
+   restore-drill persistence interface. Immediately before creating that
+   migration, rebase and inspect the core chain: use its sole current head as
+   `down_revision` and the next unclaimed `core_<n>` identifier. If the chain
+   has advanced or has multiple heads, update/reconcile it first; never create a
+   duplicate revision ID or attach to a stale head.
+3. Ship the isolated executor/service, structured result writing,
+   result-aware scheduling, attention recording, API/types/UI updates, and
+   focused tests together after the prerequisite migration is available.
+4. Roll back application code and the executor deployment without restoring a dump into the live database.
    If the source-constraint migration is downgraded, remove only
    `source="restore_drill"` attention observations before narrowing the
-   constraint; retain audit results and backup artifacts. Do not issue ad hoc
-   `ALTER ROLE` statements or manually delete failed-drill evidence as rollback.
+   constraint and revoke the executor's bounded interface before removing its
+   service/secret mount; retain audit results and backup artifacts. Do not issue
+   ad hoc `ALTER ROLE` statements or manually delete failed-drill evidence as
+   rollback.
 
 ## Open Questions
 

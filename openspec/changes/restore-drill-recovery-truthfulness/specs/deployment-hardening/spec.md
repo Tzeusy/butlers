@@ -8,9 +8,9 @@ state without mutating the live application database. `deploy/backup/pg_dump.sh`
 produces timestamped dumps, `scripts/pg_restore.sh` restores only to a named
 scratch database, and `scripts/pg_verify_restore.sh` validates schema, table,
 and row-count expectations; `docs/operations/backup-restore.md` SHALL document
-the bootstrap-managed `CREATEDB` prerequisite, the scratch lifecycle, and
-rollback boundaries. Restore verification protects the owner's irreplaceable
-personal data against corruption or accidental loss.
+the isolated restore-drill executor, its file-secret boundary, the scratch
+lifecycle, and rollback boundaries. Restore verification protects the owner's
+irreplaceable personal data against corruption or accidental loss.
 
 ID: REQ-deployment-hardening-007
 Source: Non-Negotiable Rule 1; RFC 0006 § Database Connection Scoping; RFC 0008 § Invariants
@@ -25,13 +25,25 @@ Scope: v1-mandatory
 - **AND** the procedure includes a verification step proving the restored data
   is intact
 
-#### Scenario: Bootstrap prerequisite is available without a live workaround
+#### Scenario: Isolated executor prerequisite is available without a live workaround
 - **WHEN** the restore-drill command needs to create its scratch database
-- **THEN** the configured migration/connecting role has received `CREATEDB`
-  through the managed bootstrap path before the drill is enabled
+- **THEN** the dedicated executor has received its distinct `CREATEDB`
+  credential through the managed bootstrap and file-secret path before the
+  drill is enabled
+- **AND** dashboard-api and every shared `POSTGRES_USER` consumer remain
+  `NOCREATEDB` and cannot launch the privileged command path
 - **AND** the operations documentation does not instruct an operator to issue an
   ad hoc `ALTER ROLE`, manually pre-create the scratch database, or mutate the
   live application database to make a drill pass
+
+#### Scenario: Executor deployment boundary stays narrow
+- **WHEN** the restore-drill executor is deployed
+- **THEN** it joins only the `db` network, has a read-only backup mount and no
+  listener, Docker socket, `backend`, `frontend`, or `egress` access
+- **AND** it receives its credential only through the private file-secret mount,
+  not the shared `POSTGRES_*`/`DATABASE_URL` environment used by dashboard-api
+- **AND** dashboard-api reads durable results but does not schedule or execute
+  the scratch lifecycle
 
 #### Scenario: Scratch lifecycle never targets live application data
 - **WHEN** a scheduled or documented restore drill runs with an available backup
@@ -65,8 +77,9 @@ Scope: v1-mandatory
 
 - Non-Negotiable Rule 1 (`about/heart-and-soul/vision.md`): protecting the
   owner-controlled data plane requires demonstrable recovery.
-- `about/heart-and-soul/security.md` § Schema Isolation: privileged bootstrap
-  and runtime roles have distinct trust boundaries.
+- `about/heart-and-soul/security.md` § Schema Isolation: the purpose-bound
+  executor is an explicit privileged-runtime boundary; dashboard and normal
+  runtime roles remain least-privilege.
 - RFC 0006 § Database Connection Scoping: role privileges remain least-privilege
   outside the bootstrap boundary.
 - RFC 0008 § Invariants: deployment operations retain explicit, bounded
