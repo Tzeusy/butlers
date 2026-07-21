@@ -1068,6 +1068,29 @@ async def test_last_scope_loss_replaces_account_heartbeat_with_degraded_heartbea
             await connector._degraded_heartbeat.stop()
 
 
+@pytest.mark.asyncio
+async def test_initial_degraded_heartbeat_failure_is_non_fatal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An immediate degraded heartbeat failure must not escape account resolution."""
+    connector = _make_connector()
+    connector._running = True
+    send_heartbeat = AsyncMock(side_effect=RuntimeError("heartbeat failed"))
+    monkeypatch.setattr(
+        "butlers.connectors.google_health.ConnectorHeartbeat._send_heartbeat",
+        send_heartbeat,
+    )
+
+    try:
+        await connector._ensure_degraded_heartbeat_running()
+
+        assert connector._degraded_heartbeat is not None
+        send_heartbeat.assert_awaited_once()
+    finally:
+        if connector._degraded_heartbeat is not None:
+            await connector._degraded_heartbeat.stop()
+
+
 # ---------------------------------------------------------------------------
 # Per-account poll sets + token cache + heartbeat [bu-91zdb.2]
 # ---------------------------------------------------------------------------

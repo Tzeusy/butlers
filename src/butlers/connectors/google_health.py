@@ -1183,7 +1183,13 @@ class GoogleHealthConnector:
 
     async def _ensure_degraded_heartbeat_running(self) -> None:
         """Start a degraded heartbeat after the last eligible account disappears."""
-        if self._accounts or self._degraded_heartbeat is not None or not self._running:
+        if self._accounts:
+            if self._degraded_heartbeat is not None:
+                await self._degraded_heartbeat.stop()
+                self._degraded_heartbeat = None
+            return
+
+        if self._degraded_heartbeat is not None or not self._running:
             return
 
         identity_label = self._endpoint_identity or "google_health:degraded"
@@ -1203,7 +1209,10 @@ class GoogleHealthConnector:
         self._degraded_heartbeat.start()
         # Do not wait for the normal heartbeat interval: replacing the final
         # per-account heartbeat immediately prevents a false offline window.
-        await self._degraded_heartbeat._send_heartbeat()
+        try:
+            await self._degraded_heartbeat._send_heartbeat()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("GoogleHealthConnector: initial degraded heartbeat failed: %s", exc)
 
     def _post_identity_init(self) -> None:
         """Initialise metrics/policy/filter-buffer and spawn per-account heartbeats.
