@@ -12,10 +12,11 @@ transitory `public.entities` rows marked `metadata.unidentified = true`.
   dependency.
 - Point Switchboard's unknown-sender identity-resolution scenario at the
   entity-first convention instead of the archived `contacts-identity` spec.
-- Document the current activation gap: the helper has entity-only creation and
-  one-time notification logic, while the fleet Switchboard wiring currently
-  does not enable identity resolution or provide the owner-notification
-  callback.
+- Document the current activation gap: the helper creates an entity-only
+  sender, but its inactive notification branch still uses a legacy contacts
+  target and does not provide durable, race-safe deduplication; fleet
+  Switchboard wiring also does not enable identity resolution or provide the
+  owner-notification callback.
 
 ## Capabilities
 
@@ -38,5 +39,6 @@ None.
   wired today.
 - No migration, table restoration, API change, or runtime code change is in
   this slice. A later implementation change must enable identity resolution in
-  the Switchboard pipeline and route owner delivery through the standard
-  notification boundary.
+  the Switchboard pipeline, route owner delivery through the standard
+  notification boundary, replace the legacy contacts target, and establish
+  durable, race-safe notification deduplication.

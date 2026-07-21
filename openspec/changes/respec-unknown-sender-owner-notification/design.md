@@ -6,11 +6,14 @@ instead make `public.entities` plus active `relationship.entity_facts` the
 identity model: an unresolved sender is represented by a transitory entity
 whose `metadata.unidentified` flag makes it reviewable.
 
-The helper already creates only that entity and contains an idempotent
-owner-notification attempt. It is not fleet-active: `wire_pipelines()` leaves
-`enable_identity_resolution` at its default `False` and supplies no
-`notify_owner_fn`. This change records the desired contract and that runtime
-gap without adding a second implementation track.
+The helper creates only that entity, but its inactive owner-notification branch
+still builds a legacy contacts target. Its best-effort `butler_state` read/write
+handling neither persists failures nor atomically claims a sender before
+delivery, so it is not durable or race-safe deduplication. It is not
+fleet-active: `wire_pipelines()` leaves `enable_identity_resolution` at its
+default `False` and supplies no `notify_owner_fn`. This change records the
+desired contract and that runtime gap without adding a second implementation
+track.
 
 ## Goals / Non-Goals
 
@@ -42,21 +45,24 @@ name `create_temp_contact()`.
 
 ### Notification is one best-effort owner-facing attempt, not a routing gate
 
-The notification is deduplicated per newly surfaced sender identity and must
-not repeat for later messages that resolve to the same entity. Delivery failure
-must not block routing or expose raw inbound message content; a failed attempt
-is still sealed against notification storms. The notice must identify the
-sender only with the safe display label and source channel needed to review the
-transitory entity, and must direct the owner to the unidentified-entity review
-flow rather than a contact-table record.
+The intended notification is deduplicated per newly surfaced sender identity
+and must not repeat for later messages that resolve to the same entity.
+Delivery failure must not block routing or expose raw inbound message content;
+a failed attempt is still sealed against notification storms. The notice must
+identify the sender only with the safe display label and source channel needed
+to review the transitory entity, and must direct the owner to the
+unidentified-entity review flow rather than a contact-table record. The
+inactive helper does not yet provide this durable, race-safe guarantee.
 
 ### Runtime activation stays separate
 
 Activating this contract requires a focused runtime change to enable identity
-resolution in the production Switchboard pipeline and provide the standard
-owner-notification delivery boundary. Combining that wiring, delivery-policy,
-and observability work with this archival/spec reconciliation would broaden
-the slice and hide its independent review surface.
+resolution in the production Switchboard pipeline, provide the standard
+owner-notification delivery boundary, replace the legacy contacts target with
+the Unidentified Entities review flow, and establish durable, race-safe
+deduplication before delivery. Combining that wiring, delivery-policy, and
+observability work with this archival/spec reconciliation would broaden the
+slice and hide its independent review surface.
 
 ## Risks / Trade-offs
 

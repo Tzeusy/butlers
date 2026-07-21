@@ -80,14 +80,20 @@ notification when an unknown sender is surfaced as a transitory entity; the
 owner reviews it through the Unidentified Entities flow rather than a retired
 contact record. The helper at
 `roster/switchboard/tools/identity/inject.py::resolve_and_inject_identity()`
-already contains the entity-only and idempotence mechanics.
+does create a transitory entity without a contact row, but its inactive
+notification branch still builds a legacy `/butlers/contacts/...` target. Its
+best-effort `butler_state` read/write handling also treats state failures as
+new or non-fatal and performs no atomic claim before delivery, so it does not
+provide durable, race-safe no-repeat behavior.
 
 That behavior is not active for normal fleet ingress today:
 `src/butlers/switchboard_wiring.py::wire_pipelines()` leaves
 `MessagePipeline.enable_identity_resolution` at its default `False` and does
-not provide `notify_owner_fn`. A separate runtime change must enable that path
-and wire delivery through the standard owner-notification boundary before
-operators can rely on notifications being dispatched.
+not provide `notify_owner_fn`. A separate runtime change must enable that path,
+wire delivery through the standard owner-notification boundary, replace the
+legacy target with the Unidentified Entities review flow, and establish
+durable, race-safe notification deduplication before operators can rely on
+notifications being dispatched.
 
 ## Identity Preamble
 
