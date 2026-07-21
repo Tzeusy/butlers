@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines how the Switchboard resolves inbound message identities to canonical contacts so requests route to the correct butler.
+Defines how the Switchboard resolves inbound message identities to canonical entities so requests route to the correct butler.
 
 ## Requirements
 
@@ -26,7 +26,12 @@ The Switchboard SHALL call `resolve_contact_by_channel(type, value)` on every in
 
 - **WHEN** a Telegram message arrives from chat ID `55555`
 - **AND** `resolve_contact_by_channel('telegram', '55555')` returns `None`
-- **THEN** the Switchboard MUST trigger the temporary contact creation flow (per `contacts-identity` spec)
+- **THEN** the Switchboard MUST invoke the unknown-sender transitory-entity
+  flow defined by `entity-identity`
+- **AND** the flow MUST NOT create or require a `public.contacts` or
+  `public.contact_info` row
+- **AND** owner-notification behavior for a successfully surfaced transitory
+  entity MUST follow `entity-identity`'s owner-notification requirement
 
 #### Scenario: Email message identity resolution
 

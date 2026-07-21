@@ -73,6 +73,22 @@ The sender's channel triple is not written here. Asserting the `relationship.ent
 
 The identity preamble for unknown senders includes `-- pending disambiguation`, signaling to the receiving butler that the sender identity is provisional.
 
+### Owner-notification activation gap
+
+The entity-first contract requires a one-time, message-content-free owner
+notification when an unknown sender is surfaced as a transitory entity; the
+owner reviews it through the Unidentified Entities flow rather than a retired
+contact record. The helper at
+`roster/switchboard/tools/identity/inject.py::resolve_and_inject_identity()`
+already contains the entity-only and idempotence mechanics.
+
+That behavior is not active for normal fleet ingress today:
+`src/butlers/switchboard_wiring.py::wire_pipelines()` leaves
+`MessagePipeline.enable_identity_resolution` at its default `False` and does
+not provide `notify_owner_fn`. A separate runtime change must enable that path
+and wire delivery through the standard owner-notification boundary before
+operators can rely on notifications being dispatched.
+
 ## Identity Preamble
 
 The `build_identity_preamble()` function constructs a structured text prefix that is prepended to every routed message. The format varies by sender type:
