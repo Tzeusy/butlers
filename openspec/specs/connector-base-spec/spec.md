@@ -355,11 +355,6 @@ All connectors SHALL send periodic heartbeats to the Switchboard for liveness tr
 - **WHEN** the Switchboard receives a heartbeat from an unknown connector
 - **THEN** it auto-creates a `connector_registry` row (no manual pre-configuration needed)
 
-#### Scenario: Checkpoint persistence is not self-registration
-- **WHEN** `cursor_store` creates a `connector_registry` row to persist a checkpoint before that identity has sent a heartbeat
-- **THEN** connector-liveness consumers SHALL NOT treat the checkpoint-only row as a registered or offline connector
-- **AND** the row SHALL become eligible for liveness evaluation if that same identity later sends a heartbeat
-
 #### Scenario: Instance restart detection and counter deltas
 - **WHEN** a heartbeat arrives with a different `instance_id` than the previous one from the same connector
 - **THEN** the Switchboard detects a restart; counter deltas are computed against zero (not the previous snapshot)

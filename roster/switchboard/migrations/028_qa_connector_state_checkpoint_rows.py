@@ -1,8 +1,8 @@
 """Exclude checkpoint-only registry rows from QA connector liveness.
 
-Revision ID: sw_026
-Revises: sw_025
-Create Date: 2026-07-13 00:00:00.000000
+Revision ID: sw_028
+Revises: sw_027
+Create Date: 2026-07-28 00:00:00.000000
 
 ``cursor_store.save_cursor`` persists checkpoints in ``connector_registry``.
 Most connectors use their canonical heartbeat identity as the cursor key, but
@@ -13,12 +13,12 @@ Those rows carry a checkpoint but never receive a heartbeat, so the original
 in.  ``InfraStateSource`` consequently emitted a permanent ``ConnectorOffline``
 finding once the row passed its startup grace window.
 
-Heartbeat is the sole connector self-registration mechanism.  A registry row
-that has a checkpoint but has never received a heartbeat is therefore storage
-state, not a connector liveness identity.  Keep such rows in
+A row that has a checkpoint but no process instance and no heartbeat is storage
+state, not a connector liveness identity. Keep such rows in
 ``connector_registry`` for restart-safe cursor persistence, but exclude them
-from the QA liveness view.  A canonical row becomes visible automatically as
-soon as its first heartbeat sets ``last_heartbeat_at``.
+from the QA liveness view. A process identity remains visible even before its
+first heartbeat so the existing registration grace-window semantics still
+apply.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "sw_026"
-down_revision = "sw_025"
+revision = "sw_028"
+down_revision = "sw_027"
 branch_labels = None
 depends_on = None
 
@@ -48,7 +48,8 @@ _BASE_CONNECTOR_VIEW_SQL = """
 
 _CHECKPOINT_ONLY_PREDICATE = """
       AND NOT (
-          last_heartbeat_at IS NULL
+          instance_id IS NULL
+          AND last_heartbeat_at IS NULL
           AND checkpoint_cursor IS NOT NULL
       )
 """
@@ -56,10 +57,10 @@ _CHECKPOINT_ONLY_PREDICATE = """
 
 def upgrade() -> None:
     op.execute(
-        f"CREATE OR REPLACE VIEW {_CONNECTOR_VIEW_FQN} AS"
+        f"CREATE OR REPLACE VIEW {_CONNECTOR_VIEW_FQN} AS "
         f"{_BASE_CONNECTOR_VIEW_SQL}{_CHECKPOINT_ONLY_PREDICATE}"
     )
 
 
 def downgrade() -> None:
-    op.execute(f"CREATE OR REPLACE VIEW {_CONNECTOR_VIEW_FQN} AS{_BASE_CONNECTOR_VIEW_SQL}")
+    op.execute(f"CREATE OR REPLACE VIEW {_CONNECTOR_VIEW_FQN} AS {_BASE_CONNECTOR_VIEW_SQL}")
