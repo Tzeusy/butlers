@@ -50,6 +50,11 @@ logger = logging.getLogger(__name__)
 # Switchboard-local ``state`` table serializes the claim so concurrent ingress
 # cannot turn one unknown sender into multiple owner notifications.
 _NOTIFIED_STATE_KEY_PREFIX = "identity:unknown_notified:"
+# This reservation is intentionally independent from the one-time
+# notification claim. It makes first-message entity minting idempotent before
+# the relationship-owned post-resolution fact writer has established the
+# channel-triple lookup key.
+_TEMP_ENTITY_STATE_KEY_PREFIX = "identity:unknown_entity:"
 _UNIDENTIFIED_ENTITIES_REVIEW_PATH = "/entities/index?state=unidentified"
 
 
@@ -173,6 +178,7 @@ async def resolve_and_inject_identity(
         channel_type,
         channel_value,
         display_name=display_name,
+        reservation_state_key=(f"{_TEMP_ENTITY_STATE_KEY_PREFIX}{channel_type}:{channel_value}"),
     )
 
     # Reserve the owner-notification attempt before delivery. The atomic claim

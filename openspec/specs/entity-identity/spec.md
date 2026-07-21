@@ -661,6 +661,13 @@ delivery failure SHALL leave the claim in place, and a claim-persistence
 failure SHALL continue normal routing without making an unclaimed owner
 delivery attempt.
 
+Before the unknown sender's identity context is activated in the routing
+pipeline, the system SHALL atomically reserve or reuse one transitory entity
+for that source channel and sender identifier. This reservation SHALL be
+durable across concurrent ingress workers and SHALL NOT write
+`relationship.entity_facts` from Switchboard; the existing relationship-owned
+post-resolution assertion remains responsible for the channel fact.
+
 The notification SHALL identify the sender only with the safe display label
 and source channel needed for review, SHALL direct the owner to the existing
 Unidentified Entities review flow, and SHALL NOT include the inbound message
@@ -690,6 +697,17 @@ body or grant the unknown sender any role or approval authority.
   attempt for that sender
 - **AND** the later message MUST continue through normal known-entity
   resolution and routing
+
+#### Scenario: Concurrent first messages reuse one transitory entity
+
+- **WHEN** two first messages from the same source channel and sender
+  identifier arrive concurrently with different display labels
+- **AND** both reverse lookups miss before the relationship-owned channel-fact
+  assertion runs
+- **THEN** the system MUST mint at most one transitory entity for that sender
+- **AND** both pipeline activations MUST carry that same entity UUID in their
+  unknown-sender identity context
+- **AND** Switchboard MUST NOT write the sender channel fact directly
 
 #### Scenario: Owner-notification delivery failure does not block routing
 

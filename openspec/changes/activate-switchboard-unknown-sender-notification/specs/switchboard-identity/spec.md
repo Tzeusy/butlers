@@ -33,6 +33,11 @@ connector or contacts-table path.
 - **AND** the entity-only sender's `contact_id` and
   `source_sender_contact_id` MUST be null or omitted, never a newly minted
   temporary-contact identifier
+- **AND** concurrent first messages for the same sender MUST reuse one
+  transitory `entity_id` before their routing contexts are activated, even
+  when their display labels differ
+- **AND** that minting reservation MUST NOT move
+  `relationship.entity_facts` writes into Switchboard
 - **AND** owner-notification behavior for a successfully surfaced transitory
   entity MUST follow `entity-identity`'s owner-notification requirement
 

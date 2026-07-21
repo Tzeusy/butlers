@@ -16,6 +16,9 @@ notification claim.
   contact identifiers.
 - Reserve a durable, atomic per-sender notification claim before delivery so
   concurrent ingress and delivery failures cannot create a notification storm.
+- Reserve or reuse one transitory entity per sender before pipeline activation,
+  so concurrent first messages cannot mint different entities during the gap
+  before the relationship-owned channel-fact hook runs.
 
 ## Capabilities
 
@@ -36,9 +39,10 @@ None.
 - `src/butlers/switchboard_wiring.py` supplies the enabled pipeline settings
   and delivery callback.
 - `roster/switchboard/tools/identity/inject.py` uses the existing
-  Switchboard-local state store for an atomic claim and renders the safe entity
-  review notice.
-- Focused unit tests cover wiring, first/known/repeated senders, delivery and
-  state failures, and competing notification claims.
+  Switchboard-local state store for both the atomic entity reservation and
+  notification claim, then renders the safe entity review notice.
+- Focused tests cover wiring, first/known/repeated senders, delivery and state
+  failures, competing notification claims, and two concurrent pipeline runs
+  sharing one entity-only routing context.
 - No migration, contact-table restoration, frontend route change, or broad
   notification-policy redesign is included.

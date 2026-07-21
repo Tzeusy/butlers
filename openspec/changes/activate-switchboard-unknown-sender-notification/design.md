@@ -61,6 +61,26 @@ than once. Retrying after delivery failure was rejected because the contract
 prioritizes bounded owner interruption; durable retries would require a scoped
 outbox design and migration that are explicitly out of scope.
 
+### Reserve the transitory entity before pipeline activation
+
+The notification claim prevents duplicate owner sends, but it does not close
+the separate mint-to-fact gap: the relationship-owned channel fact is asserted
+only after identity resolution returns to `MessagePipeline`. For each unknown
+sender, the Switchboard passes an opt-in state key to `create_temp_contact()`.
+Inside one transaction, that helper inserts or locks the corresponding
+Switchboard-local `state` row, reuses a committed entity UUID when present, or
+inserts `public.entities` and records its UUID before committing. A competing
+first message waits on the state row and then reuses the same entity.
+
+This reservation remains deliberately separate from the notification claim and
+from `relationship.entity_facts`: it writes only Switchboard state and the
+entity row. The existing deterministic relationship-owned fact assertion stays
+after identity resolution in the pipeline. If the reservation cannot be
+persisted, temporary-entity creation returns no entity and the existing
+fail-open routing path proceeds without an owner-notification claim. A stale
+reservation whose entity no longer exists is repaired while holding the same
+state-row lock before a replacement is minted.
+
 ### Use the canonical Unidentified Entities route and a safe label
 
 The notice points to `/entities/index?state=unidentified`, the actual frontend
@@ -78,11 +98,15 @@ channel identifier, contact ID, or legacy contacts route.
 - **[Telegram owner recipient is not configured]** → Treat it as the bounded
   failed attempt after the claim; do not block routing or repeat on every
   message.
+- **[A transitory entity is manually deleted while its reservation remains]**
+  → Validate the reserved UUID under the state-row lock, clear a stale value,
+  and mint one replacement entity in the same transaction.
 
 ## Migration Plan
 
 No schema migration is required. Deploy the wiring and helper together; the
-existing `state` primary key serializes competing claims. Rollback returns the
-pipeline to its prior inactive behavior, while any completed claim remains
+existing `state` primary key serializes both competing notification claims and
+the per-sender transitory-entity reservation. Rollback returns the pipeline to
+its prior inactive behavior, while any completed claim or reservation remains
 harmless because the transitory entity itself remains reviewable in the
 dashboard.
