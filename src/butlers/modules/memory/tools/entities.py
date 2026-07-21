@@ -776,7 +776,7 @@ async def entity_neighbors(
         FROM neighbors n
         JOIN facts f
           ON (f.entity_id = n.neighbor_id AND f.object_entity_id IS NOT NULL)
-          OR f.object_entity_id = n.neighbor_id
+          OR (f.object_entity_id = n.neighbor_id AND f.entity_id IS NOT NULL)
         WHERE f.validity IN ('active', 'fading')
           AND CASE
                   WHEN f.entity_id = n.neighbor_id THEN f.object_entity_id
