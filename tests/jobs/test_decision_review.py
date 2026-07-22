@@ -898,6 +898,83 @@ def test_run_unlabeled_marker_lint_wrong_json_shape_is_unavailable(monkeypatch, 
     assert lint_result.violations == ()
 
 
+@pytest.mark.parametrize(
+    ("returncode", "stdout"),
+    [
+        pytest.param(1, "[]", id="exit_one_with_zero_results"),
+        pytest.param(
+            0,
+            '[{"id": "bu-x", "title": "Decision", "ok": true, "violations": ["missing label"]}]',
+            id="ok_true_with_string_violation",
+        ),
+        pytest.param(
+            0,
+            '[{"id": "bu-x", "title": "Decision", "ok": true, "violations": [123]}]',
+            id="non_string_violation",
+        ),
+        pytest.param(
+            0,
+            '[{"id": "bu-x", "title": "Decision", "ok": false, "violations": ["missing label"]}]',
+            id="exit_zero_with_failing_result",
+        ),
+    ],
+)
+def test_run_unlabeled_marker_lint_rejects_semantically_invalid_payload(
+    monkeypatch, tmp_path, returncode, stdout
+):
+    monkeypatch.setattr(
+        "butlers.jobs.decision_review.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=returncode, stdout=stdout, stderr=""
+        ),
+    )
+
+    lint_result = _run_unlabeled_marker_lint(tmp_path / "issues.export.jsonl")
+
+    assert lint_result.available is False
+    assert lint_result.unavailable_reason == "lint_output_invalid_shape"
+    assert lint_result.violations == ()
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout"),
+    [
+        pytest.param(1, "[]", id="exit_one_with_zero_results"),
+        pytest.param(
+            0,
+            '[{"id": "bu-x", "title": "Decision", "ok": true, "violations": [123]}]',
+            id="non_string_violation",
+        ),
+    ],
+)
+async def test_run_digest_semantically_invalid_lint_payload_is_unavailable_and_records_failed_ledger(
+    tmp_path, monkeypatch, returncode, stdout
+):
+    """Syntactically JSON lint output cannot fabricate a genuine-zero calm."""
+    export = tmp_path / "issues.export.jsonl"
+    _write_export(export, [{"id": "bu-x", "title": "Ordinary task", "status": "open"}])
+    pool = AsyncMock()
+
+    monkeypatch.setattr(
+        "butlers.jobs.decision_review.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=returncode, stdout=stdout, stderr=""
+        ),
+    )
+    with (
+        patch("butlers.jobs.decision_review._DEFAULT_EXPORT_PATH", export),
+        patch(
+            "butlers.jobs.decision_review.record_attention_event", new=AsyncMock()
+        ) as record_mock,
+    ):
+        result = await run_decision_review_digest(pool, _now=_NOW)
+
+    assert result == {"available": False, "reason": "lint_output_invalid_shape"}
+    record_mock.assert_awaited_once()
+    assert record_mock.await_args.kwargs["outcome"] == "failed"
+    assert record_mock.await_args.kwargs["reason"] == "data_unavailable:lint_output_invalid_shape"
+
+
 async def test_run_digest_missing_lint_input_is_unavailable_not_no_decisions(tmp_path, monkeypatch):
     """A readable genuine-zero export cannot hide an unavailable lint script."""
     export = tmp_path / "issues.export.jsonl"

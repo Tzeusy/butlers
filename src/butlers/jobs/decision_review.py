@@ -453,8 +453,9 @@ def _run_unlabeled_marker_lint(export_path: Path) -> DecisionLintResult:
         logger.warning("decision_review: lint subprocess failed (%s): %s", cmd, exc)
         return DecisionLintResult(False, f"lint_subprocess_error:{type(exc).__name__}", ())
 
-    # Exit codes: 0 = clean, 1 = violations found, 2 = could not obtain data
-    # -- both 0 and 1 carry valid --json output on stdout.
+    # Exit codes: 0 = every result is clean, 1 = at least one result has
+    # violations, 2 = could not obtain data. Both 0 and 1 carry valid --json
+    # output on stdout.
     if proc.returncode == 2:
         logger.warning(
             "decision_review: lint subprocess could not obtain input: %s",
@@ -480,9 +481,14 @@ def _run_unlabeled_marker_lint(export_path: Path) -> DecisionLintResult:
         or not isinstance(result.get("title"), str)
         or not isinstance(result.get("ok"), bool)
         or not isinstance(result.get("violations"), list)
+        or any(not isinstance(violation, str) for violation in result["violations"])
+        or result["ok"] != (not result["violations"])
         for result in results
     ):
         logger.warning("decision_review: lint subprocess returned malformed JSON result")
+        return DecisionLintResult(False, "lint_output_invalid_shape", ())
+    if (proc.returncode == 0) != all(result["ok"] for result in results):
+        logger.warning("decision_review: lint subprocess exit code disagreed with JSON results")
         return DecisionLintResult(False, "lint_output_invalid_shape", ())
     return DecisionLintResult(
         True,
