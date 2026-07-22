@@ -5,11 +5,16 @@
 The scheduler SHALL distinguish a removed TOML override from an active TOML
 schedule before a module-default registration can recover a row. TOML schedule
 synchronization SHALL establish the current TOML membership before module-default
-recovery is evaluated. A module-default recovery candidate MUST be both:
+recovery is evaluated. A module-default recovery candidate MUST satisfy all of these conditions:
 
 - a name explicitly registered by the owning module as one of its defaults; and
 - the same-named `scheduled_tasks` row with `source='toml'` and `enabled=false`
-  after that TOML synchronization.
+  after that TOML synchronization; and
+- a name eligible for automatic recovery. `memory_episode_cleanup` MUST NOT be
+  eligible for automatic recovery of an existing disabled TOML-owned row, even
+  when it is a registered module default. This exclusion applies only to
+  reclaiming an existing row; ordinary missing-default creation remains governed
+  by the missing-default contract below.
 
 Recovery SHALL set only that candidate's `source` to `db` and `enabled` to
 `true`. It MUST preserve the existing cron, dispatch mode, prompt/job name, job
@@ -17,6 +22,11 @@ arguments, complexity, and `next_run_at`. A row with `source='db'` MUST NOT be
 re-enabled, rewritten, or audited by module-default recovery, regardless of its
 `enabled` state. The scheduler SHALL NOT infer module ownership from a name
 prefix, a dashboard request, or arbitrary database state.
+
+A stale `next_run_at`, expired episode history, or other retained data MUST NOT
+override the `memory_episode_cleanup` recovery exclusion. Any future cleanup
+recovery policy requires a separate provenance- and owner-gated capability; it
+is not generic module-default recovery.
 
 #### Scenario: Active TOML default remains TOML-owned
 
@@ -34,6 +44,21 @@ prefix, a dashboard request, or arbitrary database state.
   `enabled=true`
 - **AND** the row's cron, dispatch payload, complexity, and `next_run_at` SHALL
   remain the values it had before the recovery
+
+#### Scenario: Disabled TOML cleanup cannot be automatically reclaimed or dispatched
+
+- **WHEN** a memory-enabled butler has no active TOML declaration for
+  `memory_episode_cleanup`, its same-named row is `source='toml'`,
+  `enabled=false`, and has a `next_run_at` in the past
+- **AND** that butler's memory schema contains one or more episodes matching
+  `expires_at < now()`
+- **WHEN** TOML synchronization, generic module-default registration, and a
+  due-schedule evaluation run
+- **THEN** the cleanup row SHALL remain TOML-owned and disabled with its stored
+  `next_run_at` unchanged
+- **AND** no `scheduler.module_default_recovered` audit entry SHALL be appended
+- **AND** no `memory_episode_cleanup` dispatch SHALL occur
+- **AND** no episode SHALL be deleted
 
 #### Scenario: Disabled DB-owned schedule remains operator-owned
 
@@ -56,7 +81,10 @@ Each successful module-default recovery SHALL append exactly one canonical
 transition. The audit entry MUST use
 `action='scheduler.module_default_recovered'`, target `schedule:<name>`, and
 control-plane-only metadata containing the prior source, prior enabled state,
-and registered default name. It MUST NOT include prompt text, job arguments,
+registered default name, `owner_butler`, and `owner_schema`. `owner_butler` and
+`owner_schema` MUST be non-empty strings from the recovering scheduler's
+configured identity; `schedule:<name>` alone is not an unambiguous identity in
+the shared audit log. The metadata MUST NOT include prompt text, job arguments,
 episode content, or any other runtime payload.
 
 The conditional state transition's returned row is the only authority to append
@@ -72,7 +100,21 @@ recovery SHALL be a no-op.
 - **THEN** the committed `scheduled_tasks` row SHALL be DB-owned and enabled
 - **AND** exactly one committed `public.audit_log` row with
   `action='scheduler.module_default_recovered'` and target `schedule:<name>`
-  SHALL describe that transition
+  SHALL describe that transition with its `owner_butler` and `owner_schema`
+  metadata
+
+#### Scenario: Same-named recovery is attributable across two butlers
+
+- **WHEN** the `general` butler in schema `general` and the `relationship`
+  butler in schema `relationship` each recover an eligible TOML orphan named
+  `memory_consolidation`
+- **THEN** each recovery SHALL append exactly one committed audit row with
+  target `schedule:memory_consolidation`
+- **AND** the `general` row's metadata SHALL include
+  `owner_butler='general'` and `owner_schema='general'`
+- **AND** the `relationship` row's metadata SHALL include
+  `owner_butler='relationship'` and `owner_schema='relationship'`
+- **AND** the two rows SHALL remain distinguishable by that ownership metadata
 
 #### Scenario: Audit failure rolls back recovery
 

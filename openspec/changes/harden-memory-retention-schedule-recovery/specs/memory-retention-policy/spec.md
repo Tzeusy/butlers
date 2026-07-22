@@ -17,8 +17,14 @@ operator-disabled row, remains DB-owned and SHALL be left unchanged. In the
 distinct TOML-orphan case, after TOML synchronization has established that a
 registered default's same-named row is `source='toml'` and `enabled=false`,
 module-default recovery SHALL reclaim it as `source='db'` and `enabled=true`
-while preserving its stored cadence and execution payload. Recovery SHALL NOT
-replace that last TOML cadence with the module-default cadence.
+while preserving its stored cadence and execution payload, except that
+`memory_episode_cleanup` is excluded from automatic recovery. An existing
+disabled TOML-owned cleanup row SHALL remain TOML-owned and disabled regardless
+of its `next_run_at` or retained expired episodes; generic startup handling
+SHALL NOT recover, dispatch, or use it to delete episodes. This exception is
+limited to reclaiming an existing row and does not change ordinary
+missing-default creation. Recovery SHALL NOT replace a recovered row's last
+TOML cadence with the module-default cadence.
 
 #### Scenario: Decay sweep runs without any TOML schedule
 
@@ -55,6 +61,18 @@ replace that last TOML cadence with the module-default cadence.
   falling back to the registered module-default cadence
 - **AND** its dispatch mode, prompt/job name, job arguments, complexity, and
   `next_run_at` MUST remain unchanged
+
+#### Scenario: Disabled TOML cleanup cannot become a historical drain
+
+- **WHEN** a memory-enabled butler has removed its TOML
+  `memory_episode_cleanup` declaration, leaving a same-named
+  `source='toml'`, `enabled=false` row whose `next_run_at` is in the past
+- **AND** the butler has episodes matching `expires_at < now()`
+- **WHEN** startup synchronization, generic module-default registration, and a
+  due-schedule evaluation complete
+- **THEN** the cleanup row SHALL remain `source='toml'` and `enabled=false`
+- **AND** no recovery audit entry or cleanup dispatch SHALL occur
+- **AND** the expired episodes SHALL remain undeleted
 
 #### Scenario: Every memory-enabled butler has a working consolidation path
 

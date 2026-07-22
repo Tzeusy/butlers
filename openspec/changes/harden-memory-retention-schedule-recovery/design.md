@@ -26,11 +26,13 @@ operation.
 
 - Recover exactly one class of stale schedule state: a registered module
   default whose matching TOML-owned row was disabled after the TOML declaration
-  was removed.
+  was removed, except `memory_episode_cleanup`, which is excluded from generic
+  automatic recovery.
 - Keep disabled DB-owned rows operator-owned, including the live rows that
   motivated this work; recovery must never re-enable them.
-- Make the state transition and its durable audit inseparable, idempotent, and
-  safe under concurrent starts.
+- Make the state transition and its durable audit inseparable, idempotent, safe
+  under concurrent starts, and uniquely attributable to the owning butler and
+  schema in the shared audit log.
 - Make expired-but-retained episodes visible by the exact cleanup predicate,
   with complete-versus-unknown fan-out semantics and an honest Overture.
 - Preserve a clean handoff boundary to the separate provenance and
@@ -43,6 +45,9 @@ operation.
 - Re-enabling any `source='db'` schedule, including
   `memory_episode_cleanup` and `memory_consolidation` rows disabled by an
   operator or prior live incident.
+- Reclaiming a disabled TOML-owned `memory_episode_cleanup` row, including one
+  with a stale `next_run_at` and expired episodes, or using it as an automatic
+  catch-up/delete path.
 - Introducing a background job, startup side effect, migration, or automatic
   remediation based on the new statistics.
 - Defining episode evidence/provenance behavior after deletion. That belongs to
@@ -65,8 +70,11 @@ it remains TOML-owned and is not a recovery event.
 
 The module default registry remains the allowlist. The scheduler does not infer
 module ownership from a name prefix, arbitrary database row, or dashboard
-input. Registration is then safe to insert a missing default or reclaim only a
-TOML-orphaned default.
+input. `memory_episode_cleanup` is an explicit exception to generic TOML-orphan
+recovery: registration may still insert its ordinary missing default, but it
+MUST NOT reclaim an existing disabled TOML-owned cleanup row. Registration is
+then safe to insert a missing default or reclaim only an eligible TOML-orphaned
+default.
 
 **Why this over the current pre-sync source flip:** it gives the transition a
 real provenance condition and prevents audit churn for TOML entries that are
@@ -83,6 +91,10 @@ source of truth for live butler identity.
 - Add a generic `module_default` flag to every schedule row: rejected for this
   slice because the existing module registry plus source provenance supplies the
   narrow allowlist without a schema expansion or migration.
+- Treat `memory_episode_cleanup` like every other registered default: rejected
+  because a stale due time plus expired history could couple generic startup
+  recovery to an unbounded destructive handler. Any cleanup recovery needs its
+  own provenance- and owner-gated capability.
 
 ### D2 — Recover and audit in one transaction, using the transition as the idempotency key
 
@@ -94,10 +106,13 @@ only after the audit insert succeeds.
 
 The audit entry identifies the recovery action and schedule target, and contains
 only schedule control-plane context: source transition, prior enabled state,
-and the registered module/default name. It MUST NOT contain episode content,
-prompt text, job arguments, or other retained payload. The implementation may
-reuse `audit.append(connection, ...)`, whose existing contract supports a
-caller-owned transaction.
+registered module/default name, and non-empty `owner_butler` plus
+`owner_schema` metadata from the recovering scheduler. `schedule:<name>` is not
+unique across butler schemas, so it cannot be the only ownership identifier in
+the shared audit log. The entry MUST NOT contain episode content, prompt text,
+job arguments, or other retained payload. The implementation may reuse
+`audit.append(connection, ...)`, whose existing contract supports a caller-owned
+transaction.
 
 The transition changes only `source` to `db`, `enabled` to `true`, and normal
 update bookkeeping. It preserves cron, dispatch mode, job name, job args,
@@ -187,9 +202,9 @@ data. The ordinary cleanup handler MUST NOT be reused as an unbounded backfill.
 | Boundary | Current authority / reader | Contract added here |
 |---|---|---|
 | Git-backed schedules | `ButlerConfig.schedules` and `sync_schedules()` | TOML presence is determined before recovery; active TOML remains TOML-owned. |
-| Module default allowlist | Memory and Chronicler default registries calling `ensure_module_default_schedule()` | Only a registry-declared default can reclaim a disabled TOML orphan. |
-| Scheduler execution | `scheduled_tasks`, scheduler tick, and schedule CRUD/read surfaces | Recovery preserves executable payload and never changes a DB-owned disable. |
-| Durable evidence | `public.audit_log`, `audit.append()`, `/api/audit-log` | Exactly one committed control-plane audit accompanies one recovered row. |
+| Module default allowlist | Memory and Chronicler default registries calling `ensure_module_default_schedule()` | Only an eligible registry-declared default can reclaim a disabled TOML orphan; `memory_episode_cleanup` is excluded. |
+| Scheduler execution | `scheduled_tasks`, scheduler tick, and schedule CRUD/read surfaces | Recovery preserves executable payload, never changes a DB-owned disable, and never auto-dispatches a disabled TOML cleanup row. |
+| Durable evidence | `public.audit_log`, `audit.append()`, `/api/audit-log` | Exactly one committed control-plane audit accompanies one recovered row and identifies its owning butler/schema. |
 | Cleanup authority | `run_episode_cleanup()` | The observation uses its exact expiry predicate; the observation never calls it. |
 | Aggregate API | `get_memory_stats`, `MemoryStats`, `ApiMeta`, `RetentionSourceObservation`, frontend API types | New counts/ratios/status, exact per-source wire rows, and retention-specific failed-source list are additive. |
 | Owner-facing UI | `useMemoryStats()` and `MemoryOverture` | Complete degradation and unknown coverage are rendered explicitly. |
@@ -205,8 +220,10 @@ as a substitute for the complete-or-unknown `/api/memory/stats` observation.
 |---|---|
 | No row for a registered default | Insert the ordinary enabled DB-owned default; this is not a reclaim audit event. |
 | Active TOML declaration / TOML row | TOML synchronization owns cadence and enablement; no module recovery audit is written. |
-| Removed TOML declaration, matching disabled TOML row | Atomically recover it to enabled DB ownership and append one audit entry. |
+| Removed TOML declaration, matching disabled TOML row for an eligible default | Atomically recover it to enabled DB ownership and append one audit entry. |
+| Disabled TOML-owned `memory_episode_cleanup` with stale `next_run_at` and expired history | Leave it TOML-owned and disabled; write no recovery audit, dispatch no cleanup handler, and delete no episode. |
 | Matching disabled DB-owned row | No mutation, no audit, no schedule re-enable. |
+| Same schedule name recovered by two butlers | Keep one audit row per recovery and identify each row with non-empty `owner_butler` and `owner_schema` metadata. |
 | Concurrent recovery attempts | At most one transition returns a row and produces an audit entry; all other attempts are no-ops. |
 | Audit insert fails | Roll back the transition; the pre-transition schedule state remains visible and no recovery audit exists. |
 | Process crash before commit | Neither transition nor audit is committed. |
@@ -219,12 +236,12 @@ as a substitute for the complete-or-unknown `/api/memory/stats` observation.
 
 | Layer | Required evidence |
 |---|---|
-| Scheduler unit/integration | TOML present, TOML removed→disabled→recover, disabled DB-owned preservation, payload preservation, and second-run no-op. |
-| Transaction/audit | Real PostgreSQL test that a successful reclaim has one audit row; forced audit failure leaves the original schedule unchanged; concurrent contenders yield one transition/audit. |
+| Scheduler unit/integration | TOML present, TOML removed→disabled→recover for an eligible default, disabled DB-owned preservation, payload preservation, second-run no-op, and the disabled TOML cleanup/stale-due-time/no-dispatch/no-deletion fence. |
+| Transaction/audit | Real PostgreSQL test that a successful reclaim has one audit row with owner butler/schema metadata; forced audit failure leaves the original schedule unchanged; concurrent contenders yield one transition/audit; two butlers recovering the same schedule name remain attributable. |
 | API model and fan-out | Exact `RetentionSourceObservation` field names/nullability, per-source and all-source complete aggregates, zero denominator, one source over threshold, retention-only query failure, and absent memory schema coverage. |
 | Cross-contract | Existing degraded-envelope contract confirms `retention_pools_failed` names failures without mutating ordinary `pools_failed` or catalog fields. |
 | Frontend | Types compile; Overture tests construct exact `RetentionSourceObservation` rows and render healthy, degraded, and unknown/incomplete retention states while retaining existing degraded notes. |
-| Scope guard | Static/review inspection confirms no migration, drain call, schedule toggle endpoint, notification, provenance mutation, or historical data operation is introduced. |
+| Scope guard | Static/review inspection confirms no migration, drain call, cleanup recovery/dispatch, schedule toggle endpoint, notification, provenance mutation, or historical data operation is introduced. |
 | Spec | `openspec validate harden-memory-retention-schedule-recovery --strict` succeeds. |
 
 ## Risks / Trade-offs
@@ -237,6 +254,9 @@ as a substitute for the complete-or-unknown `/api/memory/stats` observation.
   closed for recovery: no state transition commits until the canonical audit
   write succeeds; report the ordinary startup failure through existing module
   diagnostics rather than silently recovering.
+- **[Risk] Generic recovery can revive a destructive cleanup job.** → Exclude
+  `memory_episode_cleanup` from disabled-TOML-row recovery; stale due time and
+  expired history do not create authority to dispatch or delete.
 - **[Risk] A large retained population produces expensive counting.** → Use
   aggregate SQL over the cleanup predicate, scoped per pool, with the existing
   fan-out pattern; do not fetch episode content or IDs.

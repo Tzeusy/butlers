@@ -7,14 +7,19 @@
   current TOML membership is established before module-default recovery, without
   allowing the first scheduler tick before handlers are registered.
 - [ ] 1.3 Update `ensure_module_default_schedule()` and its registry callers to
-  recover only registered, disabled `source='toml'` rows; preserve the existing
-  execution payload and leave every disabled `source='db'` row unchanged.
+  recover only eligible registered, disabled `source='toml'` rows; preserve the
+  existing execution payload, leave every disabled `source='db'` row unchanged,
+  and exclude an existing disabled TOML-owned `memory_episode_cleanup` row from
+  automatic recovery.
 - [ ] 1.4 Implement the reclaimed-row `RETURNING`/transaction boundary and
   canonical `scheduler.module_default_recovered` audit entry with only
-  control-plane metadata.
+  control-plane metadata, including non-empty owning-butler and owning-schema
+  identity.
 - [ ] 1.5 Add real-PostgreSQL failure and concurrency regressions proving audit
-  failure rolls back recovery, two contenders yield one transition/audit, and a
-  restart is a no-op.
+  failure rolls back recovery, two contenders yield one transition/audit, a
+  restart is a no-op, same-name recoveries across two butlers remain
+  attributable, and disabled TOML cleanup with expired history produces no
+  recovery, dispatch, or deletion.
 
 ## 2. Complete-or-unknown expired-retention API observation
 
@@ -49,13 +54,15 @@
 ## 4. Scope, review, and verification gates
 
 - [ ] 4.1 Review the final diff for the explicit fences: no migration,
-  historical drain, provenance/evidence mutation, cleanup invocation, schedule
-  toggle, notification, or `source='db'` re-enable is introduced.
+  historical drain, provenance/evidence mutation, cleanup recovery or
+  invocation, schedule toggle, notification, or `source='db'` re-enable is
+  introduced.
 - [ ] 4.2 Run the targeted scheduler, memory API, degraded-envelope, and
   frontend Overture/type suites; run the repository's required final quality
   gate once after targeted failures are resolved.
 - [ ] 4.3 Run `openspec validate harden-memory-retention-schedule-recovery --strict`
   and reconcile the implementation with every scenario in this change.
-- [ ] 4.4 Obtain review that specifically verifies atomic audit behavior,
-  active-versus-removed TOML provenance, partial-fan-out honesty, and the
-  continued separate owner/provenance gates for any historical operation.
+- [ ] 4.4 Obtain review that specifically verifies atomic audit behavior and
+  owning-butler/schema attribution, active-versus-removed TOML provenance,
+  cleanup-recovery exclusion, partial-fan-out honesty, and the continued
+  separate owner/provenance gates for any historical operation.

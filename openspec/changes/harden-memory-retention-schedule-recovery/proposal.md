@@ -15,23 +15,27 @@ without changing schedule state or deleting retained data.
 
 ## What Changes
 
-- Define the sole automatic schedule recovery: a registered module default may
-  reclaim and re-enable only its matching `source='toml'` row. A disabled
-  `source='db'` row remains operator-owned and untouched.
+- Define the sole automatic TOML-orphan recovery: a registered module default
+  other than `memory_episode_cleanup` may reclaim and re-enable only its
+  matching `source='toml'` row. A disabled `source='db'` row remains
+  operator-owned and untouched, and a disabled TOML-owned cleanup row remains
+  fenced from automatic recovery.
 - Require the reclaim and its canonical audit entry to commit atomically, with
-  exactly-once observable behavior under concurrent startup and rollback on
-  audit failure. The recovery preserves the row's existing cadence and runtime
-  payload rather than rewriting it from defaults.
+  exactly-once observable behavior under concurrent startup, rollback on audit
+  failure, and owning-butler/schema attribution in the shared audit log. The
+  recovery preserves the row's existing cadence and runtime payload rather than
+  rewriting it from defaults.
 - Add an expired-retained aggregate and per-source observation to
   `GET /api/memory/stats`, calculated with the same predicate as the cleanup
   job. A failed stats pool is explicitly unknown/degraded, never a zero or
   healthy result.
 - Require `MemoryOverture` to name retention degradation and incomplete source
   coverage instead of rendering a clean all-clear.
-- Explicitly prohibit this change from draining, deleting, re-enabling live
-  cleanup schedules, or otherwise mutating historical episodes. Episode
-  provenance/evidence semantics and any owner-authorized switchboard drain are
-  separately scoped follow-on work.
+- Explicitly prohibit this change from draining, deleting, or automatically
+  re-enabling or dispatching a disabled TOML-owned cleanup schedule, including
+  one with a stale due time and expired history. Episode provenance/evidence
+  semantics and any owner-authorized switchboard drain are separately scoped
+  follow-on work.
 
 ## Capabilities
 
