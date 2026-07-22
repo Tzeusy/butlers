@@ -464,9 +464,7 @@ async def test_conflicts_endpoint_unmarked_butler_prefixed_row_preserves_overloa
 
 
 async def test_conflicts_endpoint_still_detects_overlap_between_two_distinct_butler_events(app):
-    """The butler-projected exclusion must not swallow a genuine overlap
-    between two DIFFERENT butler-authored events (neither shadows a
-    same-titled non-butler row, so both stay in the candidate set)."""
+    """Unmarked `BUTLER:` titles remain ordinary timed radar candidates."""
     a = _ws_row(entry_id="a", title="BUTLER: Prep for review", start=_DAY)
     b = _ws_row(entry_id="b", title="BUTLER: Draft follow-up", start=_DAY + timedelta(minutes=30))
     app, _ = _build_app(app, workspace_rows={"general": [a, b]})
