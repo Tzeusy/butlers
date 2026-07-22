@@ -111,3 +111,16 @@ def test_autonomy_suggestion_action_link_follows_approval_push_revision() -> Non
     assert "alter table autonomy_suggestions" in normalized
     assert "add column if not exists action_id uuid" in normalized
     assert "references pending_actions(id) on delete set null" in normalized
+
+
+def test_action_event_provenance_outlives_terminal_action_retention() -> None:
+    """Audit event references validate on insert without blocking parent retention."""
+    mod = _load_migration("008_retain_event_action_provenance.py")
+    normalized = " ".join("\n".join(_collect_sqls(mod)).lower().split())
+
+    assert mod.revision == "approvals_008"
+    assert mod.down_revision == "approvals_007"
+    assert "drop constraint if exists approval_events_action_id_fkey" in normalized
+    assert "validate_approval_event_action_reference" in normalized
+    assert "for key share" in normalized
+    assert "create trigger trg_approval_events_action_reference" in normalized

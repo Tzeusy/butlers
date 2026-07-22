@@ -121,7 +121,8 @@ async def cleanup_old_actions(
         logger.info("DRY RUN: would delete %d actions", total)
         return counts
 
-    # Delete old actions
+    # Delete old actions. approval_events retains its immutable action_id as
+    # historical provenance until the longer event-retention window expires.
     delete_query = """
         DELETE FROM pending_actions
         WHERE status = ANY($1::text[])

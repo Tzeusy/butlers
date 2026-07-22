@@ -114,7 +114,7 @@ The module owns tables in the hosting butler's schema (Alembic branch: `approval
 
 - `pending_actions` -- durable queue and audit log for gated invocations
 - `approval_rules` -- standing rules for auto-approval
-- `approval_events` -- append-only immutable audit log (never updated or deleted)
+- `approval_events` -- append-only immutable audit log. Its `action_id` is historical provenance, so deleting a terminal action after its 90-day window neither mutates nor deletes the event; events retain their separate 365-day audit window.
 
 ## Dependencies
 

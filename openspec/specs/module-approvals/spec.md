@@ -203,7 +203,7 @@ All actual execution — auto-approved actions and manually approved actions dis
 
 ### Requirement: Immutable Audit Events
 
-The `approval_events` table MUST be an append-only audit log. Events include `event_type`, `action_id`, `rule_id`, `actor`, `reason`, `event_metadata` (JSONB), and `occurred_at`. A database trigger prevents UPDATE and DELETE operations.
+The `approval_events` table MUST be an append-only audit log. Events include `event_type`, `action_id`, `rule_id`, `actor`, `reason`, `event_metadata` (JSONB), and `occurred_at`. A database trigger prevents UPDATE and DELETE operations. An event's `action_id` is immutable historical provenance rather than a deletion-blocking foreign key, so terminal action retention does not mutate or delete the event.
 
 #### Scenario: Audit event creation for all state transitions
 
@@ -253,6 +253,7 @@ The module MUST support configurable retention windows for approvals data: `pend
 - **WHEN** `cleanup_old_actions` runs
 - **THEN** only terminal-status actions (`rejected`, `expired`, `executed`) older than the retention window are deleted
 - **AND** `approved` actions remain retained and retryable, including old rows with a null `execution_result`
+- **AND** related immutable action events remain unchanged with their historical `action_id` until their own event-retention window
 - **AND** pending actions are never cleaned up automatically
 - **AND** a dry-run mode returns counts without deleting
 
