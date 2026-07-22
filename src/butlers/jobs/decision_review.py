@@ -427,7 +427,15 @@ def _run_unlabeled_marker_lint(export_path: Path) -> DecisionLintResult:
     so the caller can record the existing failed scheduled-audit path rather
     than fabricating a calm ``no_decisions`` outcome.
     """
-    if not _LINT_SCRIPT_PATH.is_file():
+    try:
+        lint_script_exists = _LINT_SCRIPT_PATH.is_file()
+    except OSError as exc:
+        logger.warning(
+            "decision_review: unable to inspect lint script at %s: %s", _LINT_SCRIPT_PATH, exc
+        )
+        return DecisionLintResult(False, f"lint_script_unavailable:{type(exc).__name__}", ())
+
+    if not lint_script_exists:
         logger.warning("decision_review: lint script not found at %s", _LINT_SCRIPT_PATH)
         return DecisionLintResult(False, "lint_script_missing", ())
 

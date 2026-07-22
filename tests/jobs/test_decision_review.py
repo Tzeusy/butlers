@@ -997,6 +997,38 @@ async def test_run_digest_missing_lint_input_is_unavailable_not_no_decisions(tmp
     assert record_mock.await_args.kwargs["reason"] == "data_unavailable:lint_script_missing"
 
 
+async def test_run_digest_lint_script_preflight_oserror_records_failed_ledger(
+    tmp_path, monkeypatch
+):
+    """A filesystem failure checking the script must not fabricate a calm digest."""
+    export = tmp_path / "issues.export.jsonl"
+    _write_export(export, [{"id": "bu-x", "title": "Ordinary task", "status": "open"}])
+    pool = AsyncMock()
+
+    class _UnreadableLintScriptPath:
+        def is_file(self) -> bool:
+            raise OSError("filesystem unavailable")
+
+    monkeypatch.setattr(
+        "butlers.jobs.decision_review._LINT_SCRIPT_PATH", _UnreadableLintScriptPath()
+    )
+    with (
+        patch("butlers.jobs.decision_review._DEFAULT_EXPORT_PATH", export),
+        patch(
+            "butlers.jobs.decision_review.record_attention_event", new=AsyncMock()
+        ) as record_mock,
+    ):
+        result = await run_decision_review_digest(pool, _now=_NOW)
+
+    assert result == {"available": False, "reason": "lint_script_unavailable:OSError"}
+    record_mock.assert_awaited_once()
+    assert record_mock.await_args.kwargs["outcome"] == "failed"
+    assert (
+        record_mock.await_args.kwargs["reason"]
+        == "data_unavailable:lint_script_unavailable:OSError"
+    )
+
+
 def test_compose_lint_violation_message_lists_ids_and_titles():
     message = _compose_lint_violation_message(
         [{"id": "bu-w6jca", "title": "ARCHITECTURAL DECISION (owner): pick a schema"}]
