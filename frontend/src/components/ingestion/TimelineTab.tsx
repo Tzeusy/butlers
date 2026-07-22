@@ -135,7 +135,14 @@ function histogramBucketForRange(range: IngestionRange): IngestionHistogramBucke
 }
 
 function histogramBucketMinutes(bucket: IngestionHistogramBucketSize): number {
-  return bucket === "5m" ? 5 : 1;
+  switch (bucket) {
+    case "1h":
+      return 60;
+    case "5m":
+      return 5;
+    case "1m":
+      return 1;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2018,7 +2025,6 @@ export function TimelineTab({
   // (not `effectiveWindow`) so the strip keeps showing full-range context
   // even while the ledger itself is minute-scoped.
   const histogramBucket = histogramBucketForRange(range);
-  const histogramBucketMinutesValue = histogramBucketMinutes(histogramBucket);
   const histogramParams = useMemo(() => ({
     // A trace-scoped hour strip must not be silently clipped by the range
     // picker's window either — same reasoning as eventsFilters above. The
@@ -2046,6 +2052,12 @@ export function TimelineTab({
     isError: histogramError,
     refetch: refetchHistogram,
   } = useIngestionEventsHistogram(histogramParams, { enabled: isActive });
+
+  // The server can return a coarser actual bucket after its bounded fallback
+  // or trace-scoped auto-widening. That response bucket is authoritative for
+  // both strip slots and the range scoped by a strip click.
+  const actualHistogramBucket = histogramResp?.bucket ?? histogramBucket;
+  const histogramBucketMinutesValue = histogramBucketMinutes(actualHistogramBucket);
 
   const histogramByHour = useMemo(() => {
     const map = new Map<string, IngestionHistogramBucket[]>();
