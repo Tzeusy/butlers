@@ -113,7 +113,7 @@ export function GateSection({
               )}
             </>
           ) : (
-            <span data-testid={`gate-metrics-unavailable-${def.key}`}>in — · out —</span>
+            <span data-testid={`gate-metrics-unavailable-${def.key}`}>in {'—'} · out {'—'}</span>
           )}
         </div>
       </div>
