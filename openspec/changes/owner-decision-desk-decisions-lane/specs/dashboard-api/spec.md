@@ -87,8 +87,13 @@ applies equally to decision-labeled issues and to
 unlabeled title-marker matches, so historical closed records cannot create a
 weekly owner-facing migration alert. The scheduled
 `butlers.jobs.decision_review` subprocess invocation SHALL retain its existing
-unavailable/error handling; a failed or unreadable lint input MUST NOT be
-reported as a calm successful audit.
+unavailable/error handling: a missing or unreadable lint script/input, an
+unexpected nonzero exit, or malformed/non-JSON lint output MUST NOT be
+reported as a calm successful audit. It SHALL return an unavailable scheduled
+result, record the existing failed attention-ledger outcome with a
+`data_unavailable:` reason, and continue scheduler processing without raising.
+A successful zero-candidate lint result remains the normal calm
+`no_decisions` outcome.
 
 Explicit issue IDs SHALL remain forensic input and MUST be linted as supplied,
 even when `--check-unlabeled-markers` is present. An ordinary non-strict
@@ -114,3 +119,19 @@ live-status selection is specific to the scheduled full-export marker mode.
 - **WHEN** an operator runs an ordinary `--status all` audit without
   `--check-unlabeled-markers`
 - **THEN** the linter retains historical records from that input
+
+#### Scenario: Scheduled lint failure is unavailable, not a calm audit
+
+- **WHEN** the scheduled marker-mode lint script or its input is missing or
+  unreadable, the process exits unexpectedly, or its stdout is malformed/non-JSON
+- **THEN** the scheduled digest returns unavailable and records its existing
+  failed attention-ledger path with a `data_unavailable:` reason
+- **AND** the scheduler continues without raising
+- **AND** the digest MUST NOT return `available: true` with
+  `outcome: "no_decisions"`
+
+#### Scenario: Successful zero-candidate lint remains calm
+
+- **WHEN** the scheduled marker-mode lint subprocess exits successfully with a
+  valid JSON zero-candidate result and the export has zero open decisions
+- **THEN** the digest returns `available: true` with `outcome: "no_decisions"`
