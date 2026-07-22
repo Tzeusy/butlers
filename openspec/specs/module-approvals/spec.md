@@ -97,7 +97,7 @@ The approval lifecycle MUST allow `pending -> approved|rejected|expired` and `ap
 
 ### Requirement: Standing Rules CRUD and Matching
 
-Standing approval rules MUST enable auto-approval of repeatable safe invocations. Each rule has `id`, `tool_name`, `arg_constraints` (JSONB), `description`, `created_at`, `active`, and optional `created_from`, `expires_at`, `max_uses`, `use_count`.
+Standing approval rules MUST enable auto-approval of repeatable safe invocations. Each rule has `id`, `tool_name`, `arg_constraints` (JSONB), `description`, `created_at`, `active`, and optional `created_from`, `expires_at`, `max_uses`, `use_count`. A rule's `created_from` is historical action provenance rather than a deletion-blocking foreign key, so action retention does not mutate or delete a retained rule.
 
 #### Scenario: Create a standing rule
 
@@ -254,6 +254,7 @@ The module MUST support configurable retention windows for approvals data: `pend
 - **THEN** only terminal-status actions (`rejected`, `expired`, `executed`) older than the retention window are deleted
 - **AND** `approved` actions remain retained and retryable, including old rows with a null `execution_result`
 - **AND** related immutable action events remain unchanged with their historical `action_id` until their own event-retention window
+- **AND** standing rules created from those terminal actions remain unchanged with their historical `created_from` until their separate rule-retention policy applies
 - **AND** pending actions are never cleaned up automatically
 - **AND** a dry-run mode returns counts without deleting
 

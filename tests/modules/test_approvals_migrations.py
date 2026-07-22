@@ -124,3 +124,19 @@ def test_action_event_provenance_outlives_terminal_action_retention() -> None:
     assert "validate_approval_event_action_reference" in normalized
     assert "for key share" in normalized
     assert "create trigger trg_approval_events_action_reference" in normalized
+
+
+def test_rule_creator_provenance_outlives_terminal_action_retention() -> None:
+    """A retained standing rule cannot block cleanup of its terminal creator action."""
+    mod = _load_migration("009_retain_rule_creator_provenance.py")
+    normalized = " ".join("\n".join(_collect_sqls(mod)).lower().split())
+
+    assert mod.revision == "approvals_009"
+    assert mod.down_revision == "approvals_008"
+    assert "drop constraint if exists approval_rules_created_from_fk" in normalized
+    assert "validate_approval_rule_creator_reference" in normalized
+    assert "for key share" in normalized
+    assert "create constraint trigger" in normalized
+    assert "trg_approval_rules_created_from_reference" in normalized
+    assert "after insert or update of created_from on approval_rules" in normalized
+    assert "deferrable initially deferred" in normalized

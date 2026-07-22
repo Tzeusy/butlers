@@ -200,6 +200,146 @@ async def test_terminal_retention_keeps_immutable_execution_event_as_provenance(
     assert event["event_metadata"] == {"result": "merged"}
 
 
+async def test_terminal_retention_keeps_rule_creator_as_historical_provenance(
+    approvals_pool,
+) -> None:
+    """An active rule must not block cleanup of the terminal action that created it."""
+    executed_id = await _insert_old_action(
+        approvals_pool,
+        status="executed",
+        execution_result={"success": True},
+    )
+    rule_id = uuid4()
+    await approvals_pool.execute(
+        """
+        INSERT INTO approval_rules (
+            id, tool_name, arg_constraints, description, created_from, created_at, active
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        """,
+        rule_id,
+        "memory_entity_merge",
+        {"source_entity_id": "source", "target_entity_id": "target"},
+        "Active rule created from the executed action",
+        executed_id,
+        datetime.now(UTC),
+        True,
+    )
+
+    counts = await cleanup_old_actions(
+        approvals_pool,
+        RetentionPolicy(pending_actions_retention_days=90),
+    )
+
+    assert counts == {"executed": 1}
+    assert (
+        await approvals_pool.fetchval("SELECT id FROM pending_actions WHERE id = $1", executed_id)
+        is None
+    )
+    rule = await approvals_pool.fetchrow(
+        "SELECT created_from, active FROM approval_rules WHERE id = $1",
+        rule_id,
+    )
+    assert rule is not None
+    assert rule["created_from"] == executed_id
+    assert rule["active"] is True
+
+
+async def test_new_rule_creator_requires_a_live_action(approvals_pool) -> None:
+    """Historical creator provenance still validates when a rule is newly inserted."""
+    with pytest.raises(asyncpg.ForeignKeyViolationError, match="live pending action"):
+        await approvals_pool.execute(
+            """
+            INSERT INTO approval_rules (
+                id, tool_name, arg_constraints, description, created_from, active
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            uuid4(),
+            "memory_entity_merge",
+            {"source_entity_id": "source", "target_entity_id": "target"},
+            "Invalid historical creator",
+            uuid4(),
+            True,
+        )
+
+
+async def test_rule_creator_update_requires_a_live_action(approvals_pool) -> None:
+    """Replacing a rule's source action keeps the former FK integrity check."""
+    action_id = await _insert_old_action(
+        approvals_pool,
+        status="executed",
+        execution_result={"success": True},
+    )
+    rule_id = uuid4()
+    await approvals_pool.execute(
+        """
+        INSERT INTO approval_rules (
+            id, tool_name, arg_constraints, description, created_from, active
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        rule_id,
+        "memory_entity_merge",
+        {"source_entity_id": "source", "target_entity_id": "target"},
+        "Valid creator before replacement",
+        action_id,
+        True,
+    )
+
+    with pytest.raises(asyncpg.ForeignKeyViolationError, match="live pending action"):
+        await approvals_pool.execute(
+            "UPDATE approval_rules SET created_from = $1 WHERE id = $2",
+            uuid4(),
+            rule_id,
+        )
+
+
+async def test_rule_creator_validation_keeps_the_deferred_circular_insert_contract(
+    approvals_pool,
+) -> None:
+    """A rule and its source action can still be inserted in either dependency order."""
+    action_id = uuid4()
+    rule_id = uuid4()
+
+    async with approvals_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO approval_rules (
+                    id, tool_name, arg_constraints, description, created_from, active
+                )
+                VALUES ($1, $2, $3, $4, $5, $6)
+                """,
+                rule_id,
+                "memory_entity_merge",
+                {"source_entity_id": "source", "target_entity_id": "target"},
+                "Rule inserted before its source action",
+                action_id,
+                True,
+            )
+            await conn.execute(
+                """
+                INSERT INTO pending_actions (
+                    id, tool_name, tool_args, status, approval_rule_id
+                )
+                VALUES ($1, $2, $3, $4, $5)
+                """,
+                action_id,
+                "memory_entity_merge",
+                {"source_entity_id": "source", "target_entity_id": "target"},
+                "pending",
+                rule_id,
+            )
+
+    assert (
+        await approvals_pool.fetchval(
+            "SELECT created_from FROM approval_rules WHERE id = $1", rule_id
+        )
+        == action_id
+    )
+
+
 async def test_new_action_event_requires_a_live_action(approvals_pool) -> None:
     """Dropping the deletion-blocking FK must not permit invalid new event references."""
     with pytest.raises(asyncpg.ForeignKeyViolationError, match="live pending action"):
@@ -220,6 +360,16 @@ def _create_approvals_007_database(postgres_container) -> str:
     command.upgrade(
         _build_alembic_config(db_url, chains=["approvals"]),
         "approvals@approvals_007",
+    )
+    return db_url
+
+
+def _create_approvals_008_database(postgres_container) -> str:
+    """Create the approvals schema immediately before the rule-provenance fix."""
+    db_url = create_migration_db(postgres_container, migration_db_name())
+    command.upgrade(
+        _build_alembic_config(db_url, chains=["approvals"]),
+        "approvals@approvals_008",
     )
     return db_url
 
@@ -298,5 +448,72 @@ async def test_approvals_upgrade_keeps_existing_execution_event_for_terminal_ret
             "event_type": "action_execution_succeeded",
             "actor": "system:executor",
         }
+    finally:
+        await upgraded_pool.close()
+
+
+async def test_approvals_upgrade_keeps_existing_rule_creator_for_terminal_retention(
+    postgres_container,
+) -> None:
+    """An approvals_008 rule keeps its creator ID after the action-retention upgrade."""
+    db_url = await asyncio.to_thread(_create_approvals_008_database, postgres_container)
+    pool = await asyncpg.create_pool(
+        db_url,
+        min_size=1,
+        max_size=3,
+        init=register_jsonb_codec,
+    )
+    rule_id = uuid4()
+    try:
+        executed_id = await _insert_old_action(
+            pool,
+            status="executed",
+            execution_result={"success": True},
+        )
+        await pool.execute(
+            """
+            INSERT INTO approval_rules (
+                id, tool_name, arg_constraints, description, created_from, created_at, active
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """,
+            rule_id,
+            "memory_entity_merge",
+            {"source_entity_id": "source", "target_entity_id": "target"},
+            "Active rule created before the retention fix",
+            executed_id,
+            datetime.now(UTC),
+            True,
+        )
+    finally:
+        await pool.close()
+
+    await asyncio.to_thread(_upgrade_approvals_to_head, db_url)
+
+    upgraded_pool = await asyncpg.create_pool(
+        db_url,
+        min_size=1,
+        max_size=3,
+        init=register_jsonb_codec,
+    )
+    try:
+        counts = await cleanup_old_actions(
+            upgraded_pool,
+            RetentionPolicy(pending_actions_retention_days=90),
+        )
+
+        assert counts == {"executed": 1}
+        assert (
+            await upgraded_pool.fetchval(
+                "SELECT id FROM pending_actions WHERE id = $1", executed_id
+            )
+            is None
+        )
+        rule = await upgraded_pool.fetchrow(
+            "SELECT created_from, active FROM approval_rules WHERE id = $1",
+            rule_id,
+        )
+        assert rule is not None
+        assert dict(rule) == {"created_from": executed_id, "active": True}
     finally:
         await upgraded_pool.close()
