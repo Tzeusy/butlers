@@ -137,4 +137,25 @@ describe('FiltersHeaderAside — degraded-mode KPI handling', () => {
 
     expect(container.textContent).toBe('')
   })
+
+  it('names a failed metrics reader and offers a scoped retry instead of vanishing', () => {
+    const retry = vi.fn()
+    mockUsePipelineStats.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new Error('pipeline metrics offline'),
+      refetch: retry,
+    })
+
+    act(() => { root.render(<FiltersHeaderAside />) })
+
+    const note = container.querySelector('[data-testid="filters-header-metrics-unavailable"]')
+    expect(note).not.toBeNull()
+    expect(note?.textContent).toContain('pipeline metrics')
+    act(() => {
+      ;(note?.querySelector('button') as HTMLButtonElement).click()
+    })
+    expect(retry).toHaveBeenCalledTimes(1)
+  })
 })

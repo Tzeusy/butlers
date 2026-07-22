@@ -17,6 +17,7 @@ import { DispatchLayout, DispatchHeader, DispatchSurface } from '@/components/in
 import { IngestionFiltersVerdictOpener } from '@/components/ingestion/dispatch/IngestionVerdictOpeners'
 import { FiltersPipeline } from '@/components/ingestion/filters'
 import { getAvailablePipelineBacklog } from '@/components/ingestion/filters/backlog-state'
+import { SourceDegradedNote } from '@/components/ui/query-boundary'
 import { usePipelineStats } from '@/hooks/use-ingestion'
 
 // ---------------------------------------------------------------------------
@@ -24,7 +25,21 @@ import { usePipelineStats } from '@/hooks/use-ingestion'
 // ---------------------------------------------------------------------------
 
 export function FiltersHeaderAside() {
-  const { data: stats } = usePipelineStats('24h')
+  const {
+    data: stats,
+    isError: statsError,
+    refetch: refetchStats,
+  } = usePipelineStats('24h')
+  if (statsError && !stats) {
+    return (
+      <SourceDegradedNote
+        label="pipeline metrics"
+        detail="unavailable"
+        onRetry={() => void refetchStats()}
+        testId="filters-header-metrics-unavailable"
+      />
+    )
+  }
   if (!stats) return null
 
   const total = stats.ingested + stats.filtered
@@ -32,12 +47,19 @@ export function FiltersHeaderAside() {
     stats.routed_by_butler != null
       ? Object.values(stats.routed_by_butler).reduce((a, b) => a + b, 0)
       : 0
-  const available = stats.aggregates_available
+  const available = stats.aggregates_available && !statsError
   const backlog = getAvailablePipelineBacklog(stats)
 
   return (
     <div className="flex flex-wrap items-baseline gap-8">
-      {!available && (
+      {statsError ? (
+        <SourceDegradedNote
+          label="pipeline metrics"
+          detail="refresh unavailable, values may be stale"
+          onRetry={() => void refetchStats()}
+          testId="filters-header-metrics-unavailable"
+        />
+      ) : !available && (
         <span
           className="font-mono text-[9.5px] tracking-[0.14em] uppercase text-muted-foreground/70"
           data-testid="filters-header-metrics-unavailable"
