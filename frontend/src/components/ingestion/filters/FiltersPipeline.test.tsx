@@ -459,6 +459,36 @@ describe('FiltersPipeline: execution backlog status', () => {
     expect(unavailable?.textContent).toContain('backlog unavailable')
     expect(container.querySelector('[data-testid="pipeline-execution-backlog"]')).toBeNull()
   })
+
+  it('does not label cached execution counts as current after a failed stats refresh and retries', () => {
+    const retry = vi.fn()
+    mockUsePipelineStats.mockReturnValue({
+      data: makeStats({
+        failed_total: 7,
+        replay_pending_total: 2,
+        written_off_total: 11,
+        backlog_available: true,
+      }),
+      isLoading: false,
+      isError: true,
+      error: new Error('pipeline metrics refresh failed'),
+      refetch: retry,
+    })
+
+    renderComponent(container, root, <FiltersPipeline />)
+
+    const unavailable = container.querySelector('[data-testid="pipeline-execution-backlog-unavailable"]')
+    expect(unavailable, 'stale execution backlog must be named unavailable').not.toBeNull()
+    expect(unavailable?.textContent).toContain('execution backlog')
+    expect(unavailable?.textContent).toContain('unavailable')
+    expect(container.querySelector('[data-testid="pipeline-execution-backlog"]')).toBeNull()
+    expect(container.textContent).not.toContain('execution backlog · current ledger')
+
+    act(() => {
+      ;(unavailable?.querySelector('button') as HTMLButtonElement).click()
+    })
+    expect(retry).toHaveBeenCalledTimes(1)
+  })
 })
 
 // ============================================================================

@@ -54,6 +54,7 @@ import type { IngestionRule, PipelineStats } from '@/api/types'
 import type { ChannelDefaultPolicy } from '@/api/index.ts'
 import { ApiError } from '@/api/index.ts'
 import { getAvailablePipelineBacklog } from './backlog-state'
+import { SourceDegradedNote } from '@/components/ui/query-boundary'
 
 // ---------------------------------------------------------------------------
 // Rule classification helpers
@@ -69,10 +70,24 @@ function isChannelDefault(rule: IngestionRule): boolean {
 interface ExecutionBacklogProps {
   stats: PipelineStats | undefined
   loading: boolean
+  statsError: boolean
+  onRetry: () => void
 }
 
-function ExecutionBacklog({ stats, loading }: ExecutionBacklogProps) {
+function ExecutionBacklog({ stats, loading, statsError, onRetry }: ExecutionBacklogProps) {
   if (loading) return null
+
+  if (statsError) {
+    return (
+      <SourceDegradedNote
+        className="mt-6"
+        label="execution backlog"
+        detail="unavailable after refresh failed"
+        onRetry={onRetry}
+        testId="pipeline-execution-backlog-unavailable"
+      />
+    )
+  }
 
   const backlog = getAvailablePipelineBacklog(stats)
   if (!backlog) {
@@ -430,7 +445,12 @@ export function FiltersPipeline() {
       />
 
       {/* DB-backed execution backlog: independent of Prometheus funnel metrics. */}
-      <ExecutionBacklog stats={pipelineStats} loading={statsLoading} />
+      <ExecutionBacklog
+        stats={pipelineStats}
+        loading={statsLoading}
+        statsError={statsError}
+        onRetry={() => void refetchStats()}
+      />
 
       {/* Gate sections */}
       <div className="mt-14">

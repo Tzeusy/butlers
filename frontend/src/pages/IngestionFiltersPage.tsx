@@ -48,7 +48,7 @@ export function FiltersHeaderAside() {
       ? Object.values(stats.routed_by_butler).reduce((a, b) => a + b, 0)
       : 0
   const available = stats.aggregates_available && !statsError
-  const backlog = getAvailablePipelineBacklog(stats)
+  const backlog = statsError ? null : getAvailablePipelineBacklog(stats)
 
   return (
     <div className="flex flex-wrap items-baseline gap-8">
@@ -95,6 +95,13 @@ export function FiltersHeaderAside() {
               {backlog.activeTotal.toLocaleString()} active
             </div>
           </div>
+        ) : statsError ? (
+          <SourceDegradedNote
+            label="active backlog"
+            detail="unavailable after refresh failed"
+            onRetry={() => void refetchStats()}
+            testId="filters-header-backlog-unavailable"
+          />
         ) : (
           <div
             className="border-l border-border pl-5 font-mono text-[9.5px] tracking-[0.14em] uppercase text-muted-foreground/70"
