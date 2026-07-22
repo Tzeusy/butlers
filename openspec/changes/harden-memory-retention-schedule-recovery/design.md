@@ -123,10 +123,15 @@ defines this atomicity boundary.
 `GET /api/memory/stats` SHALL compute expired-retained episode counts from the
 same cleanup predicate, currently `expires_at < now()`, and shall use
 `expires_at IS NOT NULL` as the per-source eligible denominator. Its observation
-contains aggregate count and ratio plus per-source count, denominator, and
-ratio. A complete source with at least one matching row exceeds the approved
-v1 threshold of zero and is degraded; a complete source with no matching rows
-is healthy. A source with no memory schema is absent, not failed.
+contains aggregate count and ratio plus one exact `RetentionSourceObservation`
+per completed source: `source_butler: str`, `source_schema: str | None`,
+`expired_retained_episodes: int`, `retention_eligible_episodes: int`, and
+`expired_retained_ratio: float | None`. The schema is `null` only for legacy
+unqualified lookup, and the ratio is `null` only for a zero denominator. The
+backend Pydantic model and frontend TypeScript interface use those exact
+snake_case names. A complete source with at least one matching row exceeds the
+approved v1 threshold of zero and is degraded; a complete source with no
+matching rows is healthy. A source with no memory schema is absent, not failed.
 
 A retention-only pool query failure is distinct from ordinary stats and catalog
 drift failures. It SHALL preserve the existing successful stats fields but name
@@ -157,11 +162,12 @@ precedent.
 ### D4 — Render the state and coverage as separate, named facts
 
 `MemoryOverture` SHALL consume the new wire fields rather than infer health from
-an omitted value. It renders a named retention-degraded condition for a complete
-source over threshold and an incomplete/unknown condition naming every failed
-retention source. It SHALL not render a healthy retention statement when the
-aggregate is unknown. Existing ordinary `pools_failed` and catalog-drift
-degraded notes remain independent and continue to render.
+an omitted value. It renders a named retention-degraded condition from
+`source_butler` and `expired_retained_episodes` for a complete source over
+threshold and an incomplete/unknown condition naming every failed retention
+source. It SHALL not render a healthy retention statement when the aggregate is
+unknown. Existing ordinary `pools_failed` and catalog-drift degraded notes
+remain independent and continue to render.
 
 **Why this over a numeric-only KPI:** the system's reliability doctrine rejects
 calm absence. A number without coverage can look like a verified zero.
@@ -185,7 +191,7 @@ data. The ordinary cleanup handler MUST NOT be reused as an unbounded backfill.
 | Scheduler execution | `scheduled_tasks`, scheduler tick, and schedule CRUD/read surfaces | Recovery preserves executable payload and never changes a DB-owned disable. |
 | Durable evidence | `public.audit_log`, `audit.append()`, `/api/audit-log` | Exactly one committed control-plane audit accompanies one recovered row. |
 | Cleanup authority | `run_episode_cleanup()` | The observation uses its exact expiry predicate; the observation never calls it. |
-| Aggregate API | `get_memory_stats`, `MemoryStats`, `ApiMeta`, frontend API types | New counts/ratios/status and retention-specific failed-source list are additive. |
+| Aggregate API | `get_memory_stats`, `MemoryStats`, `ApiMeta`, `RetentionSourceObservation`, frontend API types | New counts/ratios/status, exact per-source wire rows, and retention-specific failed-source list are additive. |
 | Owner-facing UI | `useMemoryStats()` and `MemoryOverture` | Complete degradation and unknown coverage are rendered explicitly. |
 | Separate provenance/ops lanes | `bu-kqnum.13.4`, `bu-kqnum.13.5`, `bu-vgl57`, `bu-tmy40`, `bu-v50gm` | No evidence mutation, deletion, drain, or authorization is implied here. |
 
@@ -215,9 +221,9 @@ as a substitute for the complete-or-unknown `/api/memory/stats` observation.
 |---|---|
 | Scheduler unit/integration | TOML present, TOML removed→disabled→recover, disabled DB-owned preservation, payload preservation, and second-run no-op. |
 | Transaction/audit | Real PostgreSQL test that a successful reclaim has one audit row; forced audit failure leaves the original schedule unchanged; concurrent contenders yield one transition/audit. |
-| API model and fan-out | Per-source and all-source complete aggregates, zero denominator, one source over threshold, retention-only query failure, and absent memory schema coverage. |
+| API model and fan-out | Exact `RetentionSourceObservation` field names/nullability, per-source and all-source complete aggregates, zero denominator, one source over threshold, retention-only query failure, and absent memory schema coverage. |
 | Cross-contract | Existing degraded-envelope contract confirms `retention_pools_failed` names failures without mutating ordinary `pools_failed` or catalog fields. |
-| Frontend | Types compile; Overture renders healthy, degraded, and unknown/incomplete retention states while retaining existing degraded notes. |
+| Frontend | Types compile; Overture tests construct exact `RetentionSourceObservation` rows and render healthy, degraded, and unknown/incomplete retention states while retaining existing degraded notes. |
 | Scope guard | Static/review inspection confirms no migration, drain call, schedule toggle endpoint, notification, provenance mutation, or historical data operation is introduced. |
 | Spec | `openspec validate harden-memory-retention-schedule-recovery --strict` succeeds. |
 

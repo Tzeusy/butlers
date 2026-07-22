@@ -21,8 +21,11 @@
 - [ ] 2.1 Centralize or otherwise prove exact reuse of the ordinary cleanup
   predicate (`expires_at < now()`) for the per-source expired-retained count and
   `expires_at IS NOT NULL` denominator; do not read episode content or IDs.
-- [ ] 2.2 Extend the memory-stats fan-out, Pydantic model, API envelope, and
-  frontend API types with additive aggregate fields, per-source observations,
+- [ ] 2.2 Extend the memory-stats fan-out, Pydantic
+  `RetentionSourceObservation` model, API envelope, and frontend API types
+  with additive aggregate fields, exact per-source
+  `source_butler`/`source_schema`/`expired_retained_episodes`/
+  `retention_eligible_episodes`/`expired_retained_ratio` observations,
   retention status, and the independent `retention_pools_failed` tracker.
 - [ ] 2.3 Preserve valid ordinary stats and catalog-drift values when a
   retention-only query fails, while returning null fleet retention aggregate and
@@ -35,12 +38,13 @@
 
 ## 3. Owner-facing retention honesty
 
-- [ ] 3.1 Update `MemoryOverture` to consume the retention observation without
-  deriving health from missing/partial values and without adding mutation
-  controls.
+- [ ] 3.1 Update `MemoryOverture` to consume the exact
+  `RetentionSourceObservation` field names without deriving health from
+  missing/partial values and without adding mutation controls.
 - [ ] 3.2 Add focused component tests for healthy, named degraded, and named
-  unknown/incomplete coverage states, including coexistence with ordinary and
-  catalog degraded-source notes.
+  unknown/incomplete coverage states, constructing the exact per-source wire
+  shape and including coexistence with ordinary and catalog degraded-source
+  notes.
 
 ## 4. Scope, review, and verification gates
 

@@ -6,15 +6,20 @@ The `/memory` `MemoryOverture` SHALL render the expired-retention observation
 from `GET /api/memory/stats` using `meta.retention_status`,
 `meta.retention_sources`, and `meta.retention_pools_failed`. It SHALL treat
 retention state and source coverage as explicit facts, not infer health from a
-missing value or a partial numeric aggregate.
+missing value or a partial numeric aggregate. For a completed retention source,
+it SHALL consume the `RetentionSourceObservation` wire fields
+`source_butler`, `source_schema`, `expired_retained_episodes`,
+`retention_eligible_episodes`, and `expired_retained_ratio` rather than an
+untyped or differently named source shape.
 
 When the status is `degraded`, the Overture SHALL name at least the affected
-source and its expired-retained count; it MAY also render the eligible count and
-ratio. When the status is `unknown`, it SHALL name the failed sources and state
-that fleet retention coverage is incomplete. It SHALL not render a healthy or
-all-clear retention statement while status is `unknown`. A healthy rendering is
-permitted only for a complete `healthy` response. Existing ordinary
-`pools_failed` and catalog-drift degraded notes remain independently visible.
+`source_butler` and its `expired_retained_episodes` count; it MAY also render
+`retention_eligible_episodes` and `expired_retained_ratio`. When the status is
+`unknown`, it SHALL name the failed sources and state that fleet retention
+coverage is incomplete. It SHALL not render a healthy or all-clear retention
+statement while status is `unknown`. A healthy rendering is permitted only for
+a complete `healthy` response. Existing ordinary `pools_failed` and
+catalog-drift degraded notes remain independently visible.
 
 The Overture SHALL not add a run-now, re-enable, delete, drain, or owner-
 authorization affordance as part of this observation-only capability.
@@ -29,10 +34,13 @@ authorization affordance as part of this observation-only capability.
 #### Scenario: Degraded source is named in the Overture
 
 - **WHEN** `GET /api/memory/stats` reports `meta.retention_status='degraded'`
-  with a source whose expired-retained count is greater than zero
+  with `meta.retention_sources` containing
+  `{"source_butler":"relationship","source_schema":"relationship",
+  "expired_retained_episodes":2,"retention_eligible_episodes":5,
+  "expired_retained_ratio":0.4}`
 - **THEN** the Overture SHALL render a named retention-degraded note for that
-  source
-- **AND** the note SHALL include its expired-retained count
+  `source_butler`
+- **AND** the note SHALL include its `expired_retained_episodes` count
 - **AND** the page SHALL not offer cleanup or schedule mutation controls
 
 #### Scenario: Incomplete coverage never renders as an all-clear

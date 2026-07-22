@@ -15,9 +15,28 @@ the fleet-wide expired-retention observation:
   denominator when coverage is complete and the denominator is non-zero;
   `null` when coverage is incomplete or the denominator is zero.
 - `meta.retention_status: 'healthy' | 'degraded' | 'unknown'`.
-- `meta.retention_sources: list` with one row per completed relevant memory
-  source: its butler identity, resolved memory schema, expired-retained count,
-  eligible count, and ratio (or `null` for a zero denominator).
+- `meta.retention_sources: list[RetentionSourceObservation]` in the backend
+  Pydantic model and `RetentionSourceObservation[]` in frontend TypeScript,
+  with one row per completed relevant memory source (and an empty list when
+  none are relevant). Each `RetentionSourceObservation` SHALL carry these
+  required, snake_case JSON fields:
+  - `source_butler` — Pydantic `str` and JSON/TypeScript `string`; non-null
+    butler/pool identity for the completed source.
+  - `source_schema` — Pydantic `str | None` and JSON/TypeScript
+    `string | null`; the resolved effective memory schema, `null` only for a
+    legacy source whose memory relations use unqualified lookup.
+  - `expired_retained_episodes` — Pydantic `int` and JSON/TypeScript `number`;
+    non-null, non-negative numerator for rows matching the cleanup predicate.
+  - `retention_eligible_episodes` — Pydantic `int` and JSON/TypeScript
+    `number`; non-null, non-negative denominator for rows with
+    `expires_at IS NOT NULL`.
+  - `expired_retained_ratio` — Pydantic `float | None` and JSON/TypeScript
+    `number | null`; numerator divided by denominator when the denominator is
+    non-zero, otherwise `null` (and never a fabricated zero).
+  The backend Pydantic `RetentionSourceObservation` model and frontend
+  TypeScript `RetentionSourceObservation` interface SHALL expose exactly these
+  keys and nullability; Overture consumers and tests SHALL construct this wire
+  shape rather than a generic source row.
 - `meta.retention_pools_failed: string[]` when one or more relevant source
   queries fail. It is absent or empty only when none fail.
 
@@ -52,8 +71,10 @@ mutation.
   one or more rows matching `expires_at < now()`
 - **THEN** `data.expired_retained_episodes` and
   `data.retention_eligible_episodes` SHALL contain the complete aggregates
-- **AND** `meta.retention_sources` SHALL identify the degraded source with its
-  count and ratio
+- **AND** `meta.retention_sources` SHALL include that source's
+  `RetentionSourceObservation`, using `source_butler`, `source_schema`,
+  `expired_retained_episodes`, `retention_eligible_episodes`, and
+  `expired_retained_ratio`
 - **AND** `meta.retention_status` SHALL be `degraded`
 
 #### Scenario: Retention-only pool failure is unknown, not healthy
@@ -80,3 +101,6 @@ mutation.
   `data.retention_eligible_episodes` SHALL be zero
 - **AND** `data.expired_retained_ratio` SHALL be `null`
 - **AND** each affected per-source ratio SHALL be `null`
+- **AND** each affected `RetentionSourceObservation` SHALL retain its non-null
+  `source_butler`, `source_schema` (or legacy `null`), zero numerator, and
+  zero denominator
