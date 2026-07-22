@@ -158,6 +158,8 @@ class ChroniclerModule(Module):
             return
         from butlers.core.scheduler import ensure_module_default_schedule
 
+        owner_butler = getattr(db, "owner_butler", None) or getattr(db, "schema", None)
+        owner_schema = getattr(db, "schema", None)
         for entry in _DEFAULT_SCHEDULES:
             try:
                 await ensure_module_default_schedule(
@@ -166,6 +168,8 @@ class ChroniclerModule(Module):
                     cron=entry["cron"],
                     job_name=entry["job_name"],
                     job_args=entry.get("job_args"),
+                    owner_butler=owner_butler,
+                    owner_schema=owner_schema,
                 )
             except Exception:
                 logger.warning(

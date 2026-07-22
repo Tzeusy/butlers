@@ -514,6 +514,7 @@ async def test_ensure_module_default_schedule_idempotent_and_toml_overrides_cade
 
     pool = await _pool_for(core_memory_db_url)
     try:
+        await pool.execute("DELETE FROM scheduled_tasks WHERE name = 'memory_decay_sweep'")
         # First boot: creates the row.
         await ensure_module_default_schedule(
             pool,
@@ -576,18 +577,17 @@ async def test_ensure_module_default_schedule_idempotent_and_toml_overrides_cade
         assert row["cron"] == "30 2 * * *", "TOML cron must win once declared"
         assert row["enabled"] is True
 
-        # Operator removes the TOML block again. The module re-registers on
-        # the next boot *before* sync_schedules runs (matching lifecycle.py
-        # step ordering: module on_startup before TOML sync) — this must
-        # reclaim the row so the subsequent (empty) TOML sync does not treat
-        # it as an orphaned TOML schedule and disable it.
+        # The next boot synchronizes removed TOML entries before module-default
+        # registration. Recovery can now prove this is a disabled TOML orphan.
+        await sync_schedules(pool, [])
         await ensure_module_default_schedule(
             pool,
             name="memory_decay_sweep",
             cron="15 3 * * *",
             job_name="memory_decay_sweep",
+            owner_butler="general",
+            owner_schema="general",
         )
-        await sync_schedules(pool, [])  # TOML no longer declares this schedule
         row = await pool.fetchrow(
             "SELECT cron, source, enabled FROM scheduled_tasks WHERE name = 'memory_decay_sweep'"
         )

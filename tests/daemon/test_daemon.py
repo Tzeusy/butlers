@@ -505,8 +505,8 @@ async def test_startup_sequence(butler_dir: Path) -> None:
         "connect",
         "run_migrations(core)",
         "validate_module_credentials_async",
-        "Spawner",
         "sync_schedules",
+        "Spawner",
         "FastMCP",
         "start_mcp_server",
     ]
