@@ -251,7 +251,8 @@ The module MUST support configurable retention windows for approvals data: `pend
 #### Scenario: Cleanup old actions
 
 - **WHEN** `cleanup_old_actions` runs
-- **THEN** only terminal-status actions (`approved`, `rejected`, `expired`, `executed`) older than the retention window are deleted
+- **THEN** only terminal-status actions (`rejected`, `expired`, `executed`) older than the retention window are deleted
+- **AND** `approved` actions remain retained and retryable, including old rows with a null `execution_result`
 - **AND** pending actions are never cleaned up automatically
 - **AND** a dry-run mode returns counts without deleting
 

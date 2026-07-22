@@ -5,12 +5,12 @@ and audit events. Policies control automatic cleanup of old/stale data while
 preserving audit trails within configured windows.
 
 Retention knobs:
-- pending_actions_retention_days: Archive/delete decided actions older than N days
+- pending_actions_retention_days: Archive/delete terminal actions older than N days
 - approval_rules_retention_days: Cleanup inactive rules older than N days
 - approval_events_retention_days: Archive immutable events older than N days (compliance)
 
 Default policies:
-- Pending actions: 90 days after decision
+- Terminal actions: 90 days after terminal decision
 - Approval rules: 180 days after deactivation
 - Approval events: 365 days (1 year audit window)
 
@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 # Terminal action statuses eligible for cleanup after retention period
 TERMINAL_ACTION_STATUSES = [
-    ActionStatus.APPROVED.value,
     ActionStatus.REJECTED.value,
     ActionStatus.EXPIRED.value,
     ActionStatus.EXECUTED.value,
@@ -66,8 +65,9 @@ async def cleanup_old_actions(
 ) -> dict[str, int]:
     """Delete or archive pending actions older than the retention window.
 
-    Only terminal statuses (approved, rejected, expired, executed) are eligible
-    for cleanup. Pending actions remain until resolved.
+    Only terminal statuses (rejected, expired, executed) are eligible for
+    cleanup. Pending and approved actions remain until explicitly resolved;
+    approved actions are retryable until execution succeeds.
 
     Parameters
     ----------
