@@ -31,6 +31,16 @@ hide a timed event solely through a failed parse.
 - **THEN** overlap, back-to-back, and overloaded-day detection retain their
   existing behavior
 
+#### Scenario: Unmarked BUTLER-prefixed provider event retains detector behavior
+
+- **WHEN** a timed provider projection row has a title beginning `BUTLER:` but
+  default or unmarked metadata, and it overlaps, adjoins, or contributes meeting
+  hours alongside another timed human row
+- **THEN** it remains a radar candidate and overlap, back-to-back, and
+  overloaded-day detection retain their existing behavior
+- **AND** title, source, and lane do not substitute for explicit generated
+  metadata
+
 #### Scenario: Legacy midnight row is excluded from every detector
 
 - **WHEN** a legacy row has `all_day=false`, lasts at least 24 hours, and has
