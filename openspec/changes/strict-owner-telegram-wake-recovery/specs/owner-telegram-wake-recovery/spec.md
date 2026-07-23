@@ -1,0 +1,164 @@
+## ADDED Requirements
+
+### Requirement: Strict Post-Commit Owner Telegram Wake Authority
+The system SHALL recognize wake-recovery authority only from a durably accepted
+Switchboard ingestion event for a non-empty native-text message sent in a
+private/direct Telegram-bot chat by the canonical owner's primary Telegram-bot
+identity. The accepted-event snapshot SHALL be immutable and contain the
+ingestion-event/request ID, dedupe and external-update identifiers, committed
+acceptance timestamp, canonical owner and matched identity, exact Telegram
+endpoint/chat/thread tuple, direct-native-text proof, normalized-text digest,
+and the Owner Attention Policy timezone/floor decision; it SHALL not retain the
+message body for this protocol.
+
+The earliest owner-local release floor SHALL be an explicit, valid,
+timezone-bound Owner Attention Policy value. An absent, invalid, or not-yet
+reached floor SHALL fail closed with no wake run and no deferred trigger; a
+later qualifying owner DM may be evaluated again. A raw connector receipt,
+Telegram user-client event, group/channel/forum/topic event, forwarded, edited,
+service, callback, attachment, caption, HA, OwnTracks, location, cron, broker
+catch-up, briefing, or generic context event SHALL NOT create wake authority.
+
+#### Scenario: Accepted direct owner bot text creates one candidate
+- **WHEN** Switchboard commits a direct private native-text Telegram-bot event
+  from the canonical owner's primary Telegram-bot identity after the configured
+  local floor
+- **THEN** it persists or returns the immutable accepted-event snapshot and one
+  owner/window wake-recovery candidate
+- **AND** the candidate refers to the committed ingestion-event ID rather than
+  an in-memory connector callback
+
+#### Scenario: Replay returns the same candidate
+- **WHEN** the same accepted ingestion event is replayed after a connector or
+  coordinator retry
+- **THEN** the event uniqueness rule returns the existing candidate/run and
+  SHALL NOT allocate a second fence or egress action key
+
+#### Scenario: Non-qualifying input has no release effect
+- **WHEN** an event is from a group, a non-owner, a Telegram user client, a
+  callback, an attachment/caption, a location source, or arrives before the
+  configured local floor
+- **THEN** no wake run, queue reservation, context mutation, or Messenger
+  egress intent is created
+
+### Requirement: Window-Scoped Fenced All-or-Nothing Cohort
+The system SHALL coordinate a wake release through one active durable
+`WakeRecoveryRun` claim per canonical owner and canonical policy-timezone
+window. The run SHALL have a monotonic owner/window fence, accepted-event
+reference, explicit participant-set digest, immutable exact delivery target,
+composition-manifest digest, and lifecycle state. It SHALL assign one stable
+release action key only after a non-empty compatible manifest is final.
+An exact replay of an accepted event SHALL return its existing run, and a stale
+or conflicting fence SHALL be rejected by every participant. A later accepted
+DM while a run is active SHALL create no second action. Only after a
+`blocked_dnd` run is explicitly aborted, DND has cleared, and uncommitted
+reservations are released may a later accepted direct owner DM create a
+higher-fence successor run.
+
+Every registered v1 quiet-hours-hold origin SHALL participate in prepare, even
+when it has zero eligible rows. An unavailable, refusing, mismatched, or
+oversized participant SHALL retain the entire cohort and prohibit commit and
+egress; it SHALL NOT be omitted. A same-fence retry for unavailable or oversize
+state SHALL reuse persisted prepared responses and cutoffs and SHALL NOT add a
+late row or allocate a second action. An empty compatible cohort SHALL
+terminate as `empty` without any Health mutation or Messenger intent.
+
+Only a hold with immutable `owner_attention_quiet_hours` admission provenance,
+the matching policy-window key, a fully resolved Telegram target tuple, original
+`deliver_at`, and a deterministic origin admission sequence is eligible. The
+origin-local prepare transaction SHALL freeze its cohort and cutoff sequence.
+Legacy/unmarked rows and rows accepted after that cutoff SHALL remain outside
+the current cohort; a late row remains `pending` for a later accepted wake.
+
+#### Scenario: All registered origins must prepare
+- **WHEN** one registered origin is unavailable or reports that its selected
+  cohort would exceed the fixed v1 composition limit
+- **THEN** Switchboard records a retained run reason and retains every
+  compatible origin's uncommitted reservation under the same fence
+- **AND** no selected row, policy-sleep record, or Messenger egress intent is
+  partially committed
+
+#### Scenario: Prepare freezes the local boundary
+- **WHEN** an origin completes `wake_recovery.prepare.v1` at cutoff sequence N
+- **AND** a matching quiet-hours hold is persisted at sequence N+1 before the
+  run commits
+- **THEN** the N+1 row remains `pending` and is absent from the current
+  composition manifest
+
+#### Scenario: Legacy rows are not guessed into a cohort
+- **WHEN** a due deferred notification lacks the required wake-recovery
+  provenance
+- **THEN** the wake coordinator excludes it from the run
+- **AND** its established scheduler behavior remains unchanged
+
+### Requirement: Authenticated Prepare-Commit-Release and DND Linearization
+The system SHALL use authenticated, versioned MCP operations through
+Switchboard for `wake_recovery.prepare.v1`, `commit.v1`, `abort.v1`, and
+`release.v1`; no participant or coordinator SHALL SQL-read another origin's
+deferred-notification queue. Every operation SHALL carry the run ID, fence,
+owner/window keys, accepted-event reference, participant digest, and correlation
+key, persist replay-safe local state, and reject a lower or conflicting fence.
+
+The coordinator SHALL compose only after every prepare response is compatible,
+ordering rows deterministically by origin and admission sequence. Every row
+SHALL exactly match the accepted event's fully resolved Telegram endpoint,
+bot/chat/thread target tuple. `recipient=None`, default-owner re-resolution,
+or a differing endpoint/chat/thread SHALL cause the whole run to retain as a
+target mismatch. The release envelope SHALL use that explicit target without a
+new resolution step.
+
+Health SHALL only supersede its currently active deterministic
+Owner-Attention-Policy `sleeping` record for the same policy window and run
+fence. It SHALL NOT clear DND, a non-policy sleep record, or any other context.
+Explicit DND SHALL be an absolute veto guarded at final commit and Messenger
+admission: DND that linearizes first blocks the run with no context or egress
+mutation; DND after Messenger's durable send-start marker cannot retract the
+external call but blocks later admission/retry attempts.
+
+#### Scenario: DND wins before commit
+- **WHEN** explicit DND becomes active before the final fenced commit guard
+  succeeds
+- **THEN** the run becomes `blocked_dnd`, prepared rows remain retained, and
+  Health does not supersede policy sleep
+- **AND** Messenger does not persist or invoke an egress send
+
+#### Scenario: Exact target mismatch retains all rows
+- **WHEN** a prepared row has a different Telegram chat, thread, or bot
+  endpoint from the accepted direct owner event
+- **THEN** the coordinator records `target_mismatch` and releases only
+  uncommitted reservations
+- **AND** it does not substitute a default recipient or send a partial cohort
+
+#### Scenario: Restart resumes only the current fence
+- **WHEN** Switchboard, an origin, Health, or Messenger restarts after a
+  durable prepare or commit response
+- **THEN** replaying the same operation and fence returns the persisted state
+- **AND** a stale worker cannot prepare, abort, commit, or release that run
+
+### Requirement: Stable Egress Idempotency and Ambiguous-Send Recovery
+The system SHALL derive one immutable `release_action_key` from the run ID,
+fence, accepted event, exact target tuple, and canonical composition-manifest
+digest. The same key SHALL traverse the run, origin commit receipts, composed
+`notify.v1` metadata, Messenger delivery intent, provider-attempt record,
+provider receipt, and audit references; retry paths SHALL NOT mint a new key.
+
+Messenger SHALL durably persist the egress action before an external Telegram
+call. A restart before the durable send-start marker MAY resume the same action.
+A confirmed provider result SHALL persist the provider message ID and make
+repeated release calls return that terminal result without another provider
+call. A crash or timeout after the send-start marker without a durable receipt
+SHALL become `egress_ambiguous`; it SHALL preserve evidence and require
+explicit reconciliation, not automatically resend.
+
+#### Scenario: Repeated release has one confirmed provider send
+- **WHEN** Messenger receives repeated `wake_recovery.release.v1` calls with
+  the same valid release action key after it has persisted a provider receipt
+- **THEN** it returns the existing terminal receipt
+- **AND** it makes no second Telegram provider call
+
+#### Scenario: Post-start timeout fails closed
+- **WHEN** Messenger loses process or transport certainty after its durable
+  send-start marker but before it persists a Telegram receipt
+- **THEN** it records `egress_ambiguous` with the same action key and evidence
+- **AND** ordinary retries, the scheduler, and a new wake event cannot blindly
+  invoke another provider send for that action
