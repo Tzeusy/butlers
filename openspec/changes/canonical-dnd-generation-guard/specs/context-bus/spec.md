@@ -1,3 +1,55 @@
+## MODIFIED Requirements
+
+### Requirement: Write Permissions
+The system SHALL enforce per-signal write permissions at the application
+level for all non-DND context signals. Each signal type SHALL have a defined
+set of authorized writer butlers, and the normal `set_context()` path SHALL
+validate `(butler_name, signal_type)` against that mapping before writing.
+Unauthorized non-DND writes SHALL raise `PermissionError`.
+
+The permission mapping SHALL remain:
+- `traveling`: travel, general
+- `sleeping`: health, general
+- `meeting`: general
+- `focused`: general
+- `exercising`: health
+- `sick`: health, general
+- `socializing`: relationship, general
+- `commuting`: travel, general
+- `at_home`: travel, home, general
+- `away`: general
+- `dnd`: general, switchboard
+
+`dnd` is the safety-critical exception to the otherwise application-enforced
+model. General and Switchboard SHALL use the canonical DND mutation operation
+instead of direct generic DML. The database SHALL reject direct DND DML even
+when a runtime role retains the existing broad table grant required for
+non-DND context writes. The ordinary non-DND mapping remains an application
+authorization rule; this change does not turn it into a generic row-level
+permission system.
+
+The DND database policy constrains writes only. Every butler retains the public
+read path for active DND state and guarded snapshots; the implementation SHALL
+not use a blanket RLS policy that hides DND rows from those readers.
+
+#### Scenario: Authorized non-DND write remains application-authorized
+- **WHEN** Health calls the normal context path with
+  `butler_name="health"` and `signal_type="exercising"`
+- **THEN** the application permission check and the non-DND database policy
+  permit the write
+- **AND** the DND guard is not read or advanced
+
+#### Scenario: DND writer is routed through the guarded boundary
+- **WHEN** General or Switchboard requests `signal_type="dnd"`
+- **THEN** the request is routed to the canonical DND mutation operation
+- **AND** it cannot complete through the ordinary generic row-upsert or clear
+  path
+
+#### Scenario: Unauthorized writer remains rejected
+- **WHEN** Finance calls the normal context path with
+  `butler_name="finance"` and `signal_type="exercising"`
+- **THEN** a `PermissionError` is raised before any context write
+
 ## ADDED Requirements
 
 ### Requirement: Canonical DND Mutation and Durable Generation
@@ -12,19 +64,64 @@ The only canonical DND writers SHALL be General and Switchboard. General's
 explicit-context `set_context` and `clear_context` paths, and any future
 Switchboard DND path, SHALL route `signal_type="dnd"` through a single
 versioned atomic mutation operation. The operation SHALL require an immutable
-`mutation_id`, writer identity, operation, and correlation reference. It SHALL
-lock the guard, validate authorization, mutate only the caller's DND row,
-advance generation, and persist a receipt/audit in one transaction. A committed
-observer SHALL never see a DND row change without the corresponding advanced
-generation, or an advanced generation without the corresponding row change.
+`mutation_id`, verified writer identity, operation, opaque correlation
+reference, and complete DND payload. It SHALL lock the guard, validate
+authorization, mutate only the caller's DND row, advance generation, and
+persist a receipt/audit in one transaction. A committed observer SHALL never
+see a DND row change without the corresponding advanced generation, or an
+advanced generation without the corresponding row change.
 
-The mutation audit SHALL deduplicate `mutation_id`. An exact replay SHALL
-return the original receipt without mutating DND or generation; a replay with
-different writer, operation, or payload identity SHALL fail closed as an
-idempotency conflict. Mutation receipts and audits SHALL retain generation,
-writer, operation, correlation, and timestamps but SHALL NOT copy raw user
-message text, optional DND value text, notification content, or provider
-payloads.
+The durable replay identity SHALL be `(mutation_id,
+semantic_fingerprint_version, semantic_fingerprint)`. The audit and returned
+receipt SHALL retain `mutation_id`, generation, verified writer, affected
+writer row, operation, opaque correlation reference, requested and effective
+expiry, fingerprint version/digest, and commit timestamp. A set resolves its
+effective expiry once from database time after the normal TTL default/max
+normalization; both requested and effective expiry use canonical UTC PostgreSQL
+timestamp precision. A clear stores null expiry fields and rejects set-only
+payload fields.
+
+`semantic_fingerprint` SHALL be SHA-256 over a versioned canonical document
+that includes the protocol/signal, verified writer, affected row, operation,
+opaque correlation, requested/effective expiry, effective confidence, and
+canonicalized metadata. The optional DND value SHALL participate without being
+stored: null and empty are distinct, and a present Unicode-NFC value is included
+only through its SHA-256 digest. Metadata is likewise canonicalized and digested
+before inclusion, so no raw optional value or metadata is retained in the
+receipt/audit. On a replay lookup, the operation combines the retry's
+normalized inputs with the persisted effective expiry before recomputing the
+candidate fingerprint. This makes later retries deterministic even when a
+default or clamp would otherwise move with database time.
+
+Normalization renders requested/effective timestamps as stored UTC instants at
+PostgreSQL microsecond precision and confidence as the validated stored `REAL`
+binary32 representation. Canonical metadata JSON sorts Unicode-NFC object keys,
+preserves array order, distinguishes null from empty values, uses finite
+canonical numeric forms, and rejects unrepresentable input. The correlation is
+a normalized opaque identifier, never a user-text surrogate.
+
+The digest is an unkeyed content-minimizing replay identity, not a secret or
+credential. The audit SHALL retain no raw optional value or metadata and SHALL
+not be directly readable by runtime roles; only the canonical operation may
+read it for deduplication and return a receipt to its canonical caller.
+Snapshot/admission readers receive no digest or audit rows. A reader capable of
+testing low-entropy candidate payloads against a digest is outside this narrow
+non-disclosure guarantee, so the digest SHALL not be exposed to broad context
+readers.
+
+An exact replay SHALL return the original receipt without mutating DND or
+generation. Any fingerprint mismatch, including changed requested/effective
+expiry, optional value, confidence, metadata, writer, operation, or correlation,
+SHALL fail closed as `idempotency_conflict`. Mutation receipts and audits SHALL
+NOT copy raw user message text, optional DND value text, metadata, notification
+content, or provider payloads.
+
+If a persisted replay row lacks a fingerprint version/digest, has an
+unsupported fingerprint version, or has expiry fields incompatible with its
+operation (including a set without an effective expiry), the operation SHALL
+reject the retry as `replay_identity_unprovable` before DND DML. It SHALL NOT
+infer a replacement identity, return a guessed receipt, or apply a second
+mutation.
 
 #### Scenario: General DND set atomically advances the guard
 - **WHEN** General submits a new correlated DND set with guard generation `N`
@@ -41,15 +138,38 @@ payloads.
 
 #### Scenario: Exact mutation replay is idempotent
 - **WHEN** a canonical writer retries an already committed mutation with the
-  same mutation ID and identical identity
-- **THEN** it receives the original generation and receipt
+  same mutation ID and identical normalized semantic inputs
+- **THEN** it receives the original generation and receipt, including the
+  persisted effective expiry and fingerprint
 - **AND** no second DND row mutation, audit row, or generation increment occurs
 
 #### Scenario: Conflicting mutation replay fails closed
 - **WHEN** a caller reuses a persisted mutation ID with a different writer,
-  operation, or payload identity
+  operation, correlation, requested/effective expiry, or semantic payload
 - **THEN** the operation returns an idempotency-conflict error
 - **AND** it does not change a DND row, guard generation, or prior receipt
+
+#### Scenario: Changed expiry replay fails closed
+- **WHEN** a caller reuses a committed DND-set mutation ID with a different
+  requested expiry or a candidate effective expiry that differs from the
+  persisted receipt
+- **THEN** the operation returns `idempotency_conflict`
+- **AND** the original context row, generation, audit, and receipt remain
+  unchanged
+
+#### Scenario: Changed optional value replay fails closed without disclosure
+- **WHEN** a caller reuses a committed DND-set mutation ID but changes the
+  optional value, including null versus empty, or changes confidence or metadata
+- **THEN** the operation returns `idempotency_conflict`
+- **AND** neither the audit nor receipt reveals the prior or attempted raw value
+  or metadata
+
+#### Scenario: Uncomparable replay fails closed after restart
+- **WHEN** a retry finds a persisted mutation row with missing fingerprint
+  version/digest, an unsupported fingerprint version, or expiry fields
+  incompatible with its operation, including a set without an effective expiry
+- **THEN** the operation returns `replay_identity_unprovable` before DND DML
+- **AND** it does not infer a replacement identity or create a second mutation
 
 #### Scenario: Concurrent canonical DND writers serialize
 - **WHEN** General and Switchboard concurrently submit new DND mutations
@@ -131,6 +251,13 @@ explicit migration/recovery procedure.
 - **THEN** a consumer rejects the cached active evidence and performs a fresh
   guarded read using database time
 - **AND** the fresh read excludes the expired DND row
+
+#### Scenario: DND refresh and reactivation each advance the guard
+- **WHEN** a canonical writer refreshes an active DND row and later sets it
+  again after clear or expiry, using a new mutation ID for each request
+- **THEN** every successful refresh or reactivation persists its normalized
+  effective expiry and advances generation exactly once
+- **AND** passive expiry alone does not advance generation
 
 #### Scenario: Restart reconstructs committed DND state
 - **WHEN** a process restarts after a DND mutation commits

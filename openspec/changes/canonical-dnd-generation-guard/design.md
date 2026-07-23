@@ -69,10 +69,23 @@ row. Its durable minimum shape is:
 | `updated_at` | Database-clock mutation timestamp |
 
 It also creates an append-only `public.dnd_generation_mutations` audit keyed by
-`mutation_id`. Each row records the resulting generation, writer identity,
-operation (`set` or `clear`), a stable correlation reference, the affected
-context writer identity, and timestamps. It MUST NOT store raw Telegram text,
-the optional DND `value`, or a copied notification payload.
+`mutation_id`. Each row records the resulting generation, effective writer
+identity, operation (`set` or `clear`), an opaque stable correlation reference,
+the affected context writer identity, `requested_expires_at`,
+`effective_expires_at`, `semantic_fingerprint_version`,
+`semantic_fingerprint`, and commit timestamps. `requested_expires_at` and
+`effective_expires_at` are null for a clear. The receipt returned to a caller
+contains the same durable identity fields that it needs to identify a retry:
+`mutation_id`, generation, effective writer, operation, opaque correlation,
+requested and effective expiry, fingerprint version/digest, and commit time.
+It MUST NOT store raw Telegram text, the optional DND `value`, a metadata
+document, or a copied notification payload.
+
+The audit is not a snapshot/admission reader surface. Runtime roles receive no
+direct `SELECT` or write privilege on it; the canonical operation alone reads
+it for deduplication and returns a receipt only to the calling canonical writer.
+Health and Messenger receive snapshot/admission fields, never replay identity
+or audit rows.
 
 `dnd` is a logical OR over active RFC 0009 DND rows from General and
 Switchboard. A guard generation represents the complete logical DND state at
@@ -111,13 +124,54 @@ use this operation and carry accepted-event correlation before it becomes live.
 Health, Messenger, connectors, and every other butler cannot mutate DND.
 
 The request contains an immutable `mutation_id`, writer, operation, affected
-`set_by_butler`, and correlation reference. A retry MUST reuse the same
-`mutation_id`. The operation executes in one database transaction:
+`set_by_butler`, opaque correlation reference, and the complete DND payload. A
+retry MUST reuse the same `mutation_id` and payload. The operation has one
+privacy-preserving semantic identity, defined as SHA-256 over a versioned,
+canonical UTF-8 document containing:
+
+- `context.dnd.mutate.v1`, `dnd`, the verified effective writer, affected
+  writer row, operation, and opaque correlation reference;
+- the normalized requested expiry and the persisted effective expiry, each in
+  UTC at PostgreSQL timestamp precision; and
+- for a set, the effective confidence and canonical JSON metadata plus a
+  tagged optional-value digest. The optional DND value **does participate**:
+  `null` and an empty value are distinct, and a present value is Unicode-NFC
+  normalized before its SHA-256 digest is included. Metadata is canonicalized
+  before it is digested, so neither raw value nor raw metadata lands in the
+  audit or receipt. A clear rejects set-only payload fields and fingerprints
+  their canonical null form.
+
+Timestamp normalization renders the stored `TIMESTAMPTZ` instant in UTC to
+microsecond precision. Confidence is the validated PostgreSQL `REAL` value
+rendered by its canonical binary32 representation. Canonical JSON recursively
+sorts object keys after Unicode-NFC normalization, preserves array order,
+distinguishes null from an empty object/value, uses canonical finite numeric
+representations, and rejects non-finite or unrepresentable inputs. The opaque
+correlation reference is a normalized identifier, never a user-text surrogate.
+
+This is an unkeyed, content-minimizing SHA-256 identity, not a secrecy
+primitive. The privacy boundary is no raw semantic payload in the durable audit
+plus the narrow audit ACL above; an actor already permitted to read the digest
+and test low-entropy candidate values could make guesses. The operation must
+therefore never expose the digest to broad context readers or treat it as a
+credential.
+
+For a new set, one database timestamp inside the mutation transaction applies
+the existing TTL default/max policy and produces `effective_expires_at`; the
+stored value, not a client wall clock, is normalized for the fingerprint. For
+a replay lookup, the operation combines the retry's normalized semantic inputs
+with the already-persisted effective expiry before recomputing the candidate
+fingerprint. This prevents a later retry from silently changing a clamped or
+defaulted expiry merely because database time advanced.
+
+The operation executes in one database transaction:
 
 1. lock the singleton guard with `SELECT ... FOR UPDATE`;
 2. look up `mutation_id` in the durable mutation audit;
 3. on an exact replay, return the original receipt without changing a context
-   row or generation; on a payload mismatch, reject `idempotency_conflict`;
+   row or generation; on a fingerprint mismatch, including a changed requested
+   or effective expiry or changed semantic payload, reject
+   `idempotency_conflict`;
 4. validate writer authorization and perform the DND upsert/clear for that
    writer only;
 5. advance `generation` exactly once, persist the mutation receipt, and commit.
@@ -126,10 +180,31 @@ No committed observer can see a changed DND row without its new generation, or
 the new generation without its corresponding row mutation. Any error, including
 audit failure or counter exhaustion, rolls back the whole operation.
 
-The core migration must make direct DND DML impossible for runtime roles. It
-may preserve direct generic DML for non-DND signals, but DND rows must be
-accepted only through the guarded operation. This is a security property, not a
-Python convention.
+An audit row that lacks its fingerprint version/digest, uses an unsupported
+fingerprint version, or has expiry fields incompatible with its operation
+(including a set without an effective expiry) is not comparable after restart.
+The operation MUST reject that replay before DND DML as
+`replay_identity_unprovable`; it must not infer an identity, return a guessed
+receipt, or apply a second mutation.
+
+The core migration must preserve the existing table-level runtime grants for
+ordinary non-DND context writes while making direct DND DML impossible for
+runtime roles. It does this with `FORCE ROW LEVEL SECURITY` policies that allow
+the existing runtime roles to write only `signal_type <> 'dnd'`, including
+blocking updates that cross the DND boundary. A narrowly owned,
+`SECURITY DEFINER` canonical operation is the only DND exception: it runs with
+a pinned search path, is executable only by the General and Switchboard runtime
+roles, validates the active `SET ROLE` identity rather than a caller-supplied
+writer, and is the only role permitted by the DND RLS policy. The migration
+must revoke `EXECUTE` from `PUBLIC`, grant no runtime role direct guard/audit
+write privilege, and preserve the application-level per-signal permission check
+for non-DND rows. This is a database security property, not a Python
+convention.
+
+The RLS policies are write-specific: every butler retains the RFC 0009 public
+read path for DND snapshots, while `INSERT`, `UPDATE`, and `DELETE` are the
+only commands constrained by the DND row predicate. A blanket `FOR ALL` policy
+that hides DND rows from snapshot/admission readers is forbidden.
 
 ### D3 — A snapshot is evidence, not an authorization to send
 
@@ -214,11 +289,13 @@ and requires an explicit migration/recovery procedure. It MUST NOT wrap,
 reset, or silently reuse a generation.
 
 Process restart recovers exclusively from `dnd_generation_guard`, canonical
-context rows, and the mutation audit. No daemon cache, replayed connector
-update, or reconstructed timestamp is authoritative. A replay with an existing
-`mutation_id` returns its persisted receipt; a new mutation with a later
-correlation receives the next guard generation. If durable evidence is missing
-or inconsistent, the mutation/admission rejects rather than guessing the state.
+context rows, and the mutation audit, including the persisted fingerprint and
+effective expiry. No daemon cache, replayed connector update, or reconstructed
+timestamp is authoritative. A replay with an existing `mutation_id` returns its
+persisted receipt only when its candidate fingerprint matches; a new mutation
+with a later correlation receives the next guard generation. If durable
+evidence is missing or inconsistent, the mutation/admission rejects rather than
+guessing the state.
 
 ### D7 — Keep this prerequisite independent from wake and cancellation work
 
@@ -240,15 +317,20 @@ property is transactional.
 | --- | --- | --- |
 | General set | Generation `N`; General sets DND with fresh mutation ID | Committed row is active, receipt/audit is correlated, generation is `N+1`, and no separate committed state is observable. |
 | Switchboard clear | Switchboard owns an active DND row and clears it | Only its row changes; generation advances exactly once; another active writer still makes logical DND active. |
-| Duplicate replay | Repeat an identical mutation ID after a successful set/clear | Original generation/receipt is returned; no second audit row or generation advance occurs. |
-| Conflicting replay | Reuse mutation ID with different writer, operation, or payload identity | Rejects `idempotency_conflict`; context and guard remain unchanged. |
+| Duplicate replay | Repeat an identical mutation ID and normalized semantic payload after a successful set/clear | Original generation/receipt, including the persisted effective expiry and fingerprint, is returned; no second audit row or generation advance occurs. |
+| Changed-expiry replay | Reuse a set mutation ID with a different requested expiry, or a candidate whose normalized effective expiry differs from the receipt | Rejects `idempotency_conflict`; context, guard, audit, and prior receipt remain unchanged. |
+| Changed-payload replay | Reuse a set mutation ID with a changed optional value, confidence, or metadata, including `null` versus empty value | Rejects `idempotency_conflict`; the privacy-preserving audit exposes no raw changed payload. |
+| Uncomparable replay | Restart with an audit row missing fingerprint version/digest, using an unsupported version, or carrying expiry fields incompatible with its operation (such as a set with no effective expiry) | Rejects `replay_identity_unprovable` before DND DML; it neither guesses an identity nor applies a second mutation. |
+| Conflicting replay | Reuse mutation ID with different writer, operation, or correlation identity | Rejects `idempotency_conflict`; context and guard remain unchanged. |
 | Concurrent writers | General and Switchboard mutate DND concurrently | Results serialize to contiguous generations with no lost update or partial audit. |
+| Refresh / reactivation | A canonical writer refreshes an active DND row, then sets it again after clear or expiry, each with a new mutation ID | Each successful refresh/reactivation writes its normalized effective expiry and advances generation exactly once; expiry alone still does not advance it. |
 | Stale snapshot | Capture inactive `N`, then a writer commits `N+1` before admission | Guarded admission rejects before its local durable effect. |
 | Admission wins | Admission holds `FOR SHARE` and persists its local effect while a writer races | Writer blocks until commit/rollback; the committed effect is tied to `N`, then writer produces `N+1`. |
 | DND before egress | A DND mutation wins before future Messenger durable admission | Messenger admission rejects; no egress intent/provider call is created. |
 | TTL expiry | Capture active DND, advance database clock beyond `revalidate_at` without a write | Cached evidence is rejected; a fresh guarded read sees inactive state using database time. |
 | Restart / audit recovery | Restart after committed mutation and after rolled-back mutation | Committed state reconstructs from tables; rollback leaves no receipt, row change, or generation advance. |
-| Unauthorized path | Health, Messenger, connector, or direct generic DND DML attempts mutation | Operation is denied before any DND row/guard/audit mutation. |
+| Authorized non-DND path | A non-owner test session executes `SET ROLE butler_health_rw` or another real runtime role and writes an authorized non-DND signal through the normal context path | The normal application-level permission check and non-DND RLS policy permit the write; the test is not run as the migration owner or a privileged setup session. |
+| Unauthorized DND path | Health, Messenger, connector, or direct generic DND DML from a real runtime role attempts mutation | RLS/ACL denies the operation before any DND row/guard/audit mutation; a missing or unverifiable `SET ROLE` makes canonical DND mutation and DND-based admission fail closed. |
 | Counter exhaustion | Seed guard at `BIGINT` maximum and attempt a new mutation | Fails closed; no wrap, no context mutation, and an observable error is produced. |
 
 ## Risks / Trade-offs
@@ -257,17 +339,21 @@ property is transactional.
   critical; the singleton makes the logical OR and admission ordering explicit.
   It is not used for non-DND context signals.
 - **[A durable mutation audit adds retained metadata]** → Store only IDs,
-  writer/operation, generation, and timestamps; exclude raw user text and
-  notification content. Retention must preserve any replay window required by
-  active recovery work.
+  writer/operation, generation, normalized expiry, and a digest; exclude raw
+  user text, optional value, metadata, and notification content. The unkeyed
+  digest is content minimization rather than a secrecy primitive, so direct
+  audit read stays restricted to the canonical operation. Retention must
+  preserve any replay window required by active recovery work.
 - **[Holding a row lock through local durable admission can increase latency]**
   → The critical section contains only public revalidation plus the consumer's
   local database write. It never holds the lock through an MCP call or provider
   request; timeout/rollback fails closed.
 - **[Existing development environments may lack SET ROLE enforcement]** → The
-  guarded operation must validate its own authorization and fail closed when it
-  cannot establish the required atomic boundary. Tests may use a migration
-  owner only through an explicit test-only setup, not a production fallback.
+  ordinary non-DND context path keeps the existing development fallback, but
+  the guarded DND operation and any DND-based admission must fail closed when
+  they cannot establish the active runtime role, RLS/ACL boundary, and atomic
+  guard. Tests may use a migration owner only through an explicit test-only
+  setup, never as the runtime role whose privilege is being proved.
 - **[TTL expiry does not increment a counter]** → `revalidate_at` and
   database-time guarded rechecks make time-based state changes explicit without
   adding a background expiry writer or a second clock.
@@ -279,10 +365,14 @@ This documentation PR performs no migration. The follow-on implementation must:
 1. add a guarded public singleton and replay audit in a new core migration,
    with `to_regclass`/column guards suitable for core-only databases;
 2. seed generation `0` without rewriting existing context rows;
-3. restrict direct DND row mutation and grant only the minimum execute/select
-   privileges required by canonical writers and admission readers;
-4. route Generic context-bus DND set/clear calls through the atomic operation;
-5. add the contract/integration tests in this design, then require the strict
+3. preserve the existing broad `public.user_context` runtime grants for
+   non-DND rows, then enforce DND-only RLS/ACL restrictions, a pinned
+   `SECURITY DEFINER` mutation operation, and minimum execute/select
+   privileges for canonical writers and admission readers while denying direct
+   runtime access to the replay audit;
+4. route generic context-bus DND set/clear calls through the atomic operation;
+5. add the contract/integration tests in this design, including role-enforced
+   non-DND regression and refresh/reactivation coverage, then require the strict
    wake-recovery implementation to consume the finalized helper;
 6. deploy the guard before enabling any Health/Messenger wake admission; and
 7. roll back only before a consumer depends on it. Once a durable mutation or
