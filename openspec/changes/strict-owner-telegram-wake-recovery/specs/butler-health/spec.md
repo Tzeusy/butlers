@@ -10,9 +10,13 @@ for prepare, commit, and abort replay safety.
 
 Health SHALL NOT clear explicit DND, a non-policy sleep context, another
 butler's context, or any generic user context because of a direct Telegram DM.
-If explicit DND is active or wins the final guarded transition, Health SHALL
+If explicit DND is active when Health evaluates the request, Health SHALL
 retain its policy-sleep context and report a DND block without authorizing
-egress.
+egress. This parent packet does not define a canonical DND
+versioning/invalidation mechanism or a cross-writer final-transition guarantee;
+`bu-12iab` owns that prerequisite contract. It also defines no post-prepare
+cancellation route that returns a frozen cohort to the ordinary scheduler;
+`bu-qs702` owns that prerequisite contract.
 
 #### Scenario: Matching policy sleep is superseded only at commit
 - **WHEN** Health receives a valid fenced prepare followed by a valid commit

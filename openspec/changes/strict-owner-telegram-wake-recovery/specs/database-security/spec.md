@@ -9,9 +9,12 @@ provider authority. Cross-origin preparation, commit, abort, release, and
 metadata exchange SHALL use authenticated versioned MCP contracts mediated by
 Switchboard.
 
-Any new shared-control records or grants SHALL be limited to the participants
-that require their own durable run/fence, DND guard, or action-reconciliation
-operation, with the smallest CRUD surface needed for that operation. The
+Any new shared-control records or grants in this parent packet SHALL be limited
+to the participants that require their own durable run/fence or
+action-reconciliation operation, with the smallest CRUD surface needed for
+that operation. Canonical DND versioning/invalidation and post-prepare
+cancellation admission are deferred to `bu-12iab` and `bu-qs702`; this packet
+MUST NOT introduce a shared-control substitute for either prerequisite. The
 database role model SHALL reject an unrecognized caller, mismatched owner/run,
 or attempt to use a shared-control record as a substitute for reading another
 schema's notification content.
