@@ -500,8 +500,8 @@ class MemoryModule(Module):
         #3: only 5 of 9 memory-enabled butlers had any of these scheduled, and
         none had `memory_decay_sweep` — it had no handler at all).
 
-        This runs *after* `sync_schedules()` syncs TOML (lifecycle.py steps 9
-        and 10): an active `[[butler.schedule]]` block remains TOML-owned and
+        This runs *after* `sync_schedules()` syncs TOML (lifecycle.py steps 10
+        and 11): an active `[[butler.schedule]]` block remains TOML-owned and
         controls cadence, while a removed block is first made visible as a
         disabled TOML orphan. `ensure_module_default_schedule` can then
         recover only an eligible registered default without rewriting its

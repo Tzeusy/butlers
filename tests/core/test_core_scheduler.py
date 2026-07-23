@@ -14,17 +14,26 @@ Covers:
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncpg
 import pytest
 
 from butlers.core.model_routing import Complexity
-from butlers.db import register_jsonb_codec
+from butlers.daemon import ButlerDaemon
+from butlers.db import Database, register_jsonb_codec
+from butlers.modules import memory as memory_module
+from butlers.modules.memory import MemoryModule
+from butlers.modules.registry import ModuleRegistry
 from butlers.testing.migration import create_migrated_test_db, migration_db_name
 
 docker_available = shutil.which("docker") is not None
@@ -99,6 +108,29 @@ class _InterleavingPool:
             self._interleaved = True
             await self._before_disable()
         return await self._pool.execute(query, *args)
+
+
+class _LifecycleMemoryScheduleModule(MemoryModule):
+    """Exercise the production memory schedule-registration branch in daemon startup."""
+
+    async def on_startup(
+        self,
+        config: Any,
+        db: Any,
+        credential_store: Any = None,
+        blob_store: Any = None,
+    ) -> None:
+        await self._register_default_maintenance_schedules(db)
+
+
+class _NoopButlerDBLogHandler(logging.Handler):
+    """Keep the lifecycle test focused on scheduler recovery, not log persistence."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +232,15 @@ async def test_sync_removal_does_not_re_disable_a_concurrently_recovered_default
     assert row["source"] == "db"
     assert row["enabled"] is True
 
-    # A later startup must preserve the recovered DB-owned row and its one audit event.
+    # A fresh boot first synchronizes TOML again before its module registers
+    # defaults. That sync must leave the recovered DB-owned row enabled.
+    await sync_schedules(pool, [])
+    row = await pool.fetchrow("SELECT source, enabled FROM scheduled_tasks WHERE name = $1", name)
+    assert row is not None
+    assert row["source"] == "db"
+    assert row["enabled"] is True
+
+    # The subsequent module registration is also a no-op with one audit event.
     await ensure_module_default_schedule(
         pool,
         name=name,
@@ -219,6 +259,155 @@ async def test_sync_removal_does_not_re_disable_a_concurrently_recovered_default
         )
         == 1
     )
+
+
+async def test_legacy_lifecycle_recovery_derives_public_audit_identity(
+    pool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A schema-less daemon boot derives the recovery audit identity from lifecycle config."""
+    from butlers.core.scheduler import sync_schedules
+
+    name = f"memory_consolidation_legacy_{uuid.uuid4().hex}"
+    owner_butler = f"legacy_recovery_{uuid.uuid4().hex[:8]}"
+    monkeypatch.setattr(
+        memory_module,
+        "_DEFAULT_MAINTENANCE_SCHEDULES",
+        (
+            {
+                "name": name,
+                "cron": "0 */6 * * *",
+                "job_name": "memory_consolidation",
+            },
+        ),
+    )
+    await sync_schedules(
+        pool,
+        [
+            {
+                "name": name,
+                "cron": "0 */6 * * *",
+                "dispatch_mode": "job",
+                "job_name": "memory_consolidation",
+            }
+        ],
+    )
+
+    (tmp_path / "butler.toml").write_text(
+        "\n".join(
+            [
+                "[butler]",
+                f'name = "{owner_butler}"',
+                "port = 9199",
+                'description = "Legacy recovery test butler"',
+                "",
+                "[butler.db]",
+                'name = "legacy_recovery_test"',
+                "",
+                "[modules.memory]",
+            ]
+        )
+    )
+
+    db = Database(db_name="legacy_recovery_test")
+    db.pool = pool
+    db.close = AsyncMock()
+    daemon = ButlerDaemon(
+        tmp_path,
+        registry=ModuleRegistry(),
+        db=db,
+    )
+    daemon._registry.register(_LifecycleMemoryScheduleModule)
+
+    credential_store = SimpleNamespace(resolve=AsyncMock(return_value=None), shared_pool=pool)
+    runtime_config = SimpleNamespace(seeded_at=None, updated_at=None)
+    runtime_config_accessor = SimpleNamespace(
+        seed_if_empty=AsyncMock(return_value=runtime_config),
+        _cache=runtime_config,
+    )
+    runtime = SimpleNamespace(binary_name="claude")
+    spawner = SimpleNamespace(stop_accepting=lambda: None, drain=AsyncMock())
+
+    def _discard_background_task(coro: Any, *args: Any, **kwargs: Any) -> None:
+        coro.close()
+
+    lifecycle_patches = (
+        patch("butlers.lifecycle.init_telemetry"),
+        patch("butlers.lifecycle.init_metrics"),
+        patch("butlers.lifecycle.validate_credentials"),
+        patch(
+            "butlers.lifecycle.validate_module_credentials_async",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+        patch("butlers.lifecycle.run_migrations", new_callable=AsyncMock),
+        patch(
+            "butlers.lifecycle.resolve_general_timezone", new_callable=AsyncMock, return_value="UTC"
+        ),
+        patch("butlers.lifecycle._ensure_owner_entity", new_callable=AsyncMock),
+        patch("butlers.lifecycle.upsert_provider_feature_catalogue", new_callable=AsyncMock),
+        patch(
+            "butlers.cli_auth.persistence.restore_tokens", new_callable=AsyncMock, return_value={}
+        ),
+        patch(
+            "butlers.core.runtime_config.RuntimeConfigAccessor",
+            return_value=runtime_config_accessor,
+        ),
+        patch("butlers.lifecycle.get_adapter", return_value=lambda **kwargs: runtime),
+        patch("butlers.lifecycle.shutil.which", return_value="/usr/bin/claude"),
+        patch("butlers.lifecycle.Spawner", return_value=spawner),
+        patch("butlers.lifecycle.FastMCP", return_value=MagicMock()),
+        patch("butlers.lifecycle.asyncio.create_task", side_effect=_discard_background_task),
+        patch("butlers.core.butler_logging.ButlerDBLogHandler", _NoopButlerDBLogHandler),
+        patch.object(
+            daemon, "_build_credential_store", new_callable=AsyncMock, return_value=credential_store
+        ),
+        patch.object(daemon, "_create_audit_pool", new_callable=AsyncMock, return_value=None),
+        patch.object(daemon, "_connect_switchboard", new_callable=AsyncMock),
+        patch.object(daemon, "_disconnect_switchboard", new_callable=AsyncMock),
+        patch.object(daemon, "_recover_route_inbox", new_callable=AsyncMock),
+        patch.object(daemon, "_register_core_tools"),
+        patch.object(daemon, "_register_module_tools", new_callable=AsyncMock),
+        patch.object(daemon, "_apply_approval_gates", new_callable=AsyncMock, return_value={}),
+        patch.object(daemon, "_init_module_runtime_states", new_callable=AsyncMock),
+        patch.object(daemon, "_start_mcp_server", new_callable=AsyncMock),
+        patch.object(daemon, "_wire_pipelines"),
+        patch.object(daemon, "_wire_calendar_approval_enqueuer"),
+        patch.object(daemon, "_wire_module_runtime"),
+    )
+    with ExitStack() as stack:
+        for lifecycle_patch in lifecycle_patches:
+            stack.enter_context(lifecycle_patch)
+        try:
+            await daemon.start()
+
+            row = await pool.fetchrow(
+                "SELECT source, enabled FROM scheduled_tasks WHERE name = $1", name
+            )
+            audit_rows = await pool.fetch(
+                """
+                SELECT actor, metadata
+                FROM public.audit_log
+                WHERE action = 'scheduler.module_default_recovered' AND target = $1
+                """,
+                f"schedule:{name}",
+            )
+        finally:
+            await daemon.shutdown()
+
+    assert db.schema is None
+    assert db.owner_butler == owner_butler
+    assert row is not None
+    assert row["source"] == "db"
+    assert row["enabled"] is True
+    assert len(audit_rows) == 1
+    assert audit_rows[0]["actor"] == owner_butler
+    assert audit_rows[0]["metadata"] == {
+        "prior_source": "toml",
+        "prior_enabled": False,
+        "registered_default_name": name,
+        "owner_butler": owner_butler,
+        "owner_schema": "public",
+    }
 
 
 async def test_module_default_recovery_reclaims_only_disabled_toml_orphans_and_audits(pool):
