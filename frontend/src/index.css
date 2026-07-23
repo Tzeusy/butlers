@@ -615,7 +615,7 @@ body {
     @apply border-border;
   }
   :where(a, button, [role='button'], [tabindex]):focus-visible {
-    outline: 2px solid var(--ring);
+    outline: 2px solid var(--fg);
     outline-offset: 2px;
   }
   /* Tell the browser which palette to render native UI (scrollbars, form
