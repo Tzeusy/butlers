@@ -82,6 +82,31 @@ describe("useListTriage", () => {
     expect(onSelect).toHaveBeenCalledWith("b");
   });
 
+  it("keeps j navigation active from a focused native row button", () => {
+    const onSelect = vi.fn();
+    act(() => {
+      root.render(
+        <>
+          <Harness ids={["a", "b"]} selectedId="a" onSelect={onSelect} />
+          <button type="button" data-testid="focused-row-button">
+            Row action
+          </button>
+        </>,
+      );
+    });
+
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="focused-row-button"]');
+    expect(button).not.toBeNull();
+    button!.focus();
+    act(() => {
+      button!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(onSelect).toHaveBeenCalledWith("b");
+  });
+
   it("k moves the selection to the previous id", () => {
     const onSelect = vi.fn();
     act(() => {

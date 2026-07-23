@@ -259,7 +259,9 @@ describe("ButlersPage — keyboard board cursor", () => {
     );
 
     fireEvent.keyDown(window, { key: "ArrowRight" });
-    fireEvent.keyDown(window, { key: "ArrowRight" });
+    const firstSelected = document.querySelector<HTMLElement>('[data-butler-name="general"]');
+    expect(document.activeElement).toBe(firstSelected);
+    fireEvent.keyDown(firstSelected!, { key: "ArrowRight" });
 
     const selected = document.querySelector('[data-butler-name="health"]');
     expect(selected?.getAttribute("data-board-cursor")).toBe("true");

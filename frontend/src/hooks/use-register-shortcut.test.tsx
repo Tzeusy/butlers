@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import userEvent from "@testing-library/user-event";
 
 import {
   ShortcutRegistryProvider,
@@ -160,6 +161,96 @@ describe("useRegisterShortcut", () => {
     });
 
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("keeps nonactivation shortcuts active after focus moves to a native link", () => {
+    const handler = vi.fn();
+    act(() => {
+      root.render(
+        <>
+          <Registrar
+            bindings={[
+              { key: "j", display: ["j"], description: "Next", handler },
+              { key: "PageDown", display: ["PgDn"], description: "Later", handler },
+            ]}
+          />
+          <a href="/butlers" data-testid="shortcut-link">
+            Butler
+          </a>
+        </>,
+      );
+    });
+
+    const link = container.querySelector<HTMLAnchorElement>('[data-testid="shortcut-link"]');
+    expect(link).not.toBeNull();
+    link!.focus();
+    act(() => {
+      link!.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true }));
+      link!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "PageDown", bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a declared shortcut active after focus moves to a native button", () => {
+    const handler = vi.fn();
+    act(() => {
+      root.render(
+        <>
+          <Registrar
+            bindings={[
+              { key: "ArrowRight", display: ["→"], description: "Next", handler },
+            ]}
+          />
+          <button type="button" data-testid="shortcut-button">
+            Next
+          </button>
+        </>,
+      );
+    });
+
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="shortcut-button"]');
+    expect(button).not.toBeNull();
+    button!.focus();
+    act(() => {
+      button!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves focused native button activation to Enter and Space exactly once", async () => {
+    const shortcutHandler = vi.fn();
+    const nativeActivation = vi.fn();
+    act(() => {
+      root.render(
+        <>
+          <Registrar
+            bindings={[
+              { key: "Enter", display: ["Enter"], description: "Open", handler: shortcutHandler },
+              { key: " ", display: ["Space"], description: "Open", handler: shortcutHandler },
+            ]}
+          />
+          <button type="button" data-testid="native-action" onClick={nativeActivation}>
+            Open
+          </button>
+        </>,
+      );
+    });
+
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="native-action"]');
+    expect(button).not.toBeNull();
+    button!.focus();
+    const user = userEvent.setup();
+    await user.keyboard("{Enter}");
+    await user.keyboard(" ");
+
+    expect(nativeActivation).toHaveBeenCalledTimes(2);
+    expect(shortcutHandler).not.toHaveBeenCalled();
   });
 
   // Note: contentEditable suspension (also part of bu-5o22a's guard) is
@@ -431,11 +522,11 @@ describe("isShortcutTargetSuspended", () => {
     expect(isShortcutTargetSuspended(document.createElement("select"))).toBe(true);
   });
 
-  it("returns true for native action controls", () => {
-    expect(isShortcutTargetSuspended(document.createElement("button"))).toBe(true);
+  it("does not broadly suspend native action controls", () => {
+    expect(isShortcutTargetSuspended(document.createElement("button"))).toBe(false);
     const link = document.createElement("a");
     link.href = "/butlers";
-    expect(isShortcutTargetSuspended(link)).toBe(true);
+    expect(isShortcutTargetSuspended(link)).toBe(false);
   });
 
   it("returns true for a contentEditable target (bu-5o22a)", () => {

@@ -31,7 +31,12 @@
  *   const ids = useMemo(() => rows.map((r) => r.id), [rows]);
  *   const verbs = useMemo<ListTriageVerb[]>(() => {
  *     if (!selectedId) return [];
- *     return [{ key: "a", description: "Approve selected", handler: () => approve(selectedId) }];
+ *     return [{
+ *       key: "a",
+ *       description: "Approve selected",
+ *       handler: () => approve(selectedId),
+ *       command: { id: "approve-selected", label: "Approve selected" },
+ *     }];
  *   }, [selectedId, approve]);
  *   const { moveSelection, hints } = useListTriage({ ids, selectedId, onSelect: setSelectedId, verbs });
  */

@@ -493,8 +493,13 @@ describe("AuditLogPage — keyboard triage", () => {
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
     });
+    const firstRow = container.querySelector('[data-audit-row-id="1"]');
+    const firstTrigger = firstRow?.querySelector<HTMLElement>(
+      '[data-testid="audit-log-row-trigger"]',
+    );
+    expect(document.activeElement).toBe(firstTrigger);
     act(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
+      firstTrigger!.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
     });
 
     const selectedRow = container.querySelector('[data-audit-row-id="2"]');

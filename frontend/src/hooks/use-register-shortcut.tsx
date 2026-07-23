@@ -138,17 +138,6 @@ export function isShortcutTargetSuspended(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
   if (el) {
     if (isEditableKeyboardTarget(el) || el.tagName === "SELECT") return true;
-    // Native controls own their key behavior. In particular, a focused
-    // button's Enter must still produce its native click, rather than being
-    // consumed by a page-scoped shortcut bound to the same key. This leaves
-    // role-based rows such as DisclosureRow eligible for their own
-    // preventDefault-based ownership below, while keeping page-level j/k
-    // navigation available when focus remains on the row itself.
-    if (
-      typeof el.closest === "function" &&
-      el.closest('button, a[href], input, textarea, select, summary')
-    )
-      return true;
     // Target-containment: a keystroke fired while focus sits INSIDE any dialog
     // — modal or not, e.g. the persistent non-modal floating chat widget — is
     // that dialog's keystroke and must never leak through to a page-scoped
@@ -168,6 +157,16 @@ export function isShortcutTargetSuspended(target: EventTarget | null): boolean {
   if (typeof document !== "undefined" && document.querySelector('[role="dialog"][aria-modal="true"]'))
     return true;
   return false;
+}
+
+function isNativeActivationKey(target: EventTarget | null, key: string): boolean {
+  if (key !== "Enter" && key !== " ") return false;
+  const el = target as HTMLElement | null;
+  return Boolean(
+    el &&
+      typeof el.closest === "function" &&
+      el.closest('button, a[href], summary'),
+  );
 }
 
 function matchesBinding(binding: ShortcutBinding, e: KeyboardEvent): boolean {
@@ -218,6 +217,10 @@ export function useRegisterShortcut(bindings: ShortcutBinding[]): void {
       // native event reaches this window listener after React's target/root
       // handlers, so honoring defaultPrevented prevents a second page action.
       if (e.defaultPrevented || window.__pendingGNav) return;
+      // Native controls own activation, but not the rest of a page's hot loop:
+      // after roving focus moves to a button or link, j/k/arrows must still
+      // reach their declared page shortcut. Only Enter/Space stay native.
+      if (isNativeActivationKey(e.target, e.key)) return;
       const suspended = isShortcutTargetSuspended(e.target);
       for (const binding of bindingsRef.current) {
         if (!matchesBinding(binding, e)) continue;
