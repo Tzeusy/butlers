@@ -361,6 +361,34 @@ substitutes a peer-schema SQL check. A DND change after a durable local
 admission invalidates later or retry admission; it cannot retract an already
 admitted external effect.
 
+#### Precommit cancellation admission
+
+The wake-recovery cancellation consumer is a separate, future protocol layered
+on this admission helper. After a complete cohort is durably prepared but
+before any Messenger egress intent or send-start marker exists, Health or an
+origin Scheduler may provide a local cancellation decision only to the
+current-fence Switchboard coordinator. Switchboard carries its immutable
+run/fence/cohort/action correlation and captured DND generation through an
+authenticated MCP packet; it does not read a peer queue or Messenger state.
+
+Messenger is the final cancellation-admission owner. In the same local
+transaction that locks its private prepared-release gate and writes its durable
+cancellation receipt, it invokes the guarded DND admission with the captured
+generation. It accepts cancellation only if that generation is current, DND is
+inactive using database time, and it proves that no egress intent, send-start,
+provider receipt, or ambiguous provider-attempt state exists. The receipt is
+idempotent and binds the complete cohort; it is never a provider operation.
+
+A changed, active, missing, stale, or otherwise unprovable DND generation
+rejects the cancellation into retained `blocked_dnd`, not ordinary scheduler
+work. An egress-present or ambiguous result likewise never returns a cohort to
+the scheduler or authorizes a resend. Only a matching accepted receipt followed
+by all-participant same-fence finalization may enter the separate
+Scheduler-return path, and any later effective egress must perform its own
+Messenger guarded admission. This rule consumes the canonical generation guard;
+it does not add a DND writer, alter mutation/replay semantics, or introduce a
+peer-schema access exception.
+
 TTL expiry does not itself increment generation. Consumers cannot rely on an
 active snapshot at or after `revalidate_at`; they re-read current DND under the
 guard using database time. A later DND refresh or reactivation after clear or
