@@ -30,6 +30,12 @@ import { toast } from "sonner";
 
 import ButlersPage from "@/pages/ButlersPage";
 import type { StatusBoardRow, StatusBoardAggregates } from "@/hooks/use-butler-status-board";
+import {
+  CommandRegistryProvider,
+  useCommandMenuActions,
+  type PaletteCommand,
+} from "@/lib/command-registry";
+import { ShortcutRegistryProvider } from "@/hooks/use-register-shortcut";
 
 // ---------------------------------------------------------------------------
 // Mocks — same modules as ButlersPage.test.tsx
@@ -216,6 +222,46 @@ function renderPage() {
     </MemoryRouter>,
   );
 }
+
+function CommandReader({ onRead }: { onRead: (commands: PaletteCommand[]) => void }) {
+  onRead(useCommandMenuActions());
+  return null;
+}
+
+describe("ButlersPage — keyboard board cursor", () => {
+  it("moves across board tiles and exposes every butler as a palette destination", () => {
+    const rows = [makeRow({ name: "general" }), makeRow({ name: "health" })];
+    let commands: PaletteCommand[] = [];
+    setHookState(rows, makeAggregates({ total: 2, butlerCount: 2 }));
+
+    render(
+      <CommandRegistryProvider>
+        <ShortcutRegistryProvider>
+          <MemoryRouter>
+            <ButlersPage />
+            <CommandReader onRead={(next) => (commands = next)} />
+          </MemoryRouter>
+        </ShortcutRegistryProvider>
+      </CommandRegistryProvider>,
+    );
+
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+
+    const selected = document.querySelector('[data-butler-name="health"]');
+    expect(selected?.getAttribute("data-board-cursor")).toBe("true");
+    expect(document.activeElement).toBe(selected);
+    expect(commands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "open-butler-health",
+          label: "Open health",
+          keywords: expect.arrayContaining(["butler", "health"]),
+        }),
+      ]),
+    );
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Quarantined restore chip — click interaction

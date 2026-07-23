@@ -9,6 +9,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { useListTriage, type ListTriageVerb } from "@/hooks/use-list-triage";
+import {
+  CommandRegistryProvider,
+  useCommandMenuActions,
+  type PaletteCommand,
+} from "@/lib/command-registry";
 import { ShortcutRegistryProvider, useShortcutHintEntries } from "@/hooks/use-register-shortcut";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -33,6 +38,11 @@ function Harness({
 }) {
   const { hints } = useListTriage({ ids, selectedId, onSelect, verbs });
   onHints?.(hints.map((h) => h.description));
+  return null;
+}
+
+function CommandReader({ onRead }: { onRead: (commands: PaletteCommand[]) => void }) {
+  onRead(useCommandMenuActions());
   return null;
 }
 
@@ -152,5 +162,48 @@ describe("useListTriage", () => {
       );
     });
     expect(entries).toEqual(["Next item", "Previous item"]);
+  });
+
+  it("emits a selected verb as the matching palette command with its binding", () => {
+    const handler = vi.fn();
+    let commands: PaletteCommand[] = [];
+
+    act(() => {
+      root.render(
+        <CommandRegistryProvider>
+          <ShortcutRegistryProvider>
+            <Harness
+              ids={["1"]}
+              selectedId="1"
+              onSelect={() => {}}
+              verbs={[
+                {
+                  key: "a",
+                  description: "Approve selected",
+                  handler,
+                  command: {
+                    id: "approve-selected",
+                    label: "Approve selected",
+                    keywords: ["approval"],
+                  },
+                },
+              ]}
+            />
+            <CommandReader onRead={(next) => (commands = next)} />
+          </ShortcutRegistryProvider>
+        </CommandRegistryProvider>,
+      );
+    });
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({
+      id: "approve-selected",
+      label: "Approve selected",
+      keywords: ["approval"],
+      binding: ["a"],
+    });
+
+    act(() => commands[0]?.perform());
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

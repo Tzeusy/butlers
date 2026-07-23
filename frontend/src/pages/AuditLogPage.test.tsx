@@ -17,6 +17,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import AuditLogPage from "@/pages/AuditLogPage";
 import type { AuditLogParams, AuditLogEntry } from "@/api/types";
+import { CommandRegistryProvider } from "@/lib/command-registry";
+import { ShortcutRegistryProvider } from "@/hooks/use-register-shortcut";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -81,6 +83,21 @@ function renderInteractivePage(initialPath = "/audit-log") {
         <AuditLogPage />
         <LocationProbe />
       </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function renderKeyboardPage(initialPath = "/audit-log") {
+  const qc = new QueryClient();
+  return render(
+    <QueryClientProvider client={qc}>
+      <CommandRegistryProvider>
+        <ShortcutRegistryProvider>
+          <MemoryRouter initialEntries={[initialPath]}>
+            <AuditLogPage />
+          </MemoryRouter>
+        </ShortcutRegistryProvider>
+      </CommandRegistryProvider>
     </QueryClientProvider>,
   );
 }
@@ -430,6 +447,55 @@ describe("AuditLogPage — table renders new-schema rows", () => {
     expect(html).toContain("credential_set");
     expect(html).toContain("session_start");
     expect(html).toContain("qa");
+  });
+});
+
+describe("AuditLogPage — keyboard triage", () => {
+  it("moves between rows and toggles the keyboard-selected entry", () => {
+    setupDefaults([
+      {
+        id: 1,
+        ts: "2026-01-15T10:00:00Z",
+        actor: "owner",
+        action: "credential_set",
+        target: "u:google",
+        note: "first detail",
+        ip: null,
+        request_id: null,
+      },
+      {
+        id: 2,
+        ts: "2026-01-15T09:00:00Z",
+        actor: "qa",
+        action: "session_start",
+        target: null,
+        note: "second detail",
+        ip: null,
+        request_id: null,
+      },
+    ]);
+    const { container } = renderKeyboardPage();
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
+    });
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
+    });
+
+    const selectedRow = container.querySelector('[data-audit-row-id="2"]');
+    const selectedTrigger = selectedRow?.querySelector<HTMLElement>(
+      '[data-testid="audit-log-row-trigger"]',
+    );
+    expect(selectedRow?.getAttribute("data-audit-selected")).toBe("true");
+    expect(document.activeElement).toBe(selectedTrigger);
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("second detail");
+    expect(container.textContent).not.toContain("first detail");
   });
 });
 

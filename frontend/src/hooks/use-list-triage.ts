@@ -37,16 +37,25 @@
  */
 
 import { useCallback, useMemo } from "react";
+import { useRegisterCommands, type PaletteCommand } from "@/lib/command-registry";
 import { useRegisterShortcut, type ShortcutBinding } from "@/hooks/use-register-shortcut";
 
+export type ListTriageCommand = Pick<PaletteCommand, "id" | "label" | "keywords">;
+
 export interface ListTriageVerb {
-  /** `KeyboardEvent.key` to match, e.g. "a". Single-character keys only --
-   *  list-triage verbs are always plain, unmodified keystrokes. */
+  /** `KeyboardEvent.key` to match, e.g. "a" or "Enter". List-triage verbs
+   *  are always plain, unmodified keystrokes. */
   key: string;
   /** One-line description shown in the '?' help sheet and the footer hint strip. */
   description: string;
   /** Invoked when the key fires (subject to the shared suspend guard). */
   handler: () => void;
+  /**
+   * Optional command-palette representation of this selected-row action.
+   * `useListTriage` supplies the matching handler and binding from this same
+   * declaration, so the palette cannot target a different row than the key.
+   */
+  command?: ListTriageCommand;
 }
 
 export interface UseListTriageOptions<TId extends string = string> {
@@ -119,6 +128,17 @@ export function useListTriage<TId extends string = string>({
   }, [ids, selectedId, moveSelection, verbs]);
 
   useRegisterShortcut(bindings);
+
+  const commands = useMemo<PaletteCommand[]>(() => {
+    if (!selectedId) return [];
+    return verbs.flatMap((verb) =>
+      verb.command
+        ? [{ ...verb.command, binding: [verb.key], perform: verb.handler }]
+        : [],
+    );
+  }, [selectedId, verbs]);
+
+  useRegisterCommands(commands);
 
   return { moveSelection, hints: bindings };
 }
