@@ -58,17 +58,17 @@ The dashboard SHALL expose `GET /api/settings/console` returning aggregated head
 
 #### Scenario: Sub-system aggregation failure is reported, not propagated
 - **WHEN** one sub-system aggregation fails (e.g., spend backend unavailable) while `GET /api/settings/console` is responding
-- **THEN** the endpoint still returns 200 with the partial header (fields that succeeded) and the partial `attention[]` array
-- **AND** the failed sub-system contributes one `attention` item `{tone: "amber", kind: "system", text: "<subsystem> aggregation failed: <error_id>", action_route: "<subsystem route>"}` so the operator notices.
+- **THEN** the endpoint still returns 200 with the partial header (fields that succeeded) and the partial attention data
+- **AND** the failed sub-system contributes one item `{id: "subsystem_error:<source>", tone: "amber", kind: "subsystem_error", text: "<subsystem> aggregation failed: <error_id>", action_route: "<subsystem route>"}` so the operator notices.
 
 #### Scenario: Attention items composed from sub-systems
 - **WHEN** the aggregator runs
 - **THEN** it composes `attention_all[]` from:
-  - Open approvals waiting for the owner (kind `approval`, route `/approvals`).
-  - Models with `state ∈ {error, rate-limited}` (kind `model`, route `/settings/models`).
+  - Open approvals waiting for the owner (kind `open_approvals`, route `/approvals`).
+  - Models with `state ∈ {error, rate-limited}` (kind `model_error`, route `/settings/models`).
   - Auth-renewal required for any CLI provider (kind `auth_renewal`, route `/secrets?focus=c:cli-auth/<provider>` with the dynamic provider segment URL-encoded as needed). Each provider has its own stable `auth_renewal:<provider>` identity.
-  - Spend within 10% of the monthly ceiling (kind `spend`, route `/settings/spend`).
-  - Failed webhook deliveries in the last 24h (kind `webhook`, route `/settings/permissions`).
+  - Spend within 10% of the monthly ceiling (kind `spend_ceiling`, route `/settings/spend`).
+  - Failed webhook deliveries in the last 24h (kind `webhook_failure`, route `/settings/permissions`).
 - **AND** items are ordered with `tone="red"` first, then `tone="amber"`; `attention[]` is the five-item prefix of that order.
 
 ### Requirement: Settings Console Deltas On The Unified Fleet Event Bus
