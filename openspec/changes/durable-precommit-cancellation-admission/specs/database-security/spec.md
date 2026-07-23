@@ -16,9 +16,11 @@ they require for their local decision. Messenger SHALL perform the final guard
 admission while writing only its own local durable record. Switchboard SHALL
 carry DND generation and opaque correlation through authenticated MCP packets;
 it SHALL not read an origin queue or Messenger release gate through SQL. An
-origin validates `cancel_publish.v1` only against its own frozen-subset digest
-and receipt; it does not validate the global cohort by inspecting another
-origin. After a Messenger DND rejection, only the parent authenticated
+origin validates authenticated `cancel_finalize.v1` only against its own
+frozen-subset digest and accepted Messenger evidence, then validates
+`cancel_publish.v1` against that same local subset and durable finalization
+receipt; it does not validate the global cohort by inspecting another origin.
+After a Messenger DND rejection, only the parent authenticated
 `abort.v1(reason=blocked_dnd)` receipt may create `release_retained_dnd`; no
 participant gains a separate DND-derived cross-schema write path.
 

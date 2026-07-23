@@ -13,10 +13,10 @@ or add another cross-butler state authority.
 
 ## What Changes
 
-- Define `wake_recovery.cancel_admit.v1` and origin-facing
-  `wake_recovery.cancel_publish.v1` as authenticated, Switchboard-mediated
-  request/receipt contracts for one complete prepared cohort and one immutable
-  run fence.
+- Define `wake_recovery.cancel_admit.v1`, origin-facing
+  `wake_recovery.cancel_finalize.v1`, and `wake_recovery.cancel_publish.v1` as
+  authenticated, Switchboard-mediated request/receipt contracts for one
+  complete prepared cohort and one immutable run fence.
 - Make Messenger the sole final authority for precommit cancellation admission:
   it records an idempotent accepted, rejected, or ambiguous decision while
   serializing against its local wake-recovery egress state and the canonical
@@ -25,9 +25,11 @@ or add another cross-butler state authority.
   request fingerprints, an immutable per-origin frozen-subset commitment, DND
   generation evidence, and explicit no-egress-intent and no-send-start
   preconditions before cancellation can be accepted or published.
-- Define all-cohort cancellation recovery: only matching accepted and complete
-  finalization receipts can let every participant enter the prerequisite-defined
-  scheduler-return path. A DND mismatch instead triggers durable
+- Define all-cohort cancellation recovery: Switchboard first delivers opaque
+  accepted Messenger evidence and the recipient's immutable frozen-subset
+  manifest entry through `cancel_finalize.v1`; only matching durable
+  finalization receipts for every participant can let the cohort enter the
+  prerequisite-defined scheduler-return path. A DND mismatch instead triggers durable
   Switchboard-mediated parent `abort.v1(reason=blocked_dnd)` fanout into every
   origin's retained `release_retained_dnd` state; every other uncertain result
   remains scheduler-ineligible.
@@ -57,7 +59,8 @@ or add another cross-butler state authority.
 ## Impact
 
 This is an OpenSpec/RFC-only prerequisite. A later implementation will add
-Messenger-local records and authenticated MCP tools, origin-local cancellation
-transitions, coordinator retry handling, and PostgreSQL role/concurrency tests.
+Messenger-local records and authenticated MCP tools, origin-local finalization
+transitions and receipts, coordinator retry handling, and PostgreSQL
+role/concurrency tests.
 It depends on the canonical DND generation guard from `bu-12iab`; it neither
 implements nor alters the parent wake-recovery protocol in `bu-kqnum.3.4`.

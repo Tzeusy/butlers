@@ -136,12 +136,15 @@ be rewritten into cancellation success and SHALL prohibit automatic resend.
 
 ### Requirement: All-Cohort Scheduler Return Requires Complete Finalization
 An `accepted_precommit` Messenger receipt SHALL begin, not complete, a
-same-fence all-cohort cancellation finalization. Each origin SHALL verify the
-complete matching local prepared subset and move it atomically to a
-scheduler-ineligible cancellation-ready state. Switchboard SHALL collect a
-compatible finalization receipt from every snapshotted participant and derive a
-durable finalization digest before it sends replay-safe
-`wake_recovery.cancel_publish.v1` packets.
+same-fence all-cohort cancellation finalization. Switchboard SHALL first send
+each participant a versioned `wake_recovery.cancel_finalize.v1` request that
+contains the accepted Messenger evidence and that recipient's immutable
+frozen-subset manifest entry. Each origin SHALL verify the complete matching
+local prepared subset and move it atomically to a scheduler-ineligible
+cancellation-ready state while persisting its durable finalization receipt.
+Switchboard SHALL collect a compatible finalization receipt from every
+snapshotted participant and derive a durable finalization digest before it sends
+replay-safe `wake_recovery.cancel_publish.v1` packets.
 
 Only a publish packet carrying the accepted decision and complete finalization
 digest may move an origin's matching cancellation-ready rows to the
@@ -152,7 +155,7 @@ the parent wake release and legacy unguarded flush SHALL NOT consume it.
 
 #### Scenario: Missing participant prevents scheduler publication
 - **WHEN** Messenger has accepted cancellation but one current-fence participant
-  has not produced a compatible finalization receipt
+  has not produced a compatible `cancel_finalize.v1` receipt
 - **THEN** every unfinalized participant remains prepared or cancellation-ready
   and scheduler-ineligible
 - **AND** replay retries only the same cancellation action and participant set
@@ -164,23 +167,82 @@ the parent wake release and legacy unguarded flush SHALL NOT consume it.
   all of its cancellation-ready rows through the defined scheduler-return path
 - **AND** no individual row, late row, or subset can be published independently
 
+### Requirement: Versioned Same-Fence Origin Finalization
+`wake_recovery.cancel_finalize.v1` SHALL be an authenticated
+Switchboard-to-origin MCP operation that precedes every `cancel_publish.v1`
+authorization. Its semantic request SHALL include exact `run_id`, `fence`,
+`origin_butler`, `participant_digest`, `cohort_digest`,
+`origin_frozen_subset_digest`, `origin_frozen_subset_count`,
+`release_action_key`, `cancellation_action_key`, opaque accepted Messenger
+`accepted_admission_receipt` and its `admission_receipt_digest`, a stable
+`cancel_finalize_action_key` and `cancel_finalize_request_id`, and a versioned
+request fingerprint. The evidence SHALL identify the immutable
+`accepted_precommit` decision without carrying notification, DND, or provider
+payload. The action and request identities SHALL be reused for every retry of
+that origin's finalization.
+
+The receiver SHALL authenticate the current-fence Switchboard coordinator before
+reading or changing local cancellation state. Messenger, Health, a Scheduler, a
+provider, and unauthenticated callers SHALL be rejected. The origin SHALL
+verify the version, target origin, run/fence, global commitments, release and
+cancellation actions, accepted evidence, and its own immutable frozen-subset
+digest/count from local durable state without reading a peer schema. In the same
+local transaction, it SHALL move all and only that frozen subset to
+`cancellation_ready` and persist one versioned durable finalization receipt
+keyed by `cancel_finalize_action_key`. The receipt SHALL contain the request
+fingerprint, accepted-admission digest, run/fence/global commitments, local
+manifest digest/count, and resulting local state before the receiver responds.
+
+An exact replay with the same action, request ID, and fingerprint SHALL return
+the original durable receipt after a Switchboard or origin restart. Reusing
+either identity with a changed semantic field SHALL return
+`idempotency_conflict` without changing local state. A wrong target, different
+or stale fence, missing/non-accepted evidence, or local-manifest mismatch SHALL
+fail closed before the transition. A timeout without a durable receipt is not
+finalization: Switchboard SHALL retry the same finalization action/request and
+SHALL NOT derive a finalization digest or send `cancel_publish.v1`; a committed
+receipt with a lost response is recovered only by that exact replay.
+
+#### Scenario: Only Switchboard can request origin finalization
+- **WHEN** Messenger, Health, a Scheduler, a provider, or an unauthenticated
+  caller invokes `cancel_finalize.v1` directly
+- **THEN** the origin rejects the request before reading or changing its local
+  cancellation state
+- **AND** it creates neither a cancellation-ready transition nor a finalization
+  receipt
+
+#### Scenario: Finalization replay survives conflict and restart
+- **WHEN** an origin commits its finalization receipt and either side restarts
+  before the response is observed
+- **THEN** the same finalization action/request/fingerprint returns that receipt
+- **AND** reusing either identity with changed receipt evidence, fence, manifest,
+  or action returns `idempotency_conflict` without another local transition
+
+#### Scenario: Missing finalization receipt blocks publication
+- **WHEN** a finalization response times out before its receipt is durable
+- **THEN** Switchboard retains and retries the same finalization action/request
+- **AND** it does not derive an all-cohort finalization digest or issue
+  `cancel_publish.v1`
+
 ### Requirement: Versioned Same-Fence Origin Publication
 `wake_recovery.cancel_publish.v1` SHALL be an authenticated
 Switchboard-to-origin MCP operation. Its semantic request SHALL include exact
 `run_id`, `fence`, `origin_butler`, `participant_digest`, `cohort_digest`,
 `origin_frozen_subset_digest`, `origin_frozen_subset_count`, `release_action_key`,
 `cancellation_action_key`, accepted Messenger `admission_receipt_digest`,
+that origin's `origin_finalization_receipt_digest`,
 `cancellation_finalization_digest`, a stable `cancel_publish_action_key` and
-`cancel_publish_request_id`, and a versioned request fingerprint. The action
-and request identities SHALL be reused for every retry of that origin's publish.
+`cancel_publish_request_id`, and a versioned request fingerprint. The action and
+request identities SHALL be reused for every retry of that origin's publish.
 
 The receiving origin SHALL authenticate Switchboard, verify the version and all
 global commitments, and prove its own immutable frozen subset from its local
-prepared/cancellation-ready state without reading any peer schema. It SHALL
-persist one local publish receipt keyed by `cancel_publish_action_key` before
-changing scheduler eligibility. An exact replay after a Switchboard or origin
-restart SHALL return that receipt. A changed semantic field, wrong target origin,
-different fence, missing finalization evidence, or local subset mismatch SHALL
+prepared/cancellation-ready state and durable finalization receipt without
+reading any peer schema. It SHALL persist one local publish receipt keyed by
+`cancel_publish_action_key` before changing scheduler eligibility. An exact
+replay after a Switchboard or origin restart SHALL return that receipt. A changed
+semantic field, wrong target origin, different fence, missing or incompatible
+origin finalization receipt/finalization evidence, or local subset mismatch SHALL
 fail closed without changing local eligibility. A timeout without a durable
 receipt SHALL not be treated as publication.
 

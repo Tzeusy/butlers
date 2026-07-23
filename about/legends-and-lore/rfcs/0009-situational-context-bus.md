@@ -390,12 +390,15 @@ mutate a peer queue to emulate it. A missing fanout receipt remains retained
 and replayable, never a partial publication.
 
 An egress-present or ambiguous result likewise never returns a cohort to the
-scheduler or authorizes a resend. Only a matching accepted receipt followed by
-all-participant same-fence finalization and authenticated per-origin
-`cancel_publish.v1` receipts may enter the separate Scheduler-return path, and
-any later effective egress must perform its own Messenger guarded admission.
-This rule consumes the canonical generation guard; it does not add a DND writer,
-alter mutation/replay semantics, or introduce a peer-schema access exception.
+scheduler or authorizes a resend. Only a matching accepted receipt delivered by
+the authenticated Switchboard-to-origin `cancel_finalize.v1` operation, followed
+by one durable same-fence finalization receipt per participant and authenticated
+per-origin `cancel_publish.v1` receipts, may enter the separate Scheduler-return
+path. Switchboard retries the same finalization action/request after a timeout
+or restart and cannot publish from a missing or conflicting receipt. Any later
+effective egress must perform its own Messenger guarded admission. This rule
+consumes the canonical generation guard; it does not add a DND writer, alter
+mutation/replay semantics, or introduce a peer-schema access exception.
 
 TTL expiry does not itself increment generation. Consumers cannot rely on an
 active snapshot at or after `revalidate_at`; they re-read current DND under the
