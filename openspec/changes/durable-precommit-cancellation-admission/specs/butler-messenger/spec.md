@@ -14,6 +14,12 @@ consumer helper and SHALL persist a durable idempotent accepted, rejected, or
 ambiguous cancellation receipt before it responds. Messenger SHALL not let a
 Health, Scheduler, origin, or provider call bypass this boundary.
 
+For `rejected_blocked_dnd`, Messenger SHALL return only its durable guarded
+admission receipt to authenticated Switchboard. Switchboard, not Messenger,
+then drives the parent `abort.v1(reason=blocked_dnd)` fanout to origin-local
+`release_retained_dnd` state. Messenger SHALL not call an origin, mutate an
+origin queue, or expose a DND read surface for that fanout.
+
 #### Scenario: Messenger rejects a direct non-Switchboard caller
 - **WHEN** Health, an origin Scheduler, or an unauthenticated caller invokes
   the cancellation admission surface directly

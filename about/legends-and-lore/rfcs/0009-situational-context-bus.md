@@ -380,14 +380,22 @@ provider receipt, or ambiguous provider-attempt state exists. The receipt is
 idempotent and binds the complete cohort; it is never a provider operation.
 
 A changed, active, missing, stale, or otherwise unprovable DND generation
-rejects the cancellation into retained `blocked_dnd`, not ordinary scheduler
-work. An egress-present or ambiguous result likewise never returns a cohort to
-the scheduler or authorizes a resend. Only a matching accepted receipt followed
-by all-participant same-fence finalization may enter the separate
-Scheduler-return path, and any later effective egress must perform its own
-Messenger guarded admission. This rule consumes the canonical generation guard;
-it does not add a DND writer, alter mutation/replay semantics, or introduce a
-peer-schema access exception.
+produces Messenger's durable `rejected_blocked_dnd` receipt, not ordinary
+scheduler work. Switchboard persists that same-fence receipt and fans the
+parent wake-recovery `abort.v1(reason=blocked_dnd)` operation to every current
+participant until each returns its parent-defined retained-state receipt. Each
+origin performs the parent `aborted_dnd` / `release_retained_dnd` transition
+only for its own frozen subset; Switchboard and origins do not re-read DND or
+mutate a peer queue to emulate it. A missing fanout receipt remains retained
+and replayable, never a partial publication.
+
+An egress-present or ambiguous result likewise never returns a cohort to the
+scheduler or authorizes a resend. Only a matching accepted receipt followed by
+all-participant same-fence finalization and authenticated per-origin
+`cancel_publish.v1` receipts may enter the separate Scheduler-return path, and
+any later effective egress must perform its own Messenger guarded admission.
+This rule consumes the canonical generation guard; it does not add a DND writer,
+alter mutation/replay semantics, or introduce a peer-schema access exception.
 
 TTL expiry does not itself increment generation. Consumers cannot rely on an
 active snapshot at or after `revalidate_at`; they re-read current DND under the

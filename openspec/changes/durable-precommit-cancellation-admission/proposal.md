@@ -13,20 +13,24 @@ or add another cross-butler state authority.
 
 ## What Changes
 
-- Define `wake_recovery.cancel_admit.v1`, an authenticated,
-  Switchboard-mediated request/receipt contract for one complete prepared
-  cohort and one immutable run fence.
+- Define `wake_recovery.cancel_admit.v1` and origin-facing
+  `wake_recovery.cancel_publish.v1` as authenticated, Switchboard-mediated
+  request/receipt contracts for one complete prepared cohort and one immutable
+  run fence.
 - Make Messenger the sole final authority for precommit cancellation admission:
   it records an idempotent accepted, rejected, or ambiguous decision while
   serializing against its local wake-recovery egress state and the canonical
   DND guard.
 - Require an exact run/fence/participant/cohort/action binding, durable
-  request fingerprint, DND-generation evidence, and explicit no-egress-intent
-  and no-send-start preconditions before cancellation can be accepted.
-- Define all-cohort cancellation recovery: only a matching accepted receipt can
-  let every participant enter the prerequisite-defined scheduler-return path;
-  a DND mismatch remains retained as `blocked_dnd`, and every other uncertain
-  result remains scheduler-ineligible.
+  request fingerprints, an immutable per-origin frozen-subset commitment, DND
+  generation evidence, and explicit no-egress-intent and no-send-start
+  preconditions before cancellation can be accepted or published.
+- Define all-cohort cancellation recovery: only matching accepted and complete
+  finalization receipts can let every participant enter the prerequisite-defined
+  scheduler-return path. A DND mismatch instead triggers durable
+  Switchboard-mediated parent `abort.v1(reason=blocked_dnd)` fanout into every
+  origin's retained `release_retained_dnd` state; every other uncertain result
+  remains scheduler-ineligible.
 - Add a narrowly scoped RFC 0009 consumer rule and an executable future
   PostgreSQL/MCP contract-test matrix. This planning packet introduces no
   runtime migration, Scheduler implementation, Messenger release behavior,

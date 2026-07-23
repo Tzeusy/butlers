@@ -89,6 +89,18 @@ run/fence/participant/cohort/action record before it invokes Messenger. It MUST
 not generate a new action key on retry or translate a local policy error into a
 different cancellation reason.
 
+At prepare time, Switchboard SHALL persist an immutable ordered origin-subset
+manifest. Each entry is `(origin_butler, origin_frozen_subset_digest,
+origin_frozen_subset_count)` and commits only that origin's already-frozen local
+prepared subset (including an explicit zero/policy-only commitment where the
+participant owns no notification rows). `participant_digest` commits to the
+ordered participant identities; `cohort_digest` commits to the exact canonical
+origin-subset manifest, so it remains a global all-cohort commitment without
+exposing a peer's rows. The manifest is immutable for the run/fence. An origin
+later receives its own entry and `cohort_digest`; it MUST prove the former from
+its own durable rows and receipts, and MUST NOT attempt to prove the latter by
+reading or reconstructing any peer schema.
+
 **Alternative considered:** Let Health or an origin Scheduler call Messenger
 directly. Rejected because it creates a second cross-butler channel, lets a
 local actor bypass the current-fence coordinator, and would require a direct
@@ -178,7 +190,7 @@ Messenger returns one of these durable decision classes:
 | Class | Required result | Scheduler consequence |
 | --- | --- | --- |
 | `accepted_precommit` | Exact binding, inactive matching DND generation, and no egress intent/send-start are all proved. | Eligible only for the all-cohort finalize/publish protocol in D5. |
-| `rejected_blocked_dnd` | Generation changed, active DND is observed, or snapshot evidence is stale/unprovable. | The whole cohort is retained as `blocked_dnd`; no row becomes `pending`. |
+| `rejected_blocked_dnd` | Generation changed, active DND is observed, or snapshot evidence is stale/unprovable. | Switchboard must durably fan the same-fence result to every participant through the parent `abort.v1(reason=blocked_dnd)` path; every uncommitted origin reaches its parent-defined `release_retained_dnd` state and no row becomes `pending`. |
 | `rejected_egress_present` | Egress intent, send-start, provider receipt, or incompatible release state already exists. | Existing run/action recovery continues; no scheduler return. |
 | `rejected_fence_or_digest` | Run/fence/action/participant/cohort identity is stale or mismatched. | Existing current-fence state remains authoritative. |
 | `ambiguous` | Messenger cannot prove a coherent local gate/attempt state or cannot recover a prior outcome after retry/restart. | No scheduler return and no automatic provider resend; explicit reconciliation is required. |
@@ -195,25 +207,59 @@ durable receipt. If Messenger returns `ambiguous`, the coordinator preserves
 the cohort and action evidence; it MUST NOT send, return rows to `pending`, or
 mint a replacement action key.
 
-### D5 — Publish scheduler eligibility only after all participants finalize
+### D5 — Bind publication to a locally provable frozen subset
 
 Messenger admission decides whether a release can be cancelled before egress;
 it does not own origin rows. Therefore `accepted_precommit` starts a durable
 all-cohort completion protocol rather than an immediate local Scheduler update:
 
 1. Switchboard sends the accepted Messenger receipt to every participant under
-   the exact same run/fence/digests/action key.
-2. Each origin verifies that its complete local prepared subset matches the
-   cohort digest and atomically moves it to a local `cancellation_ready` state.
-   Health records its matching policy decision as cancellation-ready but does
-   not clear unrelated context. These states remain scheduler-ineligible.
+   the exact same run/fence/digests/action key and that participant's immutable
+   origin-subset manifest entry.
+2. Each origin verifies its own `origin_frozen_subset_digest` and count against
+   its durable prepared rows or policy state, then atomically moves that
+   complete local subset to `cancellation_ready`. Health records its matching
+   policy decision as cancellation-ready but does not clear unrelated context.
+   These states remain scheduler-ineligible. A global `cohort_digest` is a
+   correlation commitment, never a substitute for this local proof.
 3. Switchboard durably collects a compatible finalization receipt from every
-   snapshot participant and derives a `cancellation_finalization_digest`.
+   snapshot participant and derives a `cancellation_finalization_digest` over
+   the ordered receipts, each of which carries that participant's immutable
+   origin-subset digest.
 4. Only then does it issue a replay-safe `wake_recovery.cancel_publish.v1`
-   packet carrying the complete receipt digest. An origin may move all of its
-   matching `cancellation_ready` rows to the prerequisite-defined scheduler
-   return state only for this packet; individual-row, subset, or changed-fence
-   publication is rejected.
+   packet to each origin. An origin may move all and only its matching
+   `cancellation_ready` rows to the prerequisite-defined scheduler return state
+   only for this packet; individual-row, subset, or changed-fence publication
+   is rejected.
+
+`wake_recovery.cancel_publish.v1` is an authenticated Switchboard-to-origin
+operation, not a Messenger, Health, Scheduler, or provider surface. Its exact
+semantic request fields are:
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | Exact value `wake_recovery.cancel_publish.v1`. |
+| `run_id`, `fence`, `origin_butler` | The immutable current run/fence and the intended receiving origin. |
+| `participant_digest`, `cohort_digest` | The global immutable participant and cohort commitments. |
+| `origin_frozen_subset_digest`, `origin_frozen_subset_count` | The receiving origin's immutable manifest entry; this is the local proof binding. |
+| `release_action_key`, `cancellation_action_key` | The parent release identity and the accepted cancellation identity. |
+| `admission_receipt_digest`, `cancellation_finalization_digest` | The accepted Messenger receipt and complete ordered origin-finalization commitment. |
+| `cancel_publish_action_key`, `cancel_publish_request_id` | Stable per-origin action and correlation identities, derived once from the immutable run/fence, digest, action, and receipt bindings above and reused on retry. |
+| `request_fingerprint` | Versioned digest over every semantic request field above. |
+
+Only the authenticated current-fence Switchboard coordinator may invoke this
+operation. Before changing local eligibility, the receiver SHALL check the
+version, caller, run/fence, origin identity, global commitments, immutable
+local subset digest/count, accepted admission receipt, and complete
+finalization digest against its own durable `cancellation_ready` state. It
+persists one origin-local publish receipt keyed by `cancel_publish_action_key`,
+including the request fingerprint and resulting local state, before replying.
+An exact retry returns that stored receipt after either side restarts. Reusing
+its action key or request ID with any changed semantic field, targeting another
+origin, a missing receipt, a stale fence, or a locally mismatched subset fails
+closed without changing eligibility. A timeout with no durable receipt is not a
+publication; Switchboard replays the same packet and never derives success from
+a global digest alone.
 
 The future implementation may represent the final return state as `pending`
 only if its normal scheduler and final Messenger delivery admission preserve
@@ -226,9 +272,10 @@ to ordinary work.
 This is all-or-nothing at the durable protocol boundary without pretending that
 separate butler schemas share a distributed SQL transaction. The durable
 finalization digest proves that every participant reached the same cancellation
-decision before any origin receives a publish authorization. A retransmitted
-publish packet is idempotent; it cannot change membership, action, target, or
-DND evidence.
+decision before any origin receives a publish authorization, while each
+origin-local subset digest gives the receiver a proof it can validate without
+peer-schema access. A retransmitted publish packet is idempotent; it cannot
+change membership, action, target, local subset, or DND evidence.
 
 **Alternative considered:** Let each origin set its prepared rows directly to
 `pending` after receiving a local cancellation request. Rejected because a
@@ -236,7 +283,32 @@ missing participant, racing commit, or stale digest could release an arbitrary
 subset and make the ordinary Scheduler send what was supposed to be one fenced
 cohort.
 
-### D6 — Restart and failure recovery use only durable receipts
+### D6 — Fan DND rejection through the parent retained-state contract
+
+`rejected_blocked_dnd` is a Messenger-local guarded-admission decision, not an
+origin-local DND query or a permission for Switchboard to mutate an origin
+queue. On that durable receipt, Switchboard SHALL persist a same-fence DND-abort
+fanout record containing the cancellation action, Messenger receipt digest,
+run/fence, participant/cohort commitments, and immutable origin-subset manifest.
+It SHALL then invoke the parent `strict-owner-telegram-wake-recovery`
+`abort.v1` operation with the parent-defined `blocked_dnd` reason for every
+current-fence participant. This change consumes that parent reason-specific
+contract by reference; it does not define a new abort variant or alter parent
+PR #3513's state machine.
+
+Every current-fence participant returns the parent replay-safe abort receipt;
+each origin participant applies the parent's durable `aborted_dnd` /
+`release_retained_dnd` transition to its own matching frozen subset. Switchboard
+records each receipt and, on a timeout, conflict, or origin restart, replays the
+same parent `abort.v1` only to the outstanding participant. It MUST NOT send
+`cancel_publish.v1`, expose a row to the Scheduler, rewrite the Messenger
+decision, re-read DND on behalf of an origin, or use direct SQL to emulate the
+retained transition. Until every participant has returned the compatible parent
+receipt, the fanout remains incomplete and no successor, publication, egress,
+or partial release is authorized. The parent contract continues to govern the
+later DND-clear plus fresh-owner-intent successor rule.
+
+### D7 — Restart and failure recovery use only durable receipts
 
 Every receiver persists its request fingerprint and result before responding.
 After a process restart, a replay returns the stored matching receipt; it never
@@ -245,6 +317,12 @@ assumption that a provider did not receive a call. A missing record after a
 known committed release state, contradictory state, failed role proof, missing
 DND guard, missing database time, or unavailable required participant is
 fail-closed.
+
+This applies independently to Messenger admission, origin finalization,
+`cancel_publish.v1`, and the parent DND-abort fanout receipts. A Switchboard or
+origin restart may replay the same action/request identity; it MUST NOT mint a
+replacement publication, infer a local transition from a transport timeout, or
+turn a partial DND fanout into a scheduler return.
 
 An ambiguous provider outcome is outside the accepted precommit path because
 the no-egress-intent/no-send-start predicate is false or unprovable. It remains
@@ -261,16 +339,17 @@ skip row locks do not prove these properties.
 | Case | Setup / action | Required proof |
 | --- | --- | --- |
 | Exact precommit cancellation | Complete prepared cohort, matching current fence/digests, inactive DND generation `N`, no egress intent | Messenger records one `accepted_precommit` receipt before response; commit/release cannot create an intent; no provider tool is called. |
-| DND wins first | Health snapshot captures `N`; canonical writer commits `N+1` before Messenger guard admission | Messenger durably returns `rejected_blocked_dnd`; every cohort member remains retained and no scheduler return or egress occurs. |
+| DND wins first | Health snapshot captures `N`; canonical writer commits `N+1` before Messenger guard admission | Messenger durably returns `rejected_blocked_dnd`; Switchboard replays parent `abort.v1(reason=blocked_dnd)` to every participant until each has its parent receipt and every origin has the parent-defined `release_retained_dnd` result; no scheduler return or egress occurs. |
 | Cancellation wins DND ordering | Messenger holds the guard share lock for matching inactive `N` while a canonical writer races | Messenger commits its local decision before the writer advances to `N+1`; no lock is held across MCP/provider I/O, and later egress still requires its own guard admission. |
 | Release wins private gate | `commit.v1` locks the prepared-release gate and writes an egress intent before cancellation | Cancellation records `rejected_egress_present`; it cannot remove the intent, send, or publish rows. |
 | Cancellation wins private gate | Cancellation locks the matching prepared gate first | It records accepted cancellation and every later same-fence commit/release rejects before creating an intent or send-start marker. |
 | Exact replay | Repeat a complete request with the same action key and fingerprint after any terminal result | The original receipt is returned; generation evidence, gate state, and record are not rewritten. |
 | Conflicting replay | Reuse action key/request ID with changed fence, digest, action, reason, decision reference, or DND generation | `idempotency_conflict` is returned with no state mutation. |
 | Stale or cross-run request | Submit a lower/current-mismatched fence or another run's digest/action | Messenger rejects before a local decision or egress change; the current run remains authoritative. |
-| Partial participant attempt | Omit a prepared participant or provide a local subset digest | Coordinator/Messenger rejects before cancellation admission; no participant becomes `cancellation_ready` or `pending`. |
+| Local-subset mismatch | Send an origin a matching global `cohort_digest` but changed `origin_frozen_subset_digest`/count, origin identity, or local prepared subset | The origin rejects `cancel_publish.v1` without peer reads or a local eligibility change; Switchboard retains the same action for reconciliation. |
 | Finalization crash | Messenger accepted cancellation but one origin has not returned a compatible finalization receipt | Rows remain cancellation-ready or prepared and scheduler-ineligible; retrying the same packet resumes only the missing same-fence step. |
-| Publish replay | Re-send the same complete finalization digest after an origin restart | Each origin returns its original publish receipt; a changed receipt digest or subset cannot make rows scheduler-visible. |
+| Publish replay and restart | Re-send the same `cancel_publish.v1` action/request/fingerprint after an origin restart | The origin returns its original durable publish receipt; changed global or local-subset evidence cannot make rows scheduler-visible. |
+| DND fanout restart | Lose an origin `abort.v1(reason=blocked_dnd)` response or restart Switchboard/origin after a durable receipt | Switchboard replays the same parent abort only to the missing origin; no `cancel_publish.v1`, scheduler fallback, or new DND decision is inferred. |
 | Timeout and restart | Lose the MCP response or restart Messenger after committing a record | Retrying the same action key reads the durable receipt; absence or incoherence is `ambiguous`, never assumed accepted. |
 | Send-start / provider ambiguity | Attempt cancellation when send-start, provider receipt, or ambiguous attempt evidence exists | Cancellation cannot be accepted, cannot return rows to ordinary work, and cannot trigger automatic resend. |
 | Role and topology proof | Execute as `butler_health_rw`, `butler_switchboard_rw`, and `butler_messenger_rw` with real `SET ROLE` sessions | Health reads only public DND evidence; Switchboard cannot SQL-read Messenger/origin rows; Messenger owns its record; only authenticated Switchboard MCP calls reach cancellation admission. |
@@ -296,10 +375,12 @@ This planning change performs no migration. The implementation sequence is:
 1. Land and verify the canonical DND guard implementation and its role/locking
    tests before enabling this consumer.
 2. Add Messenger-local prepared-release-gate and cancellation-admission
-   records, origin-local cancellation states, and Switchboard run/finalization
-   records through schema-owned migrations with least-privilege ACLs.
-3. Add authenticated versioned MCP validation and same-fence replay handling;
-   do not expose direct peer SQL or provider tools.
+   records, origin-local frozen-subset/finalization/publish receipts, and
+   Switchboard run/finalization/DND-fanout records through schema-owned
+   migrations with least-privilege ACLs.
+3. Add authenticated versioned MCP validation and same-fence replay handling
+   for admission, origin publication, and the parent DND-abort fanout; do not
+   expose direct peer SQL or provider tools.
 4. Add the PostgreSQL/MCP role, concurrency, crash, and ambiguity tests above.
 5. Keep the capability disabled until the parent wake-recovery implementation,
    its final egress DND admission, and a staged reconciliation drill are ready.

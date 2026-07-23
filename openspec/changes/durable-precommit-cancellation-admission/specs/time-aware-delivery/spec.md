@@ -5,9 +5,12 @@ The ordinary deferred-notification Scheduler SHALL keep all
 `release_prepared` and cancellation-ready wake-recovery rows scheduler-ineligible.
 It SHALL allow a future cancellation-return state only after receiving a
 matching `wake_recovery.cancel_publish.v1` receipt whose run, fence,
-participant/cohort digests, release action, cancellation action key, accepted
-Messenger decision, and complete finalization digest exactly match the row's
-durable provenance.
+origin identity, participant/cohort digests, immutable local
+`origin_frozen_subset_digest`/count, release action, cancellation action key, accepted
+Messenger decision, stable publish action/request identities, and complete
+finalization digest exactly match the row's durable provenance. The origin SHALL
+prove that local subset only from its own durable rows/receipts; the global
+cohort digest alone is insufficient and peer-schema reads are forbidden.
 
 The Scheduler SHALL reject partial, stale, changed-digest, DND-blocked,
 egress-present, or ambiguous cancellation outcomes. It SHALL not append late
@@ -23,6 +26,14 @@ preserve the receipt's DND evidence and complete its own Messenger admission.
 
 #### Scenario: Changed publish evidence cannot expose a subset
 - **WHEN** a publish request carries a different fence, cohort digest, release
-  action, cancellation action key, or incomplete finalization digest
+  action, cancellation action key, local subset digest/count, target origin, or
+  incomplete finalization digest
 - **THEN** the Scheduler rejects it without changing row eligibility
 - **AND** no individual row becomes ordinary pending work
+
+#### Scenario: DND rejection remains a parent retained state
+- **WHEN** Switchboard relays the parent `abort.v1(reason=blocked_dnd)` receipt
+  after Messenger rejects precommit cancellation for DND
+- **THEN** the origin applies the parent-defined `release_retained_dnd` state to
+  its complete frozen subset and returns the durable parent receipt
+- **AND** it neither performs a new DND query nor accepts `cancel_publish.v1`
