@@ -239,6 +239,71 @@ async def clear_context(
     """, signal_type, butler_name)
 ```
 
+### Canonical DND Generation Guard
+
+`dnd` is a safety-critical exception to the ordinary row-upsert examples
+above. Its logical state is the OR of active General and Switchboard DND rows;
+no individual `user_context` row version is a sufficient DND admission fence.
+Every canonical DND mutation therefore uses one durable singleton generation
+guard in the `public` context-bus boundary.
+
+The guard has a non-negative, monotonic `BIGINT` generation and a mutation
+audit keyed by immutable `mutation_id`. A canonical DND request carries its
+writer, operation (`set` or `clear`), affected writer row, and stable
+correlation reference. General's explicit-context MCP tools and every future
+Switchboard DND path are the only canonical writers. Health, Messenger,
+connectors, and other domain butlers may read a DND snapshot but may not mutate
+DND.
+
+The DND mutation transaction MUST:
+
+1. lock the singleton guard with `FOR UPDATE`;
+2. deduplicate `mutation_id`, returning an exact prior receipt for an exact
+   replay and rejecting conflicting replays;
+3. validate the effective writer and mutate only that writer's DND context row;
+4. advance the guard exactly once and persist a minimal mutation receipt; and
+5. commit the row change, generation, and receipt atomically.
+
+Direct DND DML that bypasses this path is forbidden by the database security
+boundary. The receipt/audit stores generation, writer, operation, correlation,
+and timestamps only; it never stores raw user message text, optional DND value
+text, notification content, or provider payloads. A counter that would exceed
+`BIGINT` maximum fails closed before changing DND; it never wraps, resets, or
+reuses a generation.
+
+#### DND snapshots and admission
+
+A DND snapshot contains `{generation, dnd_active, observed_at,
+revalidate_at}` and is evidence rather than an egress authorization.
+`observed_at` and active-state evaluation use database time. For an active
+snapshot, `revalidate_at` is the earliest active DND expiry, the first
+time-based state transition that can happen without a writer transaction. An
+inactive snapshot has no expiry-driven activation: any future set or refresh
+must advance generation.
+
+A consumer turning an inactive snapshot into a durable local effect MUST
+revalidate it inside the same database transaction that writes that effect. It
+takes `FOR SHARE` on the same guard, requires the captured generation and an
+inactive current DND state, then commits or rolls back its own record before
+releasing the lock. Because writers take the conflicting `FOR UPDATE` lock
+first, a DND mutation either advances the generation before admission (which
+makes the admission reject) or waits until the local admission boundary is
+durable. The lock is never held across MCP or provider I/O.
+
+Health owns its policy/wake decision and Messenger owns final egress admission;
+both are future consumers of this contract. Messenger repeats the guarded
+check in the transaction that persists its own egress intent. Switchboard only
+carries generation/correlation through authenticated MCP packets and never
+substitutes a peer-schema SQL check. A DND change after a durable local
+admission invalidates later or retry admission; it cannot retract an already
+admitted external effect.
+
+TTL expiry does not itself increment generation. Consumers cannot rely on an
+active snapshot at or after `revalidate_at`; they re-read current DND under the
+guard using database time. Restart recovery uses the durable guard, mutation
+audit, and canonical context rows only. Missing, stale, malformed, or otherwise
+unprovable evidence fails closed for an admission.
+
 ### How Butlers Use Context
 
 Context checking is **pull-based**. Butlers query context at decision points, not via push notifications. This keeps the system simple and avoids coupling between butlers.
