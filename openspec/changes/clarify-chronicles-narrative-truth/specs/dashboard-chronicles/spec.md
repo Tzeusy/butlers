@@ -23,6 +23,27 @@ recent settled day (yesterday in the owner timezone).
   day in the owner timezone, or `null` when no such coverage is established
 - **AND** every numeric field is `tabular-nums` safe (integer or fixed decimal)
 
+#### Scenario: Local-day coverage requires a durable witness
+
+- **WHEN** the endpoint determines whether a selected local day is covered
+- **THEN** it SHALL call that day authoritatively covered only when a durable,
+  Chronicler-owned `covered-local-day` witness exists for that exact
+  owner-timezone local date
+- **AND** Chronicler SHALL record that witness only after every required owned
+  Chronicle evidence read for that local day has succeeded
+- **AND** `earliest_date` SHALL be the minimum successful exact-date witness,
+  but SHALL NOT imply that a later local day is covered
+- **WHEN** no authoritative coverage floor is established, the selected day
+  lacks its successful exact-date witness, its coverage evidence is incomplete
+  or failed, or the selected day falls in a coverage-evidence gap on or after
+  the floor
+- **THEN** the coverage verdict SHALL resolve `unavailable`
+- **AND** it SHALL NOT resolve `no_data` or `quiet`, or permit cached prose
+- **WHEN** the coverage verdict positively establishes that the selected local
+  day precedes the authoritative coverage floor
+- **THEN** it SHALL resolve `no_data`; `no_data` SHALL NOT be inferred from
+  missing evidence, an empty result, or an operational proxy
+
 #### Scenario: Cache applies only to a covered and available payload
 
 - **WHEN** the selected local day is authoritatively covered, all required
@@ -45,7 +66,7 @@ recent settled day (yesterday in the owner timezone).
 #### Scenario: No-data and degraded states bypass cached prose
 
 - **WHEN** the authoritative coverage verdict positively establishes that the
-  selected local day is outside the covered archive
+  selected local day precedes the authoritative coverage floor
 - **THEN** `state_class` is `no_data`
 - **AND** the response uses deterministic no-data copy and SHALL NOT read or use
   a fresh or stale day-close cache row
@@ -69,10 +90,11 @@ recent settled day (yesterday in the owner timezone).
 #### Scenario: State precedence is deterministic
 
 - **WHEN** a payload has both a cache row and a coverage or availability signal
-- **THEN** unavailable/degraded availability or indeterminate coverage SHALL
-  take precedence over `no_data`, `quiet`, cache freshness, and cached prose
-- **AND** a positive out-of-coverage verdict SHALL take precedence over empty
-  evidence and cached prose
+- **THEN** unavailable/degraded availability or coverage evidence that is
+  absent, incomplete, or failed SHALL take precedence over `no_data`, `quiet`,
+  cache freshness, and cached prose
+- **AND** a positive pre-floor verdict SHALL take precedence over empty evidence
+  and cached prose
 - **AND** `quiet` SHALL be selected only after affirmative coverage and
   successful owned reads
 
