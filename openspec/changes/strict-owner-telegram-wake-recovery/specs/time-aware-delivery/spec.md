@@ -10,16 +10,27 @@ a late row when it encounters a wake-recovery-related record.
 
 `abort.v1` SHALL persist a reason-specific run and row outcome before it
 releases any reservation. The sole scheduler-visible abort is an explicit
-`ordinary_precommit_cancel`: the complete cohort is still
+`ordinary_precommit_cancel` from `prepared`: every registered participant has
+supplied a compatible same-fence prepare response, the complete cohort is still
 `release_prepared`, no DND or retained reason has occurred, and no commit,
 egress intent, or send-start marker exists. It records `aborted_precommit`,
 returns the whole cohort to `pending` with the former fence in audit, and makes
 only those rows eligible for their normal stored scheduler path.
 
+An `ordinary_preprepare_cancel` is not a second scheduler-eligibility path. It
+may terminate only a current-fence `claimed` or `preparing` run before any
+durable prepare result, cutoff, or `release_prepared` row exists and before a
+DND or retained outcome has won. It records `aborted_preprepare` with an empty
+cohort audit, changes no row status, and makes a late same-fence prepare request
+return the terminal abort. If any preparation has durably linearized, this path
+is unavailable and the complete cohort must use the prepared, blocked, or
+retained transition.
+
 Every other wake-recovery abort or recovery remains scheduler-ineligible:
 
 | Outcome | Durable run and row state | Scheduler and replay rule |
 |---|---|---|
+| No durable prepare result | `ordinary_preprepare_cancel` records current-fence `aborted_preprepare` with an empty cohort audit and no row transition. | No scheduler eligibility changes. A late same-fence prepare/replay returns the terminal abort; it cannot reserve a row after cancellation. |
 | DND block | Explicit abort records `aborted_dnd`; the full uncommitted cohort becomes `release_retained_dnd` with its old run/fence evidence. | No row becomes `pending`. Same-fence replay returns the DND outcome; only DND clear plus a later qualifying accepted direct owner DM may open a higher-fence successor that adopts the complete cohort. |
 | Retained unavailable or oversize | The run remains `retained_unavailable` or `retained_oversize` for same-fence recovery, or records reason-tagged `aborted_retained` / `release_retained_*` on explicit abandonment. | No row becomes `pending`. Replay uses the frozen cutoff, participant responses, and manifest; it cannot add late rows, omit a participant, or mint another action. |
 | Retained target mismatch | The run remains `retained_mismatch` or records `aborted_retained` / `release_retained_mismatch` with its exact target evidence. | No row becomes `pending`. Replay returns the mismatch; recovery may not default-resolve a target or release a partial cohort. |
@@ -38,11 +49,19 @@ run.
   decision
 
 #### Scenario: Ordinary pre-commit cancellation is the sole pending transition
-- **WHEN** `ordinary_precommit_cancel` is durably recorded at the current fence
+- **WHEN** `ordinary_precommit_cancel` is durably recorded from `prepared` at
+  the current fence after every participant's compatible prepare result and
   before any participant commit or egress effect
 - **THEN** the complete `release_prepared` cohort becomes `pending` with the
   former fence recorded for replay audit
 - **AND** a repeated abort cannot restart the old run or send an egress action
+
+#### Scenario: Pre-durable-prepare cancellation does not change scheduling
+- **WHEN** `ordinary_preprepare_cancel` records `aborted_preprepare` before any
+  durable prepare result or row reservation at the current fence
+- **THEN** no row changes from `pending` and the scheduler receives no new
+  eligibility transition
+- **AND** a late same-fence prepare cannot reserve a row after the cancellation
 
 #### Scenario: DND and retained aborts stay outside the scheduler
 - **WHEN** a `blocked_dnd`, unavailable, oversize, or target-mismatch cohort is

@@ -13,8 +13,8 @@
 ## 3. Origin cohort preparation and ordinary scheduler fencing
 
 - [ ] 3.1 Persist wake-recovery provenance atomically with newly eligible owner-attention quiet-hours holds while preserving full resolved envelopes in their origin schema.
-- [ ] 3.2 Implement origin-local prepare, deterministic cutoff, same-fence replay, reason-specific abort, and commit transitions without exposing queue tables to Switchboard; only an audited all-pre-commit cancellation may return a complete cohort to `pending`.
-- [ ] 3.3 Restrict the ordinary deferred scheduler to pending rows and test prepared, retained, committed, legacy, context-only, retry, and post-cutoff late-row behavior without re-gating stored holds or exposing protocol-bound cohorts as ordinary work.
+- [ ] 3.2 Implement origin-local prepare, deterministic cutoff, same-fence replay, reason-specific abort, and commit transitions without exposing queue tables to Switchboard; only a same-fence all-cohort `prepared` → `aborted_precommit` cancellation may return rows to `pending`, while zero-cohort pre-durable-prepare cancellation records `aborted_preprepare`.
+- [ ] 3.3 Restrict the ordinary deferred scheduler to pending rows and test the zero-cohort pre-prepare path, the gated prepared-to-precommit-cancellation path, retained/committed states, legacy, context-only, retry, and post-cutoff late-row behavior without re-gating stored holds or exposing protocol-bound cohorts as ordinary work.
 
 ## 4. Health context and cross-origin MCP contract
 

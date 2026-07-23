@@ -149,28 +149,51 @@ from a DND block, a retained participant failure, or any committed egress
 outcome. A repeated abort at the same fence SHALL return the recorded outcome;
 a stale or conflicting fence SHALL not change a row or open a new action.
 
+Cancellation before owner/window claim SHALL create no abort run. A fenced
+`ordinary_preprepare_cancel` MAY terminate only a `claimed` or `preparing` run
+at its current fence before any participant has durably returned a prepare
+result, frozen a cutoff, or moved a row to `release_prepared`, and before DND
+or a retained reason has won. It SHALL record terminal `aborted_preprepare`
+with an empty cohort audit, change no row state or scheduler eligibility, and
+make a late same-fence prepare request return the terminal abort. Once any
+participant preparation has durably linearized, the pre-prepare path SHALL be
+rejected; the coordinator SHALL instead settle the full cohort into the
+ordinary pre-commit, DND, or retained transition.
+
 Only an explicit `ordinary_precommit_cancel` MAY move rows to `pending`. It
-SHALL require that the entire selected cohort is still `release_prepared`, that
-no DND, unavailable, oversize, mismatch, or commit-error reason was observed,
-and that no commit, egress intent, or send-start marker exists. It SHALL record
-terminal run state `aborted_precommit`, return the complete cohort to `pending`
-with the former fence in audit, and make only those rows eligible for their
-normal stored scheduler path.
+SHALL be a same-fence `prepared` transition after every registered participant
+has supplied a compatible prepare response, require that the entire selected
+cohort is still `release_prepared`, that no DND, unavailable, oversize,
+mismatch, or commit-error reason was observed, and that no commit, egress
+intent, or send-start marker exists. It SHALL record terminal run state
+`aborted_precommit`, return the complete cohort to `pending` with the former
+fence in audit, and make only those rows eligible for their normal stored
+scheduler path.
 
 | Outcome | Durable run and row state | Required recovery boundary |
 |---|---|---|
+| No durable prepare result | `ordinary_preprepare_cancel` records current-fence `aborted_preprepare` with an empty cohort audit and no row transition. | No scheduler eligibility changes. Same-fence late prepare/replay returns the terminal abort; a later qualifying accepted event may seek a successor after the claim is released. |
 | DND before commit or admission | Explicit abort records `aborted_dnd`; the full uncommitted cohort becomes `release_retained_dnd`, released from the old fence but retaining its run/fence evidence. | The rows are scheduler-ineligible. A new higher-fence run requires DND clear plus a later qualifying accepted direct owner DM, and it atomically adopts the whole retained cohort. |
 | Unavailable, oversize, or target mismatch | `retained_unavailable` / `retained_oversize` may retry only at the same fence using their persisted cutoff and manifest; `retained_mismatch` keeps `release_retained_mismatch` exact-target evidence. An explicit stop records a reason-tagged `aborted_retained` and `release_retained_*` rows. | The rows are scheduler-ineligible. Recovery never adds a late row, omits a participant, creates a second action, or default-resolves a mismatched target. |
 | Committed, delivered, or ambiguous egress | Committed rows remain `release_committed` and bound to the stable action key; delivery is immutable `egress_delivered` audit; uncertainty is `egress_ambiguous` with action evidence. | None may become `pending` through abort or a later wake. Same-fence replay returns the committed action/receipt, and ambiguity requires explicit reconciliation with no automatic resend. |
 
 #### Scenario: Only an ordinary all-pre-commit cancellation becomes pending
-- **WHEN** every selected row remains `release_prepared` at the current fence
+- **WHEN** the run is `prepared`, every registered participant has a compatible
+  same-fence prepare response, every selected row remains `release_prepared`,
   and Switchboard records `ordinary_precommit_cancel` before any commit or
   egress effect
 - **THEN** the run becomes `aborted_precommit` and the complete cohort returns
   to `pending` with its former fence audit
 - **AND** a replay of that abort does not restart the old run or create an
   egress action
+
+#### Scenario: Pre-durable-prepare cancellation has no cohort side effect
+- **WHEN** Switchboard cancels a `claimed` or `preparing` run at its current
+  fence before any participant has durably prepared a row or frozen a cutoff
+- **THEN** the run becomes `aborted_preprepare` with an empty cohort audit and
+  no row-state or scheduler-eligibility change
+- **AND** a late same-fence prepare request returns the terminal abort instead
+  of reserving a row
 
 #### Scenario: DND abort waits for fresh accepted owner intent
 - **WHEN** a DND-blocked run is explicitly aborted
