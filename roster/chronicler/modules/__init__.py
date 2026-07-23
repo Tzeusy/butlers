@@ -159,7 +159,8 @@ class ChroniclerModule(Module):
         from butlers.core.scheduler import ensure_module_default_schedule
 
         owner_butler = getattr(db, "owner_butler", None) or getattr(db, "schema", None)
-        owner_schema = getattr(db, "schema", None)
+        # Legacy per-butler databases use their unqualified public schema.
+        owner_schema = getattr(db, "schema", None) or "public"
         for entry in _DEFAULT_SCHEDULES:
             try:
                 await ensure_module_default_schedule(

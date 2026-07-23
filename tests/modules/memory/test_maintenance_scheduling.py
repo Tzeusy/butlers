@@ -442,6 +442,29 @@ class TestRegisterDefaultMaintenanceSchedules:
         catalog_backfill = next(c for c in calls if c["name"] == "memory_catalog_backfill")
         assert catalog_backfill["job_name"] == "memory_catalog_backfill"
 
+    async def test_legacy_per_database_registration_uses_public_audit_schema(
+        self, monkeypatch
+    ) -> None:
+        """An unqualified legacy scheduler table must attribute recovery to ``public``."""
+        calls: list[dict[str, Any]] = []
+
+        async def _fake_ensure(pool, **kwargs):
+            calls.append(kwargs)
+
+        monkeypatch.setattr("butlers.core.scheduler.ensure_module_default_schedule", _fake_ensure)
+
+        module = MemoryModule()
+        legacy_db = SimpleNamespace(
+            pool=object(),
+            owner_butler="legacy-general",
+            schema=None,
+        )
+        await module._register_default_maintenance_schedules(legacy_db)
+
+        assert {(call["owner_butler"], call["owner_schema"]) for call in calls} == {
+            ("legacy-general", "public")
+        }
+
     async def test_none_db_is_a_noop(self) -> None:
         module = MemoryModule()
         # Should not raise even though db is None (e.g. some test harnesses).

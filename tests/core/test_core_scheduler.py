@@ -16,7 +16,9 @@ from __future__ import annotations
 import json
 import shutil
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import asyncpg
 import pytest
@@ -77,6 +79,28 @@ def _past(minutes: int = 5) -> datetime:
     return datetime.now(UTC) - timedelta(minutes=minutes)
 
 
+class _InterleavingPool:
+    """Proxy a pool and invoke a callback immediately before one removal write."""
+
+    def __init__(
+        self,
+        pool: asyncpg.Pool,
+        before_disable: Callable[[], Awaitable[None]],
+    ) -> None:
+        self._pool = pool
+        self._before_disable = before_disable
+        self._interleaved = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._pool, name)
+
+    async def execute(self, query: str, *args: object) -> str:
+        if "UPDATE scheduled_tasks SET enabled = false" in query and not self._interleaved:
+            self._interleaved = True
+            await self._before_disable()
+        return await self._pool.execute(query, *args)
+
+
 # ---------------------------------------------------------------------------
 # sync_schedules
 # ---------------------------------------------------------------------------
@@ -130,6 +154,71 @@ async def test_sync_updates_changed_fields_and_disables_removed(pool):
     all_rows2 = await pool.fetch("SELECT name, enabled FROM scheduled_tasks")
     rows2 = {r["name"]: r for r in all_rows2}
     assert rows2["drop-me"]["enabled"] is True
+
+
+async def test_sync_removal_does_not_re_disable_a_concurrently_recovered_default(pool):
+    """A stale TOML-removal snapshot cannot undo an atomic module-default recovery."""
+    from butlers.core.scheduler import ensure_module_default_schedule, sync_schedules
+
+    name = "memory_consolidation_stale_disable"
+    await sync_schedules(
+        pool,
+        [
+            {
+                "name": name,
+                "cron": "0 3 * * *",
+                "dispatch_mode": "job",
+                "job_name": "memory_consolidation",
+            }
+        ],
+    )
+
+    recovered = False
+
+    async def _recover_after_stale_snapshot() -> None:
+        nonlocal recovered
+        assert recovered is False
+        recovered = True
+        await sync_schedules(pool, [])
+        await ensure_module_default_schedule(
+            pool,
+            name=name,
+            cron="0 3 * * *",
+            job_name="memory_consolidation",
+            owner_butler="legacy-general",
+            owner_schema="public",
+        )
+
+    await sync_schedules(
+        _InterleavingPool(pool, _recover_after_stale_snapshot),
+        [],
+    )
+
+    assert recovered is True
+    row = await pool.fetchrow("SELECT source, enabled FROM scheduled_tasks WHERE name = $1", name)
+    assert row is not None
+    assert row["source"] == "db"
+    assert row["enabled"] is True
+
+    # A later startup must preserve the recovered DB-owned row and its one audit event.
+    await ensure_module_default_schedule(
+        pool,
+        name=name,
+        cron="0 3 * * *",
+        job_name="memory_consolidation",
+        owner_butler="legacy-general",
+        owner_schema="public",
+    )
+    assert (
+        await pool.fetchval(
+            """
+            SELECT count(*) FROM public.audit_log
+            WHERE action = 'scheduler.module_default_recovered' AND target = $1
+            """,
+            f"schedule:{name}",
+        )
+        == 1
+    )
 
 
 async def test_module_default_recovery_reclaims_only_disabled_toml_orphans_and_audits(pool):

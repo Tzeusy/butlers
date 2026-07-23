@@ -867,6 +867,8 @@ async def sync_schedules(
                 """
                 UPDATE scheduled_tasks SET enabled = false, updated_at = now()
                 WHERE id = $1
+                  AND source = 'toml'
+                  AND enabled = true
                 """,
                 row["id"],
             )
