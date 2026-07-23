@@ -51,17 +51,22 @@ release action key only after a non-empty compatible manifest is final.
 An exact replay of an accepted event SHALL return its existing run, and a stale
 or conflicting fence SHALL be rejected by every participant. A later accepted
 DM while a run is active SHALL create no second action. Only after a
-`blocked_dnd` run is explicitly aborted, DND has cleared, and uncommitted
-reservations are released may a later accepted direct owner DM create a
-higher-fence successor run.
+`blocked_dnd` run is explicitly aborted to a durable `aborted_dnd` outcome,
+DND has cleared, and its uncommitted reservations have been released from the
+old fence into retained scheduler-ineligible rows may a later accepted direct
+owner DM create a higher-fence successor run. That successor SHALL adopt the
+complete retained cohort and SHALL NOT expose any of its rows to the ordinary
+scheduler.
 
 Every registered v1 quiet-hours-hold origin SHALL participate in prepare, even
 when it has zero eligible rows. An unavailable, refusing, mismatched, or
 oversized participant SHALL retain the entire cohort and prohibit commit and
 egress; it SHALL NOT be omitted. A same-fence retry for unavailable or oversize
 state SHALL reuse persisted prepared responses and cutoffs and SHALL NOT add a
-late row or allocate a second action. An empty compatible cohort SHALL
-terminate as `empty` without any Health mutation or Messenger intent.
+late row or allocate a second action. A target mismatch SHALL remain retained
+with its exact target evidence and SHALL NOT be repaired by default-owner
+re-resolution. An empty compatible cohort SHALL terminate as `empty` without
+any Health mutation or Messenger intent.
 
 Only a hold with immutable `owner_attention_quiet_hours` admission provenance,
 the matching policy-window key, a fully resolved Telegram target tuple, original
@@ -125,15 +130,62 @@ external call but blocks later admission/retry attempts.
 #### Scenario: Exact target mismatch retains all rows
 - **WHEN** a prepared row has a different Telegram chat, thread, or bot
   endpoint from the accepted direct owner event
-- **THEN** the coordinator records `target_mismatch` and releases only
-  uncommitted reservations
-- **AND** it does not substitute a default recipient or send a partial cohort
+- **THEN** the coordinator records durable `retained_mismatch` and
+  `release_retained_mismatch` evidence for the full uncommitted cohort
+- **AND** it does not return the rows to scheduler-visible `pending`, substitute
+  a default recipient, or send a partial cohort
 
 #### Scenario: Restart resumes only the current fence
 - **WHEN** Switchboard, an origin, Health, or Messenger restarts after a
   durable prepare or commit response
 - **THEN** replaying the same operation and fence returns the persisted state
 - **AND** a stale worker cannot prepare, abort, commit, or release that run
+
+### Requirement: Reason-Specific Abort and Recovery Boundaries
+`abort.v1` SHALL atomically persist its reason, run/fence, participant digest,
+and every selected row's before/after state before it releases any local
+reservation. It SHALL treat an ordinary pre-commit cancellation differently
+from a DND block, a retained participant failure, or any committed egress
+outcome. A repeated abort at the same fence SHALL return the recorded outcome;
+a stale or conflicting fence SHALL not change a row or open a new action.
+
+Only an explicit `ordinary_precommit_cancel` MAY move rows to `pending`. It
+SHALL require that the entire selected cohort is still `release_prepared`, that
+no DND, unavailable, oversize, mismatch, or commit-error reason was observed,
+and that no commit, egress intent, or send-start marker exists. It SHALL record
+terminal run state `aborted_precommit`, return the complete cohort to `pending`
+with the former fence in audit, and make only those rows eligible for their
+normal stored scheduler path.
+
+| Outcome | Durable run and row state | Required recovery boundary |
+|---|---|---|
+| DND before commit or admission | Explicit abort records `aborted_dnd`; the full uncommitted cohort becomes `release_retained_dnd`, released from the old fence but retaining its run/fence evidence. | The rows are scheduler-ineligible. A new higher-fence run requires DND clear plus a later qualifying accepted direct owner DM, and it atomically adopts the whole retained cohort. |
+| Unavailable, oversize, or target mismatch | `retained_unavailable` / `retained_oversize` may retry only at the same fence using their persisted cutoff and manifest; `retained_mismatch` keeps `release_retained_mismatch` exact-target evidence. An explicit stop records a reason-tagged `aborted_retained` and `release_retained_*` rows. | The rows are scheduler-ineligible. Recovery never adds a late row, omits a participant, creates a second action, or default-resolves a mismatched target. |
+| Committed, delivered, or ambiguous egress | Committed rows remain `release_committed` and bound to the stable action key; delivery is immutable `egress_delivered` audit; uncertainty is `egress_ambiguous` with action evidence. | None may become `pending` through abort or a later wake. Same-fence replay returns the committed action/receipt, and ambiguity requires explicit reconciliation with no automatic resend. |
+
+#### Scenario: Only an ordinary all-pre-commit cancellation becomes pending
+- **WHEN** every selected row remains `release_prepared` at the current fence
+  and Switchboard records `ordinary_precommit_cancel` before any commit or
+  egress effect
+- **THEN** the run becomes `aborted_precommit` and the complete cohort returns
+  to `pending` with its former fence audit
+- **AND** a replay of that abort does not restart the old run or create an
+  egress action
+
+#### Scenario: DND abort waits for fresh accepted owner intent
+- **WHEN** a DND-blocked run is explicitly aborted
+- **THEN** it records `aborted_dnd` and retains every cohort row as
+  `release_retained_dnd`, not scheduler-visible `pending`
+- **AND** only a later qualifying accepted direct owner DM after DND clears may
+  form a higher-fence successor that adopts the complete cohort
+
+#### Scenario: Retained and post-commit cohorts cannot fall back to scheduling
+- **WHEN** a run is retained for unavailable, oversize, or mismatch, or has
+  reached `release_committed`, `egress_delivered`, or `egress_ambiguous`
+- **THEN** an abort or scheduler pass preserves its reason-tagged protocol
+  state and fence/action audit
+- **AND** it does not make any individual row `pending`, send a partial cohort,
+  or re-resolve a target
 
 ### Requirement: Stable Egress Idempotency and Ambiguous-Send Recovery
 The system SHALL derive one immutable `release_action_key` from the run ID,
