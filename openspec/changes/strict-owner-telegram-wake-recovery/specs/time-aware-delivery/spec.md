@@ -13,9 +13,19 @@ releases any reservation. The sole scheduler-visible abort is an explicit
 `ordinary_precommit_cancel` from `prepared`: every registered participant has
 supplied a compatible same-fence prepare response, the complete cohort is still
 `release_prepared`, no DND or retained reason has occurred, and no commit,
-egress intent, or send-start marker exists. It records `aborted_precommit`,
-returns the whole cohort to `pending` with the former fence in audit, and makes
-only those rows eligible for their normal stored scheduler path.
+egress intent, or send-start marker exists. It first records
+`precommit_cancel_pending` with the whole cohort, run/fence, and captured DND
+generation while every row remains `release_prepared`; this is not
+scheduler-visible `pending`.
+
+Only the matching DND-serialized, cohort-wide effective scheduler/Messenger
+admission may complete that request. When the DND generation remains current
+and inactive through Messenger's durable admission, it records
+`aborted_precommit`, returns the whole cohort to `pending` under one scheduler
+claim, and makes only those rows eligible for their normal stored delivery
+path. When DND changes or wins before admission, it records `blocked_dnd` /
+`release_retained_dnd` for every member instead; no row becomes
+scheduler-visible `pending` and no partial send is allowed.
 
 An `ordinary_preprepare_cancel` is not a second scheduler-eligibility path. It
 may terminate only a current-fence `claimed` or `preparing` run before any
@@ -31,6 +41,7 @@ Every other wake-recovery abort or recovery remains scheduler-ineligible:
 | Outcome | Durable run and row state | Scheduler and replay rule |
 |---|---|---|
 | No durable prepare result | `ordinary_preprepare_cancel` records current-fence `aborted_preprepare` with an empty cohort audit and no row transition. | No scheduler eligibility changes. A late same-fence prepare/replay returns the terminal abort; it cannot reserve a row after cancellation. |
+| Ordinary pre-commit cancellation | `precommit_cancel_pending` keeps the complete cohort `release_prepared` with its run/fence and DND generation until effective admission. | Only an unchanged-generation cohort-wide scheduler/Messenger admission yields `aborted_precommit` / `pending` under one scheduler claim. A DND change/win yields `blocked_dnd` / `release_retained_dnd`; no generic scheduler scan or partial send is allowed. |
 | DND block | Explicit abort records `aborted_dnd`; the full uncommitted cohort becomes `release_retained_dnd` with its old run/fence evidence. | No row becomes `pending`. Same-fence replay returns the DND outcome; only DND clear plus a later qualifying accepted direct owner DM may open a higher-fence successor that adopts the complete cohort. |
 | Retained unavailable or oversize | The run remains `retained_unavailable` or `retained_oversize` for same-fence recovery, or records reason-tagged `aborted_retained` / `release_retained_*` on explicit abandonment. | No row becomes `pending`. Replay uses the frozen cutoff, participant responses, and manifest; it cannot add late rows, omit a participant, or mint another action. |
 | Retained target mismatch | The run remains `retained_mismatch` or records `aborted_retained` / `release_retained_mismatch` with its exact target evidence. | No row becomes `pending`. Replay returns the mismatch; recovery may not default-resolve a target or release a partial cohort. |
@@ -48,13 +59,22 @@ run.
 - **AND** it does not re-gate the stored envelope or recalculate its delivery
   decision
 
-#### Scenario: Ordinary pre-commit cancellation is the sole pending transition
+#### Scenario: DND-valid pre-commit admission is the sole pending transition
 - **WHEN** `ordinary_precommit_cancel` is durably recorded from `prepared` at
   the current fence after every participant's compatible prepare result and
-  before any participant commit or egress effect
-- **THEN** the complete `release_prepared` cohort becomes `pending` with the
-  former fence recorded for replay audit
-- **AND** a repeated abort cannot restart the old run or send an egress action
+  before any participant commit or egress effect, and its DND generation remains
+  current through the serialized scheduler/Messenger admission
+- **THEN** the complete `release_prepared` cohort passes through
+  `precommit_cancel_pending` and becomes `pending` only as terminal
+  `aborted_precommit` under one scheduler claim
+- **AND** a repeated abort cannot restart the old run, expose a member to a
+  generic scheduler scan, or send an independent egress action
+
+#### Scenario: DND changes after cancellation before admission
+- **WHEN** DND changes after a `precommit_cancel_pending` request but before
+  effective scheduler/Messenger admission
+- **THEN** the whole cohort becomes `blocked_dnd` / `release_retained_dnd`
+- **AND** no row becomes scheduler-visible `pending` or sends independently
 
 #### Scenario: Pre-durable-prepare cancellation does not change scheduling
 - **WHEN** `ordinary_preprepare_cancel` records `aborted_preprepare` before any
