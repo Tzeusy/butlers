@@ -111,7 +111,14 @@ describe("useListTriage", () => {
 
   it("wires a verb's key to its handler only while its row is selected", () => {
     const handler = vi.fn();
-    const verbs: ListTriageVerb[] = [{ key: "a", description: "Approve selected", handler }];
+    const verbs: ListTriageVerb[] = [
+      {
+        key: "a",
+        description: "Approve selected",
+        handler,
+        command: { id: "approve-selected", label: "Approve selected" },
+      },
+    ];
     act(() => {
       root.render(
         <Harness ids={["1", "2"]} selectedId={null} onSelect={() => {}} verbs={verbs} />,
@@ -130,8 +137,18 @@ describe("useListTriage", () => {
   it("hints reflect j/k plus the active verbs, in order", () => {
     let seen: string[] = [];
     const verbs: ListTriageVerb[] = [
-      { key: "a", description: "Approve selected", handler: () => {} },
-      { key: "d", description: "Deny selected", handler: () => {} },
+      {
+        key: "a",
+        description: "Approve selected",
+        handler: () => {},
+        command: { id: "approve-selected", label: "Approve selected" },
+      },
+      {
+        key: "d",
+        description: "Deny selected",
+        handler: () => {},
+        command: { id: "deny-selected", label: "Deny selected" },
+      },
     ];
     act(() => {
       root.render(
@@ -162,6 +179,22 @@ describe("useListTriage", () => {
       );
     });
     expect(entries).toEqual(["Next item", "Previous item"]);
+  });
+
+  it("keeps pure j/k navigation out of the command palette", () => {
+    let commands: PaletteCommand[] = [];
+    act(() => {
+      root.render(
+        <CommandRegistryProvider>
+          <ShortcutRegistryProvider>
+            <Harness ids={["1"]} selectedId="1" onSelect={() => {}} />
+            <CommandReader onRead={(next) => (commands = next)} />
+          </ShortcutRegistryProvider>
+        </CommandRegistryProvider>,
+      );
+    });
+
+    expect(commands).toEqual([]);
   });
 
   it("emits a selected verb as the matching palette command with its binding", () => {

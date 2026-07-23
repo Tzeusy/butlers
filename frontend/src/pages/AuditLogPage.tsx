@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
-import type { AuditLogParams } from "@/api/types";
+import type { AuditLogEntry, AuditLogParams } from "@/api/types";
 import AuditLogTable from "@/components/audit/AuditLogTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,7 @@ import { useListTriage, type ListTriageVerb } from "@/hooks/use-list-triage";
 
 const PAGE_SIZE = 20;
 const FREE_TEXT_DEBOUNCE_MS = 300;
+const EMPTY_AUDIT_ENTRIES: AuditLogEntry[] = [];
 
 // ---------------------------------------------------------------------------
 // Filter state
@@ -114,7 +115,7 @@ export default function AuditLogPage() {
   };
 
   const { data: auditResponse, isLoading, isFetching, isError, error } = useAuditLog(params);
-  const entries = auditResponse?.data ?? [];
+  const entries = auditResponse?.data ?? EMPTY_AUDIT_ENTRIES;
   const meta = auditResponse?.meta;
   const total = meta?.total ?? 0;
   const hasMore = meta?.has_more ?? false;
@@ -137,6 +138,11 @@ export default function AuditLogPage() {
         key: "Enter",
         description: "Toggle selected entry",
         handler: () => toggleExpandedAudit(id),
+        command: {
+          id: "toggle-selected-audit-entry",
+          label: "Toggle selected audit entry",
+          keywords: ["audit", "entry", "expand", "collapse"],
+        },
       },
     ];
   }, [entries, selectedAuditId, toggleExpandedAudit]);

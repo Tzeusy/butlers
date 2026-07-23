@@ -161,7 +161,7 @@ export default function ButlersPage() {
 
   const boardShortcuts = useMemo<ShortcutBinding[]>(() => {
     if (boardNames.length === 0) return [];
-    const bindings: ShortcutBinding[] = [
+    return [
       {
         key: "ArrowRight",
         display: ["→"],
@@ -186,16 +186,17 @@ export default function ButlersPage() {
         description: "Previous board row",
         handler: () => moveBoardCursorByRow(-1),
       },
+      ...(selectedButlerName
+        ? [
+            {
+              key: "Enter",
+              display: ["Enter"],
+              description: "Open selected butler",
+              handler: () => navigate(`/butlers/${selectedButlerName}`),
+            },
+          ]
+        : []),
     ];
-    if (selectedButlerName) {
-      bindings.push({
-        key: "Enter",
-        display: ["Enter"],
-        description: "Open selected butler",
-        handler: () => navigate(`/butlers/${selectedButlerName}`),
-      });
-    }
-    return bindings;
   }, [boardNames.length, moveBoardCursor, moveBoardCursorByRow, navigate, selectedButlerName]);
   useRegisterShortcut(boardShortcuts);
 

@@ -138,6 +138,17 @@ export function isShortcutTargetSuspended(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
   if (el) {
     if (isEditableKeyboardTarget(el) || el.tagName === "SELECT") return true;
+    // Native controls own their key behavior. In particular, a focused
+    // button's Enter must still produce its native click, rather than being
+    // consumed by a page-scoped shortcut bound to the same key. This leaves
+    // role-based rows such as DisclosureRow eligible for their own
+    // preventDefault-based ownership below, while keeping page-level j/k
+    // navigation available when focus remains on the row itself.
+    if (
+      typeof el.closest === "function" &&
+      el.closest('button, a[href], input, textarea, select, summary')
+    )
+      return true;
     // Target-containment: a keystroke fired while focus sits INSIDE any dialog
     // — modal or not, e.g. the persistent non-modal floating chat widget — is
     // that dialog's keystroke and must never leak through to a page-scoped
@@ -202,7 +213,11 @@ export function useRegisterShortcut(bindings: ShortcutBinding[]): void {
   // tear down and re-add the DOM listener on every render.
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (window.__pendingGNav) return;
+      // A focused component may have already claimed this key (for example,
+      // DisclosureRow's Enter/Space contract or RowLink's activation). The
+      // native event reaches this window listener after React's target/root
+      // handlers, so honoring defaultPrevented prevents a second page action.
+      if (e.defaultPrevented || window.__pendingGNav) return;
       const suspended = isShortcutTargetSuspended(e.target);
       for (const binding of bindingsRef.current) {
         if (!matchesBinding(binding, e)) continue;

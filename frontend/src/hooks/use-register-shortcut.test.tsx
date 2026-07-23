@@ -11,6 +11,7 @@ import {
   useShortcutHintEntries,
   type ShortcutBinding,
 } from "@/hooks/use-register-shortcut";
+import { DisclosureRow } from "@/components/ui/DisclosureRow";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -136,6 +137,29 @@ describe("useRegisterShortcut", () => {
     act(() => select.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true })));
     expect(handler).not.toHaveBeenCalled();
     select.remove();
+  });
+
+  it("yields to an event a focused control has already handled", () => {
+    const handler = vi.fn();
+    act(() => {
+      root.render(
+        <>
+          <Registrar bindings={[{ key: "Enter", display: ["Enter"], description: "Open", handler }]} />
+          <DisclosureRow expanded={false} onToggle={() => {}} data-testid="handled-control">
+            Handled row
+          </DisclosureRow>
+        </>,
+      );
+    });
+
+    const control = container.querySelector<HTMLElement>('[data-testid="handled-control"]');
+    act(() => {
+      control?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(handler).not.toHaveBeenCalled();
   });
 
   // Note: contentEditable suspension (also part of bu-5o22a's guard) is
@@ -405,6 +429,13 @@ describe("isShortcutTargetSuspended", () => {
     expect(isShortcutTargetSuspended(document.createElement("input"))).toBe(true);
     expect(isShortcutTargetSuspended(document.createElement("textarea"))).toBe(true);
     expect(isShortcutTargetSuspended(document.createElement("select"))).toBe(true);
+  });
+
+  it("returns true for native action controls", () => {
+    expect(isShortcutTargetSuspended(document.createElement("button"))).toBe(true);
+    const link = document.createElement("a");
+    link.href = "/butlers";
+    expect(isShortcutTargetSuspended(link)).toBe(true);
   });
 
   it("returns true for a contentEditable target (bu-5o22a)", () => {

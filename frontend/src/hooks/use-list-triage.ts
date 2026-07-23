@@ -51,11 +51,12 @@ export interface ListTriageVerb {
   /** Invoked when the key fires (subject to the shared suspend guard). */
   handler: () => void;
   /**
-   * Optional command-palette representation of this selected-row action.
+   * Required command-palette representation of this selected-row action.
    * `useListTriage` supplies the matching handler and binding from this same
    * declaration, so the palette cannot target a different row than the key.
+   * Lists with only j/k navigation omit `verbs` entirely.
    */
-  command?: ListTriageCommand;
+  command: ListTriageCommand;
 }
 
 export interface UseListTriageOptions<TId extends string = string> {
@@ -131,11 +132,7 @@ export function useListTriage<TId extends string = string>({
 
   const commands = useMemo<PaletteCommand[]>(() => {
     if (!selectedId) return [];
-    return verbs.flatMap((verb) =>
-      verb.command
-        ? [{ ...verb.command, binding: [verb.key], perform: verb.handler }]
-        : [],
-    );
+    return verbs.map((verb) => ({ ...verb.command, binding: [verb.key], perform: verb.handler }));
   }, [selectedId, verbs]);
 
   useRegisterCommands(commands);

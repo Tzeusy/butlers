@@ -25,6 +25,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { toast } from "sonner";
 
@@ -223,6 +224,18 @@ function renderPage() {
   );
 }
 
+function renderKeyboardPage() {
+  return render(
+    <CommandRegistryProvider>
+      <ShortcutRegistryProvider>
+        <MemoryRouter>
+          <ButlersPage />
+        </MemoryRouter>
+      </ShortcutRegistryProvider>
+    </CommandRegistryProvider>,
+  );
+}
+
 function CommandReader({ onRead }: { onRead: (commands: PaletteCommand[]) => void }) {
   onRead(useCommandMenuActions());
   return null;
@@ -260,6 +273,31 @@ describe("ButlersPage — keyboard board cursor", () => {
         }),
       ]),
     );
+  });
+
+  it("preserves native Enter activation for a focused Restore button", async () => {
+    vi.useRealTimers();
+    const rows = [
+      makeRow({ name: "quarant", activity: "quarantined", eligibility: "quarantined", cellTone: "red" }),
+    ];
+    setHookState(rows, makeAggregates({ total: 1, butlerCount: 1, quarantined: 1 }));
+    try {
+      renderKeyboardPage();
+
+      fireEvent.keyDown(window, { key: "ArrowRight" });
+      const chip = screen.getByRole("button", { name: /quarantined/i });
+      chip.focus();
+      await userEvent.setup().keyboard("{Enter}");
+
+      expect(toast).toHaveBeenCalledWith(
+        "Restoring quarant",
+        expect.objectContaining({ action: expect.objectContaining({ label: "Undo" }) }),
+      );
+      const toastCall = vi.mocked(toast).mock.calls[0];
+      (toastCall[1] as unknown as { action: { onClick: () => void } }).action.onClick();
+    } finally {
+      vi.useFakeTimers();
+    }
   });
 });
 
