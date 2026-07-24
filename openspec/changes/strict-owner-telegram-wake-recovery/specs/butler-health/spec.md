@@ -12,11 +12,21 @@ Health SHALL NOT clear explicit DND, a non-policy sleep context, another
 butler's context, or any generic user context because of a direct Telegram DM.
 If explicit DND is active when Health evaluates the request, Health SHALL
 retain its policy-sleep context and report a DND block without authorizing
-egress. This parent packet does not define a canonical DND
-versioning/invalidation mechanism or a cross-writer final-transition guarantee;
-`bu-12iab` owns that prerequisite contract. It also defines no post-prepare
-cancellation route that returns a frozen cohort to the ordinary scheduler;
-`bu-qs702` owns that prerequisite contract.
+egress. Health SHALL consume the landed
+`canonical-dnd-generation-guard` (`bu-12iab`) snapshot/admission boundary for
+any durable wake decision: it has no DND mutation authority and does not treat
+an observation as final egress authorization. A changed, active, missing, or
+unprovable guard result fails closed and is carried through the parent
+`blocked_dnd` / retained path.
+
+Only after every participant has supplied a compatible durable prepare result
+for the complete current-fence cohort may Health supply its local
+`ordinary_precommit_cancel` decision to authenticated Switchboard. It SHALL
+not call Messenger, move an origin row, or create a scheduler return. A partial
+prepared cohort remains protocol-bound. The landed
+`durable-precommit-cancellation-admission` (`bu-qs702`) contract owns the final
+Messenger admission and all-cohort publication; this packet consumes that
+contract without restating its fields or transitions.
 
 #### Scenario: Matching policy sleep is superseded only at commit
 - **WHEN** Health receives a valid fenced prepare followed by a valid commit

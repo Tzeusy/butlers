@@ -16,21 +16,26 @@ has won. It records `aborted_preprepare` with an empty cohort audit, changes no
 row status, and makes a late same-fence prepare request return the terminal
 abort.
 
-This parent packet defines no scheduler-visible post-prepare cancellation
-route. Once any row is `release_prepared`, an ordinary cancellation SHALL NOT
-return it to `pending`, make it eligible for a generic scheduler scan, or
-authorize a partial send. The frozen cohort remains protocol-bound under its
-run and fence. `bu-qs702` owns the future durable Scheduler/Messenger
-post-prepare cancellation-admission contract; `bu-12iab` owns canonical DND
-versioning/invalidation. This packet does not prescribe either prerequisite's
-fields or state transitions.
+Only after every participant has supplied a compatible durable prepare result
+for the complete current-fence cohort may an all-uncommitted
+`ordinary_precommit_cancel` use the landed
+`durable-precommit-cancellation-admission` (`bu-qs702`) same-fence all-cohort
+path, which consumes the landed `canonical-dnd-generation-guard` (`bu-12iab`).
+A partial prepared cohort remains protocol-bound. Before its effective
+Messenger admission and complete participant finalization/publication, no row
+becomes `pending`, generic-scheduler-visible, or sendable. Only matching
+complete publication may return every frozen member together to ordinary
+`pending` through the referenced scheduler-return transition; no late row,
+subset, target re-resolution, re-gating, or partial send is allowed. This
+parent packet does not prescribe either landed contract's fields or internal
+state transitions.
 
 Every other wake-recovery abort or recovery remains scheduler-ineligible:
 
 | Outcome | Durable run and row state | Scheduler and replay rule |
 |---|---|---|
 | No durable prepare result | `ordinary_preprepare_cancel` records current-fence `aborted_preprepare` with an empty cohort audit and no row transition. | No scheduler eligibility changes. A late same-fence prepare/replay returns the terminal abort; it cannot reserve a row after cancellation. |
-| Post-prepare ordinary cancellation | This parent packet defines no cancellation transition after a durable prepare result. The frozen cohort keeps its protocol state and fence. | No row becomes `pending`; no generic scheduler scan or partial send is allowed. The future durable admission contract belongs to `bu-qs702`. |
+| Post-prepare ordinary cancellation | Only an all-uncommitted complete current-fence cohort, after every participant has supplied a compatible durable prepare result, enters the landed `bu-qs702` cancellation-admission path; all other cancellation requests remain in their recorded protocol state. | Only a matching accepted admission plus complete same-fence finalization/publication may return the entire frozen cohort together to ordinary `pending`. A DND rejection uses the parent retained path; partial, late, stale, egress-present, and ambiguous outcomes remain scheduler-ineligible. |
 | DND block | Explicit abort records `aborted_dnd`; the full uncommitted cohort becomes `release_retained_dnd` with its old run/fence evidence. | No row becomes `pending`. Same-fence replay returns the DND outcome; only DND clear plus a later qualifying accepted direct owner DM may open a higher-fence successor that adopts the complete cohort. |
 | Retained unavailable or oversize | The run remains `retained_unavailable` or `retained_oversize` for same-fence recovery, or records reason-tagged `aborted_retained` / `release_retained_*` on explicit abandonment. | No row becomes `pending`. Replay uses the frozen cutoff, participant responses, and manifest; it cannot add a late row, omit a participant, or mint another action. |
 | Retained target mismatch | The run remains `retained_mismatch` or records `aborted_retained` / `release_retained_mismatch` with its exact target evidence. | No row becomes `pending`. Replay returns the mismatch; recovery may not default-resolve a target or release a partial cohort. |
@@ -48,13 +53,16 @@ run.
 - **AND** it does not re-gate the stored envelope or recalculate its delivery
   decision
 
-#### Scenario: Post-prepare cancellation remains protocol-bound
-- **WHEN** an ordinary cancellation is requested after any participant has
-  durably prepared a row or frozen a cutoff
-- **THEN** this parent packet makes no row scheduler-visible `pending` and
-  does not create a partial-send route
-- **AND** the cohort remains fenced until its existing retained, commit, or
-  prerequisite-defined recovery path applies
+#### Scenario: Post-prepare cancellation consumes all-cohort admission
+- **WHEN** an all-uncommitted current-fence `ordinary_precommit_cancel` is
+  requested after every participant has supplied a compatible durable prepare
+  result for the complete current-fence cohort
+- **THEN** every row remains fenced and scheduler-ineligible until the landed
+  `bu-qs702` contract has accepted admission and obtained compatible
+  finalization/publication evidence from every participant
+- **AND** only that complete matching cohort may enter ordinary `pending`
+  through the referenced scheduler-return transition, without re-gating stored
+  holds, adding a late row, or releasing a partial cohort
 
 #### Scenario: Pre-durable-prepare cancellation does not change scheduling
 - **WHEN** `ordinary_preprepare_cancel` records `aborted_preprepare` before any

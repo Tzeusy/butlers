@@ -6,8 +6,7 @@ morning cohort from an owner interaction. The owner selected a deliberately
 narrow v1 authority: a durably accepted direct text DM from the canonical owner
 through the Telegram bot. The release must remain safe through duplicate
 updates, concurrent runs, daemon crashes, and an ambiguous Telegram send; DND
-remains an absolute veto while its canonical cross-writer contract is deferred
-to a prerequisite.
+remains an absolute veto under the landed canonical cross-writer guard.
 
 ## What Changes
 
@@ -23,8 +22,10 @@ to a prerequisite.
 - Preserve DND as an absolute veto that a direct DM never clears, the
   Health-owned policy-sleep exception, all-or-nothing retry/retention behavior,
   and crash/ambiguous-send recovery.
-- Defer canonical DND versioning/invalidation and durable post-prepare
-  cancellation admission to their dedicated prerequisite changes.
+- Bind final DND admission and any complete-cohort post-prepare ordinary
+  cancellation to the
+  landed canonical DND-generation and durable cancellation-admission contracts
+  without restating or changing either independent protocol.
 - Require one stable end-to-end egress action key from the accepted event and
   window through Messenger admission and provider receipt reconciliation.
 - Document the intentionally strict v1 exclusions: no Telegram user-client,
@@ -64,16 +65,33 @@ Health policy-sleep handling, Messenger delivery admission, role grants, and
 their tests. It makes no implementation, migration, live trigger,
 notification, schedule, or runtime configuration change.
 
-## Prerequisite Boundary
+## Landed Contract Boundary
 
-This parent packet deliberately defines no scheduler-visible post-prepare
-cancellation route. Once a cohort has durably reached `release_prepared`, an
-ordinary cancellation cannot return any member to `pending` under this change;
-the frozen cohort remains protocol-bound and cannot fall back to a partial or
-ordinary send.
+`canonical-dnd-generation-guard` (`bu-12iab`, RFC 0009's **Canonical DND
+Generation Guard** and **DND snapshots and admission**) and
+`durable-precommit-cancellation-admission` (`bu-qs702`, RFC 0009's
+**Precommit cancellation admission**) are landed normative prerequisites for
+this packet. Wake recovery SHALL consume their authenticated, schema-local
+guard and cancellation boundaries; it SHALL NOT restate, alter, or substitute
+their storage, packet fields, lock ordering, role authority, replay identity,
+or internal state machines.
 
-`bu-12iab` owns the canonical DND versioning/invalidation contract. `bu-qs702`
-owns the durable Scheduler/Messenger post-prepare cancellation-admission
-contract. This packet does not prescribe either prerequisite's future schema,
-MCP fields, or implementation. They must land before an implementation relies
-on a final cross-writer DND race guarantee or a post-prepare cancellation path.
+Only after every participant has supplied a compatible durable prepare result
+for the complete current-fence cohort may an all-uncommitted
+`ordinary_precommit_cancel` use the latter contract's same-fence, all-cohort
+`cancel_admit` / `cancel_finalize` / `cancel_publish` path. A partial prepared
+cohort remains protocol-bound and cannot enter that cancellation path. Until
+Messenger has made its effective no-egress, DND-guarded admission and every
+participant has durably finalized the same frozen cohort, no member is
+scheduler-visible. Only the matching complete publication may return the exact
+cohort together to ordinary `pending` through the prerequisite-defined
+scheduler-return transition; no late row, subset, generic scheduler scan,
+target re-resolution, or partial send is permitted. A changed, active, missing,
+or unprovable DND generation
+uses the referenced `rejected_blocked_dnd` path and the parent
+`abort.v1(reason=blocked_dnd)` retained outcome, never a scheduler return.
+
+The parent retains its accepted-event authority, owner/window fencing,
+origin-local cohort boundary, all-or-nothing recovery, and action-key rules.
+It does not claim that either prerequisite's future runtime implementation is
+already present.

@@ -17,6 +17,17 @@ origin-pool handoff. It SHALL retain an all-or-nothing run on an unavailable,
 conflicting, oversized, or target-mismatched response instead of omitting an
 origin or dispatching a partial release.
 
+Only after every participant has supplied a compatible durable prepare result
+for the complete current-fence cohort may Switchboard consume an
+all-uncommitted `ordinary_precommit_cancel` through the landed
+`durable-precommit-cancellation-admission` (`bu-qs702`) authenticated
+current-fence packets and canonical DND evidence. A partial prepared cohort
+remains protocol-bound. Switchboard SHALL not invent cancellation fields, read
+an origin queue or Messenger gate, publish a subset, or turn a DND rejection
+into scheduler work. A referenced `rejected_blocked_dnd` receipt SHALL drive
+the parent same-fence `abort.v1(reason=blocked_dnd)` fanout; all other
+non-accepted outcomes remain fenced and scheduler-ineligible.
+
 #### Scenario: Only accepted ingress may start coordination
 - **WHEN** a raw Telegram connector callback arrives before its normal
   Switchboard ingestion transaction commits

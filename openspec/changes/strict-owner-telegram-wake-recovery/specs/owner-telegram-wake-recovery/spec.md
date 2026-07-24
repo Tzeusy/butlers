@@ -103,6 +103,12 @@ Switchboard for `wake_recovery.prepare.v1`, `commit.v1`, `abort.v1`, and
 deferred-notification queue. Every operation SHALL carry the run ID, fence,
 owner/window keys, accepted-event reference, participant digest, and correlation
 key, persist replay-safe local state, and reject a lower or conflicting fence.
+Only an all-uncommitted complete current-fence cohort, after every participant
+has supplied a compatible durable prepare result, SHALL permit an
+`ordinary_precommit_cancel` to consume the landed
+`durable-precommit-cancellation-admission` (`bu-qs702`) MCP boundary rather
+than a parent-defined cancellation packet or peer-schema operation. A partial
+prepared cohort SHALL remain protocol-bound.
 
 The coordinator SHALL compose only after every prepare response is compatible,
 ordering rows deterministically by origin and admission sequence. Every row
@@ -118,33 +124,49 @@ fence. It SHALL NOT clear DND, a non-policy sleep record, or any other context.
 Explicit DND SHALL be an absolute veto, and a direct Telegram DM SHALL never
 clear it. When Health observes DND as active while evaluating its matching
 policy-sleep operation, Health SHALL retain that context and block the run
-before it proceeds to egress. The parent packet does not add Messenger DND
-validation or claim a final cross-writer DND race guarantee: `bu-12iab` owns
-canonical DND versioning/invalidation without this packet prescribing its
-fields or storage.
+before it proceeds to egress. Wake recovery SHALL consume the landed
+`canonical-dnd-generation-guard` (`bu-12iab`, RFC 0009) for every durable
+decision that turns inactive DND evidence into a Health policy effect or a
+Messenger egress intent. A current generation and database-time inactive DND
+state are revalidated in that consumer's local transaction; Switchboard only
+carries the evidence through authenticated MCP and no participant gains DND
+mutation or peer-schema authority. If a DND writer wins before effective
+admission, no egress intent or provider call is authorized and the parent
+same-fence `blocked_dnd` / retained path applies. A DND change after a durable
+send-start marker cannot retract that external call, but it blocks later or
+retry admission.
 
-This parent packet also defines no scheduler-visible post-prepare cancellation
-route. Once a cohort is frozen, an ordinary cancellation SHALL NOT return a
-member to `pending`, expose it to a generic scheduler scan, or authorize a
-partial send. `bu-qs702` owns the durable Scheduler/Messenger cancellation
-admission contract without this packet prescribing its fields or state
-transitions. The existing action-key and send-start rules remain the only
-delivery recovery boundary after a committed egress action exists.
+Only after every participant has supplied a compatible durable prepare result
+for the complete current-fence cohort may an all-uncommitted
+`ordinary_precommit_cancel` use the landed
+`durable-precommit-cancellation-admission` (`bu-qs702`) contract. Its
+Messenger-local no-egress admission and complete same-fence participant
+finalization/publication are the only route that can return the exact frozen
+cohort together to ordinary `pending` through the referenced scheduler-return
+transition. A partial prepared cohort remains protocol-bound. Until that
+complete result exists, no member becomes `pending`, generic-scheduler-visible,
+or partially sendable; DND rejection invokes the parent retained path. The
+existing action-key and send-start rules remain the only delivery recovery
+boundary after a committed egress action exists.
 
-#### Scenario: DND blocks an observed protocol operation
-- **WHEN** explicit DND is active while Health evaluates the matching
-  policy-sleep operation
-- **THEN** the run becomes `blocked_dnd`, prepared rows remain retained, and
-  Health does not supersede policy sleep
-- **AND** Messenger does not persist or invoke an egress send
+#### Scenario: Canonical DND guard blocks effective admission
+- **WHEN** a canonical DND snapshot is active, changed, missing, or unprovable
+  before Health or Messenger completes its relevant durable admission
+- **THEN** the consumer fails closed, authorizes no new egress intent or
+  provider call, and Health retains policy sleep when its own decision is
+  denied
+- **AND** the current-fence parent path records `blocked_dnd` / retained
+  evidence for the complete uncommitted cohort rather than scheduler work
 
-#### Scenario: Post-prepare cancellation has no parent scheduler route
-- **WHEN** an ordinary cancellation is requested after any participant has
-  durably prepared a row or frozen a cutoff
-- **THEN** this parent packet does not make a row scheduler-visible `pending`
-  or create a partial-send route
-- **AND** the cohort remains fenced until its existing retained, commit, or
-  prerequisite-defined recovery path applies
+#### Scenario: Post-prepare cancellation requires complete referenced admission
+- **WHEN** an all-uncommitted current-fence `ordinary_precommit_cancel` is
+  requested after every participant has supplied a compatible durable prepare
+  result for the complete current-fence cohort
+- **THEN** it uses only the landed `bu-qs702` admission/finalization/publication
+  contract and leaves every member fenced until all matching evidence is durable
+- **AND** no subset, late row, generic scheduler scan, or partial send is
+  permitted; partial preparation, DND, egress-present, and ambiguous outcomes
+  remain protocol-bound
 
 #### Scenario: Exact target mismatch retains all rows
 - **WHEN** a prepared row has a different Telegram chat, thread, or bot
@@ -176,26 +198,34 @@ or a retained reason has won. It SHALL record terminal `aborted_preprepare`
 with an empty cohort audit, change no row state or scheduler eligibility, and
 make a late same-fence prepare request return the terminal abort. Once any
 participant preparation has durably linearized, the pre-prepare path SHALL be
-rejected. The parent packet defines no ordinary cancellation transition after
-that point: the full cohort remains protocol-bound and scheduler-ineligible,
-with no return to `pending` or partial-send path. `bu-qs702` owns any future
-durable post-prepare cancellation-admission contract.
+rejected. Only after every participant has supplied a compatible durable
+prepare result for the complete current-fence cohort may an all-uncommitted
+`ordinary_precommit_cancel` use the landed `bu-qs702`
+admission/finalization/publication workflow; a partial prepared cohort SHALL
+remain protocol-bound. Its accepted decision may return only the complete
+frozen cohort together after the referenced DND-guarded effective admission. It
+SHALL not turn an
+individual, late, stale-fence, egress-present, or ambiguous row into `pending`
+or a partial send.
 
 | Outcome | Durable run and row state | Required recovery boundary |
 |---|---|---|
 | No durable prepare result | `ordinary_preprepare_cancel` records current-fence `aborted_preprepare` with an empty cohort audit and no row transition. | No scheduler eligibility changes. Same-fence late prepare/replay returns the terminal abort; a later qualifying accepted event may seek a successor after the claim is released. |
-| Post-prepare ordinary cancellation | This parent packet defines no cancellation transition after a durable prepare result; the cohort keeps its protocol state and fence. | No row becomes `pending`, a generic scheduler cannot select a member, and no partial send is allowed. The future durable admission contract belongs to `bu-qs702`. |
+| Post-prepare ordinary cancellation | Only an all-uncommitted complete current-fence cohort, after every participant has supplied a compatible durable prepare result, consumes the landed `bu-qs702` admission, finalization, and publication workflow. | Only a matching accepted DND-guarded admission plus complete same-fence publication may return the exact frozen cohort together to ordinary `pending`; partial, late, stale, egress-present, and ambiguous outcomes remain scheduler-ineligible. |
 | DND before commit | Explicit abort records `aborted_dnd`; the full uncommitted cohort becomes `release_retained_dnd`, released from the old fence but retaining its run/fence evidence. | The rows are scheduler-ineligible. A new higher-fence run requires DND clear plus a later qualifying accepted direct owner DM, and it atomically adopts the whole retained cohort. |
 | Unavailable, oversize, or target mismatch | `retained_unavailable` / `retained_oversize` may retry only at the same fence using their persisted cutoff and manifest; `retained_mismatch` keeps `release_retained_mismatch` exact-target evidence. An explicit stop records a reason-tagged `aborted_retained` and `release_retained_*` rows. | The rows are scheduler-ineligible. Recovery never adds a late row, omits a participant, creates a second action, or default-resolves a mismatched target. |
 | Committed, delivered, or ambiguous egress | Committed rows remain `release_committed` and bound to the stable action key; delivery is immutable `egress_delivered` audit; uncertainty is `egress_ambiguous` with action evidence. | None may become `pending` through abort or a later wake. Same-fence replay returns the committed action/receipt, and ambiguity requires explicit reconciliation with no automatic resend. |
 
-#### Scenario: Post-prepare cancellation remains deferred
-- **WHEN** an ordinary cancellation is requested after a participant has
-  durably prepared a row or frozen a cutoff
-- **THEN** the parent packet retains the full cohort under its existing fence
-  and does not make any member `pending`
-- **AND** it does not select or send an individual member while the future
-  durable cancellation-admission contract is absent
+#### Scenario: Post-prepare cancellation stays all-cohort through publication
+- **WHEN** an all-uncommitted current-fence `ordinary_precommit_cancel` is
+  requested after every participant has supplied a compatible durable prepare
+  result for the complete current-fence cohort
+- **THEN** every member stays prepared or cancellation-ready and
+  scheduler-ineligible until the landed `bu-qs702` contract has a compatible
+  accepted admission and complete finalization/publication evidence
+- **AND** only that exact cohort may enter ordinary `pending` through the
+  referenced scheduler-return transition; a DND rejection uses `aborted_dnd` /
+  `release_retained_dnd`
 
 #### Scenario: Pre-durable-prepare cancellation has no cohort side effect
 - **WHEN** Switchboard cancels a `claimed` or `preparing` run at its current
