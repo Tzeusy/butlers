@@ -620,6 +620,14 @@ async def _relationship_finance_birthday_gift_ask(
     Deterministic per target date, not per-contact: dedupes via an
     ``origin_key`` stamped on ``public.delegation_ledger.metadata`` so
     duplicate job runs for the same target date never create a second ask.
+    The existing-row check and the dispatch's ledger writes run on one
+    connection under a transaction-scoped ``pg_advisory_xact_lock`` keyed on
+    ``origin_key`` (same idiom as ``infra_conditions._reconcile_source_locked``,
+    ``pipeline``'s ``ingest_v1`` dedup, and
+    ``decision_memory._write_terminal_decision``): two overlapping job runs for
+    the same target date serialize on the lock, so the second always observes
+    the first's row instead of racing it (bu-27dxl.5.4 AC2 — a duplicate job
+    run must never produce a duplicate ask).
 
     Never raises: any failure (query error, route failure, ledger-write
     failure) is caught and reported in the returned dict rather than
@@ -639,39 +647,48 @@ async def _relationship_finance_birthday_gift_ask(
             return {"status": "no_qualifying_birthday", "target_date": target_date_str}
 
         origin_key = _delegation_gift_ask_origin_key(target_date_str)
-        existing_id = await pool.fetchval(
-            """
-            SELECT id FROM public.delegation_ledger
-            WHERE asking_butler = 'relationship'
-              AND metadata->>'origin_key' = $1
-            LIMIT 1
-            """,
-            origin_key,
-        )
-        if existing_id is not None:
-            return {
-                "status": "already_asked",
-                "ledger_id": str(existing_id),
-                "target_date": target_date_str,
-            }
 
-        question = (
-            f"A household birthday is coming up in {DELEGATION_GIFT_ASK_DAYS_AHEAD} days "
-            f"({target_date_str}). What is the household's typical gift or "
-            "discretionary-budget guidance for a birthday like this?"
-        )
-        result = await dispatch_delegated_ask(
-            pool,
-            get_current_switchboard_client(),
-            asking_butler="relationship",
-            target_butler=DELEGATION_GIFT_ASK_TARGET_BUTLER,
-            question=question,
-            metadata={
-                "origin_key": origin_key,
-                "seed": "birthday_gift_budget_ask",
-                "target_date": target_date_str,
-            },
-        )
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                # Serialize concurrent job runs for this target date so the
+                # existing-row check below is atomic with the dispatch's
+                # ledger writes (bu-27dxl.5.4 AC2).
+                await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", origin_key)
+
+                existing_id = await conn.fetchval(
+                    """
+                    SELECT id FROM public.delegation_ledger
+                    WHERE asking_butler = 'relationship'
+                      AND metadata->>'origin_key' = $1
+                    LIMIT 1
+                    """,
+                    origin_key,
+                )
+                if existing_id is not None:
+                    return {
+                        "status": "already_asked",
+                        "ledger_id": str(existing_id),
+                        "target_date": target_date_str,
+                    }
+
+                question = (
+                    f"A household birthday is coming up in {DELEGATION_GIFT_ASK_DAYS_AHEAD} "
+                    f"days ({target_date_str}). What is the household's typical gift or "
+                    "discretionary-budget guidance for a birthday like this?"
+                )
+                result = await dispatch_delegated_ask(
+                    conn,
+                    get_current_switchboard_client(),
+                    asking_butler="relationship",
+                    target_butler=DELEGATION_GIFT_ASK_TARGET_BUTLER,
+                    question=question,
+                    metadata={
+                        "origin_key": origin_key,
+                        "seed": "birthday_gift_budget_ask",
+                        "target_date": target_date_str,
+                    },
+                )
+
         result["target_date"] = target_date_str
         return result
     except Exception:

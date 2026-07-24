@@ -516,15 +516,48 @@ async def test_run_relationship_briefing_no_birthdays():
 # ---------------------------------------------------------------------------
 
 
+class _NullAsyncCtx:
+    """No-op async context manager standing in for ``conn.transaction()``."""
+
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+
+class _FakeAcquireCtx:
+    """Async context manager standing in for ``pool.acquire()``."""
+
+    def __init__(self, conn: MagicMock) -> None:
+        self._conn = conn
+
+    async def __aenter__(self) -> MagicMock:
+        return self._conn
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+
 def _delegation_pool(*, fetchrow_value=None, fetchval_value=None) -> MagicMock:
     """A pool double for _relationship_finance_birthday_gift_ask in isolation.
 
-    ``fetchrow`` backs the birthday-count query (``_count_birthdays_on``);
-    ``fetchval`` backs the origin-key dedup lookup.
+    ``fetchrow`` backs the birthday-count query (``_count_birthdays_on``),
+    still issued directly against ``pool``. The origin-key dedup lookup and
+    the dispatch's ledger writes now run against a connection acquired via
+    ``pool.acquire()`` (under the advisory-lock transaction, bu-27dxl.5.4
+    AC2) -- ``conn.fetchval`` backs that dedup lookup, exposed on the
+    returned pool as ``.conn`` for tests that want to assert against it.
     """
+    conn = MagicMock()
+    conn.execute = AsyncMock()
+    conn.fetchval = AsyncMock(return_value=fetchval_value)
+    conn.transaction = MagicMock(return_value=_NullAsyncCtx())
+
     pool = MagicMock()
     pool.fetchrow = AsyncMock(return_value=fetchrow_value)
-    pool.fetchval = AsyncMock(return_value=fetchval_value)
+    pool.acquire = MagicMock(return_value=_FakeAcquireCtx(conn))
+    pool.conn = conn
     return pool
 
 
@@ -536,7 +569,9 @@ class TestRelationshipFinanceBirthdayGiftAskSeed:
         result = await _relationship_finance_birthday_gift_ask(pool, today_dt=_DATE_2026_03_25)
 
         assert result["status"] == "no_qualifying_birthday"
-        pool.fetchval.assert_not_called()
+        # No qualifying birthday short-circuits before ever acquiring the
+        # advisory-lock connection.
+        pool.acquire.assert_not_called()
 
     async def test_qualifying_birthday_dispatches_one_ask(self, monkeypatch):
         import butlers.jobs.briefing as briefing_mod
@@ -555,12 +590,18 @@ class TestRelationshipFinanceBirthdayGiftAskSeed:
         assert result["status"] == "routed"
         assert result["ledger_id"] == "ledger-1"
         dispatch_mock.assert_awaited_once()
+        # Dispatched on the acquired connection (same transaction/lock as
+        # the dedup check), not the raw pool.
+        assert dispatch_mock.await_args.args[0] is pool.conn
         kwargs = dispatch_mock.await_args.kwargs
         assert kwargs["asking_butler"] == "relationship"
         assert kwargs["target_butler"] == "finance"
         assert kwargs["metadata"]["origin_key"].startswith("relationship-birthday-gift-ask:v1:")
         # No PII in the question text.
         assert "Alice" not in kwargs["question"]
+        # The advisory lock is acquired before the dedup check.
+        pool.conn.execute.assert_awaited_once()
+        assert "pg_advisory_xact_lock" in pool.conn.execute.await_args.args[0]
 
     async def test_duplicate_run_dedupes_via_origin_key(self, monkeypatch):
         import butlers.jobs.briefing as briefing_mod
@@ -576,6 +617,8 @@ class TestRelationshipFinanceBirthdayGiftAskSeed:
         assert result["status"] == "already_asked"
         assert result["ledger_id"] == "existing-ledger-id"
         dispatch_mock.assert_not_awaited()
+        # The lock is still acquired before the (successful) dedup hit.
+        pool.conn.execute.assert_awaited_once()
 
     async def test_route_failure_is_caught_and_reported(self, monkeypatch):
         import butlers.jobs.briefing as briefing_mod

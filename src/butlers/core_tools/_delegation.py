@@ -177,6 +177,14 @@ async def dispatch_delegated_ask(
     deterministic caller stamp a dedup/origin key so a duplicate dispatch
     attempt can be detected by reading it back rather than re-asking.
 
+    ``pool`` accepts either an ``asyncpg.Pool`` or an already-acquired
+    ``asyncpg.Connection`` -- ``record_ask``/``mark_dispatch_outcome`` only
+    call generic query methods both implement. A caller that needs the
+    existing-row dedup check and this dispatch's ledger writes to be atomic
+    against concurrent runs (e.g. the birthday-gift seed, under a transaction-
+    scoped ``pg_advisory_xact_lock``) passes its already-open ``Connection``
+    so every write here lands on the same transaction as that check.
+
     Returns the same ``{"status": ...}`` shapes ``delegate_ask`` has always
     returned: ``routed`` (dispatch acknowledged), ``failed`` (route error,
     ``retryable`` set when transient), or ``error`` (dispatch succeeded but

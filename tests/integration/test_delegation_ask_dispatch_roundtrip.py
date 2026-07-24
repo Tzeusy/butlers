@@ -17,7 +17,9 @@ that a mocked pool cannot validate.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
+from datetime import date, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -146,3 +148,89 @@ async def test_route_failure_records_failed_row_not_routed(pool: asyncpg.Pool) -
     # attempts on a duplicate run, not "retry until success").
     found_id = await _origin_key_lookup(pool, "relationship", origin_key)
     assert str(found_id) == result["ledger_id"]
+
+
+# ---------------------------------------------------------------------------
+# Concurrent-run dedup regression (bu-27dxl.5.4 AC2)
+# ---------------------------------------------------------------------------
+#
+# ``_relationship_finance_birthday_gift_ask`` (butlers.jobs.briefing) guards
+# its existing-row dedup check and the dispatch's ledger writes with a
+# transaction-scoped ``pg_advisory_xact_lock(hashtext(origin_key))`` so two
+# overlapping job runs for the same target date serialize instead of racing
+# the check-then-act sequence. Advisory locks are a no-op under a mocked pool
+# (both "concurrent" calls would just run sequentially against the same
+# mock), so this needs the real-Postgres path with two genuinely concurrent
+# connections.
+#
+# Needs the ``relationship`` chain (``important_dates``) and the ``contacts``
+# module chain (``important_dates.local_entity_id``, added by contacts_004)
+# on top of ``core`` (``public.entities``, ``public.delegation_ledger``) --
+# see ``_count_birthdays_on``'s entity-anchored UNION arm in
+# ``butlers.jobs.briefing``.
+
+
+@pytest.fixture(scope="module")
+def gift_ask_db_url(postgres_container) -> str:
+    return create_migrated_test_db(
+        postgres_container,
+        migration_db_name(),
+        chains=["core", "memory", "relationship", "contacts"],
+    )
+
+
+@pytest.fixture
+async def gift_ask_pool(gift_ask_db_url: str) -> asyncpg.Pool:
+    # min/max > 1 so both concurrent job runs get their own connection -- the
+    # lock must be doing the serializing, not pool exhaustion.
+    p = await asyncpg.create_pool(gift_ask_db_url, min_size=2, max_size=5)
+    yield p
+    await p.close()
+
+
+async def test_concurrent_runs_dispatch_at_most_one_ask(
+    gift_ask_pool: asyncpg.Pool, monkeypatch
+) -> None:
+    import butlers.jobs.briefing as briefing_mod
+
+    today_dt = date(2026, 8, 1)
+    target_date = today_dt + timedelta(days=briefing_mod.DELEGATION_GIFT_ASK_DAYS_AHEAD)
+
+    entity_id = await gift_ask_pool.fetchval(
+        """
+        INSERT INTO public.entities (canonical_name, entity_type, listed)
+        VALUES ('Concurrent Birthday Test', 'person', true)
+        RETURNING id
+        """
+    )
+    await gift_ask_pool.execute(
+        """
+        INSERT INTO important_dates (contact_id, local_entity_id, label, month, day)
+        VALUES (NULL, $1, 'birthday', $2, $3)
+        """,
+        entity_id,
+        target_date.month,
+        target_date.day,
+    )
+
+    monkeypatch.setattr(briefing_mod, "get_current_switchboard_client", lambda: _OkClient())
+
+    # Two overlapping job runs for the same target_date, dispatched
+    # concurrently against the same pool (distinct connections).
+    results = await asyncio.gather(
+        briefing_mod._relationship_finance_birthday_gift_ask(gift_ask_pool, today_dt=today_dt),
+        briefing_mod._relationship_finance_birthday_gift_ask(gift_ask_pool, today_dt=today_dt),
+    )
+
+    statuses = sorted(r["status"] for r in results)
+    assert statuses == ["already_asked", "routed"], results
+
+    origin_key = briefing_mod._delegation_gift_ask_origin_key(target_date.isoformat())
+    rows = await gift_ask_pool.fetch(
+        """
+        SELECT id FROM public.delegation_ledger
+        WHERE asking_butler = 'relationship' AND metadata->>'origin_key' = $1
+        """,
+        origin_key,
+    )
+    assert len(rows) == 1
