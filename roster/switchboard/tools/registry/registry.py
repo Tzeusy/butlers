@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import asyncpg
 
-from butlers.core.liveness import is_liveness_stale
+from butlers.core.liveness import CLOCK_SKEW_TOLERANCE, is_liveness_stale
 from butlers.core.mcp_urls import runtime_mcp_url
 
 logger = logging.getLogger(__name__)
@@ -32,12 +32,6 @@ _AGENT_TYPES = frozenset({AGENT_TYPE_BUTLER, AGENT_TYPE_STAFFER})
 
 DEFAULT_LIVENESS_TTL_SECONDS = 300
 DEFAULT_ROUTE_CONTRACT_VERSION = 1
-# Tolerance for a last_seen_at reported in the future (clock skew between a
-# butler host and the DB server, or a bad writer). Beyond this the timestamp is
-# untrustworthy rather than confidently recent, so it must NOT keep eligibility
-# asserted forever. Mirrors _CLOCK_SKEW_TOLERANCE_SECONDS in
-# src/butlers/api/routers/butlers.py (PR #3167).
-_CLOCK_SKEW_TOLERANCE_SECONDS = 5 * 60
 
 
 def _normalize_string_list(raw: Any) -> list[str]:
@@ -104,7 +98,7 @@ def _derive_eligibility_state(
         row.get("last_seen_at"),
         ttl_seconds=row.get("liveness_ttl_seconds"),
         now=now,
-        clock_skew_tolerance=timedelta(seconds=_CLOCK_SKEW_TOLERANCE_SECONDS),
+        clock_skew_tolerance=CLOCK_SKEW_TOLERANCE,
     )
     return ELIGIBILITY_STALE if stale else ELIGIBILITY_ACTIVE
 

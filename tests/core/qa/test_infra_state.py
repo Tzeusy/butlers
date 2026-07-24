@@ -369,6 +369,8 @@ _PARITY_REGISTERED_AT = datetime.now(UTC) - timedelta(days=30)
         (datetime.now(UTC) - timedelta(seconds=301), 300),  # just past TTL boundary
         (datetime.now(UTC) - timedelta(hours=1), 300),  # long stale
         (datetime.now(UTC) + timedelta(minutes=1), 300),  # future, within skew tolerance
+        (datetime.now(UTC) + timedelta(minutes=4), 300),  # future, just within 5min skew tolerance
+        (datetime.now(UTC) + timedelta(minutes=6), 300),  # future, just past 5min skew tolerance
         (datetime.now(UTC) + timedelta(minutes=10), 300),  # future, beyond skew tolerance
         (datetime.now(UTC) - timedelta(seconds=1000), 3600),  # custom ttl keeps it fresh
         (None, 300),  # never seen (registered long ago, past infra_state's grace window)
