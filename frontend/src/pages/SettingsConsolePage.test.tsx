@@ -3,11 +3,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
-  fireEvent,
   render,
   screen,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -179,12 +179,15 @@ describe("SettingsConsolePage", () => {
     expect(screen.queryByText("Provider 6 needs auth.")).toBeNull();
     expect(screen.queryByLabelText("Go to /audit-log")).toBeNull();
 
-    fireEvent.click(expand);
+    const user = userEvent.setup();
+    expand.focus();
+    await user.keyboard("{Enter}");
     expect(await screen.findByText("Provider 6 needs auth.")).toBeTruthy();
 
     const collapse = screen.getByRole("button", { name: /show 1 fewer/i });
     expect(collapse.getAttribute("aria-expanded")).toBe("true");
-    fireEvent.click(collapse);
+    collapse.focus();
+    await user.keyboard(" ");
     expect(screen.queryByText("Provider 6 needs auth.")).toBeNull();
   });
 });
