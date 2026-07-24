@@ -50,7 +50,8 @@
 - [ ] 3.3 Add focused source, dispatch, triage, and persistence tests for
   complete/failed/partial/recovery/reopen snapshots, active-condition
   suppression ordering, repeated decision records, zero attempt side effects,
-  and unchanged QA source-type vocabulary.
+  unchanged QA source-type vocabulary, and the existing unconfigured external
+  deadman as a legitimate absence with no finding.
 
 ## 4. Dashboard lifespan loop supervision (bu-27dxl.6.5)
 

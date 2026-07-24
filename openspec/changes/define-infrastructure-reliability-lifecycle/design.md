@@ -143,6 +143,13 @@ expected-infinite loop: `secrets_lifecycle`, `model_verify`, `fleet_events_bridg
 `calendar_sync_deadman`, `external_deadman`, and `restore_drill`. The external
 deadman registration remains conditional on its configured URL.
 
+That conditional registration does not turn an unconfigured target into a
+failure signal. The existing `staffer-qa` `infra_state`
+`external-deadman-stale` contract treats an unconfigured
+`EXTERNAL_DEADMAN_URL` as a legitimate absence with no finding; this change
+preserves that boundary and neither provisions an external monitor nor creates
+a synthetic condition for missing configuration.
+
 An ordinary return or exception is unexpected: the supervisor logs the loop
 name and restarts it after bounded backoff, without allowing concurrent
 duplicate instances. During shutdown, the application marks the supervisor as

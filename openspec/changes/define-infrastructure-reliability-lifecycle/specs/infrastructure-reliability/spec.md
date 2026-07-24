@@ -135,11 +135,16 @@ task for each current loop: `secrets_lifecycle`, `model_verify`,
 `fleet_events_bridge`, `settings_console_delta`, `secrets_staleness`,
 `migration_drift`, `calendar_sync_deadman`, `external_deadman`, and
 `restore_drill`. `external_deadman` SHALL be registered only when its target
-URL is configured. An ordinary return or exception from a registered loop
-SHALL be logged with its name and restarted with bounded backoff; the
-supervisor SHALL NOT run duplicate concurrent instances. Shutdown cancellation
-SHALL cancel and await every registered loop, including calendar deadman, and
-SHALL NOT restart a loop cancelled for shutdown.
+URL is configured. An unconfigured `EXTERNAL_DEADMAN_URL` SHALL be treated as
+a legitimate absence, not an infrastructure condition: no external-deadman
+loop is registered and the QA Staffer's existing `infra_state`
+`external-deadman-stale` rule produces no finding. This requirement does not
+define external-monitor provisioning, a synthetic unconfigured condition, or
+any different QA staleness threshold. An ordinary return or exception from a
+registered loop SHALL be logged with its name and restarted with bounded
+backoff; the supervisor SHALL NOT run duplicate concurrent instances. Shutdown
+cancellation SHALL cancel and await every registered loop, including calendar
+deadman, and SHALL NOT restart a loop cancelled for shutdown.
 
 #### Scenario: Unexpected loop return is restarted
 - **WHEN** a named expected-infinite loop returns normally or raises an
@@ -153,6 +158,16 @@ SHALL NOT restart a loop cancelled for shutdown.
 - **THEN** the supervisor marks itself stopping before cancelling and awaiting
   every registered lifespan loop
 - **AND** a resulting `CancelledError` produces no restart
+
+#### Scenario: Unconfigured external deadman is a legitimate absence
+- **GIVEN** `EXTERNAL_DEADMAN_URL` is unconfigured
+- **WHEN** dashboard lifespan initialization and the QA Staffer's
+  `infra_state` discovery source evaluate the external-deadman boundary
+- **THEN** no `external_deadman` lifespan loop is registered
+- **AND** no `external-deadman-stale` QA finding or synthetic infrastructure
+  condition is created solely because the target is unconfigured
+- **AND** external-monitor provisioning and the existing QA staleness policy
+  remain outside this change
 
 ### Requirement: Heartbeat-derived connector liveness is authoritative
 
@@ -181,3 +196,4 @@ used as liveness proof.
 - Non-Negotiable Rule 7 (connector transport responsibility)
 - RFC 0001 (daemon lifecycle and dispatch decision versus launched execution)
 - RFC 0005 (recovery decision and execution-failure telemetry separation)
+- `staffer-qa` §V1 Discovery Sources (unconfigured external-deadman target is a legitimate absence)
