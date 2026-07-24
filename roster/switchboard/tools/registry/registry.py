@@ -10,6 +10,7 @@ from typing import Any
 
 import asyncpg
 
+from butlers.core.liveness import is_liveness_stale
 from butlers.core.mcp_urls import runtime_mcp_url
 
 logger = logging.getLogger(__name__)
@@ -96,25 +97,16 @@ def _derive_eligibility_state(
     if explicit_state == ELIGIBILITY_QUARANTINED or row.get("quarantined_at") is not None:
         return ELIGIBILITY_QUARANTINED
 
-    last_seen_at = row.get("last_seen_at")
-    if last_seen_at is None:
-        return ELIGIBILITY_STALE
-
-    # A last_seen_at further in the future than our skew tolerance is
-    # untrustworthy (clock skew / bad writer) — treat it as stale rather than
-    # letting the unbounded TTL window keep the butler eligible indefinitely.
-    if last_seen_at > now + timedelta(seconds=_CLOCK_SKEW_TOLERANCE_SECONDS):
-        return ELIGIBILITY_STALE
-
-    ttl_seconds = _normalize_positive_int(
-        row.get("liveness_ttl_seconds"),
-        default=DEFAULT_LIVENESS_TTL_SECONDS,
+    # Canonical last_seen_at + liveness_ttl_seconds staleness formula, shared
+    # with InfraStateSource's heartbeat-stale QA check (bu-dvzya) so the two
+    # cannot quietly diverge.
+    stale = is_liveness_stale(
+        row.get("last_seen_at"),
+        ttl_seconds=row.get("liveness_ttl_seconds"),
+        now=now,
+        clock_skew_tolerance=timedelta(seconds=_CLOCK_SKEW_TOLERANCE_SECONDS),
     )
-    return (
-        ELIGIBILITY_ACTIVE
-        if (last_seen_at + timedelta(seconds=ttl_seconds)) >= now
-        else ELIGIBILITY_STALE
-    )
+    return ELIGIBILITY_STALE if stale else ELIGIBILITY_ACTIVE
 
 
 def _transition_reason(previous_state: str, new_state: str) -> str:
