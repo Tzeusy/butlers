@@ -121,6 +121,9 @@ async def execute_consolidation(
     for fact in parsed.new_facts:
         try:
             fact_entity_id = uuid.UUID(fact.entity_id) if fact.entity_id else None
+            fact_object_entity_id = (
+                uuid.UUID(fact.object_entity_id) if fact.object_entity_id else None
+            )
             if fact_entity_id is None:
                 logger.warning(
                     "Consolidation: new fact %s/%s has no entity_id — "
@@ -140,6 +143,7 @@ async def execute_consolidation(
                 tags=fact.tags,
                 source_butler=butler_name,
                 entity_id=fact_entity_id,
+                object_entity_id=fact_object_entity_id,
                 valid_at=fact.valid_at,
                 tenant_id=tenant_id,
                 request_id=request_id,
