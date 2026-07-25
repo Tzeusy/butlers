@@ -378,7 +378,7 @@ export function ChatContent({ butlerName }: ChatContentProps) {
             ? {
                 ...prev,
                 cancelling: false,
-                cancelError: result.message ?? "Could not stop — try again.",
+                cancelError: result.message ?? "Could not stop. Try again.",
               }
             : prev,
         );
@@ -389,7 +389,7 @@ export function ChatContent({ butlerName }: ChatContentProps) {
     } catch {
       setStreaming((prev) =>
         prev
-          ? { ...prev, cancelling: false, cancelError: "Could not stop — try again." }
+          ? { ...prev, cancelling: false, cancelError: "Could not stop. Try again." }
           : prev,
       );
     }

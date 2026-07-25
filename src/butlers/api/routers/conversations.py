@@ -370,77 +370,81 @@ async def _stream_conversation_response(
 
     # Register this turn as cancellable (POST .../cancel resolves conversation_id
     # -> routed_butler + request_id -> live session, see _resolve_session_id).
-    # Cleared at every exit below so a stale entry never outlives the turn it
+    # Cleared in the finally below so a stale entry never outlives the turn it
     # describes -- an unregistered conversation_id means "nothing to cancel"
-    # (benign no-op), never a dangling handle to an unrelated later turn.
+    # (benign no-op), never a dangling handle to an unrelated later turn. The
+    # try/finally (rather than a pop() at each exit point) also covers exit
+    # paths callers didn't anticipate, e.g. an unhandled exception from
+    # message_find_reply_since during polling, or the generator being closed
+    # early by the ASGI server.
     if request_id_str:
         _ACTIVE_TURNS[conversation_id] = {
             "routed_butler": routed_butler,
             "request_id": request_id_str,
         }
 
-    # Step 3: Poll for the conversation_reply message, with keepalive.
-    start_ts = time.monotonic()
-    last_keepalive_ts = start_ts
-    reply_row: dict[str, Any] | None = None
+    try:
+        # Step 3: Poll for the conversation_reply message, with keepalive.
+        start_ts = time.monotonic()
+        last_keepalive_ts = start_ts
+        reply_row: dict[str, Any] | None = None
 
-    while reply_row is None:
-        # Check client disconnect
-        if await request.is_disconnected():
-            logger.info("Client disconnected during conversation stream %s", conversation_id)
-            _ACTIVE_TURNS.pop(conversation_id, None)
-            return
+        while reply_row is None:
+            # Check client disconnect
+            if await request.is_disconnected():
+                logger.info("Client disconnected during conversation stream %s", conversation_id)
+                return
 
-        # Keepalive check
-        now = time.monotonic()
-        if now - last_keepalive_ts >= _KEEPALIVE_INTERVAL_S:
-            yield _sse_comment("keepalive")
-            last_keepalive_ts = now
+            # Keepalive check
+            now = time.monotonic()
+            if now - last_keepalive_ts >= _KEEPALIVE_INTERVAL_S:
+                yield _sse_comment("keepalive")
+                last_keepalive_ts = now
 
-        # Timeout guard — graceful: the thread stays open and a late reply
-        # remains visible on the next history fetch/poll.
-        if now - start_ts >= _SESSION_TIMEOUT_S:
-            timeout_session_id = await _resolve_session_id(
-                db=db, routed_butler=routed_butler, request_id=request_id_str
+            # Timeout guard — graceful: the thread stays open and a late reply
+            # remains visible on the next history fetch/poll.
+            if now - start_ts >= _SESSION_TIMEOUT_S:
+                timeout_session_id = await _resolve_session_id(
+                    db=db, routed_butler=routed_butler, request_id=request_id_str
+                )
+                logger.warning(
+                    "No conversation_reply for conversation %s within %.0fs (routed_butler=%s)",
+                    conversation_id,
+                    _SESSION_TIMEOUT_S,
+                    routed_butler,
+                )
+                yield _sse_error(
+                    "SESSION_TIMEOUT",
+                    "No reply yet — inspect the session for details.",
+                    session_id=timeout_session_id,
+                )
+                yield _sse_done()
+                return
+
+            reply_row = await message_find_reply_since(
+                shared_pool, conversation_id, since=message_created_at
             )
-            logger.warning(
-                "No conversation_reply for conversation %s within %.0fs (routed_butler=%s)",
-                conversation_id,
-                _SESSION_TIMEOUT_S,
-                routed_butler,
-            )
-            yield _sse_error(
-                "SESSION_TIMEOUT",
-                "No reply yet — inspect the session for details.",
-                session_id=timeout_session_id,
-            )
-            yield _sse_done()
-            _ACTIVE_TURNS.pop(conversation_id, None)
-            return
+            if reply_row is None:
+                await asyncio.sleep(_POLL_INTERVAL_S)
 
-        reply_row = await message_find_reply_since(
-            shared_pool, conversation_id, since=message_created_at
+        # Step 4: Emit the already-persisted conversation_reply — no DB write
+        # happens here; conversation_reply_create() did it inside the routed
+        # butler's own session.
+        yield _sse_event("token", {"content": reply_row["content"]})
+        yield _sse_event(
+            "message_complete",
+            {
+                "message_id": str(reply_row["id"]),
+                "model_name": reply_row.get("model_name"),
+                "input_tokens": reply_row.get("input_tokens"),
+                "output_tokens": reply_row.get("output_tokens"),
+                "duration_ms": reply_row.get("duration_ms"),
+                "tool_calls": reply_row.get("tool_calls") or [],
+            },
         )
-        if reply_row is None:
-            await asyncio.sleep(_POLL_INTERVAL_S)
-
-    # Step 4: Emit the already-persisted conversation_reply — no DB write
-    # happens here; conversation_reply_create() did it inside the routed
-    # butler's own session.
-    yield _sse_event("token", {"content": reply_row["content"]})
-    yield _sse_event(
-        "message_complete",
-        {
-            "message_id": str(reply_row["id"]),
-            "model_name": reply_row.get("model_name"),
-            "input_tokens": reply_row.get("input_tokens"),
-            "output_tokens": reply_row.get("output_tokens"),
-            "duration_ms": reply_row.get("duration_ms"),
-            "tool_calls": reply_row.get("tool_calls") or [],
-        },
-    )
-    yield _sse_done()
-    _ACTIVE_TURNS.pop(conversation_id, None)
+        yield _sse_done()
+    finally:
+        _ACTIVE_TURNS.pop(conversation_id, None)
 
 
 async def _persist_dashboard_user_message(
@@ -906,7 +910,11 @@ async def cancel_conversation_turn(
 
     Always returns HTTP 200 -- see ``ConversationCancelResponse`` for the
     three distinct outcomes it distinguishes. Never claims ``cancelled=True``
-    unless the routed butler itself confirmed the kill.
+    unless the routed butler itself confirmed the kill -- or, for a Stop
+    click that lands before the runtime invocation has started (the session
+    row exists but ``Spawner._run`` hasn't reached ``asyncio.create_task
+    (runtime.invoke(...))`` yet), confirmed the invocation will be skipped
+    entirely rather than falsely reporting ``already_finished``.
     """
     turn = _ACTIVE_TURNS.get(conversation_id)
     if turn is None:

@@ -365,7 +365,7 @@ function WidgetPanel({ onClose }: WidgetPanelProps) {
             ? {
                 ...prev,
                 cancelling: false,
-                cancelError: result.message ?? "Could not stop — try again.",
+                cancelError: result.message ?? "Could not stop. Try again.",
               }
             : prev,
         );
@@ -376,7 +376,7 @@ function WidgetPanel({ onClose }: WidgetPanelProps) {
     } catch {
       setStreaming((prev) =>
         prev
-          ? { ...prev, cancelling: false, cancelError: "Could not stop — try again." }
+          ? { ...prev, cancelling: false, cancelError: "Could not stop. Try again." }
           : prev,
       );
     }
