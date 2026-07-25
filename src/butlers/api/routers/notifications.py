@@ -207,7 +207,18 @@ async def _query_notifications(
         idx += 1
 
     if status == "retried":
-        conditions.append(f"status = 'failed' AND {_RETRIED_EXISTS_SQL}")
+        # Matches _EFFECTIVE_STATUS_CASE_SQL's two "retried" branches: the
+        # organic session-based inference, plus a manually-retried row
+        # (status='read', stamped with the retried_to marker by POST
+        # .../retry). Keeping the WHERE-clause filter and the SELECT CASE in
+        # sync is required -- otherwise ?status=retried and the "Retried"
+        # chip shown for the same row would silently disagree.
+        conditions.append(
+            f"((status = 'failed' AND {_RETRIED_EXISTS_SQL}) "
+            "OR (status = 'read' AND metadata ? 'retried_to'))"
+        )
+    elif status == "escalated":
+        conditions.append("status = 'read' AND metadata ? 'escalated_to'")
     elif status == "terminal_failed":
         conditions.append(f"status = 'failed' AND NOT ({_RETRIED_EXISTS_SQL})")
     elif status is not None:
@@ -292,7 +303,7 @@ async def list_notifications(
     channel: str | None = Query(None, description="Filter by delivery channel"),
     status: str | None = Query(
         None,
-        description="Filter by status (sent/failed/pending/read/retried/terminal_failed)",
+        description="Filter by status (sent/failed/pending/read/retried/escalated/terminal_failed)",
     ),
     since: datetime | None = Query(None, description="Only notifications created after this time"),
     until: datetime | None = Query(None, description="Only notifications created before this time"),
@@ -342,7 +353,7 @@ async def list_butler_notifications(
     channel: str | None = Query(None, description="Filter by delivery channel"),
     status: str | None = Query(
         None,
-        description="Filter by status (sent/failed/pending/read/retried/terminal_failed)",
+        description="Filter by status (sent/failed/pending/read/retried/escalated/terminal_failed)",
     ),
     since: datetime | None = Query(None, description="Only notifications created after this time"),
     until: datetime | None = Query(None, description="Only notifications created before this time"),
