@@ -28,9 +28,9 @@
 //   - `.data` is TanStack Query's own envelope field name, ubiquitous in this
 //     codebase for query results -- but a `.data` access on a value that is
 //     NOT a query result (rare in components/pages) will still be flagged.
-//     If genuinely unrelated to a query, add an inline
-//     eslint-disable-next-line no-restricted-syntax with a one-line reason
-//     (see AGENTS.md "Notes to self" for the accepted escape-hatch pattern).
+//     If genuinely unrelated to a query, add a line-level disable comment for
+//     no-restricted-syntax with a one-line reason (see the escape-hatch
+//     pattern used throughout eslint.config.js's own selector comments).
 //   - `.meta.total` / `.meta.count` mirrors the backend's `meta.<flag>`
 //     degraded-envelope convention (butlers/CLAUDE.md API Conventions), so
 //     it is scoped to exactly that shape, not any `.total`/`.count` field.
@@ -39,8 +39,8 @@
 //     guard is about call sites silently re-deriving one without isError.
 //   - Intentional coercions where isError genuinely doesn't apply (a
 //     non-query optional field, a value already checked upstream) are a
-//     legitimate reason to keep the coercion -- use the same
-//     eslint-disable-next-line escape hatch, not a rule-wide suppression.
+//     legitimate reason to keep the coercion -- use the same line-level
+//     disable-comment escape hatch, not a rule-wide suppression.
 
 import { ESLint } from 'eslint'
 import fs from 'node:fs'
