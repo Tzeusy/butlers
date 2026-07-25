@@ -30,6 +30,7 @@ from butlers.config import ButlerConfig, RuntimeSeedConfig
 from butlers.core.runtimes import DEFAULT_RUNTIME_TYPE
 from butlers.core.runtimes.base import RuntimeAdapter
 from butlers.core.spawner import (
+    SESSION_CANCELLED_ERROR,
     Spawner,
     SpawnerResult,
     _append_runtime_session_query,
@@ -2734,3 +2735,95 @@ class TestSpendEventBusWiring:
         # Session must succeed despite broker error
         assert result.success is True
         assert result.error is None
+
+
+# ---------------------------------------------------------------------------
+# cancel_session (bu-ep4ks.2) — owner-initiated Stop actually kills the
+# in-flight runtime invocation rather than just detaching a client watcher.
+# ---------------------------------------------------------------------------
+
+
+class TestCancelSession:
+    async def test_unknown_session_id_is_benign_noop(self, tmp_path: Path):
+        """Cancelling a session that never registered an invoke_task is a no-op, not an error."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        spawner = Spawner(config=_make_config(), config_dir=config_dir, runtime=MockAdapter())
+        assert spawner.cancel_session("00000000-0000-0000-0000-000000000000") is False
+
+    async def test_cancel_kills_running_invocation_and_marks_ledger(self, tmp_path: Path):
+        """cancel_session() cancels the live invoke_task and the outcome is honestly logged."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+        mock_pool = AsyncMock()
+
+        with (
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
+            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock) as mock_complete,
+        ):
+            fake_session_id = uuid.UUID("00000000-0000-0000-0000-0000000000ca")
+            mock_create.return_value = fake_session_id
+
+            spawner = Spawner(
+                config=config,
+                config_dir=config_dir,
+                pool=mock_pool,
+                # Long delay — invoke() must still be running when we cancel.
+                runtime=MockAdapter(delay=30),
+            )
+
+            trigger_task = asyncio.create_task(spawner.trigger("cancel me", "schedule"))
+            try:
+                for _ in range(500):
+                    if str(fake_session_id) in spawner._invoke_tasks_by_session:
+                        break
+                    await asyncio.sleep(0.01)
+                else:
+                    pytest.fail("invoke_task never registered for session_id")
+
+                assert spawner.cancel_session(str(fake_session_id)) is True
+
+                result = await asyncio.wait_for(trigger_task, timeout=5)
+            finally:
+                if not trigger_task.done():
+                    trigger_task.cancel()
+
+            assert result.success is False
+            assert result.error == SESSION_CANCELLED_ERROR
+            assert result.session_id == fake_session_id
+
+            # No leaked registry entry once the attempt has unwound.
+            assert str(fake_session_id) not in spawner._invoke_tasks_by_session
+
+            mock_complete.assert_called_once()
+            args, kwargs = mock_complete.call_args
+            assert args[0] is mock_pool and args[1] == fake_session_id
+            assert kwargs["success"] is False
+            assert kwargs["error"] == SESSION_CANCELLED_ERROR
+
+    async def test_cancel_after_completion_is_benign_noop(self, tmp_path: Path):
+        """A session that already finished is not cancellable — no false 'stopped' claim."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config = _make_config()
+        mock_pool = AsyncMock()
+
+        with (
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_create,
+            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock),
+        ):
+            fake_session_id = uuid.UUID("00000000-0000-0000-0000-0000000000cb")
+            mock_create.return_value = fake_session_id
+
+            spawner = Spawner(
+                config=config,
+                config_dir=config_dir,
+                pool=mock_pool,
+                runtime=MockAdapter(result_text="done already"),
+            )
+
+            result = await spawner.trigger("finish fast", "schedule")
+            assert result.success is True
+
+            assert spawner.cancel_session(str(fake_session_id)) is False
