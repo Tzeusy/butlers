@@ -42,6 +42,7 @@ Contract (Amendment 14 + spec §"Requirement: Central writer"):
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -51,12 +52,21 @@ from typing import Any
 
 import asyncpg
 
+from butlers.core.approvals_hooks import park_pending_action
+from butlers.core.tool_call_capture import (
+    get_current_approval_push_runtime,
+    get_current_runtime_session_id,
+)
+
 logger = logging.getLogger(__name__)
 
 # Pending actions expire after 72 hours (mirrors contact_info.py).
 _PENDING_ACTION_EXPIRY_HOURS = 72
 _EvidenceReference = dict[str, str]
 _EVIDENCE_TYPES = {"fact", "entity", "url", "text"}
+# Every pending_actions row this writer parks belongs to the relationship
+# butler -- it never runs cross-butler (bu-g27ib).
+_ORIGIN_BUTLER = "relationship"
 
 
 def _validate_typed_evidence(evidence: list[_EvidenceReference]) -> None:
@@ -326,7 +336,7 @@ async def _validate_predicate(conn: asyncpg.Connection, predicate: str) -> None:
 
 
 async def _create_pending_action(
-    conn: asyncpg.Connection,
+    pool: asyncpg.Pool,
     tool_name: str,
     tool_args: dict[str, Any],
     summary: str,
@@ -348,9 +358,17 @@ async def _create_pending_action(
     *why* and typed *evidence* populate the ``pending_actions`` dossier columns
     so the approvals UI can render a human-readable rationale and inspectable
     references rather than an untyped evidence string list.
+
+    Takes *pool* (not a caller-supplied ``conn``) because the actual insert
+    routes through :func:`butlers.core.approvals_hooks.park_pending_action`,
+    the single choke point for PENDING inserts (bu-mda0r): it writes the row
+    AND attempts the owner-facing push in one call, and the push path needs
+    to acquire its own connection from a real pool (bu-g27ib). The dedup read
+    has no transactional dependency on the caller's in-flight entity_facts
+    write, so reading it from *pool* instead of the caller's ``conn`` is safe.
     """
     if dedup_match is not None:
-        existing = await conn.fetchval(
+        existing = await pool.fetchval(
             """
             SELECT id FROM pending_actions
              WHERE tool_name = $1
@@ -369,21 +387,24 @@ async def _create_pending_action(
     now = datetime.now(UTC)
     expires_at = now + timedelta(hours=_PENDING_ACTION_EXPIRY_HOURS)
 
-    await conn.execute(
-        "INSERT INTO pending_actions "
-        "(id, tool_name, tool_args, agent_summary, session_id, status, "
-        "requested_at, expires_at, why, evidence) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-        action_id,
-        tool_name,
-        tool_args,
-        summary,
-        None,  # session_id not available at this layer
-        "pending",
-        now,
-        expires_at,
-        why,
-        evidence if evidence is not None else [],
+    # Bind the sanitized dict directly (no json.dumps, no ::jsonb cast) --
+    # asyncpg's registered jsonb codec already serializes once; pre-
+    # serializing double-encodes into a jsonb-typed STRING (bu-cymc4/bu-bstqu).
+    safe_tool_args = json.loads(json.dumps(tool_args, default=str))
+
+    await park_pending_action(
+        pool,
+        action_id=action_id,
+        tool_name=tool_name,
+        tool_args=safe_tool_args,
+        agent_summary=summary,
+        requested_at=now,
+        expires_at=expires_at,
+        session_id=get_current_runtime_session_id(),
+        why=why,
+        evidence=evidence if evidence is not None else [],
+        origin_butler=_ORIGIN_BUTLER,
+        approval_push_runtime=get_current_approval_push_runtime(),
     )
     return action_id
 
@@ -585,6 +606,7 @@ async def _upsert_fact(
 
 async def _assert_on_conn(
     conn: asyncpg.Connection,
+    pool: asyncpg.Pool,
     *,
     subject: uuid.UUID,
     predicate: str,
@@ -605,6 +627,12 @@ async def _assert_on_conn(
 
     Parameters
     ----------
+    pool:
+        The caller's asyncpg pool. Used ONLY for the owner-carve-out /
+        family-gate park paths below (:func:`_create_pending_action`), which
+        need real pool semantics (``pool.acquire()``) for the owner push --
+        every entity_facts read/write in this function still goes through
+        *conn*.
     wrap_transaction:
         When True, wraps the upsert in ``conn.transaction()`` for atomic
         supersession.  Set to False when the caller is already inside a
@@ -675,7 +703,7 @@ async def _assert_on_conn(
         )
 
         action_id = await _create_pending_action(
-            conn,
+            pool,
             "relationship_assert_fact",
             tool_args,
             summary,
@@ -753,7 +781,7 @@ async def _assert_on_conn(
             f"(conf={conf:g}) on entity {subject} — gated for confirmation"
         )
         action_id = await _create_pending_action(
-            conn,
+            pool,
             "relationship_assert_fact",
             tool_args_gate,
             gate_summary,
@@ -914,12 +942,12 @@ async def relationship_assert_fact(
     if conn is not None:
         # Caller owns the connection (and likely an open transaction).
         # Do NOT open another transaction — that would deadlock.
-        return await _assert_on_conn(conn, wrap_transaction=False, **kwargs)
+        return await _assert_on_conn(conn, pool, wrap_transaction=False, **kwargs)
 
     # No caller-supplied connection: acquire one from the pool and manage the
     # transaction ourselves.
     async with pool.acquire() as acquired_conn:
-        return await _assert_on_conn(acquired_conn, wrap_transaction=True, **kwargs)
+        return await _assert_on_conn(acquired_conn, pool, wrap_transaction=True, **kwargs)
 
 
 # ---------------------------------------------------------------------------
