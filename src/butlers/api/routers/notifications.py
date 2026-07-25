@@ -14,10 +14,12 @@ Mutation endpoints:
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -27,13 +29,22 @@ from butlers.api.db import DatabaseManager
 from butlers.api.models import ApiResponse, PaginationMeta
 from butlers.api.models.notification import (
     AckFailedResult,
+    NotificationActionResult,
     NotificationListResponse,
     NotificationStats,
     NotificationSummary,
 )
+from butlers.core.attention_ledger import record_attention_event
+from butlers.credential_store import resolve_owner_entity_info
 
 logger = logging.getLogger(__name__)
 _missing_notifications_table_warnings: set[str] = set()
+
+# Escalation only supports the two channels notify() itself dispatches
+# directly (see SUPPORTED_CHANNELS in switchboard/tools/notification/deliver.py);
+# whatsapp/other channels have no owner-credential resolver wired here.
+_ESCALATE_ALTERNATE_CHANNEL = {"telegram": "email", "email": "telegram"}
+_OWNER_INFO_TYPE_BY_CHANNEL = {"telegram": "telegram_chat_id", "email": "email"}
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 butler_notifications_router = APIRouter(prefix="/api/butlers", tags=["butlers", "notifications"])
@@ -149,6 +160,21 @@ _RETRIED_EXISTS_SQL = (
     ")"
 )
 
+# A manually retried/escalated notification (POST .../retry or .../escalate)
+# is flipped to status='read' and stamped with an explicit metadata marker
+# pointing at the new attempt -- distinct from the session-based organic
+# _RETRIED_EXISTS_SQL inference above, which never matches a dashboard-
+# triggered attempt (no session_id). Checked first so an explicitly-actioned
+# row reads as "retried"/"escalated" rather than the generic "read".
+_EFFECTIVE_STATUS_CASE_SQL = (
+    "CASE "
+    "  WHEN status = 'read' AND metadata ? 'escalated_to' THEN 'escalated' "
+    "  WHEN status = 'read' AND metadata ? 'retried_to' THEN 'retried' "
+    f"  WHEN status = 'failed' AND {_RETRIED_EXISTS_SQL} THEN 'retried' "
+    "  ELSE status "
+    "END"
+)
+
 
 async def _query_notifications(
     pool: asyncpg.Pool,
@@ -212,10 +238,7 @@ async def _query_notifications(
         data_sql = (
             f"SELECT id, source_butler, channel, recipient, message, metadata, "
             f"status, error, session_id, trace_id, created_at, "
-            f"CASE "
-            f"  WHEN status = 'failed' AND {_RETRIED_EXISTS_SQL} THEN 'retried' "
-            f"  ELSE status "
-            f"END AS effective_status "
+            f"{_EFFECTIVE_STATUS_CASE_SQL} AS effective_status "
             f"FROM notifications{where_clause} "
             f"ORDER BY created_at DESC "
             f"OFFSET ${idx} LIMIT ${idx + 1}"
@@ -632,3 +655,328 @@ async def ack_failed_notifications(
         cache.invalidate_all()
 
     return ApiResponse(data=AckFailedResult(acknowledged=acknowledged))
+
+
+# ---------------------------------------------------------------------------
+# POST /api/notifications/{notification_id}/retry
+# POST /api/notifications/{notification_id}/escalate
+# ---------------------------------------------------------------------------
+
+
+async def _fetch_notification_row(
+    pool: asyncpg.Pool, notification_id: uuid.UUID
+) -> asyncpg.Record | None:
+    try:
+        return await pool.fetchrow(
+            """
+            SELECT id, source_butler, channel, recipient, message, metadata,
+                   status, error, session_id, trace_id, created_at
+            FROM notifications
+            WHERE id = $1
+            """,
+            notification_id,
+        )
+    except Exception as exc:
+        if _is_missing_notifications_table_error(exc):
+            raise HTTPException(
+                status_code=503,
+                detail="Notifications table is not yet initialised",
+            ) from exc
+        raise
+
+
+def _extract_stored_envelope(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Reconstruct a notify.v1 envelope for a stored notification row.
+
+    Prefers the full envelope persisted at delivery time
+    (``metadata.notify_request``, written by ``deliver()``'s notify_request
+    path). Falls back to a minimal synthetic envelope built from the row's
+    own columns for older rows or the legacy channel/recipient/message
+    dispatch path, which never persisted an envelope -- so every failed row
+    is retryable, not just the ones that happen to carry one.
+    """
+    metadata = row.get("metadata")
+    if isinstance(metadata, Mapping):
+        stored = metadata.get("notify_request")
+        if isinstance(stored, Mapping):
+            return dict(stored)
+    return {
+        "schema_version": "notify.v1",
+        "origin_butler": row["source_butler"],
+        "delivery": {
+            "intent": "send",
+            "channel": row["channel"],
+            "recipient": row["recipient"],
+            "message": row["message"],
+        },
+    }
+
+
+async def _redeliver(
+    pool: asyncpg.Pool,
+    *,
+    envelope: dict[str, Any],
+    source_butler: str,
+    extra_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Re-invoke delivery in-process against the Switchboard pool.
+
+    Mirrors the dashboard-API's approval-push precedent
+    (``ingestion_connectors.py::_build_dashboard_approval_push_runtime``):
+    the dashboard-API process is not a butler daemon, so it imports
+    ``deliver()`` directly and calls it in-process rather than proxying
+    through a ``switchboard_client`` MCP connection that does not exist here.
+    """
+    from butlers.tools.switchboard.notification.deliver import deliver as _switchboard_deliver
+
+    return await _switchboard_deliver(
+        pool,
+        source_butler=source_butler,
+        notify_request=envelope,
+        metadata=extra_metadata,
+    )
+
+
+async def _finalize_manual_action(
+    pool: asyncpg.Pool,
+    *,
+    notification_id: uuid.UUID,
+    marker_key: str,
+    new_notification_id: str | None,
+    extra_fields: dict[str, Any],
+) -> None:
+    """Flip the original row to ``read`` and stamp a forward-link marker.
+
+    A human has now acted on this failure (retried or escalated it), so it
+    no longer belongs in the ``failed``/``terminal_failed`` attention view --
+    ``effective_status`` picks the marker up (see
+    ``_EFFECTIVE_STATUS_CASE_SQL``) to render "retried"/"escalated" rather
+    than the generic "read". Written even when the new attempt itself
+    raised before producing an id (``new_notification_id=None``): the
+    original must not sit forever in "failed" after a human has already
+    acted on it.
+    """
+    marker = {marker_key: new_notification_id, **extra_fields}
+    await pool.execute(
+        """
+        UPDATE notifications
+        SET status = 'read', metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
+        WHERE id = $1
+        """,
+        notification_id,
+        json.dumps(marker),
+    )
+
+
+@router.post(
+    "/{notification_id}/retry",
+    response_model=ApiResponse[NotificationActionResult],
+)
+async def retry_notification(
+    notification_id: uuid.UUID,
+    db: DatabaseManager = Depends(_get_db_manager),
+    cache: BriefingCache = Depends(get_cache),
+) -> ApiResponse[NotificationActionResult]:
+    """Manually re-attempt delivery of a failed notification, right now.
+
+    Distinct from ``notify()``'s own automatic transport-failure retry
+    (which only fires for a narrow "unexpected exception after resolution"
+    class and enqueues onto the deferred-notifications/scheduler-flush
+    path): this is a human-triggered, synchronous re-send for the ordinary
+    case -- a plain delivery error/timeout that ``notify()`` correctly
+    records as a terminal ``failed`` attention-ledger outcome and does not
+    retry on its own (core-notify spec, "Attention Ledger Recording at the
+    notify() Boundary"). Deliberately bypasses ``notify()``'s quiet-hours /
+    policy gate, the same way the dashboard's approval-push runtime does --
+    an explicit human retry carries the same "act now" intent as a
+    high-priority notification.
+
+    Returns HTTP 404 if the notification does not exist, 409 if it is not
+    currently ``failed``, 503 if the Switchboard pool is unavailable.
+    """
+    pool = _get_switchboard_pool(db)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Switchboard database is not available")
+
+    row = await _fetch_notification_row(pool, notification_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Notification not found: {notification_id}")
+    if row["status"] != "failed":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Only failed notifications can be retried; current status is '{row['status']}'."
+            ),
+        )
+
+    envelope = _extract_stored_envelope(row)
+    result = await _redeliver(
+        pool,
+        envelope=envelope,
+        source_butler=row["source_butler"],
+        extra_metadata={"retried_from": str(notification_id)},
+    )
+
+    new_id = result.get("notification_id")
+    status = result.get("status", "failed")
+    await _finalize_manual_action(
+        pool,
+        notification_id=notification_id,
+        marker_key="retried_to",
+        new_notification_id=new_id,
+        extra_fields={"retried_at": datetime.now(UTC).isoformat()},
+    )
+    await record_attention_event(
+        pool,
+        origin_butler=row["source_butler"],
+        source="notify",
+        outcome="delivered" if status == "sent" else "failed",
+        channel=row["channel"],
+        reason=(
+            "manual_retry"
+            if status == "sent"
+            else f"manual_retry_failed:{result.get('error_class', 'delivery_error')}"
+        ),
+        notification_ref=new_id,
+        metadata={"retried_from": str(notification_id)},
+    )
+
+    owner_id = await resolve_owner_id(pool)
+    if owner_id is not None:
+        cache.invalidate(owner_id)
+    else:
+        cache.invalidate_all()
+
+    return ApiResponse(
+        data=NotificationActionResult(
+            original_notification_id=notification_id,
+            new_notification_id=uuid.UUID(new_id) if new_id else None,
+            channel=row["channel"],
+            status=status,
+            error=result.get("error"),
+        )
+    )
+
+
+@router.post(
+    "/{notification_id}/escalate",
+    response_model=ApiResponse[NotificationActionResult],
+)
+async def escalate_notification(
+    notification_id: uuid.UUID,
+    db: DatabaseManager = Depends(_get_db_manager),
+    cache: BriefingCache = Depends(get_cache),
+) -> ApiResponse[NotificationActionResult]:
+    """Re-attempt a failed notification on the owner's alternate channel.
+
+    Escalation exists for the case a plain retry cannot fix: the *channel
+    itself* is the problem (a Telegram outage, a stale chat id) rather than
+    a one-off transient error. Swaps telegram<->email and resolves the
+    owner's contact for that channel via ``resolve_owner_entity_info``, the
+    same owner-credential lookup the dashboard's connector actions already
+    use for owner-directed delivery (``ingestion_connectors.py``). This
+    endpoint only escalates owner-directed notifications -- a third-party
+    recipient has no configured alternate to fall back to.
+
+    Returns HTTP 404 if not found, 409 if not ``failed``, 422 if the channel
+    has no supported alternate or the owner has no contact configured for
+    it, 503 if the Switchboard pool is unavailable.
+    """
+    pool = _get_switchboard_pool(db)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Switchboard database is not available")
+
+    row = await _fetch_notification_row(pool, notification_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Notification not found: {notification_id}")
+    if row["status"] != "failed":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Only failed notifications can be escalated; current status is '{row['status']}'."
+            ),
+        )
+
+    alt_channel = _ESCALATE_ALTERNATE_CHANNEL.get(row["channel"])
+    if alt_channel is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Escalation is only supported for telegram/email notifications, "
+                f"not '{row['channel']}'."
+            ),
+        )
+
+    info_type = _OWNER_INFO_TYPE_BY_CHANNEL[alt_channel]
+    alt_recipient = await resolve_owner_entity_info(pool, info_type)
+    if not alt_recipient:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No owner {alt_channel} contact is configured; cannot escalate.",
+        )
+
+    envelope: dict[str, Any] = {
+        "schema_version": "notify.v1",
+        "origin_butler": row["source_butler"],
+        "delivery": {
+            "intent": "send",
+            "channel": alt_channel,
+            "recipient": alt_recipient,
+            "message": row["message"],
+        },
+    }
+    if alt_channel == "email":
+        envelope["delivery"]["subject"] = f"Escalated notification from {row['source_butler']}"
+
+    result = await _redeliver(
+        pool,
+        envelope=envelope,
+        source_butler=row["source_butler"],
+        extra_metadata={
+            "escalated_from": str(notification_id),
+            "escalated_from_channel": row["channel"],
+        },
+    )
+
+    new_id = result.get("notification_id")
+    status = result.get("status", "failed")
+    await _finalize_manual_action(
+        pool,
+        notification_id=notification_id,
+        marker_key="escalated_to",
+        new_notification_id=new_id,
+        extra_fields={
+            "escalated_at": datetime.now(UTC).isoformat(),
+            "escalated_channel": alt_channel,
+        },
+    )
+    await record_attention_event(
+        pool,
+        origin_butler=row["source_butler"],
+        source="notify",
+        outcome="delivered" if status == "sent" else "failed",
+        channel=alt_channel,
+        reason=(
+            "manual_escalate"
+            if status == "sent"
+            else f"manual_escalate_failed:{result.get('error_class', 'delivery_error')}"
+        ),
+        notification_ref=new_id,
+        metadata={"escalated_from": str(notification_id)},
+    )
+
+    owner_id = await resolve_owner_id(pool)
+    if owner_id is not None:
+        cache.invalidate(owner_id)
+    else:
+        cache.invalidate_all()
+
+    return ApiResponse(
+        data=NotificationActionResult(
+            original_notification_id=notification_id,
+            new_notification_id=uuid.UUID(new_id) if new_id else None,
+            channel=alt_channel,
+            status=status,
+            error=result.get("error"),
+        )
+    )
