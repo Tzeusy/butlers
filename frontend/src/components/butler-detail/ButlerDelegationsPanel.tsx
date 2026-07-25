@@ -16,6 +16,7 @@
  */
 
 import { MonoLabel, Panel } from "@/components/butler-detail/atoms"
+import { SourceDegradedNote } from "@/components/ui/query-boundary"
 import { Time } from "@/components/ui/time"
 import { useDelegationLedger } from "@/hooks/use-delegation"
 import type { DelegationLedgerEntry } from "@/api/types"
@@ -77,11 +78,7 @@ function DelegationList({
     return <MonoLabel color="dim">loading</MonoLabel>
   }
   if (isError) {
-    return (
-      <p className="text-sm text-destructive" data-testid={`${testId}-error`}>
-        Could not load delegations.
-      </p>
-    )
+    return <SourceDegradedNote label="Delegations" testId={`${testId}-error`} />
   }
   if (entries.length === 0) {
     return <MonoLabel color="dim">{emptyText}</MonoLabel>

@@ -11,6 +11,7 @@
 //   - Populated: source, escalation level, state, summary rendered
 //   - Resolved condition: recovery provenance (resolved-relative + duration)
 //   - Suppressed QA dispatch count: rendered when the fingerprint matches
+//   - Suppression-count source degraded: never fabricates a 0 count
 // ---------------------------------------------------------------------------
 
 import { describe, expect, it, vi } from "vitest"
@@ -27,6 +28,7 @@ type ConditionsHookResult = Partial<{
 
 let mockConditionsResult: ConditionsHookResult = { isPending: false }
 let mockSuppressionCounts: Map<string, number> = new Map()
+let mockSuppressionIsError = false
 
 vi.mock("@/hooks/use-system", () => ({
   useSystemConditions: () => mockConditionsResult,
@@ -36,7 +38,7 @@ vi.mock("@/hooks/use-healing", () => ({
   useInfraConditionSuppressionCounts: () => ({
     counts: mockSuppressionCounts,
     isLoading: false,
-    isError: false,
+    isError: mockSuppressionIsError,
   }),
 }))
 
@@ -170,6 +172,23 @@ describe("StandingConditionsTile -- populated", () => {
     mockConditionsResult = { isPending: false, data: makeFacts({ conditions: [openCondition], total: 1 }) }
     expect(render()).not.toContain("condition-suppressed-count")
   })
+
+  it("renders a degraded note when the suppression-count source errors, instead of a fabricated 0", () => {
+    mockSuppressionIsError = true
+    mockSuppressionCounts = new Map()
+    mockConditionsResult = { isPending: false, data: makeFacts({ conditions: [openCondition], total: 1 }) }
+    const html = render()
+    expect(html).toContain("standing-conditions-suppression-degraded")
+    expect(html).not.toContain("condition-suppressed-count")
+    mockSuppressionIsError = false
+  })
+
+  it("does not render the suppression-degraded note when the source is healthy", () => {
+    mockSuppressionIsError = false
+    mockSuppressionCounts = new Map()
+    mockConditionsResult = { isPending: false, data: makeFacts({ conditions: [openCondition], total: 1 }) }
+    expect(render()).not.toContain("standing-conditions-suppression-degraded")
+  })
 })
 
 describe("StandingConditionsTile -- resolved condition (auto-resolve provenance)", () => {
@@ -192,6 +211,7 @@ describe("StandingConditionsTile -- resolved condition (auto-resolve provenance)
 
   it("renders 'Resolved' provenance with recovery duration", () => {
     mockSuppressionCounts = new Map()
+    mockSuppressionIsError = false
     mockConditionsResult = {
       isPending: false,
       data: makeFacts({ conditions: [resolvedCondition], total: 1 }),

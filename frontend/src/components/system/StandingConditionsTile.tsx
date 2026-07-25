@@ -19,6 +19,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { SourceDegradedNote } from "@/components/ui/query-boundary"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StateDot, type DispatchState } from "@/components/ui/StateDot"
 import { Time } from "@/components/ui/time"
@@ -63,7 +64,14 @@ function conditionDotState(state: string): DispatchState {
   return "ok"
 }
 
-function ConditionRow({ condition, suppressedCount }: { condition: ConditionEntry; suppressedCount: number }) {
+function ConditionRow({
+  condition,
+  suppressedCount,
+}: {
+  condition: ConditionEntry
+  /** null means the suppression-count source is degraded -- render nothing rather than a fabricated 0. */
+  suppressedCount: number | null
+}) {
   const isResolved = condition.state === "resolved"
   return (
     <li className="text-sm" data-testid="standing-condition-row">
@@ -97,7 +105,7 @@ function ConditionRow({ condition, suppressedCount }: { condition: ConditionEntr
             Detected <Time value={condition.first_detected_at} mode="relative" />
           </>
         )}
-        {suppressedCount > 0 ? (
+        {suppressedCount !== null && suppressedCount > 0 ? (
           <span data-testid="condition-suppressed-count">
             {" "}
             · {suppressedCount} QA dispatch{suppressedCount === 1 ? "" : "es"} suppressed
@@ -110,14 +118,15 @@ function ConditionRow({ condition, suppressedCount }: { condition: ConditionEntr
 
 export function StandingConditionsTile() {
   const { data: response, isPending, isError } = useSystemConditions({ limit: 20 })
-  const { counts: suppressedCounts } = useInfraConditionSuppressionCounts()
+  const { counts: suppressedCounts, isError: suppressionCountsError } =
+    useInfraConditionSuppressionCounts()
 
   if (isPending) return <TileSkeleton />
 
   if (isError) {
     return (
       <TileFrame testId="standing-conditions-error">
-        <p className="text-destructive text-sm">Could not load standing conditions.</p>
+        <SourceDegradedNote label="Standing conditions" detail="could not be reached" />
       </TileFrame>
     )
   }
@@ -127,9 +136,7 @@ export function StandingConditionsTile() {
   if (!facts || !facts.conditions_available) {
     return (
       <TileFrame testId="standing-conditions-degraded">
-        <p className="text-destructive text-sm">
-          Standing conditions unavailable. The reliability ledger could not be reached.
-        </p>
+        <SourceDegradedNote label="Standing conditions" detail="reliability ledger unavailable" />
       </TileFrame>
     )
   }
@@ -144,12 +151,21 @@ export function StandingConditionsTile() {
 
   return (
     <TileFrame testId="standing-conditions-content">
+      {suppressionCountsError ? (
+        <SourceDegradedNote
+          className="mb-2"
+          label="QA dispatch suppression counts"
+          testId="standing-conditions-suppression-degraded"
+        />
+      ) : null}
       <ul className="space-y-3 max-h-[320px] overflow-y-auto">
         {facts.conditions.map((condition) => (
           <ConditionRow
             key={condition.id}
             condition={condition}
-            suppressedCount={suppressedCounts.get(condition.fingerprint) ?? 0}
+            suppressedCount={
+              suppressionCountsError ? null : suppressedCounts.get(condition.fingerprint) ?? 0
+            }
           />
         ))}
       </ul>
