@@ -228,6 +228,8 @@ function DrilldownBody({ date, tz }: ChroniclesDrilldownPanelProps) {
             windowStart={from}
             windowEnd={to}
             onEpisodeClick={handleEpisodeClick}
+            isError={episodesQuery.isError}
+            onRetry={() => void episodesQuery.refetch()}
           />
           <BalanceRings
             data={balance.data?.data}
