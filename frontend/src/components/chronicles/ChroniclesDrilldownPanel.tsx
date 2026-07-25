@@ -185,7 +185,7 @@ function DrilldownBody({ date, tz }: ChroniclesDrilldownPanelProps) {
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-end">
-        <ManualRefreshButton timeWindow={{ from, to }} />
+        <ManualRefreshButton />
       </div>
 
       <SourceStateBadgeStrip />
