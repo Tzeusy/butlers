@@ -28,7 +28,7 @@ import { ManualRefreshButton } from "@/components/chronicles/ManualRefreshButton
 // the invalidateQueries calls made on click can be inspected.
 // ---------------------------------------------------------------------------
 
-const invalidateQueries = vi.fn(() => Promise.resolve());
+const invalidateQueries = vi.fn((_opts: { queryKey: readonly unknown[] }) => Promise.resolve());
 
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries }),

@@ -431,7 +431,7 @@ describe("SettingsPermissionsPage — audit reel filters operational noise [bu-9
       isError: true,
       error: new Error("audit log fetch failed"),
       refetch: vi.fn(),
-    });
+    } as unknown as ReturnType<typeof useAuditLogMock>);
 
     await act(async () => {
       renderPage();
