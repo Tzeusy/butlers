@@ -446,6 +446,27 @@ was removed (no compat shim).
 - **AND** HTTP 404 is returned when `{id}` does not exist, and HTTP 503 when
   the Switchboard pool is unavailable
 
+#### Scenario: Concurrent or replayed retry/escalate never double-delivers
+- **WHEN** two `POST .../retry` (or two `.../escalate`) requests for the same
+  `{id}` race — a double-click, two open tabs, or a client resending after a
+  perceived timeout — and both observe `status = 'failed'` on their initial
+  read
+- **THEN** immediately before invoking real delivery, the backend atomically
+  claims the row with a single conditional `UPDATE notifications SET status
+  = 'read' WHERE id = $1 AND status = 'failed' RETURNING *`; only the first
+  request's `UPDATE` can match a `'failed'` row, so exactly one request
+  proceeds to redeliver and the loser's claim affects zero rows
+- **AND** the losing request returns HTTP 409 without invoking delivery — the
+  user is never sent the notification twice
+- **AND** because the claim (not delivery success) is what leaves `'failed'`
+  status, a delivery-adjacent failure after the claim — including
+  `_finalize_manual_action`'s own metadata-merge write failing after a
+  successful send — cannot leave the row re-claimable: a subsequent client
+  retry after such a failure also observes a non-`'failed'` status and gets
+  HTTP 409, never a second real send. The tradeoff is a possible orphaned row
+  (already `status = 'read'` but missing its `retried_to`/`escalated_to`
+  forward-link marker) rather than a duplicate delivery
+
 #### Scenario: Manual escalate re-sends on the owner's alternate channel
 - **WHEN** `POST /api/notifications/{id}/escalate` is called on a failed
   `telegram` or `email` notification

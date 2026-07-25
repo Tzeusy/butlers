@@ -748,6 +748,53 @@ async def _redeliver(
     )
 
 
+async def _claim_failed_notification(
+    pool: asyncpg.Pool, notification_id: uuid.UUID
+) -> asyncpg.Record | None:
+    """Atomically claim a ``failed`` row for a manual retry/escalate action.
+
+    Concurrency guard for ``retry_notification``/``escalate_notification``:
+    a plain ``fetchrow`` status check followed by a real send is a classic
+    check-then-act race (two concurrent/replayed requests both see
+    ``status='failed'``, both redeliver, the user gets the message twice).
+    This conditional ``UPDATE ... WHERE status = 'failed'`` is a single
+    atomic statement -- Postgres serializes concurrent updates to the same
+    row, so only the first caller's ``UPDATE`` can match and return a row;
+    every other concurrent or replayed caller affects zero rows and gets
+    ``None`` back, which the endpoint turns into an honest 409 instead of a
+    second real delivery.
+
+    The claim flips ``status`` straight to ``'read'`` -- the terminal state
+    :func:`_finalize_manual_action` would reach anyway -- rather than a
+    dedicated in-flight status, because ``chk_notifications_status`` only
+    permits ``sent``/``failed``/``read`` and reusing ``'read'`` avoids a
+    schema migration for this fix. Call this only immediately before the
+    real delivery attempt (after any read-only 404/422 validation), never
+    before checks that can legitimately reject without sending anything --
+    claiming on a path that never delivers would strand a retryable failure
+    as unactionable.
+
+    Crash-window semantics: if the process dies (or :func:`_finalize_manual_action`
+    raises) between this claim and the follow-up metadata merge, the row is
+    left at ``status='read'`` with no ``retried_to``/``escalated_to`` marker.
+    It then renders as a plain "read" notification instead of
+    "retried"/"escalated" -- a cosmetic gap -- but it can never be re-claimed
+    or double-delivered, because it is already off ``'failed'``. This is a
+    deliberate safety-over-completeness tradeoff: an orphaned marker is
+    recoverable by inspection; a duplicate real send is not.
+    """
+    return await pool.fetchrow(
+        """
+        UPDATE notifications
+        SET status = 'read'
+        WHERE id = $1 AND status = 'failed'
+        RETURNING id, source_butler, channel, recipient, message, metadata,
+                  status, error, session_id, trace_id, created_at
+        """,
+        notification_id,
+    )
+
+
 async def _finalize_manual_action(
     pool: asyncpg.Pool,
     *,
@@ -803,7 +850,9 @@ async def retry_notification(
     high-priority notification.
 
     Returns HTTP 404 if the notification does not exist, 409 if it is not
-    currently ``failed``, 503 if the Switchboard pool is unavailable.
+    currently ``failed`` (including a concurrent/replayed retry that lost the
+    atomic claim below -- see :func:`_claim_failed_notification`), 503 if the
+    Switchboard pool is unavailable.
     """
     pool = _get_switchboard_pool(db)
     if pool is None:
@@ -821,6 +870,21 @@ async def retry_notification(
         )
 
     envelope = _extract_stored_envelope(row)
+
+    claimed = await _claim_failed_notification(pool, notification_id)
+    if claimed is None:
+        # Lost a concurrent claim race (double-click, two tabs, a client
+        # resending after a perceived timeout) -- another request already
+        # flipped this row off 'failed' between our read above and this
+        # claim. Report the same 409 a fresh read would give instead of
+        # redelivering a second time.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Only failed notifications can be retried; this notification was already actioned."
+            ),
+        )
+
     result = await _redeliver(
         pool,
         envelope=envelope,
@@ -889,9 +953,11 @@ async def escalate_notification(
     endpoint only escalates owner-directed notifications -- a third-party
     recipient has no configured alternate to fall back to.
 
-    Returns HTTP 404 if not found, 409 if not ``failed``, 422 if the channel
-    has no supported alternate or the owner has no contact configured for
-    it, 503 if the Switchboard pool is unavailable.
+    Returns HTTP 404 if not found, 409 if not ``failed`` (including a
+    concurrent/replayed escalate that lost the atomic claim below -- see
+    :func:`_claim_failed_notification`), 422 if the channel has no supported
+    alternate or the owner has no contact configured for it, 503 if the
+    Switchboard pool is unavailable.
     """
     pool = _get_switchboard_pool(db)
     if pool is None:
@@ -938,6 +1004,19 @@ async def escalate_notification(
     }
     if alt_channel == "email":
         envelope["delivery"]["subject"] = f"Escalated notification from {row['source_butler']}"
+
+    claimed = await _claim_failed_notification(pool, notification_id)
+    if claimed is None:
+        # Lost a concurrent claim race -- see the matching comment in
+        # retry_notification. Checked here, after the 422 validation above,
+        # so a request that would fail validation never claims the row.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Only failed notifications can be escalated; "
+                "this notification was already actioned."
+            ),
+        )
 
     result = await _redeliver(
         pool,
