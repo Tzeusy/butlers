@@ -567,7 +567,10 @@ class TestNotifyMissingIdentifierAndOwner:
                 daemon, "_resolve_entity_channel_identifier", new=AsyncMock(return_value=None)
             ),
             patch(
-                "butlers.modules.approvals.park.park_pending_action",
+                # notify() reaches the park choke point via the core_tools ->
+                # core.approvals_hooks indirection (core_tools must never
+                # import modules.* directly; bu-mda0r).
+                "butlers.core.approvals_hooks.park_pending_action",
                 new=AsyncMock(return_value=None),
             ) as mock_park,
         ):
@@ -752,27 +755,40 @@ class TestNotifyDecisionDossierBoundary:
         assert notify_fn is not None
         daemon.switchboard_client = _make_mock_client()
 
-        with (
-            patch.object(
-                daemon,
-                "_resolve_entity_channel_identifier",
-                new=AsyncMock(return_value=None),
-            ),
-            patch.object(
-                daemon,
-                "_resolve_default_notify_recipient",
-                new=AsyncMock(return_value=None),
-            ),
-            patch(
-                "butlers.core.owner.fetch_owner_entity_id",
-                new=AsyncMock(return_value=entity_id),
-            ),
-        ):
-            result = await notify_fn(
-                channel="telegram",
-                message="Owner delivery awaiting channel configuration",
-                entity_id=entity_id,
-            )
+        # This butler.toml fixture does not enable the approvals module, so
+        # on_startup() never calls register_park_pending_action; register the
+        # real implementation directly so notify()'s missing-identifier park
+        # (routed through the core.approvals_hooks choke point, bu-mda0r)
+        # actually issues its INSERT against this test's mock pool.
+        import butlers.core.approvals_hooks as _approvals_hooks
+        from butlers.modules.approvals.park import park_pending_action as _real_park
+
+        original_park_hook = _approvals_hooks._park_pending_action_hook
+        _approvals_hooks.register_park_pending_action(_real_park)
+        try:
+            with (
+                patch.object(
+                    daemon,
+                    "_resolve_entity_channel_identifier",
+                    new=AsyncMock(return_value=None),
+                ),
+                patch.object(
+                    daemon,
+                    "_resolve_default_notify_recipient",
+                    new=AsyncMock(return_value=None),
+                ),
+                patch(
+                    "butlers.core.owner.fetch_owner_entity_id",
+                    new=AsyncMock(return_value=entity_id),
+                ),
+            ):
+                result = await notify_fn(
+                    channel="telegram",
+                    message="Owner delivery awaiting channel configuration",
+                    entity_id=entity_id,
+                )
+        finally:
+            _approvals_hooks._park_pending_action_hook = original_park_hook
 
         assert result["status"] == "pending_missing_identifier"
         pending_insert = next(

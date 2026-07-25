@@ -404,23 +404,37 @@ class TestNotifyParkPath:
         notify_fn = captured.get("notify")
         assert notify_fn is not None, "notify() was not registered"
 
-        entity_id = uuid.uuid4()
-        result = await notify_fn(
-            channel="telegram",
-            message="hello there",
-            intent="send",
-            entity_id=entity_id,
-            _why="The contact needs this delivery after their channel is configured.",
-            _evidence=[
-                {
-                    "type": "entity",
-                    "ref": str(entity_id),
-                    "note": "The target entity lacks a telegram identifier.",
-                }
-            ],
-            _blast_radius="contact",
-            _reversibility="compensable",
-        )
+        # notify() reaches park_pending_action via the core_tools ->
+        # core.approvals_hooks indirection (core_tools must never import
+        # modules.* directly; bu-mda0r). Register the real implementation for
+        # this test the same way modules.approvals.module.on_startup() does
+        # in production, and restore whatever was registered beforehand so
+        # this doesn't leak into other tests sharing the process.
+        import butlers.core.approvals_hooks as _approvals_hooks
+        from butlers.modules.approvals.park import park_pending_action as _real_park
+
+        original_park_hook = _approvals_hooks._park_pending_action_hook
+        _approvals_hooks.register_park_pending_action(_real_park)
+        try:
+            entity_id = uuid.uuid4()
+            result = await notify_fn(
+                channel="telegram",
+                message="hello there",
+                intent="send",
+                entity_id=entity_id,
+                _why="The contact needs this delivery after their channel is configured.",
+                _evidence=[
+                    {
+                        "type": "entity",
+                        "ref": str(entity_id),
+                        "note": "The target entity lacks a telegram identifier.",
+                    }
+                ],
+                _blast_radius="contact",
+                _reversibility="compensable",
+            )
+        finally:
+            _approvals_hooks._park_pending_action_hook = original_park_hook
         assert result["status"] == "pending_missing_identifier"
 
         stored = await _fetch_latest_tool_args(pool, "notify")

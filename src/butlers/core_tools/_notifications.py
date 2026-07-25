@@ -592,7 +592,7 @@ def register_notification_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable
                     if pool is not None:
                         import datetime as _dt
 
-                        from butlers.modules.approvals.park import park_pending_action
+                        from butlers.core.approvals_hooks import park_pending_action
 
                         action_id = uuid.uuid4()
                         now = _dt.datetime.now(_dt.UTC)
