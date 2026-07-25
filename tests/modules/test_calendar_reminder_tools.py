@@ -304,6 +304,64 @@ class TestReminderCreateBehavior:
 
 
 # ---------------------------------------------------------------------------
+# calendar_create_butler_event: native reminder storage
+# ---------------------------------------------------------------------------
+
+
+class TestCreateButlerReminder:
+    async def test_uses_native_calendar_event_without_legacy_reminders_table(self):
+        """The butler-events group can create reminders on every calendar butler."""
+        mcp, mod = await _make_module(butler_name="finance", pool=_make_pool())
+        event_id = uuid.uuid4()
+        event_row = {
+            "id": event_id,
+            "title": "Review renewal",
+            "description": "Cancel if no longer needed",
+            "location": "Online",
+            "starts_at": _DUE_AT,
+            "ends_at": _ENDS_AT,
+            "status": "confirmed",
+            "recurrence_rule": None,
+            "source_butler": "finance",
+            "source_session_id": None,
+        }
+
+        mod._table_exists = AsyncMock(return_value=False)
+        mod._prepare_workspace_mutation = AsyncMock(return_value=("key", None))
+        mod._resolve_action_source_id = AsyncMock(return_value=_SOURCE_ID)
+        mod._insert_reminder_to_calendar_events = AsyncMock(return_value=(event_id, event_row))
+        mod._refresh_butler_projection = AsyncMock(return_value={"available": True})
+        mod._finalize_workspace_mutation = AsyncMock()
+
+        result = await mcp.tools["calendar_create_butler_event"](
+            butler_name="finance",
+            title="Review renewal",
+            start_at=_DUE_AT,
+            end_at=_ENDS_AT,
+            description="Cancel if no longer needed",
+            location="Online",
+            source_hint="butler_reminder",
+        )
+
+        assert result["status"] == "created"
+        assert result["source_type"] == "butler_reminder"
+        assert result["event_id"] == str(event_id)
+        assert result["reminder_id"] == str(event_id)
+        mod._insert_reminder_to_calendar_events.assert_awaited_once_with(
+            title="Review renewal",
+            body=None,
+            description="Cancel if no longer needed",
+            location="Online",
+            starts_at=_DUE_AT,
+            ends_at=_ENDS_AT,
+            timezone="UTC",
+            recurrence_rule=None,
+            entity_ids=[],
+        )
+        assert not any(call.args == ("reminders",) for call in mod._table_exists.await_args_list)
+
+
+# ---------------------------------------------------------------------------
 # reminder_list: behavior
 # ---------------------------------------------------------------------------
 

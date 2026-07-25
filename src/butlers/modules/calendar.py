@@ -4333,15 +4333,12 @@ class CalendarModule(Module):
                 until_at = module._rrule_until(normalized_rule)
 
             normalized_source_hint = module._normalize_butler_event_source_hint(source_hint)
-            reminders_available = await module._table_exists("reminders")
             source_kind = normalized_source_hint
             if source_kind is None:
-                if normalized_rule is None and cron is None and reminders_available:
+                if normalized_rule is None and cron is None:
                     source_kind = BUTLER_EVENT_SOURCE_REMINDER
                 else:
                     source_kind = BUTLER_EVENT_SOURCE_SCHEDULED
-            if source_kind == BUTLER_EVENT_SOURCE_REMINDER and not reminders_available:
-                raise ValueError("Reminder source is not available on this butler")
 
             normalized_request_id = module._normalize_request_id(request_id)
             action_payload = {
@@ -4383,31 +4380,29 @@ class CalendarModule(Module):
             )
 
             try:
-                event_link_id = uuid.uuid4()
                 if source_kind == BUTLER_EVENT_SOURCE_REMINDER:
-                    reminder = await module._create_reminder_event(
+                    reminder_id, reminder = await module._insert_reminder_to_calendar_events(
                         title=normalized_title,
-                        start_at=start_at,
-                        timezone=effective_timezone,
-                        until_at=until_at,
-                        recurrence_rule=normalized_rule,
-                        cron=cron,
-                        action=action,
-                        action_args=action_args,
-                        calendar_event_id=event_link_id,
+                        body=None,
                         description=normalized_description,
                         location=normalized_location,
+                        starts_at=start_at,
+                        ends_at=effective_end,
+                        timezone=effective_timezone,
+                        recurrence_rule=normalized_rule,
+                        entity_ids=[],
                     )
-                    origin_ref = str(reminder["id"])
+                    origin_ref = str(reminder_id)
                     result: dict[str, Any] = {
                         "status": "created",
                         "source_type": BUTLER_EVENT_SOURCE_REMINDER,
                         "butler_name": module._butler_name,
-                        "event_id": str(reminder.get("calendar_event_id") or reminder["id"]),
-                        "reminder_id": str(reminder["id"]),
+                        "event_id": str(reminder_id),
+                        "reminder_id": str(reminder_id),
                         "reminder": reminder,
                     }
                 else:
+                    event_link_id = uuid.uuid4()
                     effective_cron = cron
                     if effective_cron is None:
                         if normalized_rule is None:
@@ -9701,6 +9696,8 @@ class CalendarModule(Module):
         *,
         title: str,
         body: str | None,
+        description: str | None = None,
+        location: str | None = None,
         starts_at: datetime,
         ends_at: datetime,
         timezone: str,
@@ -9731,22 +9728,24 @@ class CalendarModule(Module):
         row = await pool.fetchrow(
             """
             INSERT INTO calendar_events (
-                source_id, origin_ref, title, body, timezone,
+                source_id, origin_ref, title, description, body, location, timezone,
                 starts_at, ends_at, all_day, status, visibility,
                 recurrence_rule, source_butler, source_session_id, metadata
             )
             VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, FALSE, 'confirmed', 'default',
-                $8, $9, $10, '{"native": true}'::jsonb
+                $1, $2, $3, $4, $5, $6, $7,
+                $8, $9, FALSE, 'confirmed', 'default',
+                $10, $11, $12, '{"native": true}'::jsonb
             )
-            RETURNING id, title, body, starts_at, ends_at, status,
+            RETURNING id, title, description, body, location, starts_at, ends_at, status,
                       recurrence_rule, source_butler, source_session_id
             """,
             source_id,
             origin_ref,
             title,
+            description,
             body,
+            location,
             timezone,
             starts_at,
             ends_at,
