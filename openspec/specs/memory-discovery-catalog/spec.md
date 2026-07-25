@@ -329,6 +329,24 @@ requiring a copy-pasted `butler.toml` schedule block per butler.
   job can never re-introduce a row the write-time guard (or the one-off purge
   migration cleaning up rows written before this exclusion existed) keeps out
 
+#### Scenario: The one-off purge recovers rows whose recorded sensitivity cannot be trusted
+
+- **WHEN** the one-off purge migration (core_183) runs against
+  `public.memory_catalog` rows written before write-time exclusion existed
+- **THEN** it MUST delete rows whose own `sensitivity` column is already
+  `pii`/`confidential`
+- **AND** it MUST ALSO delete rows whose `sensitivity` column is NULL but
+  whose canonical source fact/rule (resolved via the catalog row's
+  `source_schema`/`source_table`/`source_id` provenance) is genuinely
+  `pii`/`confidential` -- a catalog row's own `sensitivity` column cannot be
+  trusted in isolation, because the live write-behind path historically
+  dropped it entirely (every such row landed with `sensitivity IS NULL`
+  regardless of the source's true classification, so `COALESCE(sensitivity,
+  'normal')` alone would silently leave those rows in the catalog)
+- **AND** a NULL-sensitivity row whose canonical source is genuinely `normal`
+  (or whose source no longer exists to check) MUST NOT be deleted -- the
+  purge recovers provably-sensitive rows, it is not a blanket NULL purge
+
 ---
 
 ### Requirement: Backfill reverse-reconciles drifted catalog rows
