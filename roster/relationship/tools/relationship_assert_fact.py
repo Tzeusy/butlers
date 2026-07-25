@@ -321,8 +321,14 @@ async def _is_owner_entity(
         return False
 
 
-async def _validate_predicate(conn: asyncpg.Connection, predicate: str) -> None:
-    """Raise ValueError if *predicate* is not in relationship.entity_predicate_registry."""
+async def _validate_predicate(conn: asyncpg.Connection | asyncpg.Pool, predicate: str) -> None:
+    """Raise ValueError if *predicate* is not in relationship.entity_predicate_registry.
+
+    Accepts a bare ``Pool`` as well as a ``Connection`` -- both expose the same
+    ``fetchval()`` surface (a pool auto-acquires/releases internally), which
+    :func:`validate_fact_fields_or_raise` relies on to avoid an explicit
+    ``pool.acquire()`` for a single read (bu-g27ib).
+    """
     exists = await conn.fetchval(
         "SELECT EXISTS (SELECT 1 FROM relationship.entity_predicate_registry WHERE predicate = $1)",
         predicate,
@@ -333,6 +339,48 @@ async def _validate_predicate(conn: asyncpg.Connection, predicate: str) -> None:
             "relationship.entity_predicate_registry. "
             "Add it via migration or use one of the seeded predicate names."
         )
+
+
+async def validate_fact_fields_or_raise(
+    pool: asyncpg.Pool,
+    *,
+    predicate: str,
+    conf: float,
+    object_kind: str,
+) -> None:
+    """Validate a fact's static fields without writing anything.
+
+    Raises ``ValueError`` with the same messages :func:`relationship_assert_fact`
+    would raise for an unregistered predicate, an out-of-range ``conf``, or an
+    invalid ``object_kind`` -- but performs no mutation and reads only the
+    predicate registry.
+
+    Callers that assert a BATCH of facts inside one outer transaction (e.g.
+    ``POST /entities``'s ``initial_facts`` loop) MUST pre-validate every fact
+    in the batch with this function *before* starting that transaction.
+    Reason (bu-g27ib): :func:`park_pending_action` (the owner-push choke
+    point every parking fact routes through, bu-mda0r) writes its
+    ``pending_actions`` row -- and fires the owner push -- on its own
+    connection acquired from *pool*, independent of any caller-supplied
+    ``conn``/transaction, because the push path needs real ``pool.acquire()``
+    semantics. If an EARLIER fact in a batch parks (committing that row) and
+    a LATER fact in the same batch then raises ``ValueError`` (e.g. an
+    unregistered predicate), rolling back the outer transaction does NOT
+    undo the earlier park: the result is an orphaned ``pending_actions`` row
+    referencing data that was never persisted, and an owner push for a
+    mutation that no longer exists. Ruling out every ``ValueError`` up front
+    makes that mid-batch rollback structurally unreachable.
+    """
+    if object_kind not in ("literal", "entity"):
+        raise ValueError(f"Invalid object_kind {object_kind!r}: must be 'literal' or 'entity'.")
+    if not (0.0 <= conf <= 1.0):
+        raise ValueError(f"conf must be in [0.0, 1.0]; got {conf!r}.")
+    resolved_predicate = _PREDICATE_ALIAS_MAP.get(predicate, predicate)
+    # Query *pool* directly (no explicit acquire()) -- a single read has no
+    # need to hold a dedicated connection, and this keeps a batch
+    # pre-validation pass from consuming an extra connection-pool slot per
+    # fact on top of the one the caller's transaction already holds.
+    await _validate_predicate(pool, resolved_predicate)
 
 
 async def _create_pending_action(
