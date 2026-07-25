@@ -349,6 +349,7 @@ async def check_email_recipient(
     blast_radius: Any = None,
     reversibility: Any = None,
     enforce_dossier: bool = False,
+    approval_push_runtime: Any = None,
 ) -> EmailGuardDecision:
     """Check whether an outbound email to *email_target* is permitted.
 
@@ -357,6 +358,11 @@ async def check_email_recipient(
     ``allowed=True`` decision so butlers without approvals remain functional.
 
     Parameters mirror ``modules.approvals.email_guard.check_email_recipient``.
+    ``approval_push_runtime`` (an
+    ``modules.approvals.notifications.ApprovalPushRuntime`` or ``None``) is
+    passed through untyped here to avoid importing the approvals module from
+    core; the registered hook applies it when parking an action so the owner
+    is actually notified (bu-mda0r).
     """
     if _email_guard_hook is None:
         # Approvals module not loaded — fail open.
@@ -379,6 +385,7 @@ async def check_email_recipient(
         blast_radius=blast_radius,
         reversibility=reversibility,
         enforce_dossier=enforce_dossier,
+        approval_push_runtime=approval_push_runtime,
     )
     # Coerce to core's EmailGuardDecision (modules returns the approvals-local type).
     return EmailGuardDecision(
@@ -409,6 +416,7 @@ async def check_recipient(
     blast_radius: Any = None,
     reversibility: Any = None,
     enforce_dossier: bool = False,
+    approval_push_runtime: Any = None,
 ) -> EmailGuardDecision:
     """Channel-general outbound recipient guard for ``notify()``.
 
@@ -422,6 +430,9 @@ async def check_recipient(
     decision so butlers without approvals remain functional.
 
     Parameters mirror ``modules.approvals.email_guard.check_recipient``.
+    ``approval_push_runtime`` is forwarded untyped (see
+    :func:`check_email_recipient`) so a parked action is actually pushed to
+    the owner (bu-mda0r).
     """
     if _recipient_guard_hook is None:
         # Approvals module not loaded — fail open.
@@ -444,6 +455,7 @@ async def check_recipient(
         blast_radius=blast_radius,
         reversibility=reversibility,
         enforce_dossier=enforce_dossier,
+        approval_push_runtime=approval_push_runtime,
     )
     # Coerce to core's EmailGuardDecision (modules returns the approvals-local type).
     return EmailGuardDecision(

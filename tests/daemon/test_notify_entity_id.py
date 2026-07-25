@@ -544,25 +544,32 @@ class TestNotifyMissingIdentifierAndOwner:
     """Tasks 7.3+7.4 — missing identifier parks; no entity_id uses owner resolution."""
 
     async def test_missing_identifier_parks_and_owner_fallback(self, butler_dir: Path) -> None:
-        """Missing identifier → pending_missing_identifier; owner notified if available;
-        no entity_id/recipient → owner default resolver called; entity_id wins over recipient."""
+        """Missing identifier -> pending_missing_identifier, parked through the shared
+        park_pending_action choke point (bu-mda0r) so the owner push is attempted
+        exactly the way every other park path attempts it; no entity_id/recipient ->
+        owner default resolver called; entity_id wins over recipient.
+
+        The push mechanism itself (whether the owner is actually reachable, quiet
+        hours, burst digest, callback-secret handling) is real-Postgres-backed
+        coverage owned by tests/integration/test_approval_push_on_park.py; this
+        test only proves notify()'s missing-identifier path hands off to that
+        one shared helper instead of building its own ad hoc owner alert.
+        """
         patches, mock_pool, _ = _make_missing_id_patches(butler_dir)
         daemon, notify_fn = await _start_daemon_with_notify(butler_dir, patches)
         assert notify_fn is not None
         entity_id = uuid.UUID("00000000-0000-0000-0000-000000000030")
+        push_runtime = object()  # opaque sentinel; identity-checked below
+        daemon._approval_push_runtime = push_runtime
 
-        # Missing identifier → pending_missing_identifier; owner notified
-        mock_client = _make_mock_client()
-        daemon.switchboard_client = mock_client
         with (
             patch.object(
                 daemon, "_resolve_entity_channel_identifier", new=AsyncMock(return_value=None)
             ),
-            patch.object(
-                daemon,
-                "_resolve_default_notify_recipient",
-                new=AsyncMock(return_value="owner@example.com"),
-            ),
+            patch(
+                "butlers.modules.approvals.park.park_pending_action",
+                new=AsyncMock(return_value=None),
+            ) as mock_park,
         ):
             result = await notify_fn(
                 channel="email",
@@ -573,28 +580,12 @@ class TestNotifyMissingIdentifierAndOwner:
             )
         assert result["status"] == "pending_missing_identifier"
         assert result["entity_id"] == str(entity_id)
-        mock_client.call_tool.assert_awaited_once()
-
-        # No owner → no notification
-        mock_client2 = _make_mock_client()
-        daemon.switchboard_client = mock_client2
-        with (
-            patch.object(
-                daemon, "_resolve_entity_channel_identifier", new=AsyncMock(return_value=None)
-            ),
-            patch.object(
-                daemon, "_resolve_default_notify_recipient", new=AsyncMock(return_value=None)
-            ),
-        ):
-            result2 = await notify_fn(
-                channel="email",
-                message="Cannot deliver",
-                entity_id=entity_id,
-                _why="The contact needs this delivery after their channel is configured.",
-                _evidence=[],
-            )
-        assert result2["status"] == "pending_missing_identifier"
-        mock_client2.call_tool.assert_not_awaited()
+        mock_park.assert_awaited_once()
+        park_kwargs = mock_park.await_args.kwargs
+        assert park_kwargs["tool_name"] == "notify"
+        assert park_kwargs["origin_butler"] == daemon.config.name
+        assert park_kwargs["approval_push_runtime"] is push_runtime
+        assert park_kwargs["tool_args"]["entity_id"] == str(entity_id)
 
         # No entity_id → default owner resolver called
         patches3 = _patch_infra()

@@ -590,12 +590,18 @@ class ApprovalsModule(Module):
                 return [{"error": f"Invalid status: {status}"}]
 
             query = (
-                "SELECT * FROM pending_actions WHERE status = $1 "
-                "ORDER BY requested_at DESC LIMIT $2"
+                "SELECT pa.*, ape.outcome AS push_outcome FROM pending_actions pa "
+                "LEFT JOIN approval_push_emissions ape ON ape.action_id = pa.id "
+                "WHERE pa.status = $1 "
+                "ORDER BY pa.requested_at DESC LIMIT $2"
             )
             rows = await self._db.fetch(query, status, effective_limit)
         else:
-            query = "SELECT * FROM pending_actions ORDER BY requested_at DESC LIMIT $1"
+            query = (
+                "SELECT pa.*, ape.outcome AS push_outcome FROM pending_actions pa "
+                "LEFT JOIN approval_push_emissions ape ON ape.action_id = pa.id "
+                "ORDER BY pa.requested_at DESC LIMIT $1"
+            )
             rows = await self._db.fetch(query, effective_limit)
 
         return [PendingAction.from_row(row).to_dict() for row in rows]
@@ -607,7 +613,12 @@ class ApprovalsModule(Module):
         except ValueError:
             return {"error": f"Invalid action_id: {action_id}"}
 
-        row = await self._db.fetchrow("SELECT * FROM pending_actions WHERE id = $1", parsed_id)
+        row = await self._db.fetchrow(
+            "SELECT pa.*, ape.outcome AS push_outcome FROM pending_actions pa "
+            "LEFT JOIN approval_push_emissions ape ON ape.action_id = pa.id "
+            "WHERE pa.id = $1",
+            parsed_id,
+        )
         if row is None:
             return {"error": f"Action not found: {action_id}"}
 

@@ -191,12 +191,16 @@ class TestDaemonCalendarOverlapEnqueuer:
         pool = pending_actions_pool
         daemon = ButlerDaemon.__new__(ButlerDaemon)
         daemon.config = SimpleNamespace(
-            modules={"approvals": {"enabled": True, "default_expiry_hours": 1}}
+            name="test-butler",
+            modules={"approvals": {"enabled": True, "default_expiry_hours": 1}},
         )
         daemon.db = SimpleNamespace(pool=pool)
         fake_cal = _FakeCalendarModule()
         daemon._modules = [fake_cal]
         daemon._module_statuses = {}
+        # __new__ bypasses __init__, so the cached park -> push runtime
+        # (bu-mda0r) must be set explicitly like every other instance attr.
+        daemon._approval_push_runtime = None
 
         daemon._wire_calendar_approval_enqueuer()
         assert fake_cal.enqueuer is not None, "calendar overlap enqueuer was not wired"
@@ -378,12 +382,13 @@ class TestNotifyParkPath:
 
         fake_daemon = SimpleNamespace(
             db=SimpleNamespace(pool=pool),
-            # Truthy so notify()'s "Switchboard is not connected" guard passes;
-            # never actually invoked because owner_identifier resolves to None.
             switchboard_client=SimpleNamespace(),
             _resolve_entity_channel_identifier=AsyncMock(return_value=None),
             _CHANNEL_TO_CONTACT_INFO_TYPE={"telegram": "telegram_chat_id", "email": "email"},
             _resolve_default_notify_recipient=AsyncMock(return_value=None),
+            # None -> park_pending_action attempts no push (bu-mda0r); this
+            # test only asserts the INSERT round-trips tool_args as a dict.
+            _approval_push_runtime=None,
         )
         ctx = ToolContext(
             daemon=fake_daemon,
