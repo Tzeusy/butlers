@@ -115,6 +115,22 @@ def parse_home_coordinates(value: str) -> tuple[float, float] | None:
         return None
 
 
+def _sanitize_error_message(exc: httpx.HTTPError) -> str:
+    """Build a sanitized error message without leaking coordinates.
+
+    HTTPStatusError embeds the full request URL including latitude/longitude
+    query params. This function strips sensitive query params and returns
+    a safe error message suitable for logging and DB storage.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        reason = getattr(exc.response, "reason_phrase", "")
+        status_part = f"HTTP {exc.response.status_code}"
+        if reason:
+            status_part += f" {reason}"
+        return f"open-meteo request failed: {status_part}"
+    return f"open-meteo request failed: {type(exc).__name__}"
+
+
 async def _fetch_conditions(
     client: httpx.AsyncClient, *, latitude: float, longitude: float
 ) -> dict[str, Any]:
@@ -145,7 +161,8 @@ async def _fetch_conditions(
         )
         air_quality_resp.raise_for_status()
     except httpx.HTTPError as exc:
-        raise AtmosphereFetchError(str(exc)) from exc
+        sanitized_msg = _sanitize_error_message(exc)
+        raise AtmosphereFetchError(sanitized_msg) from exc
 
     return {"forecast": forecast_resp.json(), "air_quality": air_quality_resp.json()}
 
