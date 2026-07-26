@@ -1180,6 +1180,7 @@ function RulesTable({ rules, onDelete, onReorder, isReordering = false }: RulesT
   const dragIdRef = useRef<string | null>(null)
   const [grabbedId, setGrabbedId] = useState<string | null>(null)
   const grabOriginRef = useRef<number | null>(null)
+  const movedDuringGrabRef = useRef<boolean>(false)
 
   function handleDragStart(e: React.DragEvent, id: string) {
     dragIdRef.current = id
@@ -1206,8 +1207,19 @@ function RulesTable({ rules, onDelete, onReorder, isReordering = false }: RulesT
     if (!isGrabbed) {
       if (e.key !== " " && e.key !== "Enter") return
       e.preventDefault()
+      // Implicit drop of previously grabbed row before grabbing this one
+      // (bu-mmdef keyboard reorder): if another row is grabbed, treat grabbing
+      // this row as an implicit drop of the previous one. Follow ARIA pattern:
+      // finish (or cancel) current reorder before starting a new one.
+      if (grabbedId !== null) {
+        const prevGrabbedRule = rules.find((r) => r.id === grabbedId)
+        if (prevGrabbedRule) {
+          announce(`Dropped rule at position ${prevGrabbedRule.position} of ${rules.length}.`)
+        }
+      }
       setGrabbedId(rule.id)
       grabOriginRef.current = rule.position
+      movedDuringGrabRef.current = false
       announce(
         `Grabbed rule at position ${rule.position} of ${rules.length}. Use arrow keys to move, space or enter to drop, escape to cancel.`,
       )
@@ -1219,6 +1231,7 @@ function RulesTable({ rules, onDelete, onReorder, isReordering = false }: RulesT
       if (isReordering) return
       const target = e.key === "ArrowUp" ? rule.position - 1 : rule.position + 1
       if (target < 1 || target > rules.length) return
+      movedDuringGrabRef.current = true
       onReorder(rule.id, target)
       announce(`Moved rule to position ${target} of ${rules.length}.`)
       return
@@ -1228,6 +1241,7 @@ function RulesTable({ rules, onDelete, onReorder, isReordering = false }: RulesT
       e.preventDefault()
       setGrabbedId(null)
       grabOriginRef.current = null
+      movedDuringGrabRef.current = false
       announce(`Dropped rule at position ${rule.position} of ${rules.length}.`)
       return
     }
@@ -1235,9 +1249,16 @@ function RulesTable({ rules, onDelete, onReorder, isReordering = false }: RulesT
     if (e.key === "Escape") {
       e.preventDefault()
       const origin = grabOriginRef.current
+      const moved = movedDuringGrabRef.current
       setGrabbedId(null)
       grabOriginRef.current = null
-      if (origin != null && origin !== rule.position && !isReordering) {
+      movedDuringGrabRef.current = false
+      // Restore if we moved during grab, regardless of current rule.position.
+      // If a reorder mutation is in flight when Escape fires, rule.position is
+      // still at the grab origin (stale), so we can't rely on it. Instead,
+      // check the `moved` flag set when arrow keys fired (bu-mmdef: Escape-
+      // cancel race -- server move is in flight, position is stale).
+      if (origin != null && moved) {
         onReorder(rule.id, origin)
         announce(`Cancelled. Restored rule to position ${origin} of ${rules.length}.`)
       } else {

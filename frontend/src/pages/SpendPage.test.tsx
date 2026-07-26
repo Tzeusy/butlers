@@ -1703,6 +1703,97 @@ describe("SpendPage — keyboard reorder (bu-mmdef)", () => {
     const prevented = !row.dispatchEvent(event)
     expect(prevented).toBe(true)
   })
+
+  it("Escape-cancel race: restores to origin even if reorder mutation is in flight when Escape fires (bu-mmdef)", async () => {
+    // Scenario: grab row 2, move it (starts mutation), press Escape before
+    // mutation settles. At Escape time, rule.position is still at grab origin
+    // (stale), so we can't rely on comparing positions. Instead, check if we
+    // moved at all (movedDuringGrab flag). If we moved, restore unconditionally.
+    const store = makeRulesStore(THREE_RULES)
+    let resolveReorder: (() => void) | null = null
+    apiFetchMock.mockReset()
+    apiFetchMock.mockImplementation((path: string, opts?: RequestInit) => {
+      if (path === "/spend/rules") return Promise.resolve(store.get())
+      const match = /^\/spend\/rules\/([^/]+)$/.exec(path)
+      if (match && opts?.method === "PUT") {
+        // Hang the reorder mutation so we can test Escape during flight
+        return new Promise((resolve) => {
+          const body = JSON.parse(opts.body as string) as { position: number }
+          store.reorder(match[1], body.position)
+          resolveReorder = () => resolve({})
+        })
+      }
+      return defaultApiFetch(path)
+    })
+
+    await act(async () => {
+      renderPage()
+    })
+
+    const row = (await screen.findByTestId("spend-rule-row-rule-2")) as HTMLElement
+    row.focus()
+
+    // Grab row 2 at position 2
+    fireEvent.keyDown(row, { key: " " })
+    expect(row.getAttribute("data-grabbed")).toBe("true")
+
+    // Move to position 1 (starts mutation, but hangs)
+    fireEvent.keyDown(row, { key: "ArrowUp" })
+
+    await waitFor(() => {
+      expect(store.get().data.find((r) => r.id === "rule-2")?.position).toBe(1)
+    })
+
+    // Press Escape while mutation is still in flight
+    fireEvent.keyDown(row, { key: "Escape" })
+
+    // At this point, rule.position is still 1 (hasn't been re-fetched yet),
+    // so the old logic (origin !== rule.position) would NOT fire restore.
+    // New logic checks movedDuringGrab flag, which is true, so restore fires.
+
+    // Let mutation settle, then resolve it
+    await act(async () => {
+      resolveReorder?.()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    // Restore mutation should complete, moving rule-2 back to position 2
+    await waitFor(() => {
+      expect(screen.getByTestId("spend-rule-position-rule-2").textContent).toBe("2")
+    })
+
+    expect(row.getAttribute("data-grabbed")).toBeNull()
+  })
+
+  it("grabbing row B while row A is grabbed implicitly drops row A (bu-mmdef)", async () => {
+    // Scenario: grab row 2, then without Escaping, grab row 3. Row 2 should be
+    // implicitly dropped (announced) before row 3 is grabbed.
+    const store = makeRulesStore(THREE_RULES)
+    mockRulesApi(store)
+
+    await act(async () => {
+      renderPage()
+    })
+
+    const row2 = (await screen.findByTestId("spend-rule-row-rule-2")) as HTMLElement
+    const row3 = screen.getByTestId("spend-rule-row-rule-3") as HTMLElement
+
+    row2.focus()
+
+    // Grab row 2
+    fireEvent.keyDown(row2, { key: " " })
+    expect(row2.getAttribute("data-grabbed")).toBe("true")
+    expect(row3.getAttribute("data-grabbed")).toBeNull()
+
+    // Now grab row 3 without Escaping row 2 first
+    fireEvent.keyDown(row3, { key: " " })
+
+    // Row 2 should no longer be grabbed (implicitly dropped)
+    expect(row2.getAttribute("data-grabbed")).toBeNull()
+
+    // Row 3 should now be grabbed
+    expect(row3.getAttribute("data-grabbed")).toBe("true")
+  })
 })
 
 // ---------------------------------------------------------------------------
