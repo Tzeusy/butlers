@@ -1704,23 +1704,36 @@ describe("SpendPage — keyboard reorder (bu-mmdef)", () => {
     expect(prevented).toBe(true)
   })
 
-  it("Escape-cancel race: restores to origin even if reorder mutation is in flight when Escape fires (bu-mmdef)", async () => {
-    // Scenario: grab row 2, move it (starts mutation), press Escape before
-    // mutation settles. At Escape time, rule.position is still at grab origin
-    // (stale), so we can't rely on comparing positions. Instead, check if we
-    // moved at all (movedDuringGrab flag). If we moved, restore unconditionally.
+  it("Escape-cancel race: reorderMutation's scope serializes the restore behind the in-flight move, so a slow/reordered response can never leave the server moved (bu-mmdef)", async () => {
+    // The previous race test's mock applied store.reorder() synchronously at
+    // request-send time and stashed a single `resolveReorder` handle that the
+    // second PUT would silently clobber -- it could never fail even with no
+    // ordering guarantee at all, because the store only ever saw call order,
+    // never arrival order, and there was only ever one resolver to invoke.
+    // This test instead: (1) keeps one deferred handle per PUT call so
+    // neither is lost, (2) applies store.reorder() at *resolve* time (i.e.
+    // simulated response-arrival time, not send time) so resolution order is
+    // the thing that determines server-visible state, and (3) asserts the
+    // restore's PUT is not even dispatched until the move's PUT has settled
+    // -- the actual client-side serialization guarantee `scope` provides,
+    // not just a lucky final value.
     const store = makeRulesStore(THREE_RULES)
-    let resolveReorder: (() => void) | null = null
+    const puts: Array<{ id: string; position: number; resolve: () => void }> = []
     apiFetchMock.mockReset()
     apiFetchMock.mockImplementation((path: string, opts?: RequestInit) => {
       if (path === "/spend/rules") return Promise.resolve(store.get())
       const match = /^\/spend\/rules\/([^/]+)$/.exec(path)
       if (match && opts?.method === "PUT") {
-        // Hang the reorder mutation so we can test Escape during flight
+        const body = JSON.parse(opts.body as string) as { position: number }
         return new Promise((resolve) => {
-          const body = JSON.parse(opts.body as string) as { position: number }
-          store.reorder(match[1], body.position)
-          resolveReorder = () => resolve({})
+          puts.push({
+            id: match[1],
+            position: body.position,
+            resolve: () => {
+              store.reorder(match[1], body.position)
+              resolve({})
+            },
+          })
         })
       }
       return defaultApiFetch(path)
@@ -1733,35 +1746,43 @@ describe("SpendPage — keyboard reorder (bu-mmdef)", () => {
     const row = (await screen.findByTestId("spend-rule-row-rule-2")) as HTMLElement
     row.focus()
 
-    // Grab row 2 at position 2
-    fireEvent.keyDown(row, { key: " " })
-    expect(row.getAttribute("data-grabbed")).toBe("true")
+    fireEvent.keyDown(row, { key: " " }) // grab rule-2 at position 2
+    fireEvent.keyDown(row, { key: "ArrowUp" }) // move mutation: PUT rule-2 position=1
 
-    // Move to position 1 (starts mutation, but hangs)
-    fireEvent.keyDown(row, { key: "ArrowUp" })
+    await waitFor(() => expect(puts).toHaveLength(1))
+    expect(puts[0]).toMatchObject({ id: "rule-2", position: 1 })
 
-    await waitFor(() => {
-      expect(store.get().data.find((r) => r.id === "rule-2")?.position).toBe(1)
-    })
+    fireEvent.keyDown(row, { key: "Escape" }) // compensating restore: mutate({id: rule-2, position: 2})
 
-    // Press Escape while mutation is still in flight
-    fireEvent.keyDown(row, { key: "Escape" })
-
-    // At this point, rule.position is still 1 (hasn't been re-fetched yet),
-    // so the old logic (origin !== rule.position) would NOT fire restore.
-    // New logic checks movedDuringGrab flag, which is true, so restore fires.
-
-    // Let mutation settle, then resolve it
+    // The restore shares reorderMutation's scope with the still-pending move,
+    // so TanStack Query must hold its request back rather than dispatching a
+    // second, concurrent PUT. Give any (incorrect) immediate dispatch a full
+    // microtask+macrotask flush to show up before asserting it didn't.
     await act(async () => {
-      resolveReorder?.()
       await new Promise((r) => setTimeout(r, 0))
     })
+    expect(puts).toHaveLength(1)
 
-    // Restore mutation should complete, moving rule-2 back to position 2
+    // Settle the move. Only now should the queued restore mutation actually
+    // dispatch its request.
+    await act(async () => {
+      puts[0].resolve()
+    })
+    await waitFor(() => expect(puts).toHaveLength(2))
+    expect(puts[1]).toMatchObject({ id: "rule-2", position: 2 })
+
+    // Settle the restore last -- the scenario the old test structurally
+    // could not exercise. Server-visible state must reflect the restore
+    // (grab-origin position), never the moved position, however slow or
+    // reordered a real network response might have been.
+    await act(async () => {
+      puts[1].resolve()
+    })
+
     await waitFor(() => {
       expect(screen.getByTestId("spend-rule-position-rule-2").textContent).toBe("2")
     })
-
+    expect(store.get().data.find((r) => r.id === "rule-2")?.position).toBe(2)
     expect(row.getAttribute("data-grabbed")).toBeNull()
   })
 

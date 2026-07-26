@@ -1611,6 +1611,25 @@ function SpendRulesSection() {
 
   const reorderMutation = useMutation({
     mutationFn: ({ id, position }: { id: string; position: number }) => reorderRule(id, position),
+    // Mutation scope (bu-mmdef: concurrent-restore-vs-move-race) -- Escape's
+    // compensating restore (RulesTable's movedDuringGrabRef path) fires a
+    // second reorderMutation.mutate() while an arrow-move mutation may still
+    // be in flight, and it intentionally bypasses the isReordering gate that
+    // blocks a second *arrow* move. Without a scope, that second PUT would be
+    // an unserialized concurrent request racing the first one to the server,
+    // so a slow/reordered response could leave the server at the moved
+    // position after the UI has already announced "Cancelled. Restored."
+    // TanStack Query mutation scopes serialize same-scope mutations in
+    // call order: a mutation only runs once no other pending mutation shares
+    // its scope.id (MutationCache#canRun), and settling one resumes the next
+    // paused one in the order it was added (MutationCache#runNext). Because
+    // every reorder on this table -- arrow move or Escape restore -- shares
+    // one scope, the restore's actual PUT is never even dispatched until the
+    // move it's compensating for has settled, so it is always the
+    // last-applied write. List-scoped (one id for the whole table) is
+    // sufficient: reorders only ever need to serialize against each other on
+    // this same list, not per-row.
+    scope: { id: "spend-rule-reorder" },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["spend-rules"] }),
     onError: () => toast.error("Failed to reorder rule"),
   })
