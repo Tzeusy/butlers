@@ -53,6 +53,11 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS idx_domain_event_deliveries_status_updated_at")
+    # Reclassify failed_permanent rows to failed before re-narrowing the constraint
+    op.execute(
+        "UPDATE public.domain_event_deliveries "
+        "SET status = 'failed' WHERE status = 'failed_permanent'"
+    )
     op.execute("""
         ALTER TABLE public.domain_event_deliveries
         DROP CONSTRAINT IF EXISTS chk_domain_event_deliveries_status
