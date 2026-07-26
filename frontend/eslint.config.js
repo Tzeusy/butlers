@@ -327,6 +327,43 @@ const NO_WINDOW_CONFIRM_SELECTORS = [
   },
 ]
 
+// bu-ep4ks.15: ban var(--category-N) (a chart/categorical hue, e.g. the blue
+// --category-1) standing in for a STATUS color. StateDot.tsx's exported
+// TONE_COLORS/STATE_COLORS registry is now the canonical status-color source
+// (green/amber/red/neutral only, per dashboard-design-language spec § State
+// Color Discipline) -- a categorical hue reused as a live status signal is
+// the exact "unguarded blue/purple" drift the population-coverage audit
+// flagged (TopologyGraph.tsx's staffer identity blue is the one deliberate,
+// reviewed exception, kept via a documented inline eslint-disable rather than
+// silently exempted from the rule).
+//
+// Scoped to NO_CATEGORICAL_STATUS_FILES (the two files this bead's registry
+// consolidation touches) rather than repo-wide: a broader audit of the ~17
+// files found using raw blue/purple/etc Tailwind shades for various badges
+// and banners (rule-promotion-banner.tsx, ingestion/StatusBadge.tsx,
+// education/QuizHistoryList.tsx, etc.) is a separate, larger sweep -- most of
+// those are informational-tone banners or fixed categorical tags, not all a
+// "healthy" status collision, and need per-file judgment this bead's scope
+// doesn't cover. Follow-up, not silently expanded here (mirrors the
+// POLL_POLICY_FILES / NO_WINDOW_CONFIRM_FILES scoping precedent above).
+const NO_CATEGORICAL_STATUS_FILES = [
+  'src/components/ui/StateDot.tsx',
+  'src/components/topology/TopologyGraph.tsx',
+]
+
+const NO_CATEGORICAL_STATUS_SELECTORS = [
+  {
+    selector: 'Literal[value=/var\\(--category-\\d+\\)/]',
+    message:
+      'var(--category-N) is a chart/categorical hue, not one of the three sanctioned status ' +
+      'colors (var(--red)/var(--amber)/var(--green), see StateDot.tsx\'s exported ' +
+      'TONE_COLORS/STATE_COLORS) -- using it as a live status signal is the "unguarded ' +
+      'blue/purple" drift bu-ep4ks.15 flagged. If this is a deliberate, reviewed exception ' +
+      '(e.g. a fixed identity hue), add a line-level eslint-disable-next-line with a ' +
+      'one-line reason instead of a rule-wide escape hatch.',
+  },
+]
+
 export default defineConfig([
   globalIgnores(['dist']),
   {
@@ -543,6 +580,31 @@ export default defineConfig([
         ...FORMAT_CLONE_SELECTORS,
         ...KEYDOWN_LISTENER_SELECTORS,
         ...NO_WINDOW_CONFIRM_SELECTORS,
+      ],
+    },
+  },
+  {
+    // bu-ep4ks.15: no-categorical-status-color, scoped -- see
+    // NO_CATEGORICAL_STATUS_FILES comment above for why this isn't repo-wide.
+    // Must repeat the general '**/*.tsx' block's full selector set (flat
+    // config does not merge no-restricted-syntax across matching blocks for
+    // the same file). Harmless to apply the non-ui selector set (including
+    // PRIMITIVE_REDECLARATION/HANDROLLED_OVERLAY) to StateDot.tsx too -- it
+    // declares neither, so those simply never match there.
+    files: NO_CATEGORICAL_STATUS_FILES,
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...HSL_VAR_SELECTORS,
+        ...STATUS_COLOR_SELECTORS,
+        ...HEX_COLOR_SELECTORS,
+        ...PRIMITIVE_REDECLARATION_SELECTORS,
+        ...HANDROLLED_OVERLAY_SELECTORS,
+        ...POLL_POLICY_SELECTORS,
+        ...ANIMATE_PULSE_SELECTORS,
+        ...FORMAT_CLONE_SELECTORS,
+        ...KEYDOWN_LISTENER_SELECTORS,
+        ...NO_CATEGORICAL_STATUS_SELECTORS,
       ],
     },
   },
