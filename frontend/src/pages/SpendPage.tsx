@@ -74,6 +74,7 @@ import { CostStripeChart } from "@/components/costs/CostStripeChart"
 import { SpendVerdictOpener } from "@/components/costs/SpendVerdictOpener"
 import { formatCostUsd } from "@/lib/format-cost"
 import { cn } from "@/lib/utils"
+import { announce } from "@/lib/shell-announcer"
 import { useRegisterCommands, type PaletteCommand } from "@/lib/command-registry"
 import { computeMovers, type Mover } from "@/lib/spend-movers"
 import type { ForecastData, ForecastDay } from "@/lib/spend-forecast"
@@ -1158,10 +1159,27 @@ interface RulesTableProps {
   rules: SpendRule[]
   onDelete: (id: string) => void
   onReorder: (id: string, newPosition: number) => void
+  /** True while a reorder mutation is in flight -- arrow-key moves are
+   *  suspended so a fast double-press can't race the server's response with
+   *  a stale `rule.position` (bu-mmdef, keyboard chassis remainder). */
+  isReordering?: boolean
 }
 
-function RulesTable({ rules, onDelete, onReorder }: RulesTableProps) {
+// Keyboard reorder (bu-mmdef, keyboard chassis remainder -- SpendPage's
+// routing-rules table was drag-only, cut from #3586's scope for its distinct
+// interaction model). Standard grab/move/drop pattern: focus a row, Space or
+// Enter grabs it, Up/Down arrows move it one position at a time (each move is
+// a real `onReorder` call -- the same mutation the drag handler already
+// drives, so there is no separate optimistic-vs-server state to keep in
+// sync), Space or Enter drops it in place, Escape cancels and restores the
+// row to the position it was grabbed from. Every state change is announced
+// through the shell's shared sr-only live region (`announce`, bu-qvnce.10 --
+// same mechanism NewEventsPill and EntityDetailPage's merge banner already
+// use) since this row-level state change has no other accessible signal.
+function RulesTable({ rules, onDelete, onReorder, isReordering = false }: RulesTableProps) {
   const dragIdRef = useRef<string | null>(null)
+  const [grabbedId, setGrabbedId] = useState<string | null>(null)
+  const grabOriginRef = useRef<number | null>(null)
 
   function handleDragStart(e: React.DragEvent, id: string) {
     dragIdRef.current = id
@@ -1180,6 +1198,52 @@ function RulesTable({ rules, onDelete, onReorder }: RulesTableProps) {
   function handleDragOver(e: React.DragEvent) {
     e.preventDefault()
     e.dataTransfer.dropEffect = "move"
+  }
+
+  function handleRowKeyDown(e: React.KeyboardEvent, rule: SpendRule) {
+    const isGrabbed = grabbedId === rule.id
+
+    if (!isGrabbed) {
+      if (e.key !== " " && e.key !== "Enter") return
+      e.preventDefault()
+      setGrabbedId(rule.id)
+      grabOriginRef.current = rule.position
+      announce(
+        `Grabbed rule at position ${rule.position} of ${rules.length}. Use arrow keys to move, space or enter to drop, escape to cancel.`,
+      )
+      return
+    }
+
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault()
+      if (isReordering) return
+      const target = e.key === "ArrowUp" ? rule.position - 1 : rule.position + 1
+      if (target < 1 || target > rules.length) return
+      onReorder(rule.id, target)
+      announce(`Moved rule to position ${target} of ${rules.length}.`)
+      return
+    }
+
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault()
+      setGrabbedId(null)
+      grabOriginRef.current = null
+      announce(`Dropped rule at position ${rule.position} of ${rules.length}.`)
+      return
+    }
+
+    if (e.key === "Escape") {
+      e.preventDefault()
+      const origin = grabOriginRef.current
+      setGrabbedId(null)
+      grabOriginRef.current = null
+      if (origin != null && origin !== rule.position && !isReordering) {
+        onReorder(rule.id, origin)
+        announce(`Cancelled. Restored rule to position ${origin} of ${rules.length}.`)
+      } else {
+        announce("Cancelled reordering.")
+      }
+    }
   }
 
   if (rules.length === 0) {
@@ -1203,37 +1267,57 @@ function RulesTable({ rules, onDelete, onReorder }: RulesTableProps) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rules.map((rule) => (
-            <TableRow
-              key={rule.id}
-              draggable
-              onDragStart={(e) => handleDragStart(e, rule.id)}
-              onDrop={(e) => handleDrop(e, rule.position)}
-              onDragOver={handleDragOver}
-              className="border-border/60 hover:bg-muted/30 cursor-grab active:cursor-grabbing"
-            >
-              <TableCell className="py-2 px-2 text-muted-foreground tabular-nums">{rule.position}</TableCell>
-              <TableCell className="py-2 px-2">
-                <RuleChips entries={conditionChips(rule.condition)} emptyLabel="any dispatch" />
-              </TableCell>
-              <TableCell className="py-2 px-2">
-                <RuleChips entries={actionChips(rule.action)} emptyLabel="—" />
-              </TableCell>
-              <TableCell className="py-2 px-2 text-right tabular-nums text-xs">
-                {rule.saved_7d != null ? fmtUsdPrecise(rule.saved_7d) : "—"}
-              </TableCell>
-              <TableCell className="py-2 px-2 text-right">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-xs text-destructive hover:text-destructive"
-                  onClick={() => onDelete(rule.id)}
-                >
-                  Remove
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
+          {rules.map((rule) => {
+            const isGrabbed = grabbedId === rule.id
+            return (
+              <TableRow
+                key={rule.id}
+                draggable
+                tabIndex={0}
+                onDragStart={(e) => handleDragStart(e, rule.id)}
+                onDrop={(e) => handleDrop(e, rule.position)}
+                onDragOver={handleDragOver}
+                onKeyDown={(e) => handleRowKeyDown(e, rule)}
+                data-testid={`spend-rule-row-${rule.id}`}
+                data-rule-id={rule.id}
+                data-grabbed={isGrabbed ? "true" : undefined}
+                aria-label={`Routing rule at position ${rule.position} of ${rules.length}${isGrabbed ? ", grabbed. Use arrow keys to move, space or enter to drop, escape to cancel" : ". Press space or enter to reorder with the keyboard"}`}
+                className={cn(
+                  "border-border/60 hover:bg-muted/30 cursor-grab active:cursor-grabbing",
+                  "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-fg",
+                  isGrabbed && "bg-muted/50 outline outline-2 outline-offset-[-2px] outline-fg",
+                )}
+              >
+                <TableCell className="py-2 px-2 text-muted-foreground tabular-nums">
+                  <span data-testid={`spend-rule-position-${rule.id}`}>{rule.position}</span>
+                  {isGrabbed && (
+                    <span className="ml-1.5 font-sans normal-case text-[10px] text-foreground">
+                      grabbed
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="py-2 px-2">
+                  <RuleChips entries={conditionChips(rule.condition)} emptyLabel="any dispatch" />
+                </TableCell>
+                <TableCell className="py-2 px-2">
+                  <RuleChips entries={actionChips(rule.action)} emptyLabel="—" />
+                </TableCell>
+                <TableCell className="py-2 px-2 text-right tabular-nums text-xs">
+                  {rule.saved_7d != null ? fmtUsdPrecise(rule.saved_7d) : "—"}
+                </TableCell>
+                <TableCell className="py-2 px-2 text-right">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs text-destructive hover:text-destructive"
+                    onClick={() => onDelete(rule.id)}
+                  >
+                    Remove
+                  </Button>
+                </TableCell>
+              </TableRow>
+            )
+          })}
         </TableBody>
       </Table>
     </div>
@@ -1533,7 +1617,8 @@ function SpendRulesSection() {
         <div className="flex flex-col gap-1">
           <Eyebrow>Routing Rules</Eyebrow>
           <p className="text-xs text-muted-foreground">
-            Evaluated top-to-bottom; first match wins. Drag rows to reorder.
+            Evaluated top-to-bottom; first match wins. Drag rows to reorder, or focus a row
+            and press Space to grab it.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
@@ -1579,6 +1664,7 @@ function SpendRulesSection() {
             rules={rules}
             onDelete={(id) => deleteMutation.mutate(id)}
             onReorder={(id, position) => reorderMutation.mutate({ id, position })}
+            isReordering={reorderMutation.isPending}
           />
         )}
       </div>
