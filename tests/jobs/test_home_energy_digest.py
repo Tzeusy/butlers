@@ -500,6 +500,92 @@ def test_build_digest_message():
 # ---------------------------------------------------------------------------
 
 
+async def test_fetch_weekly_statistics_uses_authenticated_websocket_commands():
+    """Statistics use HA's WebSocket command instead of a nonexistent REST route."""
+
+    class FakeWebSocket:
+        def __init__(self):
+            self.sent: list[dict[str, Any]] = []
+            self.responses = iter(
+                [
+                    {"type": "auth_required"},
+                    {"type": "auth_ok"},
+                    {
+                        "id": 1,
+                        "type": "result",
+                        "success": True,
+                        "result": {"sensor.energy": [{"sum": 12.5}]},
+                    },
+                    {
+                        "id": 2,
+                        "type": "result",
+                        "success": True,
+                        "result": {"sensor.energy": [{"sum": 5.0}, {"sum": 7.5}]},
+                    },
+                ]
+            )
+
+        async def receive_json(self, *, timeout):
+            return next(self.responses)
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+
+    class FakeWebSocketContext:
+        def __init__(self, websocket):
+            self.websocket = websocket
+
+        async def __aenter__(self):
+            return self.websocket
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    class FakeSession:
+        def __init__(self, websocket):
+            self.websocket = websocket
+            self.ws_connect_args = None
+            self.closed = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            self.closed = True
+
+        def ws_connect(self, *args, **kwargs):
+            self.ws_connect_args = (args, kwargs)
+            return FakeWebSocketContext(self.websocket)
+
+    websocket = FakeWebSocket()
+    session = FakeSession(websocket)
+
+    with patch("butlers.jobs.home.aiohttp.ClientSession", return_value=session):
+        result = await _fetch_weekly_statistics(
+            MagicMock(),
+            ["sensor.energy"],
+            ha_url="https://ha.example/",
+            ha_token="secret-token",
+        )
+
+    assert session.closed is True
+    assert session.ws_connect_args == (
+        ("wss://ha.example/api/websocket",),
+        {"heartbeat": None, "ssl": False},
+    )
+    assert websocket.sent[0] == {"type": "auth", "access_token": "secret-token"}
+    assert [message["period"] for message in websocket.sent[1:]] == ["week", "day"]
+    assert all(
+        message["type"] == "recorder/statistics_during_period" for message in websocket.sent[1:]
+    )
+    assert result == {
+        "sensor.energy": {
+            "weekly_sum": 12.5,
+            "daily": [{"sum": 5.0}, {"sum": 7.5}],
+        }
+    }
+
+
 async def test_run_energy_digest_early_exits():
     """Empty snapshot → error; no energy sensors → error."""
     with patch("butlers.jobs.home._send_notify", new_callable=AsyncMock):
