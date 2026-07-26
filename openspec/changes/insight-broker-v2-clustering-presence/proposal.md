@@ -26,8 +26,9 @@ Source: docs/redesigns/2026-07-25-jarvis-pursuit.md (rank 9, bu-ep4ks.9).
 - **Deterministic clustering (zero-LLM):** `_cluster_candidates` groups a
   digest's candidates by shared `metadata.entity_id` or overlapping event
   time window (`metadata.event_window: {start, end}` or `metadata.event_date`),
-  using half-open `[start, end)` bounds and union-find so transitive links fold
-  into one group. `_format_digest` renders each multi-candidate group as one
+  using strict positive-duration half-open `[start, end)` bounds and
+  union-find so transitive links fold into one group. `_format_digest` renders
+  each multi-candidate group as one
   labeled `Correlated (N):` sub-list instead of unrelated flat bullets; a
   candidate with no correlation data renders exactly as before this change.
 - **Source-grounded producer adoption:** health maps its measurement-door

@@ -1190,6 +1190,38 @@ class TestClusteredDigest:
         clusters = _cluster_candidates(candidates)
         assert len(clusters) == 2
 
+    async def test_cluster_candidates_empty_event_window_stays_singleton(self):
+        """An empty half-open range cannot overlap a covering event window."""
+        from butlers.tools.switchboard.insight.broker import _cluster_candidates
+
+        candidates = [
+            {
+                "origin_butler": "finance",
+                "message": "Empty window",
+                "metadata": {
+                    "event_window": {
+                        "start": "2026-08-04T12:00:00+00:00",
+                        "end": "2026-08-04T12:00:00+00:00",
+                    }
+                },
+            },
+            {
+                "origin_butler": "travel",
+                "message": "Covering window",
+                "metadata": {
+                    "event_window": {
+                        "start": "2026-08-04T11:00:00+00:00",
+                        "end": "2026-08-04T13:00:00+00:00",
+                    }
+                },
+            },
+        ]
+
+        clusters = _cluster_candidates(candidates)
+
+        assert len(clusters) == 2
+        assert all(len(cluster) == 1 for cluster in clusters)
+
     def test_cluster_candidates_event_date_normalizes_to_full_day_window(self):
         from butlers.tools.switchboard.insight.broker import _cluster_candidates
 

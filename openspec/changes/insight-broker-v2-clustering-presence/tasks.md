@@ -3,7 +3,7 @@
 - [x] 1.1 `_candidate_entity_key` / `_candidate_time_window` metadata extraction helpers, fail-open on malformed data.
 - [x] 1.2 `_cluster_candidates` union-find grouping by shared entity or overlapping time window, transitive.
 - [x] 1.3 `_format_digest` renders multi-candidate groups as a labeled `Correlated (N):` sub-list; singleton groups format identically to before this change.
-- [x] 1.4 Unit tests: entity grouping, time-window overlap, non-overlap, `event_date` normalization, transitive chains, no-correlation-data regression, malformed-metadata fail-open, determinism.
+- [x] 1.4 Unit tests: entity grouping, time-window overlap, non-overlap, empty-window fail-open, `event_date` normalization, transitive chains, no-correlation-data regression, malformed-metadata fail-open, determinism.
 
 ## 2. Presence-aware context-bus suppression (slice 2)
 

@@ -779,8 +779,9 @@ def _candidate_time_window(candidate: dict[str, Any]) -> tuple[datetime, datetim
     Supports two producer shapes: an explicit ``event_window: {start, end}``
     (ISO 8601 timestamps), or a coarser ``event_date`` (ISO date, normalized to
     a full UTC day). Both forms use half-open ``[start, end)`` semantics, so
-    adjacent windows share no event time. Malformed or partial values fail open
-    to "no correlation data" (returns None) rather than raising — a producer's
+    adjacent windows share no event time. Explicit windows must have positive
+    duration; malformed, partial, or non-positive values fail open to "no
+    correlation data" (returns None) rather than raising — a producer's
     metadata typo must not break digest formatting.
     """
     metadata = candidate.get("metadata")
@@ -800,7 +801,7 @@ def _candidate_time_window(candidate: dict[str, Any]) -> tuple[datetime, datetim
                 start = start.replace(tzinfo=UTC)
             if end.tzinfo is None:
                 end = end.replace(tzinfo=UTC)
-            if end < start:
+            if end <= start:
                 return None
             return (start, end)
 
