@@ -94,12 +94,14 @@ active subscriber of its own event type.
 ### Requirement: Strict Delivery Retry Classification
 
 The domain-event delivery ledger SHALL retry only a transient route failure.
-Switchboard SHALL preserve the existing route-level `error` text and MAY add
-`retryable = true` only when it still has a concrete connection, transient OS,
-or timeout exception. The domain-event route-result unwrap SHALL honor a
-literal boolean `retryable` signal when present; for older route envelopes
-without that signal, it SHALL retain compatibility only for the exact legacy
-`ConnectionError:`, `OSError:`, and `TimeoutError:` prefixes.
+Switchboard SHALL preserve the existing route-level `error` text and SHALL add
+a literal boolean `retryable` classification to current route-error envelopes:
+`true` only when it still has a concrete connection, transient OS, or timeout
+exception, and `false` for every other current route error. The domain-event
+route-result unwrap SHALL honor a literal boolean `retryable` signal when
+present and treat a present non-boolean signal as terminal; for older route
+envelopes without that signal, it SHALL retain compatibility only for the exact
+legacy `ConnectionError:`, `OSError:`, and `TimeoutError:` prefixes.
 
 Every other route-level failure, including unregistered/unknown tool,
 registry lookup, authorization, validation/schema, configuration, and business

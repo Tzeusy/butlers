@@ -7,6 +7,7 @@ integration tests in test_tools.py which use a real Postgres container.
 
 from __future__ import annotations
 
+import errno
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -1252,12 +1253,19 @@ class TestCallButlerTool:
         assert second == {"step": 2}
         assert mock_ctor.call_count == 2
 
-    async def test_wraps_client_failure_as_connection_error(self) -> None:
-        """_call_butler_tool should preserve failed-call context in the exception."""
+    @pytest.mark.parametrize(
+        "failure",
+        (
+            PermissionError(errno.EACCES, "Permission denied"),
+            RuntimeError("malformed MCP response"),
+        ),
+    )
+    async def test_preserves_nontransport_client_failure(self, failure: Exception) -> None:
+        """Authorization and protocol failures must not be relabeled as transport loss."""
         from butlers.tools.switchboard import _call_butler_tool
 
         mock_client = AsyncMock()
-        mock_client.call_tool = AsyncMock(side_effect=RuntimeError("connection refused"))
+        mock_client.call_tool = AsyncMock(side_effect=failure)
 
         mock_ctor = MagicMock()
         mock_ctx = mock_ctor.return_value
@@ -1265,15 +1273,38 @@ class TestCallButlerTool:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with patch("butlers.tools.switchboard.routing.route.MCPClient", mock_ctor):
-            with pytest.raises(
-                ConnectionError,
-                match="Failed to call tool bot_switchboard_handle_message",
-            ):
+            with pytest.raises(type(failure)) as raised:
                 await _call_butler_tool(
                     "http://localhost:41101/sse",
                     "bot_switchboard_handle_message",
                     {"prompt": "Hello"},
                 )
+
+        assert str(raised.value) == str(failure)
+        mock_client.call_tool.assert_awaited_once()
+
+    async def test_reconnects_once_for_a_transient_client_failure(self) -> None:
+        """A genuine connection failure still gets the existing one reconnect attempt."""
+        from butlers.tools.switchboard import _call_butler_tool
+
+        success = SimpleNamespace(isError=False, content=[SimpleNamespace(text='{"ok": true}')])
+        mock_client = AsyncMock()
+        mock_client.call_tool = AsyncMock(side_effect=[ConnectionError("refused"), success])
+
+        mock_ctor = MagicMock()
+        mock_ctx = mock_ctor.return_value
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("butlers.tools.switchboard.routing.route.MCPClient", mock_ctor):
+            result = await _call_butler_tool(
+                "http://localhost:41101/sse",
+                "bot_switchboard_handle_message",
+                {"prompt": "Hello"},
+            )
+
+        assert result == {"ok": True}
+        assert mock_client.call_tool.await_count == 2
 
     async def test_unprefixed_unknown_tool_does_not_fallback_to_trigger(self) -> None:
         """Legacy unprefixed tool names should fail without trigger fallback."""

@@ -100,13 +100,13 @@ _MAX_DELIVERY_RETRY_ATTEMPTS = 5
 _SWEEP_BATCH_LIMIT = 200
 
 # route() preserves the old ``{"error": "<ExceptionType>: <message>"}``
-# envelope and now adds ``retryable: true`` only while it still has a proven
-# transport exception hierarchy. Older Switchboard versions and test doubles
-# have only that legacy string, so retain the exact historical prefixes as a
-# compatibility fallback. Everything else -- notably a RuntimeError from an
-# unknown/unregistered tool (the shape a missing `domain_events` core group
-# takes) or a LookupError from an absent registry entry -- is permanent:
-# retrying can never succeed.
+# envelope and current Switchboard versions add a literal boolean ``retryable``
+# classification while they still have the concrete exception hierarchy. Older
+# Switchboard versions and test doubles have only that legacy string, so retain
+# the exact historical prefixes only when the structured field is absent.
+# Everything else -- notably a RuntimeError from an unknown/unregistered tool
+# (the shape a missing `domain_events` core group takes) or a LookupError from
+# an absent registry entry -- is permanent: retrying can never succeed.
 _RETRYABLE_ROUTE_ERROR_PREFIXES = ("ConnectionError:", "OSError:", "TimeoutError:")
 
 
@@ -155,21 +155,20 @@ def _unwrap_route_result(raw: Any) -> tuple[dict[str, Any] | None, str | None, b
 
     ``route()`` returns ``{"error": "<ExceptionType>: <message>"}`` on any
     route-level failure (target unreachable, unknown tool, registry lookup),
-    adding ``"retryable": true`` only for source-classified transport
-    failures, or ``{"result": <target tool's own return value>}`` on success
-    -- see ``_dispatch_receive_via_switchboard``'s docstring. This is the
-    single place both of that function's branches (real MCP client vs.
-    Switchboard in-process self-delivery) unwrap that envelope, so they can
-    never drift out of sync on how a route-level error is detected and
-    classified.
+    adding a literal boolean ``"retryable"`` on current envelopes, or
+    ``{"result": <target tool's own return value>}`` on success -- see
+    ``_dispatch_receive_via_switchboard``'s docstring. This is the single
+    place both of that function's branches (real MCP client vs. Switchboard
+    in-process self-delivery) unwrap that envelope, so they can never drift
+    out of sync on how a route-level error is detected and classified.
     """
     if not isinstance(raw, dict):
         return None, "route() returned a non-dict result.", False
     if "error" in raw:
         error_text = str(raw["error"])
-        retryable = raw.get("retryable")
-        if isinstance(retryable, bool):
-            return None, error_text, retryable
+        if "retryable" in raw:
+            retryable = raw["retryable"]
+            return None, error_text, retryable if isinstance(retryable, bool) else False
         return None, error_text, _is_retryable_route_error_text(error_text)
 
     data = raw.get("result")
@@ -288,7 +287,7 @@ async def _dispatch_and_record_delivery(
                 pool,
                 delivery["id"],
                 error_text,
-                retryable=True,
+                retryable=False,
                 max_attempts=max_attempts,
             )
         except Exception:

@@ -47,7 +47,8 @@
 
 ## 9. Route-failure classification reliability (bu-j9bc7)
 
-- [x] 9.1 Preserve route error text while emitting a structured transient
-  retry signal, consume it through domain-event delivery classification with
-  legacy-prefix compatibility, and cover bounded ledger reconciliation plus
+- [x] 9.1 Preserve route error text while emitting a structured literal-boolean
+  retry classification, consume it through domain-event delivery with
+  fail-closed malformed-signal handling and legacy-prefix compatibility only
+  for unstructured envelopes, and cover bounded ledger reconciliation plus
   terminal route/target-tool failures.

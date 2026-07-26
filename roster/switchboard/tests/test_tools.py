@@ -303,6 +303,7 @@ async def test_route_to_unknown_butler(pool):
     result = await route(pool, "nonexistent", "some_tool", {})
     assert "error" in result
     assert "not found" in result["error"]
+    assert result["retryable"] is False
 
 
 async def test_route_to_known_butler_success(pool):
@@ -353,6 +354,30 @@ async def test_route_to_known_butler_marks_transient_subclasses_retryable(pool, 
     result = await route(pool, "failing", "broken_tool", {}, call_fn=failing_call)
     assert result["error"] == f"{type(failure).__name__}: {failure}"
     assert result["retryable"] is True
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        PermissionError(errno.EACCES, "Permission denied"),
+        OSError(errno.EINVAL, "Invalid argument"),
+    ),
+)
+async def test_route_to_known_butler_marks_nontransient_os_errors_terminal(pool, failure):
+    """Current route envelopes must make non-transient OS failures explicit."""
+    from butlers.tools.switchboard import register_butler, route
+
+    await register_butler(pool, "failing", "http://localhost:8300/sse")
+
+    async def failing_call(endpoint_url, tool_name, args):
+        raise failure
+
+    result = await route(pool, "failing", "broken_tool", {}, call_fn=failing_call)
+
+    assert result == {
+        "error": f"{type(failure).__name__}: {failure}",
+        "retryable": False,
+    }
 
 
 async def test_route_blocks_stale_target_by_default_and_allows_override(pool):
@@ -676,7 +701,7 @@ async def test_routing_log_records_failure(pool):
         raise RuntimeError("boom")
 
     result = await route(pool, "errored", "explode", {}, call_fn=bad_call)
-    assert result == {"error": "RuntimeError: boom"}
+    assert result == {"error": "RuntimeError: boom", "retryable": False}
 
     rows = await pool.fetch("SELECT * FROM routing_log WHERE target_butler = 'errored'")
     assert len(rows) == 1

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import errno
 import json
 import logging
 import time
@@ -16,6 +15,7 @@ from opentelemetry import trace
 from butlers.core.mcp_urls import canonical_runtime_mcp_url, resolve_cross_container_mcp_url
 from butlers.core.model_routing import Complexity
 from butlers.core.telemetry import inject_trace_context
+from butlers.core_tools._switchboard_route_dispatch import is_retryable_route_exception
 from butlers.tools.switchboard.registry.registry import (
     DEFAULT_ROUTE_CONTRACT_VERSION,
     resolve_routing_target,
@@ -28,33 +28,6 @@ from butlers.tools.switchboard.routing.telemetry import (
 logger = logging.getLogger(__name__)
 _ROUTER_CLIENTS: dict[str, tuple[MCPClient, Any]] = {}
 _ROUTER_CLIENT_LOCKS: dict[str, asyncio.Lock] = {}
-
-# Route dispatch handles sockets, not local files. Restrict the structured
-# retry signal to concrete network errnos instead of treating every OSError as
-# transient: PermissionError and FileNotFoundError are configuration or
-# authorization failures that a delivery retry cannot repair.
-_RETRYABLE_ROUTE_OS_ERRNOS = frozenset(
-    {
-        errno.EAGAIN,
-        errno.ECONNABORTED,
-        errno.ECONNREFUSED,
-        errno.ECONNRESET,
-        errno.EHOSTUNREACH,
-        errno.EINTR,
-        errno.ENETDOWN,
-        errno.ENETRESET,
-        errno.ENETUNREACH,
-        errno.EPIPE,
-        errno.ETIMEDOUT,
-    }
-)
-
-
-def _is_retryable_route_exception(exc: Exception) -> bool:
-    """Return whether a route dispatch exception denotes transient transport failure."""
-    if isinstance(exc, (ConnectionError, TimeoutError)):
-        return True
-    return isinstance(exc, OSError) and exc.errno in _RETRYABLE_ROUTE_OS_ERRNOS
 
 
 def _router_lock(endpoint_url: str) -> asyncio.Lock:
@@ -129,7 +102,6 @@ async def _call_tool_with_router_client(
     tool_name: str,
     args: dict[str, Any],
 ) -> Any:
-    first_exc: Exception | None = None
     telemetry = get_switchboard_telemetry()
 
     for reconnect in (False, True):
@@ -137,17 +109,11 @@ async def _call_tool_with_router_client(
             client = await _get_cached_router_client(endpoint_url, reconnect=reconnect)
             return await client.call_tool(tool_name, args, raise_on_error=False)
         except Exception as exc:
+            if not is_retryable_route_exception(exc):
+                raise
             if reconnect:
-                if first_exc is None:
-                    message = f"Failed to call tool {tool_name} on {endpoint_url}: {exc}"
-                else:
-                    message = (
-                        f"Failed to call tool {tool_name} on {endpoint_url}: "
-                        f"{first_exc} (reconnect failed: {exc})"
-                    )
-                raise ConnectionError(message) from exc
+                raise
 
-            first_exc = exc
             telemetry.retry_attempt.add(
                 1,
                 telemetry.attrs(
@@ -348,7 +314,7 @@ async def route(
                     await _log_routing(
                         pool, source_butler, target_butler, tool_name, False, 0, wake_error
                     )
-                    return {"error": wake_error}
+                    return {"error": wake_error, "retryable": False}
 
             # Resolve target with registry validation
             target_row, resolve_error = await resolve_routing_target(
@@ -376,7 +342,7 @@ async def route(
                 await _log_routing(
                     pool, source_butler, target_butler, tool_name, False, 0, error_msg
                 )
-                return {"error": error_msg}
+                return {"error": error_msg, "retryable": False}
 
             # Registry endpoints are self-registered as http://localhost:<port>
             # from butlers-up's own point of view (see runtime_mcp_url()).
@@ -438,7 +404,7 @@ async def route(
                 )
                 return {"result": result}
             except Exception as exc:
-                retryable = _is_retryable_route_exception(exc)
+                retryable = is_retryable_route_exception(exc)
                 error_class = normalize_error_class(exc)
                 span.set_status(trace.StatusCode.ERROR, str(exc))
                 span.set_attribute("routing.outcome", "failure")
@@ -465,10 +431,7 @@ async def route(
                 await _log_routing(
                     pool, source_butler, target_butler, tool_name, False, duration_ms, error_msg
                 )
-                error_result: dict[str, Any] = {"error": error_msg}
-                if retryable:
-                    error_result["retryable"] = True
-                return error_result
+                return {"error": error_msg, "retryable": retryable}
 
 
 async def post_mail(
