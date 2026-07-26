@@ -44,3 +44,10 @@
 ## 8. Deferred (still reported as a follow-up, not implemented here)
 
 - [ ] 8.1 A shared `domain-event-bus` skill -- the bar ("a second manual publisher adopts the primitives") means a second *agent-authored* MCP-tool-driven publisher, not a deterministic Python job calling `publish_domain_event`/`publish_domain_event_once` directly. That bar is not yet met.
+
+## 9. Route-failure classification reliability (bu-j9bc7)
+
+- [x] 9.1 Preserve route error text while emitting a structured transient
+  retry signal, consume it through domain-event delivery classification with
+  legacy-prefix compatibility, and cover bounded ledger reconciliation plus
+  terminal route/target-tool failures.

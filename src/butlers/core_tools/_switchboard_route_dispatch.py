@@ -59,11 +59,12 @@ async def dispatch_via_switchboard_route(
 
     ``route()`` (``roster/switchboard/tools/routing/route.py``) always
     returns ``{"error": "<ExceptionType>: <message>"}`` on a route-level
-    failure (target unreachable, unknown tool, registry lookup) or
-    ``{"result": <target tool's own return value>}`` on success -- never the
-    target's dict unwrapped at the top level. ``classify`` is the one seam
-    where callers deliberately diverge on how to peel that envelope back and
-    decide whether the *target tool's own* response also counts as a
+    failure (target unreachable, unknown tool, registry lookup), with an
+    optional ``"retryable": true`` only for source-classified transport
+    failures, or ``{"result": <target tool's own return value>}`` on success
+    -- never the target's dict unwrapped at the top level. ``classify`` is the
+    one seam where callers deliberately diverge on how to peel that envelope
+    back and decide whether the *target tool's own* response also counts as a
     failure; given the raw value returned by ``route()`` (``result.data`` for
     a real MCP client, or the same shape returned directly by the in-process
     ``route()`` call for Switchboard's self-delivery branch), it must return

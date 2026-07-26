@@ -657,6 +657,17 @@ class TestUnwrapRouteResult:
         assert error == "ConnectionError: refused"
         assert retryable is True
 
+    def test_structured_transient_envelope_handles_a_nonlegacy_concrete_name(self):
+        data, error, retryable = _unwrap_route_result(
+            {
+                "error": "ClientConnectorError: connection refused",
+                "retryable": True,
+            }
+        )
+        assert data is None
+        assert error == "ClientConnectorError: connection refused"
+        assert retryable is True
+
     def test_error_envelope_is_detected_and_classified_permanent(self):
         data, error, retryable = _unwrap_route_result(
             {"error": "RuntimeError: Unknown tool: receive_domain_event"}

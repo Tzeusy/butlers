@@ -510,9 +510,8 @@ async def _transient_failure_switchboard_route(
     source_butler: str = "switchboard",
     **_kwargs: Any,
 ) -> dict[str, Any]:
-    """Simulates a transient network blip -- retryable per
-    `_is_retryable_route_error_text`."""
-    return {"error": "ConnectionError: connection refused"}
+    """Simulates a real route envelope with a concrete nonlegacy transport name."""
+    return {"error": "ClientConnectorError: connection refused", "retryable": True}
 
 
 async def _insert_delivery_row(

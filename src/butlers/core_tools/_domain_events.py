@@ -99,19 +99,19 @@ _FAILED_RETRY_BACKOFF = timedelta(minutes=15)
 _MAX_DELIVERY_RETRY_ATTEMPTS = 5
 _SWEEP_BATCH_LIMIT = 200
 
-# route()'s internal except-block stamps every failure as
-# f"{type(exc).__name__}: {exc}" (see roster/switchboard/tools/routing/
-# route.py). These exception-type prefixes are the ones route() actually
-# raises for transient conditions (target unreachable, call timed out);
-# everything else -- notably a RuntimeError from an unknown/unregistered
-# tool (the shape a missing `domain_events` core group takes) or a
-# LookupError from an absent registry entry -- is permanent: retrying can
-# never succeed.
+# route() preserves the old ``{"error": "<ExceptionType>: <message>"}``
+# envelope and now adds ``retryable: true`` only while it still has a proven
+# transport exception hierarchy. Older Switchboard versions and test doubles
+# have only that legacy string, so retain the exact historical prefixes as a
+# compatibility fallback. Everything else -- notably a RuntimeError from an
+# unknown/unregistered tool (the shape a missing `domain_events` core group
+# takes) or a LookupError from an absent registry entry -- is permanent:
+# retrying can never succeed.
 _RETRYABLE_ROUTE_ERROR_PREFIXES = ("ConnectionError:", "OSError:", "TimeoutError:")
 
 
 def _is_retryable_route_error_text(error_text: str) -> bool:
-    """Classify a route()-level error string as transient (True) or permanent."""
+    """Classify an unstructured legacy route error as transient or permanent."""
     return error_text.startswith(_RETRYABLE_ROUTE_ERROR_PREFIXES)
 
 
@@ -154,17 +154,22 @@ def _unwrap_route_result(raw: Any) -> tuple[dict[str, Any] | None, str | None, b
     """Unwrap a raw ``route()`` return value into ``(data, error_text, retryable)``.
 
     ``route()`` returns ``{"error": "<ExceptionType>: <message>"}`` on any
-    route-level failure (target unreachable, unknown tool, registry lookup)
-    or ``{"result": <target tool's own return value>}`` on success -- see
-    ``_dispatch_receive_via_switchboard``'s docstring. This is the single
-    place both of that function's branches (real MCP client vs. Switchboard
-    in-process self-delivery) unwrap that envelope, so they can never drift
-    out of sync on how a route-level error is detected and classified.
+    route-level failure (target unreachable, unknown tool, registry lookup),
+    adding ``"retryable": true`` only for source-classified transport
+    failures, or ``{"result": <target tool's own return value>}`` on success
+    -- see ``_dispatch_receive_via_switchboard``'s docstring. This is the
+    single place both of that function's branches (real MCP client vs.
+    Switchboard in-process self-delivery) unwrap that envelope, so they can
+    never drift out of sync on how a route-level error is detected and
+    classified.
     """
     if not isinstance(raw, dict):
         return None, "route() returned a non-dict result.", False
     if "error" in raw:
         error_text = str(raw["error"])
+        retryable = raw.get("retryable")
+        if isinstance(retryable, bool):
+            return None, error_text, retryable
         return None, error_text, _is_retryable_route_error_text(error_text)
 
     data = raw.get("result")
