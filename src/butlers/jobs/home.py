@@ -6,7 +6,7 @@ costs for formulaic monitoring work.
 
 Jobs read current entity state from the connector-populated ``ha_entity_snapshot``
 table and load monitoring thresholds from the state store (``home:thresholds:*``),
-falling back to direct HA REST API calls only for historical statistics queries
+falling back to direct HA WebSocket calls only for historical statistics queries
 (energy digest) or hardcoded defaults (environment report).
 
 The ``run_maintenance_schedule_check`` function is fully implemented: it queries
@@ -59,7 +59,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
 
 import asyncpg
-import httpx
 
 from butlers.core.attention_ledger import (
     check_owner_notify_suppression,
@@ -1299,90 +1298,118 @@ async def _fetch_weekly_statistics(
     ha_url: str,
     ha_token: str,
 ) -> dict[str, Any]:
-    """Fetch weekly energy statistics via HA REST API.
+    """Fetch weekly energy statistics via the HA WebSocket API.
 
-    Calls ``recorder/get_statistics_during_period`` with ``period="week"``
+    Calls ``recorder/statistics_during_period`` with ``period="week"``
     for aggregate totals and ``period="day"`` for daily breakdowns.
 
     Returns a dict mapping entity_id → ``{"weekly_sum": float, "daily": [...]}``
     or an empty dict if HA is unreachable.
     """
+    import aiohttp
+
     end_dt = datetime.now(tz=UTC)
     start_dt = end_dt - timedelta(days=7)
     start_iso = start_dt.isoformat()
     end_iso = end_dt.isoformat()
 
     base_url = ha_url.rstrip("/")
-    headers = {
-        "Authorization": f"Bearer {ha_token}",
-        "Content-Type": "application/json",
-    }
+    if base_url.startswith("https://"):
+        ws_url = "wss://" + base_url.removeprefix("https://")
+    elif base_url.startswith("http://"):
+        ws_url = "ws://" + base_url.removeprefix("http://")
+    else:
+        ws_url = base_url
+    ws_url += "/api/websocket"
 
     result: dict[str, Any] = {}
 
-    async with httpx.AsyncClient(
-        headers=headers,
-        timeout=httpx.Timeout(30.0, connect=10.0),
-        verify=False,  # noqa: S501 — local HA instances often use self-signed certs
-    ) as client:
-        # Fetch weekly aggregate totals
-        try:
-            resp = await client.post(
-                f"{base_url}/api/recorder/get_statistics_during_period",
-                json={
-                    "start_time": start_iso,
-                    "end_time": end_iso,
-                    "statistic_ids": entity_ids,
-                    "period": "week",
-                    "types": ["sum", "mean"],
-                },
+    async def _request_statistics(
+        websocket: aiohttp.ClientWebSocketResponse,
+        *,
+        command_id: int,
+        period: str,
+    ) -> dict[str, Any] | None:
+        await websocket.send_json(
+            {
+                "id": command_id,
+                "type": "recorder/statistics_during_period",
+                "start_time": start_iso,
+                "end_time": end_iso,
+                "statistic_ids": entity_ids,
+                "period": period,
+                "types": ["sum", "mean"],
+            }
+        )
+        message = await websocket.receive_json(timeout=30.0)
+        if (
+            message.get("type") != "result"
+            or message.get("id") != command_id
+            or not message.get("success")
+        ):
+            error = message.get("error") or {}
+            logger.error(
+                "HA WebSocket error fetching %s stats: code=%r message=%r",
+                period,
+                error.get("code"),
+                str(error.get("message", ""))[:200],
             )
-            if resp.status_code >= 400:
-                logger.error(
-                    "HA API error fetching weekly stats: status=%d body=%r",
-                    resp.status_code,
-                    resp.text[:200],
-                )
-            else:
-                weekly_data = resp.json()
-                for eid, stats_list in weekly_data.items():
-                    if not isinstance(stats_list, list) or not stats_list:
-                        continue
-                    # Sum the 'sum' values across all returned entries
-                    total = sum(float(s.get("sum") or 0) for s in stats_list if isinstance(s, dict))
-                    result.setdefault(eid, {})["weekly_sum"] = total
-        except httpx.RequestError as exc:
-            logger.warning(
-                "HA REST API unreachable for weekly stats — skipping historical data: %s", exc
-            )
-            return {}
+            return None
 
-        # Fetch daily breakdown
-        try:
-            resp = await client.post(
-                f"{base_url}/api/recorder/get_statistics_during_period",
-                json={
-                    "start_time": start_iso,
-                    "end_time": end_iso,
-                    "statistic_ids": entity_ids,
-                    "period": "day",
-                    "types": ["sum", "mean"],
-                },
-            )
-            if resp.status_code >= 400:
-                logger.error(
-                    "HA API error fetching daily stats: status=%d body=%r",
-                    resp.status_code,
-                    resp.text[:200],
+        data = message.get("result")
+        if not isinstance(data, dict):
+            logger.error("HA WebSocket returned invalid %s statistics payload", period)
+            return None
+        return data
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=70.0, connect=10.0)
+        connector = aiohttp.TCPConnector(
+            ssl=False,  # noqa: S501 — local HA instances often use self-signed certs
+        )
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+            async with session.ws_connect(ws_url, heartbeat=30.0) as websocket:
+                auth_required = await websocket.receive_json(timeout=10.0)
+                if auth_required.get("type") != "auth_required":
+                    raise RuntimeError("Home Assistant WebSocket did not request authentication")
+
+                await websocket.send_json({"type": "auth", "access_token": ha_token})
+                auth_result = await websocket.receive_json(timeout=10.0)
+                if auth_result.get("type") != "auth_ok":
+                    raise RuntimeError("Home Assistant WebSocket authentication failed")
+
+                weekly_data = await _request_statistics(
+                    websocket,
+                    command_id=1,
+                    period="week",
                 )
-            else:
-                daily_data = resp.json()
-                for eid, stats_list in daily_data.items():
-                    if not isinstance(stats_list, list):
-                        continue
-                    result.setdefault(eid, {})["daily"] = stats_list
-        except httpx.RequestError as exc:
-            logger.warning("HA REST API unreachable for daily stats: %s", exc)
+                if weekly_data is not None:
+                    for eid, stats_list in weekly_data.items():
+                        if not isinstance(stats_list, list) or not stats_list:
+                            continue
+                        total = sum(
+                            float(stat.get("sum") or 0)
+                            for stat in stats_list
+                            if isinstance(stat, dict)
+                        )
+                        result.setdefault(eid, {})["weekly_sum"] = total
+
+                daily_data = await _request_statistics(
+                    websocket,
+                    command_id=2,
+                    period="day",
+                )
+                if daily_data is not None:
+                    for eid, stats_list in daily_data.items():
+                        if not isinstance(stats_list, list):
+                            continue
+                        result.setdefault(eid, {})["daily"] = stats_list
+    except (aiohttp.ClientError, TimeoutError, RuntimeError, ValueError, TypeError) as exc:
+        logger.warning(
+            "HA WebSocket API unavailable for energy statistics — skipping historical data: %s",
+            exc,
+        )
+        return {}
 
     return result
 
@@ -1681,7 +1708,7 @@ async def run_energy_digest(
         )
         if not stats:
             ha_unreachable = True
-            logger.warning("run_energy_digest: HA REST API returned no data")
+            logger.warning("run_energy_digest: HA WebSocket API returned no data")
     else:
         ha_unreachable = True
         logger.warning(
@@ -1805,7 +1832,7 @@ async def run_energy_digest(
     # ------------------------------------------------------------------
     if ha_unreachable and not device_totals:
         message = (
-            "⚠️ Weekly energy digest: Home Assistant REST API was unreachable. "
+            "⚠️ Weekly energy digest: Home Assistant statistics API was unreachable. "
             "Historical statistics are unavailable this week."
         )
     else:
@@ -1816,7 +1843,7 @@ async def run_energy_digest(
             baseline_total=baseline_total_kwh,
         )
         if ha_unreachable:
-            message += "\n\n⚠️ Note: HA REST API unreachable — statistics may be incomplete."
+            message += "\n\n⚠️ Note: HA statistics API unreachable — statistics may be incomplete."
 
     await _send_notify(pool, message)
 

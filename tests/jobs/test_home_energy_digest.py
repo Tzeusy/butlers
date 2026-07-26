@@ -14,6 +14,7 @@ import pytest
 from butlers.jobs.home import (
     _build_digest_message,
     _compute_device_totals,
+    _fetch_weekly_statistics,
     _is_energy_entity,
     detect_anomalies,
     run_energy_digest,
@@ -112,6 +113,86 @@ def test_compute_device_totals():
     assert len(result) == 2
     assert result[0]["entity_id"] == "sensor.b"
     assert sum(d["share_pct"] for d in result) == pytest.approx(100.0, abs=0.5)
+
+
+# ---------------------------------------------------------------------------
+# _fetch_weekly_statistics
+# ---------------------------------------------------------------------------
+
+
+async def test_fetch_weekly_statistics_uses_ha_websocket_recorder_command():
+    """Historical energy statistics use HA's WebSocket-only recorder API."""
+    websocket = MagicMock()
+    websocket.receive_json = AsyncMock(
+        side_effect=[
+            {"type": "auth_required", "ha_version": "2026.7.0"},
+            {"type": "auth_ok", "ha_version": "2026.7.0"},
+            {
+                "id": 1,
+                "type": "result",
+                "success": True,
+                "result": {
+                    "sensor.energy": [
+                        {"start": 1, "end": 2, "sum": 12.5, "mean": 1.8},
+                    ]
+                },
+            },
+            {
+                "id": 2,
+                "type": "result",
+                "success": True,
+                "result": {
+                    "sensor.energy": [
+                        {"start": 1, "end": 2, "sum": 5.0, "mean": 1.2},
+                        {"start": 2, "end": 3, "sum": 7.5, "mean": 2.4},
+                    ]
+                },
+            },
+        ]
+    )
+    websocket.send_json = AsyncMock()
+
+    websocket_context = MagicMock()
+    websocket_context.__aenter__ = AsyncMock(return_value=websocket)
+    websocket_context.__aexit__ = AsyncMock(return_value=None)
+
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.ws_connect.return_value = websocket_context
+
+    with (
+        patch("aiohttp.ClientSession", return_value=session),
+        patch("aiohttp.TCPConnector"),
+    ):
+        result = await _fetch_weekly_statistics(
+            MagicMock(),
+            ["sensor.energy"],
+            ha_url="http://ha.local:8123/",
+            ha_token="token",
+        )
+
+    session.ws_connect.assert_called_once_with(
+        "ws://ha.local:8123/api/websocket",
+        heartbeat=30.0,
+    )
+    sent = [call.args[0] for call in websocket.send_json.await_args_list]
+    assert sent[0] == {"type": "auth", "access_token": "token"}
+    assert [message["type"] for message in sent[1:]] == [
+        "recorder/statistics_during_period",
+        "recorder/statistics_during_period",
+    ]
+    assert [message["period"] for message in sent[1:]] == ["week", "day"]
+    assert [message["id"] for message in sent[1:]] == [1, 2]
+    assert result == {
+        "sensor.energy": {
+            "weekly_sum": 12.5,
+            "daily": [
+                {"start": 1, "end": 2, "sum": 5.0, "mean": 1.2},
+                {"start": 2, "end": 3, "sum": 7.5, "mean": 2.4},
+            ],
+        }
+    }
 
 
 # ---------------------------------------------------------------------------
