@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import asyncpg
+import httpx
 import pytest
 
 from butlers.config import ButlerType
@@ -845,6 +846,32 @@ class TestDispatchReceiveViaSwitchboardEnvelope:
         assert data is None
         assert error == f"Switchboard unreachable: {failure}"
         assert retryable is False
+
+    @pytest.mark.parametrize(
+        "failure",
+        (
+            httpx.ConnectError("connection refused"),
+            httpx.ReadTimeout("read timed out"),
+        ),
+    )
+    async def test_client_branch_classifies_direct_transient_httpx_errors_as_retryable(
+        self, failure
+    ):
+        """Direct HTTPX transport failures use the shared retry classifier."""
+        client = AsyncMock()
+        client.call_tool = AsyncMock(side_effect=failure)
+
+        data, error, retryable = await _domain_events._dispatch_receive_via_switchboard(
+            client,
+            AsyncMock(),
+            "travel",
+            target_butler="finance",
+            args={"event_id": "e1", "event_type": "travel.trip_booked", "payload": {}},
+        )
+
+        assert data is None
+        assert error == f"Switchboard unreachable: {failure}"
+        assert retryable is True
 
     async def test_switchboard_self_delivery_branch_unwraps_successful_result(self, monkeypatch):
         import importlib

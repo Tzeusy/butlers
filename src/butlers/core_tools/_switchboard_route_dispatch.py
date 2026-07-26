@@ -145,7 +145,7 @@ async def dispatch_via_switchboard_route(
             )
         except TimeoutError:
             return None, f"Switchboard route() call timed out after {timeout_s}s.", True
-        except (ConnectionError, OSError) as exc:
+        except (ConnectionError, OSError, httpx.NetworkError, httpx.TimeoutException) as exc:
             return (
                 None,
                 f"Switchboard unreachable: {exc}",
