@@ -102,6 +102,7 @@ async def _call_tool_with_router_client(
     tool_name: str,
     args: dict[str, Any],
 ) -> Any:
+    first_exc: Exception | None = None
     telemetry = get_switchboard_telemetry()
 
     for reconnect in (False, True):
@@ -112,8 +113,16 @@ async def _call_tool_with_router_client(
             if not is_retryable_route_exception(exc):
                 raise
             if reconnect:
-                raise
+                if first_exc is None:
+                    message = f"Failed to call tool {tool_name} on {endpoint_url}: {exc}"
+                else:
+                    message = (
+                        f"Failed to call tool {tool_name} on {endpoint_url}: "
+                        f"{first_exc} (reconnect failed: {exc})"
+                    )
+                raise ConnectionError(message) from exc
 
+            first_exc = exc
             telemetry.retry_attempt.add(
                 1,
                 telemetry.attrs(

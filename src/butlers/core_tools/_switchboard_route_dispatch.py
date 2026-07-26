@@ -25,6 +25,8 @@ import errno
 from collections.abc import Callable
 from typing import Any
 
+import httpx
+
 ROUTE_TIMEOUT_S = 30
 
 # Route dispatch handles sockets, not local files. Keep the same bounded
@@ -48,11 +50,32 @@ _RETRYABLE_ROUTE_OS_ERRNOS = frozenset(
 )
 
 
-def is_retryable_route_exception(exc: Exception) -> bool:
-    """Return whether an exception is a known transient route transport failure."""
+def _is_direct_retryable_route_exception(exc: Exception) -> bool:
+    """Return whether ``exc`` itself is a known transient route failure."""
     if isinstance(exc, (ConnectionError, TimeoutError)):
         return True
+    if isinstance(exc, (httpx.NetworkError, httpx.TimeoutException)):
+        return True
     return isinstance(exc, OSError) and exc.errno in _RETRYABLE_ROUTE_OS_ERRNOS
+
+
+def is_retryable_route_exception(exc: Exception) -> bool:
+    """Return whether an exception is a known transient route transport failure.
+
+    FastMCP turns a transport error raised while opening a client into its
+    exact ``RuntimeError('Client failed to connect: ...')`` wrapper. Preserve
+    the underlying network classification only for that known shape and its
+    direct cause; arbitrary runtime wrappers remain terminal and must never
+    gain a reconnect attempt or be relabeled as ``ConnectionError``.
+    """
+    if _is_direct_retryable_route_exception(exc):
+        return True
+    return (
+        type(exc) is RuntimeError
+        and str(exc).startswith("Client failed to connect:")
+        and isinstance(exc.__cause__, Exception)
+        and _is_direct_retryable_route_exception(exc.__cause__)
+    )
 
 
 def _extract_mcp_error_text(result: Any) -> str:
