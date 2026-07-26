@@ -473,6 +473,16 @@ describe("ButlerQaInvestigationsTab — severity badges", () => {
     const labels = badges.map((b) => b.textContent ?? "");
     expect(labels).toContain("low");
   });
+
+  it("uses the neutral status token for a PR-open investigation", () => {
+    renderTab();
+    const badge = screen
+      .getAllByText("PR open")
+      .find((element) => (element as HTMLElement).getAttribute("data-slot") === "badge") as HTMLElement;
+
+    expect(badge).toBeTruthy();
+    expect(badge.style.borderColor).toBe("var(--dim)");
+  });
 });
 
 // ---------------------------------------------------------------------------

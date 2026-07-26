@@ -20,8 +20,8 @@
  * filtered/skipped. "failed" (routing failure after ingestion, bu-lkzsf.1)
  * shares the error segment — same destructive severity, just a later
  * pipeline stage — rather than adding a fifth stacked lane.
- * Segment fills reuse the app's existing status color vocabulary (StatusBadge /
- * RowStatus: destructive for error, blue-500 for replay) — no new color
+ * Segment fills reuse the app's existing status/category vocabulary (StatusBadge /
+ * RowStatus: destructive for error, categorical-1 for replay) — no new color
  * tokens are introduced.
  *
  * The strip is always 60px wide (bucketMinutes * slotCount == 60) so the
@@ -210,7 +210,7 @@ export function HourFlameStrip({
             ? []
             : [
                 { count: errorTotal(slot.counts), className: "bg-destructive" },
-                { count: replayTotal(slot.counts), className: "bg-blue-500" },
+                { count: replayTotal(slot.counts), className: "bg-[var(--categorical-1)]" },
                 { count: slot.counts.ingested, className: "bg-foreground/30" },
                 { count: slot.counts.filtered + slot.counts.skipped, className: "bg-foreground/10" },
               ].filter((seg) => seg.count > 0);

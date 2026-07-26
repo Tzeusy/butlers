@@ -1227,7 +1227,7 @@ function HourGroup({
                 <>
                   {" "}
                   ·{" "}
-                  <span className="text-blue-600">
+                  <span className="text-[var(--categorical-1)]">
                     {hourTotals.replays} {hourTotals.replays === 1 ? "replay" : "replays"}
                   </span>
                 </>

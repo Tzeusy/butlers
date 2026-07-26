@@ -152,7 +152,7 @@ describe("HourFlameStrip", () => {
     );
     expect(segmentClasses).toEqual([
       "bg-destructive",
-      "bg-blue-500",
+      "bg-[var(--categorical-1)]",
       "bg-foreground/30",
       "bg-foreground/10",
     ]);
