@@ -1210,6 +1210,27 @@ class TestClusteredDigest:
         assert len(clusters) == 1
         assert len(clusters[0]) == 2
 
+    async def test_cluster_candidates_adjacent_event_dates_stay_separate(self):
+        """UTC dates represent adjacent full-day windows, not one shared instant."""
+        from butlers.tools.switchboard.insight.broker import _cluster_candidates
+
+        candidates = [
+            {
+                "origin_butler": "finance",
+                "message": "Tuesday",
+                "metadata": {"event_date": "2026-08-04"},
+            },
+            {
+                "origin_butler": "travel",
+                "message": "Wednesday",
+                "metadata": {"event_date": "2026-08-05"},
+            },
+        ]
+
+        clusters = _cluster_candidates(candidates)
+
+        assert len(clusters) == 2
+
     def test_cluster_candidates_transitive_chain_folds_into_one_group(self):
         """A links to B via entity_id; B links to C via overlapping window ->
         A, B, C fold into one connected group even though A and C share

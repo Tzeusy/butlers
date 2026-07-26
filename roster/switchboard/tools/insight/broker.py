@@ -778,9 +778,10 @@ def _candidate_time_window(candidate: dict[str, Any]) -> tuple[datetime, datetim
 
     Supports two producer shapes: an explicit ``event_window: {start, end}``
     (ISO 8601 timestamps), or a coarser ``event_date`` (ISO date, normalized to
-    a full UTC day). Malformed or partial values fail open to "no correlation
-    data" (returns None) rather than raising — a producer's metadata typo must
-    not break digest formatting.
+    a full UTC day). Both forms use half-open ``[start, end)`` semantics, so
+    adjacent windows share no event time. Malformed or partial values fail open
+    to "no correlation data" (returns None) rather than raising — a producer's
+    metadata typo must not break digest formatting.
     """
     metadata = candidate.get("metadata")
     if not isinstance(metadata, dict):
@@ -821,13 +822,10 @@ def _cluster_candidates(candidates: list[dict[str, Any]]) -> list[list[dict[str,
 
     Two candidates link when they share a non-null ``metadata.entity_id``, or
     when both resolve a time window (``metadata.event_window`` or
-    ``metadata.event_date``) and those windows overlap. Linkage is transitive
-    (union-find), so a chain of pairwise links folds into one group.
-    Candidates with no correlation data of their own remain singleton groups
-    — this is exactly the pre-clustering behaviour, so a digest built from
-    candidates with no correlation metadata (every producer today — see
-    bu-ep4ks.9 follow-up to wire entity_id/event_window into producer
-    metadata) formats identically to before this slice.
+    ``metadata.event_date``) and those half-open windows overlap. Linkage is
+    transitive (union-find), so a chain of pairwise links folds into one group.
+    Candidates with no correlation data of their own remain singleton groups,
+    preserving pre-clustering digest formatting for those entries.
 
     Group order follows each group's earliest-appearing member in
     ``candidates`` (already priority-ordered by the caller), so both
@@ -857,7 +855,7 @@ def _cluster_candidates(candidates: list[dict[str, Any]]) -> list[list[dict[str,
                 continue
             if windows[i] is not None and windows[j] is not None:
                 (s1, e1), (s2, e2) = windows[i], windows[j]
-                if s1 <= e2 and s2 <= e1:
+                if s1 < e2 and s2 < e1:
                     union(i, j)
 
     groups: dict[int, list[dict[str, Any]]] = {}

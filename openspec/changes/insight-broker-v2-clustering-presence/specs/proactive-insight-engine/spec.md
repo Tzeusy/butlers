@@ -56,8 +56,10 @@ silently queue for the length of a trip.
 When the delivery cycle composes a multi-candidate digest, it SHALL group
 candidates that share a non-null `metadata.entity_id`, or whose event time
 windows overlap (`metadata.event_window: {start, end}` as ISO 8601
-timestamps, or `metadata.event_date` as an ISO date normalized to a full UTC
-day), into one labeled sub-group within the digest message. Grouping is
+timestamps, or `metadata.event_date` as an ISO date normalized to a half-open
+full UTC-day window `[00:00, next 00:00)`), into one labeled sub-group within
+the digest message. Event-window overlap uses half-open `[start, end)`
+semantics, so adjacent boundaries alone do not correlate. Grouping is
 transitive: if candidate A links to B and B links to C, all three render as
 one group even if A and C share neither an entity nor an overlapping window
 directly. This grouping is deterministic and computed without any LLM call.
@@ -77,6 +79,12 @@ requirement existed.
   (or `metadata.event_date`) time ranges overlap
 - **THEN** the digest renders those two candidates under one correlated
   sub-entry
+
+#### Scenario: Adjacent UTC event dates remain separate
+- **WHEN** the digest includes one candidate with `metadata.event_date`
+  `"2026-08-04"` and another with `metadata.event_date` `"2026-08-05"`
+- **THEN** the digest renders them as separate entries because their normalized
+  half-open UTC-day windows meet at a boundary but do not overlap
 
 #### Scenario: No correlation metadata preserves prior flat-list formatting
 - **WHEN** none of the digest's candidates carry `metadata.entity_id`,
