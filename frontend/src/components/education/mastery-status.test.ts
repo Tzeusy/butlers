@@ -32,4 +32,16 @@ describe("mastery-status: canonical color map", () => {
       "bg-[var(--amber)]/10 text-[var(--amber-text)]",
     );
   });
+
+  it("ensures all text colors are WCAG-AA safe (no border-opacity tokens)", () => {
+    for (const [status, token] of Object.entries(MASTERY_STATUS_TEXT_COLORS)) {
+      expect(
+        token,
+        `status "${status}" text color should not use border-strong (18%-20% opacity is not text-safe)`,
+      ).not.toContain("border-strong");
+    }
+    // Explicitly verify unseen and diagnosed use text-safe --dim
+    expect(MASTERY_STATUS_TEXT_COLORS.unseen).toBe("var(--dim)");
+    expect(MASTERY_STATUS_TEXT_COLORS.diagnosed).toBe("var(--dim)");
+  });
 });

@@ -26,11 +26,14 @@ export const MASTERY_STATUS_COLORS: Record<string, string> = {
 /**
  * TEXT-safe variant of MASTERY_STATUS_COLORS. Base --amber fails WCAG AA as
  * text (bu-86c4c.16) -- --amber-text is the AA-fixed alias for text usage.
- * Every other status's base token already passes AA as text.
+ * --border-strong (18%-20% opacity) is not text-safe, so unseen and diagnosed
+ * use --dim (tertiary text token) instead.
  */
 export const MASTERY_STATUS_TEXT_COLORS: Record<string, string> = {
   ...MASTERY_STATUS_COLORS,
   learning: "var(--amber-text)",
+  unseen: "var(--dim)", // border-opacity tokens are not text-safe
+  diagnosed: "var(--dim)", // border-opacity tokens are not text-safe
 };
 
 /** Tailwind arbitrary-value badge classes derived from the maps above. */
