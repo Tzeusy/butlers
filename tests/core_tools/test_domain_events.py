@@ -17,7 +17,11 @@ import pytest
 from butlers.config import ButlerType
 from butlers.core_tools import _domain_events
 from butlers.core_tools._base import ToolContext
-from butlers.core_tools._domain_events import fan_out_event, register_domain_event_tools
+from butlers.core_tools._domain_events import (
+    fan_out_event,
+    publish_domain_event_once,
+    register_domain_event_tools,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -143,6 +147,97 @@ class TestReceiveDomainEvent:
         assert result == {"status": "ok", "state": "task_created"}
         assert handler_mock.await_args.kwargs["subscriber_butler"] == "finance"
         assert handler_mock.await_args.kwargs["event_id"] == "event-1"
+
+
+class TestPublishDomainEventOnce:
+    async def test_publishes_when_no_prior_key_recorded(self, monkeypatch):
+        pool = AsyncMock()
+        monkeypatch.setattr("butlers.core.state.state_get", AsyncMock(return_value=None))
+        state_set_mock = AsyncMock(return_value=1)
+        monkeypatch.setattr("butlers.core.state.state_set", state_set_mock)
+        publish_mock = AsyncMock(return_value={"status": "ok", "event_id": "e1", "deliveries": []})
+        monkeypatch.setattr(_domain_events, "publish_domain_event", publish_mock)
+
+        result = await publish_domain_event_once(
+            pool,
+            None,
+            event_type="travel.trip_active",
+            source_butler="travel",
+            dedup_namespace="travel.trip_active",
+            dedup_key="trip-1",
+            payload={"trip_id": "trip-1"},
+        )
+
+        assert result == {"status": "ok", "event_id": "e1", "deliveries": []}
+        publish_mock.assert_awaited_once()
+        state_set_mock.assert_awaited_once_with(
+            pool, "domain_event_once:travel.trip_active:travel.trip_active", "trip-1"
+        )
+
+    async def test_skips_when_key_unchanged(self, monkeypatch):
+        pool = AsyncMock()
+        monkeypatch.setattr("butlers.core.state.state_get", AsyncMock(return_value="trip-1"))
+        state_set_mock = AsyncMock()
+        monkeypatch.setattr("butlers.core.state.state_set", state_set_mock)
+        publish_mock = AsyncMock()
+        monkeypatch.setattr(_domain_events, "publish_domain_event", publish_mock)
+
+        result = await publish_domain_event_once(
+            pool,
+            None,
+            event_type="travel.trip_active",
+            source_butler="travel",
+            dedup_namespace="travel.trip_active",
+            dedup_key="trip-1",
+            payload={"trip_id": "trip-1"},
+        )
+
+        assert result is None
+        publish_mock.assert_not_awaited()
+        state_set_mock.assert_not_awaited()
+
+    async def test_publishes_again_when_key_changes(self, monkeypatch):
+        pool = AsyncMock()
+        monkeypatch.setattr("butlers.core.state.state_get", AsyncMock(return_value="trip-1"))
+        state_set_mock = AsyncMock(return_value=2)
+        monkeypatch.setattr("butlers.core.state.state_set", state_set_mock)
+        publish_mock = AsyncMock(return_value={"status": "ok", "event_id": "e2", "deliveries": []})
+        monkeypatch.setattr(_domain_events, "publish_domain_event", publish_mock)
+
+        result = await publish_domain_event_once(
+            pool,
+            None,
+            event_type="travel.trip_active",
+            source_butler="travel",
+            dedup_namespace="travel.trip_active",
+            dedup_key="trip-2",
+            payload={"trip_id": "trip-2"},
+        )
+
+        assert result == {"status": "ok", "event_id": "e2", "deliveries": []}
+        state_set_mock.assert_awaited_once_with(
+            pool, "domain_event_once:travel.trip_active:travel.trip_active", "trip-2"
+        )
+
+    async def test_does_not_record_key_when_publish_errors(self, monkeypatch):
+        pool = AsyncMock()
+        monkeypatch.setattr("butlers.core.state.state_get", AsyncMock(return_value=None))
+        state_set_mock = AsyncMock()
+        monkeypatch.setattr("butlers.core.state.state_set", state_set_mock)
+        publish_mock = AsyncMock(return_value={"status": "error", "error": "invalid event_type"})
+        monkeypatch.setattr(_domain_events, "publish_domain_event", publish_mock)
+
+        result = await publish_domain_event_once(
+            pool,
+            None,
+            event_type="not valid",
+            source_butler="travel",
+            dedup_namespace="travel.trip_active",
+            dedup_key="trip-1",
+        )
+
+        assert result == {"status": "error", "error": "invalid event_type"}
+        state_set_mock.assert_not_awaited()
 
 
 class TestFanOutEvent:

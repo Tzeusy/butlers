@@ -304,6 +304,59 @@ async def publish_domain_event(
     return {"status": "ok", "event_id": event_id, "deliveries": fanout["deliveries"]}
 
 
+async def publish_domain_event_once(
+    pool: Any,
+    switchboard_client: Any,
+    *,
+    event_type: str,
+    source_butler: str,
+    dedup_namespace: str,
+    dedup_key: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Publish *event_type* unless *dedup_key* was the last one published for
+    *dedup_namespace*.
+
+    For a deterministic, recurring producer (a scheduled job re-evaluating the
+    same condition every run -- e.g. Finance's ``budget_pressure`` or Health's
+    ``recovery_state`` derived advisory, or Travel's ``trip_active`` transition
+    detector) calling :func:`publish_domain_event` unconditionally would
+    re-publish -- and re-wake every subscriber -- on every single run for as
+    long as the condition holds, rather than once per distinct occurrence.
+    This wraps the publish with a state-store-memoized "last key I published
+    for this namespace" check (mirrors the deterministic idempotence pattern
+    ``butlers.jobs.context_producers`` and the insight broker's ``dedup_key``
+    both use, applied here to the fan-out side instead of the owner-
+    notification side).
+
+    ``dedup_namespace`` scopes the memory (e.g. ``"travel.trip_active"`` or
+    ``f"finance.budget_pressure:{category}"``); ``dedup_key`` is the value that
+    must change for a new publish to occur (e.g. a trip id, or a
+    ``f"{period_scope}-{status}"`` token). Uses the caller's own pool's
+    ``state`` table (per-butler-schema KV store) -- never a sibling schema's.
+
+    Returns ``None`` when skipped as a duplicate of the last publish for this
+    namespace; otherwise the :func:`publish_domain_event` result.
+    """
+    from butlers.core.state import state_get, state_set
+
+    state_key = f"domain_event_once:{event_type}:{dedup_namespace}"
+    last_key = await state_get(pool, state_key)
+    if last_key == dedup_key:
+        return None
+
+    result = await publish_domain_event(
+        pool,
+        switchboard_client,
+        event_type=event_type,
+        source_butler=source_butler,
+        payload=payload,
+    )
+    if result.get("status") == "ok":
+        await state_set(pool, state_key, dedup_key)
+    return result
+
+
 def register_domain_event_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> None:
     """Register domain-event-bus tools: publish/subscribe/unsubscribe/list/receive.
 
