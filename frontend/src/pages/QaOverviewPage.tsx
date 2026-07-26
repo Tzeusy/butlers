@@ -725,8 +725,8 @@ export default function QaOverviewPage() {
   // navigation IS the selection, same shape as an issues-panel roving cursor
   // with no verbs declared.
   const caseIds = useMemo(
-    () => (cases.data?.data ?? []).map((c) => c.id),
-    [cases.data?.data],
+    () => casesData.map((c) => c.id),
+    [cases.data?.data], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const { hints: caseTriageHints } = useListTriage({
     ids: caseIds,
@@ -775,7 +775,7 @@ export default function QaOverviewPage() {
           if (resetCircuitBreaker.isPending) return;
           setResetDialogOpen(open);
         }}
-        attempts={circuitBreaker.data?.data.recent_attempts ?? []}
+        attempts={circuitBreaker.isError ? [] : (circuitBreaker.data?.data.recent_attempts ?? [])}
         attemptsAvailable={!circuitBreaker.isError}
         onConfirm={confirmResetCircuitBreaker}
         pending={resetCircuitBreaker.isPending}
