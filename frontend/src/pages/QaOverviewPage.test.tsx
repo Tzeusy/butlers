@@ -248,6 +248,16 @@ describe("QaOverviewPage -- dossier shell", () => {
     expect(html).toContain("What the staff caught and fixed");
   });
 
+  it("names a degraded case rail and exposes retry instead of an empty dossier", () => {
+    (useQaCases as AnyMock).mockReturnValue({
+      data: undefined, isLoading: false, isError: true, refetch: vi.fn(),
+    });
+    const html = renderPage();
+    expect(html).toContain('data-testid="qa-case-rail-degraded"');
+    expect(html).toContain("Retry");
+    expect(html).not.toContain("Nothing in the dossier.");
+  });
+
   it("renders port, model, and patrol_interval_minutes in header caption", () => {
     (useQaCases as AnyMock).mockReturnValue({
       data: { data: [MOCK_CASE_1] },
