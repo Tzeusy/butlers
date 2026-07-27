@@ -523,16 +523,20 @@ def test_dashboard_turn_stop_transitions_and_runtime_acl(postgres_container) -> 
                 p_route_inbox_id=inbox_id,
             )
             assert recovered["outcome"] == "cancelling"
-            crashed_session = conn.execute(
-                text(
-                    """
+            crashed_session = (
+                conn.execute(
+                    text(
+                        """
                     SELECT invoke_active, completed_at
                     FROM public.dashboard_conversation_turn_sessions
                     WHERE message_id = :message_id AND session_id = :session_id
                     """
-                ),
-                {"message_id": message_id, "session_id": crashed_session_id},
-            ).mappings().one()
+                    ),
+                    {"message_id": message_id, "session_id": crashed_session_id},
+                )
+                .mappings()
+                .one()
+            )
             assert crashed_session["invoke_active"] is False
             assert crashed_session["completed_at"] is not None
             assert (

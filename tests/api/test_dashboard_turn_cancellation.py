@@ -205,7 +205,9 @@ async def test_durable_stop_never_claims_success_when_an_invoked_runtime_wont_co
     # A failed MCP acknowledgement is not success, but a concurrent runtime
     # may have persisted its own durable outcome while this request was in
     # flight. Re-read that authority before returning an honest failure.
-    confirm_cancel.assert_awaited_once_with(db.credential_shared_pool.return_value, message_id=message_id)
+    confirm_cancel.assert_awaited_once_with(
+        db.credential_shared_pool.return_value, message_id=message_id
+    )
 
 
 async def test_existing_sse_observes_a_stop_settled_by_another_client(monkeypatch) -> None:
@@ -218,7 +220,12 @@ async def test_existing_sse_observes_a_stop_settled_by_another_client(monkeypatc
     monkeypatch.setattr(
         subject,
         "dispatch_status",
-        AsyncMock(side_effect=[_turn("active", message_id=message_id), _turn("cancelled", message_id=message_id)]),
+        AsyncMock(
+            side_effect=[
+                _turn("active", message_id=message_id),
+                _turn("cancelled", message_id=message_id),
+            ]
+        ),
     )
     monkeypatch.setattr(subject, "message_find_reply_since", AsyncMock(return_value=None))
     monkeypatch.setattr(subject.asyncio, "sleep", AsyncMock())
