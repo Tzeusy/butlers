@@ -31,6 +31,14 @@ pytestmark = pytest.mark.unit
 _REQUEST_ID = "018f6f4e-5b3b-7b2d-9c2f-7b7b6b6b6b6b"
 
 
+class _NoopLeaseHeartbeat:
+    async def __aenter__(self) -> asyncio.Event:
+        return asyncio.Event()
+
+    async def __aexit__(self, *_args: object) -> bool:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
@@ -241,8 +249,12 @@ def _mock_route_inbox(monkeypatch):
         AsyncMock(return_value=fake_inbox_id),
     )
     monkeypatch.setattr(
-        "butlers.core_tools._routing.route_inbox_mark_processing",
-        AsyncMock(),
+        "butlers.core_tools._routing.route_inbox_claim_processing",
+        AsyncMock(return_value=uuid.uuid4()),
+    )
+    monkeypatch.setattr(
+        "butlers.core_tools._routing.route_inbox_processing_lease_heartbeat",
+        MagicMock(side_effect=lambda *_args, **_kwargs: _NoopLeaseHeartbeat()),
     )
     monkeypatch.setattr(
         "butlers.core_tools._routing.route_inbox_mark_processed",

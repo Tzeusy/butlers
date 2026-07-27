@@ -23,6 +23,14 @@ from butlers.daemon import ButlerDaemon
 pytestmark = pytest.mark.unit
 
 
+class _NoopLeaseHeartbeat:
+    async def __aenter__(self) -> asyncio.Event:
+        return asyncio.Event()
+
+    async def __aexit__(self, *_args: object) -> bool:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Helpers (mirrors tests/daemon/test_route_execute_async_dispatch.py)
 # ---------------------------------------------------------------------------
@@ -187,7 +195,15 @@ async def test_creates_conversation_anchor_and_forwards_conversation_id(
             new_callable=AsyncMock,
             return_value=uuid.uuid4(),
         ),
-        patch("butlers.core_tools._routing.route_inbox_mark_processing", new_callable=AsyncMock),
+        patch(
+            "butlers.core_tools._routing.route_inbox_claim_processing",
+            new_callable=AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
+        patch(
+            "butlers.core_tools._routing.route_inbox_processing_lease_heartbeat",
+            side_effect=lambda *_args, **_kwargs: _NoopLeaseHeartbeat(),
+        ),
         patch("butlers.core_tools._routing.route_inbox_mark_processed", new_callable=AsyncMock),
         patch(
             "butlers.api.conversations.conversation_get_or_create_by_thread",
@@ -233,7 +249,15 @@ async def test_skips_conversation_anchor_when_no_thread_identity(tmp_path: Path)
             new_callable=AsyncMock,
             return_value=uuid.uuid4(),
         ),
-        patch("butlers.core_tools._routing.route_inbox_mark_processing", new_callable=AsyncMock),
+        patch(
+            "butlers.core_tools._routing.route_inbox_claim_processing",
+            new_callable=AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
+        patch(
+            "butlers.core_tools._routing.route_inbox_processing_lease_heartbeat",
+            side_effect=lambda *_args, **_kwargs: _NoopLeaseHeartbeat(),
+        ),
         patch("butlers.core_tools._routing.route_inbox_mark_processed", new_callable=AsyncMock),
         patch(
             "butlers.api.conversations.conversation_get_or_create_by_thread",
@@ -273,7 +297,15 @@ async def test_conversation_anchor_lookup_failure_does_not_block_routing(
             new_callable=AsyncMock,
             return_value=uuid.uuid4(),
         ),
-        patch("butlers.core_tools._routing.route_inbox_mark_processing", new_callable=AsyncMock),
+        patch(
+            "butlers.core_tools._routing.route_inbox_claim_processing",
+            new_callable=AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
+        patch(
+            "butlers.core_tools._routing.route_inbox_processing_lease_heartbeat",
+            side_effect=lambda *_args, **_kwargs: _NoopLeaseHeartbeat(),
+        ),
         patch("butlers.core_tools._routing.route_inbox_mark_processed", new_callable=AsyncMock),
         patch(
             "butlers.api.conversations.conversation_get_or_create_by_thread",
