@@ -195,6 +195,22 @@ The `energy_digest` job fetches weekly energy statistics, computes top consumers
 - **WHEN** energy sensors are discovered
 - **THEN** the job SHALL call the HA WebSocket API command `recorder/statistics_during_period` with `period="day"` for the past 7 days (historical statistics are not available in the connector cache)
 - **AND** it SHALL also call over an hour-aligned 168-hour window with `period="hour"` and sum the returned per-period `change` values for aggregate consumption per device
+- **AND** a device series SHALL be supported only when every hourly bucket contains a finite numeric `change`; an explicit `change=0` SHALL remain valid zero consumption
+- **AND** the job SHALL NOT substitute missing, non-numeric, or non-finite `change` values with zero or integrate `mean` power values as energy
+
+#### Scenario: No cumulative-energy statistics available
+
+- **WHEN** every discovered sensor lacks a complete finite hourly `change` series
+- **THEN** the job SHALL notify the owner that cumulative-energy statistics are unavailable and recommend configuring a Home Assistant energy helper for power-only sensors
+- **AND** it SHALL return `{"error": "no_cumulative_energy_statistics", "unsupported_sensors": [...]}` with the omitted entity IDs
+- **AND** it SHALL NOT compute or store an energy baseline
+
+#### Scenario: Partial cumulative-energy statistics
+
+- **WHEN** at least one discovered sensor has a complete finite hourly `change` series and at least one does not
+- **THEN** the job SHALL report only the supported device series and identify the omitted sensors visibly
+- **AND** it SHALL NOT present a whole-home total, whole-home trend, savings claim, or percentage share
+- **AND** it SHALL NOT read or store an overall energy baseline, though supported per-device baselines and anomalies MAY still be processed
 
 #### Scenario: Baseline comparison
 
@@ -216,7 +232,7 @@ The `energy_digest` job fetches weekly energy statistics, computes top consumers
 
 #### Scenario: Baseline memory update
 
-- **WHEN** the digest is composed
+- **WHEN** a complete digest is composed with cumulative-energy statistics for every discovered sensor
 - **THEN** the job SHALL call `store_fact` with `predicate="energy_baseline"`, `permanence="standard"`, containing the current week's total and top consumer breakdown
 - **AND** if anomalies were detected, it SHALL call `store_fact` with `predicate="energy_spike"`, `permanence="volatile"`, for each anomalous device
 
@@ -234,8 +250,10 @@ The `energy_digest` job fetches weekly energy statistics, computes top consumers
 
 #### Scenario: Job return value
 
-- **WHEN** the job completes successfully
+- **WHEN** the job completes successfully with cumulative-energy statistics for every discovered sensor
 - **THEN** it SHALL return a dict with keys `total_kwh` (float), `devices_ranked` (int), `anomalies_found` (int), `baseline_updated` (bool)
+- **WHEN** the job completes with both supported and unsupported sensor series
+- **THEN** it SHALL return a dict with `partial=true`, `omitted_sensors` (list of entity IDs), `devices_ranked` (int), `anomalies_found` (int), and `baseline_updated=false`, without a `total_kwh` key
 
 ### Requirement: Entity State Access and HA Statistics Fallback for Jobs
 
