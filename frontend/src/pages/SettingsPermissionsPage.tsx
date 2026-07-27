@@ -436,7 +436,7 @@ function AuditReelSection() {
           />
         </div>
       )}
-      {!isLoading && !isError && (
+      {!isLoading && (data != null) && (
         <>
           {entries.map((entry) => (
             <div
@@ -459,7 +459,7 @@ function AuditReelSection() {
               </span>
             </div>
           ))}
-          {entries.length === 0 && (
+          {!isError && entries.length === 0 && (
             <div className="border-r border-b border-border/60 px-4 py-3">
               <p className="font-serif italic text-sm text-muted-foreground">
                 No recent audit entries.

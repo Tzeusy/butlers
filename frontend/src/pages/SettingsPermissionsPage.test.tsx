@@ -440,6 +440,16 @@ describe("SettingsPermissionsPage — audit reel filters operational noise [bu-9
     expect(screen.getByTestId("audit-reel-degraded")).toBeTruthy();
     expect(screen.queryByText("No recent audit entries.")).toBeNull();
   });
+
+  it("keeps cached audit rows visibly degraded when refresh fails", async () => {
+    useAuditLogMock.mockReturnValue({
+      data: { data: [{ id: "a", ts: "2026-01-01T00:00:00Z", actor: "owner", action: "permission.changed" }] },
+      isLoading: false, isError: true, error: new Error("refresh failed"), refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useAuditLogMock>);
+    await act(async () => { renderPage(); });
+    expect(screen.getByTestId("audit-reel-degraded")).toBeTruthy();
+    expect(screen.getByText("permission.changed")).toBeTruthy();
+  });
 });
 
 // ---------------------------------------------------------------------------

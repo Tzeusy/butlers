@@ -87,7 +87,7 @@ export function TelegramSessionSetup({
   startImmediately?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { data: status, isLoading } = useQuery({
+  const { data: status, isLoading, isError, refetch } = useQuery({
     queryKey: ["telegram-session-status"],
     queryFn: getTelegramSessionStatus,
     refetchInterval: TELEGRAM_SESSION_POLL_MS,
@@ -256,6 +256,18 @@ export function TelegramSessionSetup({
       <section className="space-y-3" aria-live="polite">
         <Eyebrow as="div">Telegram user session</Eyebrow>
         <Skeleton className="h-8 w-48" />
+      </section>
+    );
+  }
+
+  if (isError) {
+    return (
+      <section className="space-y-3" aria-live="polite">
+        <Eyebrow as="div">Telegram user session</Eyebrow>
+        <p className="text-sm text-muted-foreground" role="status">
+          Session status unavailable.
+        </p>
+        <Button variant="outline" size="sm" onClick={() => void refetch()}>Retry status</Button>
       </section>
     );
   }
