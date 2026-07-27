@@ -105,7 +105,7 @@ async def test_execute_consolidation_skips_registered_temporal_updated_fact(monk
             UpdatedFact(
                 target_id=target_id,
                 subject="system",
-                predicate="status_event",
+                predicate="model_claimed_non_temporal",
                 content="new status",
             )
         ],
@@ -159,7 +159,7 @@ async def test_execute_consolidation_skips_temporal_updated_fact_by_predicate_al
             UpdatedFact(
                 target_id=target_id,
                 subject="system",
-                predicate="status",
+                predicate="model_claimed_non_temporal",
                 content="new status",
             )
         ],
@@ -319,3 +319,74 @@ async def test_updated_fact_uses_persisted_target_identity(monkeypatch) -> None:
     )
     assert stored_kwargs[0]["entity_id"] == persisted_entity_id
     assert stored_kwargs[0]["scope"] == "persisted_scope"
+    assert stored_kwargs[0]["expected_supersedes_id"] == target_id
+
+    target_query = " ".join(pool.fetchrow.await_args.args[0].split())
+    assert "tenant_id = $2" in target_query
+    assert "source_butler = $3" in target_query
+    assert "object_entity_id IS NULL" in target_query
+    pool.fetchval.assert_awaited_once_with(
+        "SELECT is_temporal FROM predicate_registry "
+        "WHERE name = $1 OR $1 = ANY(aliases) "
+        "ORDER BY ($1 = ANY(aliases)) DESC LIMIT 1",
+        "persisted_predicate",
+    )
+
+
+@pytest.mark.asyncio
+async def test_missing_target_is_sanitized_and_later_updates_continue(monkeypatch) -> None:
+    missing_id = uuid.uuid4()
+    valid_id = uuid.uuid4()
+    entity_id = uuid.uuid4()
+    pool = AsyncMock()
+    pool.fetchrow.side_effect = [
+        None,
+        {
+            "subject": "persisted subject",
+            "predicate": "persisted_predicate",
+            "entity_id": entity_id,
+            "scope": "travel",
+        },
+    ]
+    pool.fetchval.return_value = False
+    store_fact_mock = AsyncMock(
+        return_value={"id": uuid.uuid4(), "supersedes_id": valid_id},
+    )
+
+    monkeypatch.setattr(consolidation_executor, "store_fact", store_fact_mock)
+    monkeypatch.setattr(
+        consolidation_executor,
+        "_lookup_episode_ttl_days",
+        AsyncMock(return_value=7),
+    )
+
+    parsed = ConsolidationResult(
+        updated_facts=[
+            UpdatedFact(
+                target_id=str(missing_id),
+                subject="untrusted",
+                predicate="untrusted",
+                content="missing",
+            ),
+            UpdatedFact(
+                target_id=str(valid_id),
+                subject="untrusted",
+                predicate="untrusted",
+                content="valid",
+            ),
+        ],
+    )
+
+    result = await consolidation_executor.execute_consolidation(
+        pool=pool,
+        embedding_engine=object(),
+        parsed=parsed,
+        source_episode_ids=[],
+        butler_name="travel",
+        tenant_id="shared",
+    )
+
+    assert result["facts_updated"] == 1
+    assert result["errors"] == [f"Failed to update fact ({missing_id})"]
+    store_fact_mock.assert_awaited_once()
+    assert store_fact_mock.await_args.kwargs["expected_supersedes_id"] == valid_id

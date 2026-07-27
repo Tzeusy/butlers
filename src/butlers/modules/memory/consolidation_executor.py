@@ -254,6 +254,7 @@ async def execute_consolidation(
                 entity_id=fact_entity_id,
                 tenant_id=tenant_id,
                 request_id=request_id,
+                expected_supersedes_id=target_id,
                 enable_shared_catalog=enable_shared_catalog,
                 source_schema=source_schema,
             )
