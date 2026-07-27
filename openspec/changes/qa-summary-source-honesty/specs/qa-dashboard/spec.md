@@ -1,5 +1,7 @@
 ## ADDED Requirements
 
+References: `frontend/src/components/qa/QaKpiStrip.tsx`, `frontend/src/pages/QaOverviewPage.tsx`.
+
 ### Requirement: QA summary and case rail source honesty
 
 The QA overview SHALL distinguish an unavailable summary or case source from a successful empty result.

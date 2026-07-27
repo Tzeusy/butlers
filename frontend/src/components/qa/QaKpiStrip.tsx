@@ -134,7 +134,7 @@ export function QaKpiStrip({ kpis, active, className }: QaKpiStripProps) {
       id: "active-cases",
       label: "active cases · now",
       value: kpis ? String(kpis.active_cases_now) : "—",
-      sub: formatActiveBreakdown(active),
+      sub: kpis == null ? "summary unavailable" : formatActiveBreakdown(active),
     },
     {
       id: "failed",
