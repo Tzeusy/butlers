@@ -60,7 +60,7 @@ type StatusTone = keyof typeof TONE_COLORS;
 
 const SEV_TONE: Record<number, StatusTone> = {
   0: "red",
-  1: "amber",
+  1: "red",
   2: "amber",
   3: "neutral",
   4: "neutral",

@@ -460,6 +460,20 @@ describe("ButlerQaInvestigationsTab — severity badges", () => {
     expect(labels).toContain("high");
   });
 
+  it("uses destructive red for high severity while keeping medium amber", () => {
+    renderTab();
+    const badges = screen.getAllByTestId("severity-badge");
+    const highBadge = badges.find((badge) => badge.textContent === "high");
+    const mediumBadge = badges.find((badge) => badge.textContent === "medium");
+
+    expect(highBadge).toBeDefined();
+    expect(highBadge?.style.borderColor).toBe("var(--red)");
+    expect(highBadge?.style.color).toBe("var(--red-text)");
+    expect(mediumBadge).toBeDefined();
+    expect(mediumBadge?.style.borderColor).toBe("var(--amber)");
+    expect(mediumBadge?.style.color).toBe("var(--amber-text)");
+  });
+
   it("renders 'medium' severity badge for severity=2", () => {
     renderTab();
     const badges = screen.getAllByTestId("severity-badge");
