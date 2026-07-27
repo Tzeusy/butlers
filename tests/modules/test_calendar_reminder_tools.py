@@ -440,6 +440,7 @@ class TestCreateButlerReminder:
         """A native reminder returned by create remains update/toggle/delete manageable."""
         mcp, mod = await _make_module(butler_name="finance", pool=_make_pool())
         event_id = uuid.uuid4()
+        entity_id = uuid.uuid4()
         event_row = {
             "id": event_id,
             "title": "Review renewal",
@@ -463,6 +464,7 @@ class TestCreateButlerReminder:
         mod._update_native_reminder_event = AsyncMock(return_value=updated_row)
         mod._toggle_native_reminder_event = AsyncMock(return_value=paused_row)
         mod._delete_native_reminder_event = AsyncMock(return_value=True)
+        mod._upsert_event_entities = AsyncMock()
         mod._update_reminder_event = AsyncMock(side_effect=AssertionError("legacy update used"))
         mod._toggle_reminder_event = AsyncMock(side_effect=AssertionError("legacy toggle used"))
         mod._delete_reminder_event = AsyncMock(side_effect=AssertionError("legacy delete used"))
@@ -480,6 +482,7 @@ class TestCreateButlerReminder:
             event_id=created["event_id"],
             title="Review subscription",
             source_hint="butler_reminder",
+            entity_ids=[entity_id],
         )
         toggled = await mcp.tools["calendar_toggle_butler_event"](
             event_id=created["event_id"],
@@ -499,6 +502,10 @@ class TestCreateButlerReminder:
         assert toggled["event_id"] == str(event_id)
         assert deleted["status"] == "deleted"
         mod._update_native_reminder_event.assert_awaited_once()
+        mod._upsert_event_entities.assert_awaited_once_with(
+            event_id=event_id,
+            entity_ids=[entity_id],
+        )
         mod._toggle_native_reminder_event.assert_awaited_once_with(event_id, False)
         mod._delete_native_reminder_event.assert_awaited_once_with(event_id)
         mod._update_reminder_event.assert_not_awaited()
@@ -778,12 +785,12 @@ class TestInsertReminderToCalendarEvents:
                 entity_ids=[],
             )
 
-    async def test_recurring_reminder_inserts_initial_instance(self):
-        """A recurring reminder must seed an initial calendar_event_instances row."""
+    async def test_recurring_reminder_materializes_rolling_instance_window(self):
+        """A recurring reminder materializes every occurrence in its rolling window."""
         pool = _make_pool(
             fetchrow_side_effect=[
                 _source_row(),
-                _event_row_dict(recurrence_rule="RRULE:FREQ=YEARLY"),
+                _event_row_dict(recurrence_rule="RRULE:FREQ=MONTHLY"),
             ]
         )
         mod = CalendarModule()
@@ -802,19 +809,30 @@ class TestInsertReminderToCalendarEvents:
                 starts_at=_DUE_AT,
                 ends_at=_ENDS_AT,
                 timezone="UTC",
-                recurrence_rule="RRULE:FREQ=YEARLY",
+                recurrence_rule="RRULE:FREQ=MONTHLY",
                 entity_ids=[],
             )
 
-        # pool.execute should be called once to seed the initial instance.
-        pool.execute.assert_called_once()
-        query, *params = pool.execute.await_args.args
+        pool.executemany.assert_awaited_once()
+        query, rows = pool.executemany.await_args.args
         normalized_query = " ".join(query.split())
         assert "source_id" in normalized_query
         assert "origin_instance_ref" in normalized_query
         assert "timezone" in normalized_query
-        assert _SOURCE_ID in params
-        assert "UTC" in params
+        assert len(rows) >= 3
+        assert all(_SOURCE_ID in row for row in rows)
+        assert all("UTC" in row for row in rows)
+
+    async def test_internal_projection_refresh_extends_native_reminder_window(self):
+        """Periodic internal refresh also extends recurring native reminder instances."""
+        mod = CalendarModule()
+        mod._project_scheduler_source = AsyncMock(return_value=False)
+        mod._project_native_reminder_instances = AsyncMock()
+
+        changed = await mod._project_internal_sources(emit_event=False)
+
+        assert changed is False
+        mod._project_native_reminder_instances.assert_awaited_once_with()
 
     async def test_one_time_reminder_does_not_insert_instance(self):
         """A one-time reminder must NOT insert into calendar_event_instances."""

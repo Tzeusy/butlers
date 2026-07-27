@@ -18,6 +18,7 @@ import shutil
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -133,6 +134,14 @@ CREATE TABLE IF NOT EXISTS calendar_event_instances (
 )
 """
 
+_CREATE_CALENDAR_EVENT_ENTITIES_SQL = """
+CREATE TABLE IF NOT EXISTS calendar_event_entities (
+    event_id UUID NOT NULL REFERENCES calendar_events(id) ON DELETE CASCADE,
+    entity_id UUID NOT NULL,
+    PRIMARY KEY (event_id, entity_id)
+)
+"""
+
 _CREATE_CALENDAR_SYNC_CURSORS_SQL = """
 CREATE TABLE IF NOT EXISTS calendar_sync_cursors (
     source_id UUID NOT NULL REFERENCES calendar_sources(id) ON DELETE CASCADE,
@@ -191,9 +200,24 @@ async def reminder_pool(provisioned_postgres_pool):
         await pool.execute(_CREATE_CALENDAR_SOURCES_SQL)
         await pool.execute(_CREATE_CALENDAR_EVENTS_SQL)
         await pool.execute(_CREATE_CALENDAR_EVENT_INSTANCES_SQL)
+        await pool.execute(_CREATE_CALENDAR_EVENT_ENTITIES_SQL)
         await pool.execute(_CREATE_CALENDAR_SYNC_CURSORS_SQL)
         await pool.execute(_CREATE_CALENDAR_ACTION_LOG_SQL)
         yield pool
+
+
+class _StubMCP:
+    """Minimal MCP stub that captures registered tools by function name."""
+
+    def __init__(self) -> None:
+        self.tools: dict[str, object] = {}
+
+    def tool(self):
+        def decorator(func):
+            self.tools[func.__name__] = func
+            return func
+
+        return decorator
 
 
 def _make_module(pool, *, butler_name: str = "relationship") -> object:
@@ -373,6 +397,93 @@ async def test_calendar_native_butler_reminder_lifecycle(reminder_pool):
 
     assert await mod._delete_native_reminder_event(event_id) is True
     assert await pool.fetchrow("SELECT id FROM calendar_events WHERE id = $1", event_id) is None
+
+
+async def test_public_native_reminder_update_replaces_entity_links(reminder_pool):
+    """The public update tool writes entity links against the native event ID."""
+    pool = reminder_pool
+    mod = _make_module(pool, butler_name="finance")
+    mcp = _StubMCP()
+    await mod.register_tools(
+        mcp=mcp,
+        config={"provider": "google"},
+        db=mod._db,
+        butler_name="finance",
+    )
+    mod._prepare_workspace_mutation = AsyncMock(return_value=("test-key", None))
+    mod._refresh_butler_projection = AsyncMock(return_value={"available": True})
+    mod._finalize_workspace_mutation = AsyncMock()
+
+    old_entity_id = uuid.uuid4()
+    new_entity_id = uuid.uuid4()
+    start_at = datetime.now(UTC) + timedelta(days=1)
+    event_id, _ = await mod._insert_reminder_to_calendar_events(
+        title="Review renewal",
+        body=None,
+        starts_at=start_at,
+        ends_at=start_at + timedelta(minutes=15),
+        timezone="UTC",
+        recurrence_rule=None,
+        entity_ids=[old_entity_id],
+    )
+
+    result = await mcp.tools["calendar_update_butler_event"](
+        event_id=str(event_id),
+        title="Review subscription",
+        entity_ids=[new_entity_id],
+        source_hint="butler_reminder",
+    )
+
+    assert result["status"] == "updated"
+    rows = await pool.fetch(
+        """
+        SELECT entity_id
+        FROM calendar_event_entities
+        WHERE event_id = $1
+        ORDER BY entity_id
+        """,
+        event_id,
+    )
+    assert [row["entity_id"] for row in rows] == [new_entity_id]
+
+
+async def test_native_recurring_reminder_refreshes_rolling_window(reminder_pool):
+    """Create and periodic refresh both materialize multiple future instances."""
+    pool = reminder_pool
+    mod = _make_module(pool, butler_name="finance")
+    start_at = datetime.now(UTC) + timedelta(days=1)
+    event_id, _ = await mod._insert_reminder_to_calendar_events(
+        title="Weekly renewal review",
+        body=None,
+        starts_at=start_at,
+        ends_at=start_at + timedelta(minutes=15),
+        timezone="UTC",
+        recurrence_rule="RRULE:FREQ=WEEKLY",
+        entity_ids=[],
+    )
+
+    initial_rows = await pool.fetch(
+        """
+        SELECT source_id, timezone
+        FROM calendar_event_instances
+        WHERE event_id = $1
+        ORDER BY starts_at
+        """,
+        event_id,
+    )
+    assert len(initial_rows) >= 10
+    assert all(row["source_id"] is not None for row in initial_rows)
+    assert all(row["timezone"] == "UTC" for row in initial_rows)
+
+    await pool.execute("DELETE FROM calendar_event_instances WHERE event_id = $1", event_id)
+    mod._projection_tables_available_cache = True
+    await mod._project_native_reminder_instances()
+
+    refreshed_count = await pool.fetchval(
+        "SELECT count(*) FROM calendar_event_instances WHERE event_id = $1",
+        event_id,
+    )
+    assert refreshed_count >= 10
 
 
 # ===========================================================================

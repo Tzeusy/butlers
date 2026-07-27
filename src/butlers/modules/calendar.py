@@ -4618,16 +4618,19 @@ class CalendarModule(Module):
                 if pool is None:
                     raise RuntimeError("Database pool is not available")
 
+                native_reminder_target: uuid.UUID | None = None
                 if source_type == BUTLER_EVENT_SOURCE_REMINDER:
-                    native_target = await module._find_native_reminder_target(str(target_id))
-                    if native_target is not None:
+                    native_reminder_target = await module._find_native_reminder_target(
+                        str(target_id)
+                    )
+                    if native_reminder_target is not None:
                         if cron is not None:
                             raise ValueError(
                                 "cron is not supported for butler_reminder events; "
                                 "use source_hint='scheduled_task'"
                             )
                         reminder = await module._update_native_reminder_event(
-                            reminder_id=native_target,
+                            reminder_id=native_reminder_target,
                             title=title,
                             body=body,
                             start_at=start_at,
@@ -4709,7 +4712,12 @@ class CalendarModule(Module):
 
                 result["projection_freshness"] = await module._refresh_butler_projection()
                 # Update entity associations on the projection row if entity_ids provided.
-                if entity_ids is not None and source_id is not None:
+                if entity_ids is not None and native_reminder_target is not None:
+                    await module._upsert_event_entities(
+                        event_id=native_reminder_target,
+                        entity_ids=entity_ids,
+                    )
+                elif entity_ids is not None and source_id is not None:
                     await module._update_butler_event_entities(
                         source_id=source_id,
                         origin_ref=origin_ref,
@@ -7939,15 +7947,50 @@ class CalendarModule(Module):
             return
         await publish_fleet_event(pool, "calendar", {"kind": kind, **(data or {})})
 
-    async def _project_internal_sources(self, *, emit_event: bool = True) -> bool:
-        """Refresh non-provider butler projection sources (scheduled tasks).
+    async def _project_native_reminder_instances(self) -> None:
+        """Extend recurring native reminders through the rolling projection window."""
+        if not await self._projection_tables_available():
+            return
+        pool = getattr(self._db, "pool", None) if self._db is not None else None
+        if pool is None:
+            return
 
-        Reminders are now native calendar events in ``calendar_events`` and are
-        projected through the standard event pipeline — no separate projection
-        pass is needed.
-        """
+        rows = await pool.fetch(
+            """
+            SELECT e.id, e.source_id, e.recurrence_rule, e.starts_at, e.ends_at, e.timezone
+            FROM calendar_events e
+            JOIN calendar_sources s ON s.id = e.source_id
+            WHERE s.source_kind = $1
+              AND e.source_butler = $2
+              AND e.status = 'confirmed'
+              AND e.recurrence_rule IS NOT NULL
+            """,
+            SOURCE_KIND_INTERNAL_REMINDERS,
+            self._resolve_effective_butler_name(),
+        )
+        window_start = datetime.now(UTC)
+        window_end = window_start + timedelta(days=RECURRENCE_PROJECTION_WINDOW_DAYS)
+        for row in rows:
+            await self._prune_recurring_instances_outside_window(
+                event_id=row["id"],
+                window_start=window_start,
+                window_end=window_end,
+            )
+            await self._materialize_native_reminder_instances(
+                row["id"],
+                row["source_id"],
+                recurrence_rule=row["recurrence_rule"],
+                starts_at=row["starts_at"],
+                ends_at=row["ends_at"],
+                timezone=row["timezone"],
+                window_start=window_start,
+            )
+
+    async def _project_internal_sources(self, *, emit_event: bool = True) -> bool:
+        """Refresh scheduled-task projections and recurring native reminder instances."""
         try:
             material_projection = await self._project_scheduler_source()
+            await self._project_native_reminder_instances()
         except Exception as exc:
             logger.error("Internal calendar projection refresh failed: %s", exc, exc_info=True)
             return False
@@ -9847,27 +9890,15 @@ class CalendarModule(Module):
 
         event_id: uuid.UUID = row["id"]
 
-        # Recurring reminders need at least one materialized instance so that
-        # reminder_dismiss can cancel the earliest confirmed occurrence.
-        # The background projection job will expand the full series on its next
-        # cycle; this seeds the initial instance at the creation time slot.
         if recurrence_rule:
-            origin_instance_ref = f"native:{_format_ical_utc(starts_at)}"
-            await pool.execute(
-                """
-                INSERT INTO calendar_event_instances (
-                    event_id, source_id, origin_instance_ref, timezone,
-                    starts_at, ends_at, status
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, 'confirmed')
-                ON CONFLICT (event_id, origin_instance_ref) DO NOTHING
-                """,
+            await self._materialize_native_reminder_instances(
                 event_id,
                 source_id,
-                origin_instance_ref,
-                timezone,
-                starts_at,
-                ends_at,
+                recurrence_rule=recurrence_rule,
+                starts_at=starts_at,
+                ends_at=ends_at,
+                timezone=timezone,
+                window_start=starts_at,
             )
 
         # Insert entity associations if provided.
@@ -9882,6 +9913,57 @@ class CalendarModule(Module):
             )
 
         return event_id, dict(row)
+
+    async def _materialize_native_reminder_instances(
+        self,
+        event_id: uuid.UUID,
+        source_id: uuid.UUID,
+        *,
+        recurrence_rule: str,
+        starts_at: datetime,
+        ends_at: datetime,
+        timezone: str,
+        window_start: datetime,
+    ) -> None:
+        """Materialize a rolling RRULE window without overwriting dismissed instances."""
+        pool = getattr(self._db, "pool", None) if self._db is not None else None
+        if pool is None:
+            raise RuntimeError("Database pool is not available")
+
+        duration_minutes = max(int((ends_at - starts_at).total_seconds() // 60), 1)
+        window_end = window_start + timedelta(days=RECURRENCE_PROJECTION_WINDOW_DAYS)
+        occurrences = _rrule_occurrences_in_window(
+            recurrence_rule,
+            starts_at,
+            window_start,
+            window_end,
+            duration_minutes=duration_minutes,
+        )
+        if not occurrences:
+            return
+
+        rows = [
+            (
+                event_id,
+                source_id,
+                f"native:{_format_ical_utc(occurrence_start)}",
+                timezone,
+                occurrence_start,
+                occurrence_end,
+            )
+            for occurrence_start, occurrence_end in occurrences
+        ]
+        await pool.executemany(
+            """
+            INSERT INTO calendar_event_instances (
+                event_id, source_id, origin_instance_ref, timezone,
+                starts_at, ends_at, status, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', '{"native": true}'::jsonb)
+            ON CONFLICT (event_id, origin_instance_ref) DO NOTHING
+            """,
+            rows,
+        )
 
     async def _update_native_reminder_event(
         self,
@@ -9990,22 +10072,14 @@ class CalendarModule(Module):
                 reminder_id,
             )
             if result.get("recurrence_rule") and result.get("status") != "cancelled":
-                origin_instance_ref = f"native:{_format_ical_utc(result['starts_at'])}"
-                await pool.execute(
-                    """
-                    INSERT INTO calendar_event_instances (
-                        event_id, source_id, origin_instance_ref, timezone,
-                        starts_at, ends_at, status
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6, 'confirmed')
-                    ON CONFLICT (event_id, origin_instance_ref) DO NOTHING
-                    """,
+                await self._materialize_native_reminder_instances(
                     reminder_id,
                     result["source_id"],
-                    origin_instance_ref,
-                    result["timezone"],
-                    result["starts_at"],
-                    result["ends_at"],
+                    recurrence_rule=result["recurrence_rule"],
+                    starts_at=result["starts_at"],
+                    ends_at=result["ends_at"],
+                    timezone=result["timezone"],
+                    window_start=result["starts_at"],
                 )
 
         return result
