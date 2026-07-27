@@ -206,9 +206,11 @@ The consolidation executor SHALL apply parsed consolidation results to the datab
 #### Scenario: Updated facts trigger supersession with tenant context
 
 - **WHEN** the executor processes a property `updated_facts` entry without `valid_at`
-- **THEN** it MUST reload the live target fact identified by `target_id`, scoped to the same tenant and source butler
+- **THEN** the parser MUST require only `target_id` and replacement `content`, MAY accept `permanence`, and MUST NOT require model-supplied `subject`, `predicate`, `entity_id`, or `scope`
+- **AND** unrecognized legacy identity fields MAY be ignored rather than copied into the internal update action
+- **AND** it MUST reload the live target fact identified by `target_id`, scoped to the same tenant and source butler
 - **AND** the target MUST be a property fact rather than an entity-edge fact
-- **AND** it MUST use the target fact's persisted subject, predicate, entity ID, and scope as the supersession identity key rather than trusting repeated model-output identity fields
+- **AND** it MUST use the target fact's persisted subject, predicate, entity ID, and scope as the supersession identity key
 - **AND** temporal-predicate classification MUST use the persisted target predicate, including predicate aliases, rather than the repeated model-output predicate
 - **AND** `store_fact` MUST atomically verify that `target_id` remains the current fact for that identity key before superseding it
 - **AND** a missing, stale, cross-tenant, cross-source, temporal, or entity-edge target MUST be rejected without preventing later consolidation actions

@@ -56,8 +56,6 @@ async def test_execute_consolidation_forwards_new_temporal_timestamp_only(monkey
         updated_facts=[
             UpdatedFact(
                 target_id=str(uuid.uuid4()),
-                subject="person",
-                predicate="current_city",
                 content="Singapore",
             )
         ],
@@ -104,8 +102,6 @@ async def test_execute_consolidation_skips_registered_temporal_updated_fact(monk
         updated_facts=[
             UpdatedFact(
                 target_id=target_id,
-                subject="system",
-                predicate="model_claimed_non_temporal",
                 content="new status",
             )
         ],
@@ -158,8 +154,6 @@ async def test_execute_consolidation_skips_temporal_updated_fact_by_predicate_al
         updated_facts=[
             UpdatedFact(
                 target_id=target_id,
-                subject="system",
-                predicate="model_claimed_non_temporal",
                 content="new status",
             )
         ],
@@ -260,10 +254,9 @@ async def test_execute_consolidation_rejects_registry_relational_edge(monkeypatc
 
 @pytest.mark.asyncio
 async def test_updated_fact_uses_persisted_target_identity(monkeypatch) -> None:
-    """Model-supplied identity fields cannot retarget an existing fact update."""
+    """The target row supplies every identity field for an existing fact update."""
     target_id = uuid.uuid4()
     persisted_entity_id = uuid.uuid4()
-    stale_entity_id = uuid.uuid4()
     pool = AsyncMock()
     pool.fetchrow.return_value = {
         "subject": "persisted subject",
@@ -291,10 +284,7 @@ async def test_updated_fact_uses_persisted_target_identity(monkeypatch) -> None:
         updated_facts=[
             UpdatedFact(
                 target_id=str(target_id),
-                subject="model subject",
-                predicate="model_predicate",
                 content="new value",
-                entity_id=str(stale_entity_id),
             )
         ]
     )
@@ -364,14 +354,10 @@ async def test_missing_target_is_sanitized_and_later_updates_continue(monkeypatc
         updated_facts=[
             UpdatedFact(
                 target_id=str(missing_id),
-                subject="untrusted",
-                predicate="untrusted",
                 content="missing",
             ),
             UpdatedFact(
                 target_id=str(valid_id),
-                subject="untrusted",
-                predicate="untrusted",
                 content="valid",
             ),
         ],

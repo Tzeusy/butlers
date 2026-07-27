@@ -652,8 +652,6 @@ async def _assert_consolidation_target_boundaries(db_url: str) -> None:
             updated_facts=[
                 UpdatedFact(
                     target_id=str(target_id),
-                    subject="untrusted",
-                    predicate="untrusted",
                     content="must not overwrite",
                 )
                 for target_id in targets
