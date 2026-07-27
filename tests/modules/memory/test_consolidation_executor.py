@@ -161,7 +161,7 @@ async def test_execute_consolidation_skips_temporal_updated_fact_by_predicate_al
 
 
 @pytest.mark.asyncio
-async def test_execute_consolidation_forwards_new_edge_target(monkeypatch) -> None:
+async def test_execute_consolidation_forwards_new_narrative_edge_target(monkeypatch) -> None:
     subject_entity_id = uuid.uuid4()
     object_entity_id = uuid.uuid4()
     stored_kwargs: list[dict] = []
@@ -181,8 +181,8 @@ async def test_execute_consolidation_forwards_new_edge_target(monkeypatch) -> No
         new_facts=[
             NewFact(
                 subject="person",
-                predicate="works_at",
-                content="engineer",
+                predicate="planned_dinner_with",
+                content="dinner next Friday",
                 entity_id=str(subject_entity_id),
                 object_entity_id=str(object_entity_id),
             )
@@ -201,3 +201,40 @@ async def test_execute_consolidation_forwards_new_edge_target(monkeypatch) -> No
     assert result["facts_created"] == 1
     assert stored_kwargs[0]["entity_id"] == subject_entity_id
     assert stored_kwargs[0]["object_entity_id"] == object_entity_id
+
+
+@pytest.mark.asyncio
+async def test_execute_consolidation_rejects_registry_relational_edge(monkeypatch) -> None:
+    store_fact_mock = AsyncMock(
+        return_value={"id": uuid.uuid4(), "supersedes_id": None},
+    )
+    monkeypatch.setattr(consolidation_executor, "store_fact", store_fact_mock)
+    monkeypatch.setattr(
+        consolidation_executor,
+        "_lookup_episode_ttl_days",
+        AsyncMock(return_value=7),
+    )
+
+    parsed = ConsolidationResult(
+        new_facts=[
+            NewFact(
+                subject="person",
+                predicate="works_at",
+                content="engineer",
+                entity_id=str(uuid.uuid4()),
+                object_entity_id=str(uuid.uuid4()),
+            )
+        ],
+    )
+
+    result = await consolidation_executor.execute_consolidation(
+        pool=AsyncMock(),
+        embedding_engine=object(),
+        parsed=parsed,
+        source_episode_ids=[],
+        butler_name="relationship",
+    )
+
+    assert result["facts_created"] == 0
+    assert result["errors"] == ["Failed to store new fact (person/works_at)"]
+    store_fact_mock.assert_not_awaited()
