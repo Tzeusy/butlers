@@ -1058,3 +1058,30 @@ async def test_console_endpoint_healthy_approval_counts_remain_truthful(count, r
             body = (await client.get("/api/settings/console")).json()["data"]
     assert body["header_counts"]["open_approvals"] == count
     assert ("open_approvals" in {item["id"] for item in body["attention"]}) is red
+
+
+@pytest.mark.asyncio
+async def test_console_endpoint_degraded_approval_discovery_never_returns_partial_total():
+    approval_pool = MagicMock()
+    approval_pool.fetchval = AsyncMock(return_value=2)
+    db = MagicMock(spec=DatabaseManager)
+
+    async def degraded_discovery(_db, *, tracker=None):
+        assert tracker is not None
+        tracker.mark("broken")
+        return [approval_pool]
+
+    app = _make_app(db=db)
+    with (
+        patch("butlers.api.routers.approvals._find_all_approvals_pools", new=degraded_discovery),
+        patch.object(console_mod, "_count_active_butlers", new=AsyncMock(return_value=(1, None))),
+        patch.object(console_mod, "_get_spend_mtd", new=AsyncMock(return_value=(0.0, None, None))),
+        patch.object(console_mod, "_count_models", new=AsyncMock(return_value=(0, 0, None))),
+        patch.object(console_mod, "_check_cli_auth", new=AsyncMock(return_value=[])),
+        patch.object(console_mod, "_check_model_errors", new=AsyncMock(return_value=[])),
+        patch.object(console_mod, "_check_failed_webhooks", new=AsyncMock(return_value=[])),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            body = (await client.get("/api/settings/console")).json()["data"]
+    assert body["header_counts"]["open_approvals"] is None
+    assert "subsystem_error:approvals" in {item["id"] for item in body["attention"]}
