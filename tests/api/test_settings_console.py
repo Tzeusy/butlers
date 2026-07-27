@@ -1037,3 +1037,24 @@ async def test_console_endpoint_db_none_marks_approval_and_models_unavailable():
         "subsystem_error:approvals",
         "subsystem_error:models",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("count", "red"), [(0, False), (5, True)])
+async def test_console_endpoint_healthy_approval_counts_remain_truthful(count, red):
+    app = _make_app(db=MagicMock(spec=DatabaseManager))
+    with (
+        patch.object(console_mod, "_count_active_butlers", new=AsyncMock(return_value=(1, None))),
+        patch.object(console_mod, "_get_spend_mtd", new=AsyncMock(return_value=(0.0, None, None))),
+        patch.object(
+            console_mod, "_count_open_approvals", new=AsyncMock(return_value=(count, None))
+        ),
+        patch.object(console_mod, "_count_models", new=AsyncMock(return_value=(0, 0, None))),
+        patch.object(console_mod, "_check_cli_auth", new=AsyncMock(return_value=[])),
+        patch.object(console_mod, "_check_model_errors", new=AsyncMock(return_value=[])),
+        patch.object(console_mod, "_check_failed_webhooks", new=AsyncMock(return_value=[])),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            body = (await client.get("/api/settings/console")).json()["data"]
+    assert body["header_counts"]["open_approvals"] == count
+    assert ("open_approvals" in {item["id"] for item in body["attention"]}) is red
