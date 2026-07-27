@@ -186,7 +186,10 @@ def _create_schema() -> None:
             cancel_requested_at TIMESTAMPTZ,
             cancel_confirmed_at TIMESTAMPTZ,
             pending_terminal_state TEXT
-                CHECK (pending_terminal_state IS NULL OR pending_terminal_state IN ('completed', 'failed')),
+                CHECK (
+                    pending_terminal_state IS NULL
+                    OR pending_terminal_state IN ('completed', 'failed')
+                ),
             pending_terminal_at TIMESTAMPTZ,
             terminal_state TEXT
                 CHECK (
