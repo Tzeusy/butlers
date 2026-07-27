@@ -6,6 +6,7 @@ _build_digest_message, run_energy_digest, and daemon registry.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -133,7 +134,8 @@ async def test_fetch_weekly_statistics_uses_ha_websocket_recorder_command():
                 "success": True,
                 "result": {
                     "sensor.energy": [
-                        {"start": 1, "end": 2, "sum": 12.5, "mean": 1.8},
+                        {"start": 1, "end": 2, "sum": 105.0, "change": 5.0, "mean": 1.8},
+                        {"start": 2, "end": 3, "sum": 112.5, "change": 7.5, "mean": 2.4},
                     ]
                 },
             },
@@ -143,8 +145,8 @@ async def test_fetch_weekly_statistics_uses_ha_websocket_recorder_command():
                 "success": True,
                 "result": {
                     "sensor.energy": [
-                        {"start": 1, "end": 2, "sum": 5.0, "mean": 1.2},
-                        {"start": 2, "end": 3, "sum": 7.5, "mean": 2.4},
+                        {"start": 1, "end": 2, "sum": 105.0, "change": 5.0, "mean": 1.2},
+                        {"start": 2, "end": 3, "sum": 112.5, "change": 7.5, "mean": 2.4},
                     ]
                 },
             },
@@ -182,17 +184,110 @@ async def test_fetch_weekly_statistics_uses_ha_websocket_recorder_command():
         "recorder/statistics_during_period",
         "recorder/statistics_during_period",
     ]
-    assert [message["period"] for message in sent[1:]] == ["week", "day"]
+    assert [message["period"] for message in sent[1:]] == ["hour", "day"]
     assert [message["id"] for message in sent[1:]] == [1, 2]
+    assert [message["types"] for message in sent[1:]] == [
+        ["change", "mean"],
+        ["change", "mean"],
+    ]
+    aggregate_start = datetime.fromisoformat(sent[1]["start_time"])
+    aggregate_end = datetime.fromisoformat(sent[1]["end_time"])
+    assert aggregate_end - aggregate_start == timedelta(days=7)
+    assert (aggregate_end.minute, aggregate_end.second, aggregate_end.microsecond) == (0, 0, 0)
     assert result == {
         "sensor.energy": {
             "weekly_sum": 12.5,
             "daily": [
-                {"start": 1, "end": 2, "sum": 5.0, "mean": 1.2},
-                {"start": 2, "end": 3, "sum": 7.5, "mean": 2.4},
+                {"start": 1, "end": 2, "sum": 105.0, "change": 5.0, "mean": 1.2},
+                {"start": 2, "end": 3, "sum": 112.5, "change": 7.5, "mean": 2.4},
             ],
         }
     }
+
+
+async def test_fetch_weekly_statistics_returns_empty_when_authentication_is_rejected():
+    """Authentication rejection preserves the digest's graceful fallback."""
+    websocket = MagicMock()
+    websocket.receive_json = AsyncMock(
+        side_effect=[
+            {"type": "auth_required", "ha_version": "2026.7.0"},
+            {"type": "auth_invalid", "message": "Invalid access token"},
+        ]
+    )
+    websocket.send_json = AsyncMock()
+
+    websocket_context = MagicMock()
+    websocket_context.__aenter__ = AsyncMock(return_value=websocket)
+    websocket_context.__aexit__ = AsyncMock(return_value=None)
+
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.ws_connect.return_value = websocket_context
+
+    with (
+        patch("aiohttp.ClientSession", return_value=session),
+        patch("aiohttp.TCPConnector"),
+    ):
+        result = await _fetch_weekly_statistics(
+            MagicMock(),
+            ["sensor.energy"],
+            ha_url="http://ha.local:8123/",
+            ha_token="token",
+        )
+
+    assert result == {}
+    websocket.send_json.assert_awaited_once_with({"type": "auth", "access_token": "token"})
+
+
+async def test_fetch_weekly_statistics_returns_empty_when_aggregate_command_is_rejected():
+    """A daily-only partial response must not masquerade as a zero-consumption week."""
+    websocket = MagicMock()
+    websocket.receive_json = AsyncMock(
+        side_effect=[
+            {"type": "auth_required", "ha_version": "2026.7.0"},
+            {"type": "auth_ok", "ha_version": "2026.7.0"},
+            {
+                "id": 1,
+                "type": "result",
+                "success": False,
+                "error": {"code": "unknown_error", "message": "Statistics unavailable"},
+            },
+            {
+                "id": 2,
+                "type": "result",
+                "success": True,
+                "result": {
+                    "sensor.energy": [
+                        {"start": 1, "end": 2, "change": 5.0, "mean": 1.2},
+                    ]
+                },
+            },
+        ]
+    )
+    websocket.send_json = AsyncMock()
+
+    websocket_context = MagicMock()
+    websocket_context.__aenter__ = AsyncMock(return_value=websocket)
+    websocket_context.__aexit__ = AsyncMock(return_value=None)
+
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.ws_connect.return_value = websocket_context
+
+    with (
+        patch("aiohttp.ClientSession", return_value=session),
+        patch("aiohttp.TCPConnector"),
+    ):
+        result = await _fetch_weekly_statistics(
+            MagicMock(),
+            ["sensor.energy"],
+            ha_url="http://ha.local:8123/",
+            ha_token="token",
+        )
+
+    assert result == {}
 
 
 # ---------------------------------------------------------------------------

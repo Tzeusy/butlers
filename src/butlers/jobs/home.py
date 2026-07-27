@@ -1300,15 +1300,16 @@ async def _fetch_weekly_statistics(
 ) -> dict[str, Any]:
     """Fetch weekly energy statistics via the HA WebSocket API.
 
-    Calls ``recorder/statistics_during_period`` with ``period="week"``
-    for aggregate totals and ``period="day"`` for daily breakdowns.
+    Calls ``recorder/statistics_during_period`` with ``period="hour"`` over
+    an hour-aligned seven-day window for aggregate totals, and with
+    ``period="day"`` for daily breakdowns.
 
     Returns a dict mapping entity_id → ``{"weekly_sum": float, "daily": [...]}``
     or an empty dict if HA is unreachable.
     """
     import aiohttp
 
-    end_dt = datetime.now(tz=UTC)
+    end_dt = datetime.now(tz=UTC).replace(minute=0, second=0, microsecond=0)
     start_dt = end_dt - timedelta(days=7)
     start_iso = start_dt.isoformat()
     end_iso = end_dt.isoformat()
@@ -1338,7 +1339,7 @@ async def _fetch_weekly_statistics(
                 "end_time": end_iso,
                 "statistic_ids": entity_ids,
                 "period": period,
-                "types": ["sum", "mean"],
+                "types": ["change", "mean"],
             }
         )
         message = await websocket.receive_json(timeout=30.0)
@@ -1381,18 +1382,19 @@ async def _fetch_weekly_statistics(
                 weekly_data = await _request_statistics(
                     websocket,
                     command_id=1,
-                    period="week",
+                    period="hour",
                 )
-                if weekly_data is not None:
-                    for eid, stats_list in weekly_data.items():
-                        if not isinstance(stats_list, list) or not stats_list:
-                            continue
-                        total = sum(
-                            float(stat.get("sum") or 0)
-                            for stat in stats_list
-                            if isinstance(stat, dict)
-                        )
-                        result.setdefault(eid, {})["weekly_sum"] = total
+                if weekly_data is None:
+                    return {}
+                for eid, stats_list in weekly_data.items():
+                    if not isinstance(stats_list, list) or not stats_list:
+                        continue
+                    total = sum(
+                        float(stat.get("change") or 0)
+                        for stat in stats_list
+                        if isinstance(stat, dict)
+                    )
+                    result.setdefault(eid, {})["weekly_sum"] = total
 
                 daily_data = await _request_statistics(
                     websocket,
@@ -1629,8 +1631,8 @@ async def run_energy_digest(
     Steps:
     1. Discover energy sensors from ha_entity_snapshot.
     2. Load energy thresholds from state store (``home:thresholds:energy``).
-    3. Resolve HA credentials (URL, token) for REST API calls.
-    4. Fetch weekly historical statistics via HA REST API.
+    3. Resolve HA credentials (URL, token) for WebSocket API calls.
+    4. Fetch weekly historical statistics via HA WebSocket API.
     5. Compute top consumers and percentage shares.
     6. Compare vs baselines (from ``energy_baseline`` memory facts).
     7. Detect anomalies using configurable thresholds.
