@@ -71,6 +71,13 @@ def _app_with_mock_db(app: FastAPI, *, fetch_rows=None, fetchval_result=0, pool_
     return app, mock_pool
 
 
+def _home_router_module(app: FastAPI):
+    for butler_name, router_module in app.state.butler_routers:
+        if butler_name == "home":
+            return router_module
+    raise AssertionError("Home router was not registered")
+
+
 # ---------------------------------------------------------------------------
 # Devices — 200 structure + 503 fallback
 # ---------------------------------------------------------------------------
@@ -112,6 +119,98 @@ async def test_devices_large_page_size_rejected(app):
 
 
 # ---------------------------------------------------------------------------
+# Energy — current HA WebSocket statistics command and delta semantics
+# ---------------------------------------------------------------------------
+
+
+async def test_energy_uses_shared_statistics_client_and_change_values(app, monkeypatch):
+    _app, pool = _app_with_mock_db(app)
+    pool.fetch.side_effect = [
+        [
+            {"key": "ha_url", "value": "https://ha.example"},
+            {"key": "ha_token", "value": "secret-token"},
+        ],
+        [{"entity_id": "sensor.energy", "friendly_name": "Whole Home"}],
+    ]
+    statistics_client = MagicMock()
+    statistics_client.get_statistics = AsyncMock(
+        return_value={
+            "sensor.energy": [
+                {
+                    "start": "2026-07-27T00:00:00+00:00",
+                    "sum": 1_012.5,
+                    "change": 7.5,
+                }
+            ]
+        }
+    )
+    client_factory = MagicMock(return_value=statistics_client)
+    monkeypatch.setattr(_home_router_module(app), "HAStatisticsClient", client_factory)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/home/energy",
+            params={
+                "period": "hour",
+                "start": "2026-07-27T00:00:00Z",
+                "end": "2026-07-27T01:00:00Z",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()[0]["total_kwh"] == 7.5
+    client_factory.assert_called_once_with(
+        ha_url="https://ha.example",
+        ha_token="secret-token",
+    )
+    assert statistics_client.get_statistics.await_args.kwargs["types"] == ("change",)
+
+
+async def test_top_consumers_sum_changes_not_cumulative_totals(app, monkeypatch):
+    _app, pool = _app_with_mock_db(app)
+    pool.fetch.side_effect = [
+        [
+            {"key": "ha_url", "value": "https://ha.example"},
+            {"key": "ha_token", "value": "secret-token"},
+        ],
+        [
+            {"entity_id": "sensor.energy", "friendly_name": "Whole Home"},
+            {"entity_id": "sensor.ev_energy", "friendly_name": "EV"},
+        ],
+    ]
+    statistics_client = MagicMock()
+    statistics_client.get_statistics = AsyncMock(
+        return_value={
+            "sensor.energy": [{"sum": 1_012.5, "change": 7.5}],
+            "sensor.ev_energy": [{"sum": 508.0, "change": 2.5}],
+        }
+    )
+    monkeypatch.setattr(
+        _home_router_module(app),
+        "HAStatisticsClient",
+        MagicMock(return_value=statistics_client),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/home/energy/top-consumers",
+            params={
+                "start": "2026-07-20T00:00:00Z",
+                "end": "2026-07-27T00:00:00Z",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert [entry["total_kwh"] for entry in resp.json()] == [7.5, 2.5]
+    assert [entry["percentage"] for entry in resp.json()] == [75.0, 25.0]
+    assert statistics_client.get_statistics.await_args.kwargs["types"] == ("change",)
+
+
+# ---------------------------------------------------------------------------
 # Maintenance — status classification (parametrized)
 # ---------------------------------------------------------------------------
 
@@ -136,13 +235,6 @@ async def test_maintenance_status_classification(app, due_offset_days, expected_
 # ---------------------------------------------------------------------------
 # Atmosphere feed — not configured / healthy / degraded, and location patch
 # ---------------------------------------------------------------------------
-
-
-def _home_router_module(app: FastAPI):
-    for butler_name, router_module in app.state.butler_routers:
-        if butler_name == "home" and hasattr(router_module, "_get_db_manager"):
-            return router_module
-    raise AssertionError("home router module not found")
 
 
 async def test_atmosphere_current_not_configured(app):
