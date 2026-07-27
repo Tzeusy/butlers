@@ -1,13 +1,8 @@
 """Integration tests — calendar-native reminder lifecycle.
 
-Tests the full lifecycle of reminders stored in the legacy reminders table:
-  1. Full lifecycle: create reminder → list → dismiss → verify state
-  2. Recurring reminder: dismiss advances next_trigger_at, series stays active
-  3. Contact association: create reminder with contact_id, verify stored row
-
-These tests exercise CalendarModule private methods directly against a real
-PostgreSQL database (testcontainers) using the same fixture pattern as the
-existing relationship butler SPO tests (test_spo_tools.py).
+These tests exercise CalendarModule native reminder methods directly against a
+real PostgreSQL database (testcontainers), including provider mirroring to the
+dedicated Butlers calendar.
 
 [bu-hws35]
 """
@@ -22,6 +17,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from butlers.modules.calendar import (
+    CalendarEvent,
+    CalendarEventCreate,
+    CalendarEventUpdate,
+    CalendarProvider,
+)
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.asyncio(loop_scope="session"),
@@ -29,31 +31,8 @@ pytestmark = [
 ]
 
 # ---------------------------------------------------------------------------
-# SQL helpers — minimal schema for reminder lifecycle tests
+# SQL helpers — minimal native calendar schema for reminder lifecycle tests
 # ---------------------------------------------------------------------------
-
-_CREATE_REMINDERS_SQL = """
-CREATE TABLE IF NOT EXISTS reminders (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    label TEXT,
-    message TEXT,
-    type TEXT,
-    reminder_type TEXT,
-    next_trigger_at TIMESTAMPTZ,
-    due_at TIMESTAMPTZ,
-    timezone TEXT NOT NULL DEFAULT 'UTC',
-    until_at TIMESTAMPTZ,
-    recurrence_rule TEXT,
-    cron TEXT,
-    description TEXT,
-    location TEXT,
-    dismissed BOOLEAN NOT NULL DEFAULT false,
-    calendar_event_id TEXT,
-    contact_id UUID,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-)
-"""
 
 _CREATE_CALENDAR_SOURCES_SQL = """
 CREATE TABLE IF NOT EXISTS calendar_sources (
@@ -194,9 +173,8 @@ CREATE TABLE IF NOT EXISTS calendar_action_log (
 
 @pytest.fixture
 async def reminder_pool(provisioned_postgres_pool):
-    """Fresh DB with reminders + full calendar projection tables."""
+    """Fresh DB with the native calendar projection tables."""
     async with provisioned_postgres_pool() as pool:
-        await pool.execute(_CREATE_REMINDERS_SQL)
         await pool.execute(_CREATE_CALENDAR_SOURCES_SQL)
         await pool.execute(_CREATE_CALENDAR_EVENTS_SQL)
         await pool.execute(_CREATE_CALENDAR_EVENT_INSTANCES_SQL)
@@ -231,128 +209,87 @@ def _make_module(pool, *, butler_name: str = "relationship") -> object:
     return mod
 
 
-# ---------------------------------------------------------------------------
-# Helper — create a reminder row via CalendarModule private method
-# ---------------------------------------------------------------------------
+class _ReminderProviderDouble(CalendarProvider):
+    """Stateful provider double for native reminder mirror reconciliation."""
 
+    def __init__(self) -> None:
+        self.events: dict[str, CalendarEvent] = {}
+        self.create_calls: list[CalendarEventCreate] = []
+        self.update_calls: list[tuple[str, CalendarEventUpdate]] = []
+        self.delete_calls: list[str] = []
 
-async def _create_reminder(
-    mod,
-    *,
-    title: str = "Test reminder",
-    start_at: datetime | None = None,
-    recurrence_rule: str | None = None,
-    cron: str | None = None,
-    action_args: dict | None = None,
-    description: str | None = None,
-    location: str | None = None,
-) -> dict:
-    if start_at is None:
-        start_at = datetime.now(UTC) + timedelta(days=1)
-    return await mod._create_reminder_event(
-        title=title,
-        start_at=start_at,
-        timezone="UTC",
-        until_at=None,
-        recurrence_rule=recurrence_rule,
-        cron=cron,
-        action="test action",
-        action_args=action_args,
-        calendar_event_id=str(uuid.uuid4()),
-        description=description,
-        location=location,
-    )
+    @property
+    def name(self) -> str:
+        return "google"
 
+    async def list_events(self, *, calendar_id, start_at=None, end_at=None, limit=50):
+        return list(self.events.values())
 
-# ===========================================================================
-# 1. Full lifecycle: create → verify list → dismiss → verify dismissed
-# ===========================================================================
+    async def get_event(self, *, calendar_id, event_id):
+        return self.events.get(event_id)
 
+    async def create_event(self, *, calendar_id, payload):
+        self.create_calls.append(payload)
+        event_id = f"provider-{uuid.uuid4()}"
+        event = CalendarEvent(
+            event_id=event_id,
+            title=payload.title,
+            start_at=payload.start_at,
+            end_at=payload.end_at,
+            timezone=payload.timezone or "UTC",
+            description=payload.description,
+            location=payload.location,
+            recurrence_rule=payload.recurrence_rule,
+            butler_generated=True,
+            butler_name=payload.private_metadata.get("butler_name"),
+        )
+        self.events[event_id] = event
+        return event
 
-async def test_full_lifecycle_create_list_dismiss(reminder_pool):
-    """Full reminder lifecycle: create, verify persisted, dismiss, verify dismissed.
+    async def update_event(self, *, calendar_id, event_id, patch):
+        self.update_calls.append((event_id, patch))
+        existing = self.events[event_id]
+        updated = existing.model_copy(
+            update={
+                key: value
+                for key, value in {
+                    "title": patch.title,
+                    "start_at": patch.start_at,
+                    "end_at": patch.end_at,
+                    "timezone": patch.timezone,
+                    "description": patch.description,
+                    "location": patch.location,
+                    "recurrence_rule": patch.recurrence_rule,
+                }.items()
+                if value is not None
+            }
+        )
+        self.events[event_id] = updated
+        return updated
 
-    Covers spec: Full lifecycle integration test.
-    """
-    pool = reminder_pool
-    mod = _make_module(pool)
+    async def delete_event(self, *, calendar_id, event_id):
+        self.delete_calls.append(event_id)
+        self.events.pop(event_id, None)
 
-    start_at = datetime(2026, 5, 1, 9, 0, tzinfo=UTC)
-    reminder = await _create_reminder(mod, title="Take vitamins", start_at=start_at)
+    async def add_attendees(
+        self, *, calendar_id, event_id, attendees, optional=False, send_updates="none"
+    ):
+        raise NotImplementedError
 
-    assert reminder["label"] == "Take vitamins"
-    assert reminder["dismissed"] is False
-    assert reminder["next_trigger_at"] == start_at
-    assert reminder["due_at"] == start_at
-    reminder_id = uuid.UUID(str(reminder["id"]))
+    async def remove_attendees(self, *, calendar_id, event_id, attendees, send_updates="none"):
+        raise NotImplementedError
 
-    # Verify persisted in DB
-    row = await pool.fetchrow("SELECT * FROM reminders WHERE id = $1", reminder_id)
-    assert row is not None
-    assert row["dismissed"] is False
+    async def get_free_busy(self, *, calendar_ids, start_at, end_at, timezone=None):
+        return []
 
-    # Dismiss (toggle enabled=False)
-    dismissed = await mod._toggle_reminder_event(reminder_id, enabled=False)
-    assert dismissed["dismissed"] is True
-    assert dismissed["next_trigger_at"] is None
+    async def find_conflicts(self, *, calendar_id, candidate):
+        return []
 
-    # Verify DB state
-    row_after = await pool.fetchrow("SELECT * FROM reminders WHERE id = $1", reminder_id)
-    assert row_after["dismissed"] is True
-    assert row_after["next_trigger_at"] is None
+    async def sync_incremental(self, *, calendar_id, sync_token, full_sync_window_days=30):
+        return [], [], "token"
 
-
-async def test_full_lifecycle_delete(reminder_pool):
-    """Deleting a reminder removes the row from the database."""
-    pool = reminder_pool
-    mod = _make_module(pool)
-
-    reminder = await _create_reminder(mod, title="Dentist appointment")
-    reminder_id = uuid.UUID(str(reminder["id"]))
-
-    # Verify exists
-    assert await pool.fetchrow("SELECT id FROM reminders WHERE id = $1", reminder_id) is not None
-
-    # Delete
-    deleted = await mod._delete_reminder_event(reminder_id)
-    assert deleted is True
-
-    # Verify removed
-    assert await pool.fetchrow("SELECT id FROM reminders WHERE id = $1", reminder_id) is None
-
-
-async def test_full_lifecycle_update_title_and_time(reminder_pool):
-    """Updating a reminder's title and time reflects in the database."""
-    pool = reminder_pool
-    mod = _make_module(pool)
-
-    original_start = datetime(2026, 6, 1, 8, 0, tzinfo=UTC)
-    reminder = await _create_reminder(mod, title="Morning walk", start_at=original_start)
-    reminder_id = uuid.UUID(str(reminder["id"]))
-
-    new_start = datetime(2026, 6, 1, 10, 0, tzinfo=UTC)
-    updated = await mod._update_reminder_event(
-        reminder_id=reminder_id,
-        title="Afternoon walk",
-        start_at=new_start,
-        timezone=None,
-        until_at=None,
-        recurrence_rule=None,
-        cron=None,
-        enabled=None,
-    )
-
-    assert updated["label"] == "Afternoon walk"
-    assert updated["message"] == "Afternoon walk"
-    assert updated["next_trigger_at"] == new_start
-    assert updated["due_at"] == new_start
-
-    # Verify DB
-    row = await pool.fetchrow("SELECT * FROM reminders WHERE id = $1", reminder_id)
-    if row["label"] is not None:
-        assert row["label"] == "Afternoon walk"
-    if row["next_trigger_at"] is not None:
-        assert row["next_trigger_at"] == new_start
+    async def shutdown(self):
+        return None
 
 
 async def test_calendar_native_butler_reminder_lifecycle(reminder_pool):
@@ -374,7 +311,7 @@ async def test_calendar_native_butler_reminder_lifecycle(reminder_pool):
         entity_ids=[],
     )
 
-    assert await mod._find_reminder_target(str(event_id)) == event_id
+    assert await mod._find_native_reminder_target(str(event_id)) == event_id
 
     updated = await mod._update_native_reminder_event(
         reminder_id=event_id,
@@ -397,6 +334,80 @@ async def test_calendar_native_butler_reminder_lifecycle(reminder_pool):
 
     assert await mod._delete_native_reminder_event(event_id) is True
     assert await pool.fetchrow("SELECT id FROM calendar_events WHERE id = $1", event_id) is None
+
+
+async def test_native_reminder_provider_mirror_is_durable_idempotent_and_orphan_safe(
+    reminder_pool,
+):
+    """Native reminders create/update/delete one durable provider mirror."""
+    pool = reminder_pool
+    mod = _make_module(pool, butler_name="finance")
+    provider = _ReminderProviderDouble()
+    mod._provider = provider
+    mod._resolved_calendar_id = "butlers-calendar"
+
+    starts_at = datetime.now(UTC).replace(microsecond=0) + timedelta(days=1)
+    event_id, _ = await mod._insert_reminder_to_calendar_events(
+        title="Review insurance renewal",
+        body="Compare the latest quote",
+        description="Bring the renewal letter",
+        location="Home office",
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(minutes=30),
+        timezone="Asia/Singapore",
+        recurrence_rule="RRULE:FREQ=MONTHLY",
+        entity_ids=[],
+    )
+
+    await mod._push_internal_events_to_provider()
+
+    assert len(provider.create_calls) == 1
+    created = provider.create_calls[0]
+    assert created.description == "Bring the renewal letter"
+    assert created.location == "Home office"
+    assert created.recurrence_rule == "RRULE:FREQ=MONTHLY"
+    provider_event_id = await pool.fetchval(
+        "SELECT metadata->>'provider_event_id' FROM calendar_events WHERE id = $1",
+        event_id,
+    )
+    assert provider_event_id is not None
+    assert provider.delete_calls == []
+
+    await mod._update_native_reminder_event(
+        reminder_id=event_id,
+        title="Review insurance options",
+        body=None,
+        start_at=None,
+        end_at=None,
+        timezone=None,
+        until_at=None,
+        recurrence_rule="RRULE:FREQ=YEARLY",
+        enabled=None,
+    )
+    await mod._push_internal_events_to_provider()
+
+    assert len(provider.create_calls) == 1
+    assert len(provider.update_calls) == 1
+    updated_id, patch = provider.update_calls[0]
+    assert updated_id == provider_event_id
+    assert patch.title == "Review insurance options"
+    assert patch.description == "Bring the renewal letter"
+    assert patch.location == "Home office"
+    assert patch.recurrence_rule == "RRULE:FREQ=YEARLY"
+    assert provider.delete_calls == []
+
+    assert await mod._delete_native_reminder_event(event_id) is True
+    assert (
+        await pool.fetchval(
+            "SELECT count(*) FROM calendar_events WHERE id = $1",
+            event_id,
+        )
+        == 0
+    )
+    assert provider.delete_calls == [provider_event_id]
+    await mod._push_internal_events_to_provider()
+
+    assert provider.delete_calls == [provider_event_id]
 
 
 async def test_public_native_reminder_update_replaces_entity_links(reminder_pool):
@@ -806,207 +817,3 @@ async def test_native_following_delete_rejects_non_occurrence_boundary_without_m
         )
         == 0
     )
-
-
-# ===========================================================================
-# 2. Recurring reminder: dismiss advances next_trigger_at, series stays active
-# ===========================================================================
-
-
-async def test_recurring_reminder_toggle_state_transitions(reminder_pool):
-    """Toggle a monthly recurring reminder off and on; verify state transitions.
-
-    _toggle_reminder_event(enabled=False) clears next_trigger_at and marks
-    dismissed=True. Re-enabling (enabled=True) restores next_trigger_at from
-    due_at and sets dismissed=False.
-
-    Note: The CalendarModule's _toggle_reminder_event clears next_trigger_at
-    when enabled=False and restores it from due_at when re-enabled. The
-    recurring advance logic (advancing to the next occurrence) lives in the
-    relationship butler's reminder_dismiss function, not here.
-    """
-    pool = reminder_pool
-    mod = _make_module(pool)
-
-    due = datetime(2026, 4, 15, 9, 0, tzinfo=UTC)
-    reminder = await _create_reminder(
-        mod,
-        title="Monthly review",
-        start_at=due,
-        recurrence_rule="RRULE:FREQ=MONTHLY",
-    )
-    reminder_id = uuid.UUID(str(reminder["id"]))
-
-    # Confirm it was created as recurring with trigger time set
-    row = await pool.fetchrow("SELECT * FROM reminders WHERE id = $1", reminder_id)
-    assert row["dismissed"] is False
-    assert row["next_trigger_at"] is not None or row["due_at"] is not None
-
-    # Dismiss (pause) the recurring reminder
-    dismissed = await mod._toggle_reminder_event(reminder_id, enabled=False)
-    assert dismissed["dismissed"] is True
-    assert dismissed["next_trigger_at"] is None
-
-    # Re-enable: next_trigger_at should be restored from due_at
-    resumed = await mod._toggle_reminder_event(reminder_id, enabled=True)
-    assert resumed["dismissed"] is False
-    assert resumed["next_trigger_at"] == due
-
-
-# ===========================================================================
-# 3. Contact association: create reminder with contact_id, verify stored
-# ===========================================================================
-
-
-async def test_contact_association_stores_contact_id(reminder_pool):
-    """Creating a reminder with contact_id in action_args stores it in the row.
-
-    Covers spec: Entity association — create reminder with entity_ids,
-    verify the contact linkage is persisted.
-    """
-    pool = reminder_pool
-    mod = _make_module(pool)
-
-    contact_id = uuid.uuid4()
-    start_at = datetime(2026, 7, 4, 10, 0, tzinfo=UTC)
-    reminder = await _create_reminder(
-        mod,
-        title="Follow up with contact",
-        start_at=start_at,
-        action_args={"contact_id": str(contact_id)},
-    )
-
-    reminder_id = uuid.UUID(str(reminder["id"]))
-    row = await pool.fetchrow("SELECT contact_id FROM reminders WHERE id = $1", reminder_id)
-    assert row is not None
-    assert row["contact_id"] == contact_id, (
-        f"Expected contact_id {contact_id} stored in reminder row; got {row['contact_id']}"
-    )
-
-
-async def test_contact_association_null_contact_id_allowed(reminder_pool):
-    """Creating a reminder without contact_id does not fail — contact_id is nullable."""
-    pool = reminder_pool
-    mod = _make_module(pool)
-
-    reminder = await _create_reminder(mod, title="Standalone reminder")
-    reminder_id = uuid.UUID(str(reminder["id"]))
-
-    row = await pool.fetchrow("SELECT contact_id FROM reminders WHERE id = $1", reminder_id)
-    assert row is not None
-    assert row["contact_id"] is None
-
-
-# ===========================================================================
-# 4. Regression: existing calendar module tests are unaffected
-# ===========================================================================
-
-
-async def test_reminder_update_not_found_raises(reminder_pool):
-    """Updating a non-existent reminder raises ValueError."""
-    pool = reminder_pool
-    mod = _make_module(pool)
-
-    nonexistent_id = uuid.uuid4()
-    with pytest.raises(ValueError, match=str(nonexistent_id)):
-        await mod._update_reminder_event(
-            reminder_id=nonexistent_id,
-            title="Ghost",
-            start_at=None,
-            timezone=None,
-            until_at=None,
-            recurrence_rule=None,
-            cron=None,
-            enabled=None,
-        )
-
-
-async def test_reminder_toggle_not_found_raises(reminder_pool):
-    """Toggling a non-existent reminder raises ValueError."""
-    pool = reminder_pool
-    mod = _make_module(pool)
-
-    nonexistent_id = uuid.uuid4()
-    with pytest.raises(ValueError, match=str(nonexistent_id)):
-        await mod._toggle_reminder_event(nonexistent_id, enabled=False)
-
-
-async def test_reminder_delete_nonexistent_returns_false(reminder_pool):
-    """Deleting a non-existent reminder returns False without raising."""
-    pool = reminder_pool
-    mod = _make_module(pool)
-
-    nonexistent_id = uuid.uuid4()
-    result = await mod._delete_reminder_event(nonexistent_id)
-    assert result is False
-
-
-async def test_create_reminder_no_db_raises(reminder_pool):
-    """_create_reminder_event raises when no database pool is available."""
-    from butlers.modules.calendar import CalendarModule
-
-    mod = CalendarModule()
-    mod._db = None
-    mod._butler_name = "test"
-
-    with pytest.raises(RuntimeError, match="Database pool"):
-        await mod._create_reminder_event(
-            title="No DB",
-            start_at=datetime.now(UTC),
-            timezone="UTC",
-            until_at=None,
-            recurrence_rule=None,
-            cron=None,
-            action="test",
-            action_args=None,
-            calendar_event_id=str(uuid.uuid4()),
-        )
-
-
-# ===========================================================================
-# 5. description and location survive _create_reminder_event
-# ===========================================================================
-
-
-async def test_create_reminder_stores_description_and_location(reminder_pool):
-    """_create_reminder_event persists description and location when the schema has those columns.
-
-    Covers bu-nacgn: reminder-branch butler events must carry description and
-    location through creation so the Google push projection can include them.
-    """
-    pool = reminder_pool
-    mod = _make_module(pool)
-
-    start_at = datetime(2026, 8, 1, 10, 0, tzinfo=UTC)
-    reminder = await _create_reminder(
-        mod,
-        title="Doctor visit",
-        start_at=start_at,
-        description="Annual checkup with Dr. Smith",
-        location="123 Medical Center Dr",
-    )
-
-    assert reminder.get("description") == "Annual checkup with Dr. Smith"
-    assert reminder.get("location") == "123 Medical Center Dr"
-
-    row = await pool.fetchrow(
-        "SELECT description, location FROM reminders WHERE id = $1", reminder["id"]
-    )
-    assert row is not None
-    assert row["description"] == "Annual checkup with Dr. Smith"
-    assert row["location"] == "123 Medical Center Dr"
-
-
-async def test_create_reminder_without_description_location_is_null(reminder_pool):
-    """_create_reminder_event stores NULL for description and location when omitted."""
-    pool = reminder_pool
-    mod = _make_module(pool)
-
-    reminder = await _create_reminder(mod, title="Plain reminder")
-
-    row = await pool.fetchrow(
-        "SELECT description, location FROM reminders WHERE id = $1", reminder["id"]
-    )
-    assert row is not None
-    assert row["description"] is None
-    assert row["location"] is None

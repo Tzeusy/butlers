@@ -459,15 +459,11 @@ class TestCreateButlerReminder:
         mod._prepare_workspace_mutation = AsyncMock(return_value=("key", None))
         mod._resolve_action_source_id = AsyncMock(return_value=_SOURCE_ID)
         mod._insert_reminder_to_calendar_events = AsyncMock(return_value=(event_id, event_row))
-        mod._find_reminder_target = AsyncMock(return_value=event_id)
         mod._find_native_reminder_target = AsyncMock(return_value=event_id)
         mod._update_native_reminder_event = AsyncMock(return_value=updated_row)
         mod._toggle_native_reminder_event = AsyncMock(return_value=paused_row)
         mod._delete_native_reminder_event = AsyncMock(return_value=True)
         mod._upsert_event_entities = AsyncMock()
-        mod._update_reminder_event = AsyncMock(side_effect=AssertionError("legacy update used"))
-        mod._toggle_reminder_event = AsyncMock(side_effect=AssertionError("legacy toggle used"))
-        mod._delete_reminder_event = AsyncMock(side_effect=AssertionError("legacy delete used"))
         mod._gate_high_impact_mutation = AsyncMock(return_value=None)
         mod._refresh_butler_projection = AsyncMock(return_value={"available": True})
         mod._finalize_workspace_mutation = AsyncMock()
@@ -512,9 +508,6 @@ class TestCreateButlerReminder:
             scope="series",
             instance_start_at=None,
         )
-        mod._update_reminder_event.assert_not_awaited()
-        mod._toggle_reminder_event.assert_not_awaited()
-        mod._delete_reminder_event.assert_not_awaited()
 
     async def test_native_reminder_delete_forwards_occurrence_scope(self):
         """Occurrence-scoped deletion reaches the native reminder backend."""
@@ -522,7 +515,6 @@ class TestCreateButlerReminder:
         event_id = uuid.uuid4()
 
         mod._prepare_workspace_mutation = AsyncMock(return_value=("key", None))
-        mod._find_reminder_target = AsyncMock(return_value=event_id)
         mod._find_native_reminder_target = AsyncMock(return_value=event_id)
         mod._resolve_action_source_id = AsyncMock(return_value=_SOURCE_ID)
         mod._delete_native_reminder_event = AsyncMock(return_value=True)
@@ -546,17 +538,17 @@ class TestCreateButlerReminder:
 
 
 class TestButlerReminderTargetResolution:
-    async def test_native_target_is_resolved_without_legacy_reminders_table(self):
-        """Native reminder IDs resolve through calendar_events before legacy fallback."""
+    async def test_native_target_is_resolved_from_calendar_events(self):
+        """Native reminder IDs resolve only through calendar_events."""
         event_id = uuid.uuid4()
         pool = _make_pool(fetchrow_result={"id": event_id})
         _, mod = await _make_module(butler_name="finance", pool=pool)
         mod._table_exists = AsyncMock(side_effect=lambda table: table == "calendar_events")
 
-        resolved = await mod._find_reminder_target(str(event_id))
+        resolved = await mod._find_native_reminder_target(str(event_id))
 
         assert resolved == event_id
-        assert not any(call.args == ("reminders",) for call in mod._table_exists.await_args_list)
+        mod._table_exists.assert_awaited_once_with("calendar_events")
 
 
 # ---------------------------------------------------------------------------
@@ -895,3 +887,17 @@ class TestInsertReminderToCalendarEvents:
             )
 
         pool.execute.assert_not_called()
+
+
+async def test_butler_projection_refresh_pushes_native_changes_to_provider():
+    """A lifecycle refresh mirrors native reminder mutations immediately."""
+    mod = CalendarModule()
+    mod._project_internal_sources = AsyncMock()
+    mod._push_internal_events_to_provider = AsyncMock()
+    mod._projection_freshness_metadata = AsyncMock(return_value={"available": True})
+
+    result = await mod._refresh_butler_projection()
+
+    assert result == {"available": True}
+    mod._project_internal_sources.assert_awaited_once_with()
+    mod._push_internal_events_to_provider.assert_awaited_once_with()

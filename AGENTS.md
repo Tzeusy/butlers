@@ -349,9 +349,13 @@ Each butler has a `MANIFESTO.md` that defines its public identity and value prop
 - Calendar module today only persists sync metadata via `_state_get/_state_set` (aka the shared `state` table) and exposes Google-backed tools (list/get, create/update/delete, add/remove attendees, sync status/force) plus the background poller; there is no `calendar_events`/`scheduled_tasks` projection wiring or workspace tooling described in `docs/modules/calendar.md`.
 
 ### Calendar projection sync contract
-- `CalendarModule._sync_calendar` now materializes unified projection rows: provider deltas upsert into `calendar_events` + `calendar_event_instances`, and internal scheduler/reminder sources refresh into the same tables with deterministic `origin_ref` linkage (`scheduled_tasks.id` / `reminders.id`).
+- `CalendarModule._sync_calendar` now materializes unified projection rows: provider deltas upsert into `calendar_events` + `calendar_event_instances`, and internal scheduler/reminder sources refresh into the same tables with deterministic `origin_ref` linkage (`scheduled_tasks.id` / native `calendar_events.id`).
 - Projection checkpoints are persisted in `calendar_sync_cursors` (`provider_sync` for provider pulls, `projection` for internal sources), and each sync refresh records action status in `calendar_action_log`.
 - `calendar_sync_status` and `calendar_force_sync` now include `projection_freshness` (`last_refreshed_at`, `staleness_ms`, per-source `sync_state=fresh|stale|failed`); projection writes hard-gate on strict `to_regclass(...) IS TRUE` checks so pre-migration DBs/tests safely no-op.
+
+### Calendar-native reminder provider mirror contract
+- Runtime reminder lifecycle and target resolution are native-only (`calendar_events` with `source_kind='internal_reminders'`); the retired physical `reminders` table is migration history, not a runtime fallback or test fixture.
+- The dedicated Butlers provider-calendar mirror stores its durable provider id in `calendar_events.metadata.provider_event_id`. Refreshes update that same event with description/body, location, and RRULE recurrence; active ids participate in orphan protection, and series deletion removes the provider copy before deleting the authoritative local row.
 
 ### Calendar workspace contract coverage
 - Calendar workspace frontend tests should cover URL-backed view toggles (`view=user|butler`), butler-lane rendering/grouping, and both user/butler create-edit mutation payload shapes.
