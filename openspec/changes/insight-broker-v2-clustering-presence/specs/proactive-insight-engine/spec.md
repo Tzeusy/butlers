@@ -97,9 +97,9 @@ requirement existed.
   render as separate singleton entries
 
 #### Scenario: Invalid explicit event window does not fall back to event date
-- **WHEN** a candidate carries a partial, empty, or wrong-type explicit
-  `metadata.event_window` together with a valid `metadata.event_date` that
-  would overlap another candidate's valid window
+- **WHEN** a candidate carries a partial, empty, wrong-type, zero-length, or
+  reversed explicit `metadata.event_window` together with a valid
+  `metadata.event_date` that would overlap another candidate's valid window
 - **THEN** the explicit window resolves no correlation data, the event date is
   not used as a fallback, and both candidates render as separate singleton
   entries

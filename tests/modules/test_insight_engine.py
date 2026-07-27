@@ -1228,6 +1228,20 @@ class TestClusteredDigest:
             ({"start": "2026-08-04T09:00:00+00:00"}, "partial"),
             ({}, "empty"),
             ("not-a-window", "wrong-type"),
+            (
+                {
+                    "start": "2026-08-04T10:00:00+00:00",
+                    "end": "2026-08-04T10:00:00+00:00",
+                },
+                "zero-length",
+            ),
+            (
+                {
+                    "start": "2026-08-04T11:00:00+00:00",
+                    "end": "2026-08-04T10:00:00+00:00",
+                },
+                "reversed",
+            ),
         ],
     )
     async def test_cluster_candidates_explicit_invalid_event_window_does_not_fallback_to_event_date(
