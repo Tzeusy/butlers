@@ -39,6 +39,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from butlers.api.db import DatabaseManager
+from butlers.api.degraded import DegradedSources
 from butlers.api.deps import (
     ButlerConnectionInfo,
     MCPClientManager,
@@ -256,15 +257,19 @@ async def _count_open_approvals(
     try:
         from butlers.api.routers.approvals import _find_all_approvals_pools
 
+        tracker = DegradedSources(logger)
         pools = await asyncio.wait_for(
-            _find_all_approvals_pools(db),
+            _find_all_approvals_pools(db, tracker=tracker),
             timeout=_QUERY_TIMEOUT_S,
         )
+        if tracker.failed:
+            raise RuntimeError("approval pool discovery degraded")
         total = 0
         for pool in pools:
             try:
-                count = await pool.fetchval(
-                    "SELECT COUNT(*) FROM pending_actions WHERE status = 'pending'"
+                count = await asyncio.wait_for(
+                    pool.fetchval("SELECT COUNT(*) FROM pending_actions WHERE status = 'pending'"),
+                    timeout=_QUERY_TIMEOUT_S,
                 )
                 total += count or 0
             except Exception as exc:
