@@ -182,22 +182,40 @@ class _FakePool:
 
 
 class _FakeSpawnerResult:
-    def __init__(self, *, output: str | None = "{}"):
-        self.success = True
+    def __init__(
+        self,
+        *,
+        success: bool = True,
+        output: str | None = "{}",
+        error: str | None = None,
+    ):
+        self.success = success
         self.output = output
-        self.error = None
+        self.error = error
 
 
 class _FakeSpawner:
-    def __init__(self, *, output: str | None = "{}"):
+    def __init__(
+        self,
+        *,
+        success: bool = True,
+        output: str | None = "{}",
+        error: str | None = None,
+    ):
         self.calls = 0
         self.trigger_sources: list[str] = []
+        self.success = success
         self.output = output
+        self.error = error
 
     async def trigger(self, *, prompt: str, trigger_source: str):
         self.calls += 1
         self.trigger_sources.append(trigger_source)
-        return _FakeSpawnerResult(output=self.output)
+        return _FakeSpawnerResult(
+            success=self.success,
+            output=self.output,
+            error=self.error,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +396,35 @@ class TestRunConsolidationWritesAuditRow:
         )
 
         detail = "runtime session returned no consolidation output"
+        assert stats["groups_consolidated"] == 0
+        assert stats["errors"] == [f"runtime session failed for switchboard: {detail}"]
+        failure_updates = [
+            args for query, args in pool.executes if "last_consolidation_error" in query
+        ]
+        assert failure_updates[0][0] == detail
+
+    async def test_unsuccessful_runtime_without_error_records_fallback_detail(self) -> None:
+        claim_rows = [
+            {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "butler": "switchboard",
+                "content": "c",
+                "importance": 5.0,
+                "metadata": {},
+                "created_at": None,
+                "tenant_id": "t1",
+                "consolidation_attempts": 0,
+            }
+        ]
+        pool = _FakePool(claim_rows=claim_rows)
+
+        stats = await consolidation_module.run_consolidation(
+            pool,
+            embedding_engine=None,
+            cc_spawner=_FakeSpawner(success=False),
+        )
+
+        detail = "unsuccessful runtime result contained no error detail"
         assert stats["groups_consolidated"] == 0
         assert stats["errors"] == [f"runtime session failed for switchboard: {detail}"]
         failure_updates = [
