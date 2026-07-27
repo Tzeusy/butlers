@@ -329,6 +329,27 @@ class TestModuleStartup:
                 "type": "string",
             } in source_hint_schema["anyOf"]
 
+    @pytest.mark.parametrize(
+        "source_hint",
+        [
+            "schedule",
+            "scheduler",
+            "reminder",
+            "reminders",
+            "SCHEDULED_TASK",
+            " scheduled_task ",
+        ],
+    )
+    def test_butler_event_source_hint_normalizer_rejects_noncanonical_values(
+        self,
+        source_hint: str,
+    ):
+        with pytest.raises(
+            ValueError,
+            match="source_hint must be one of: scheduled_task \\| butler_reminder",
+        ):
+            CalendarModule._normalize_butler_event_source_hint(source_hint)
+
 
 # ---------------------------------------------------------------------------
 # Calendar read tools

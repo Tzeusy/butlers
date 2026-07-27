@@ -9590,10 +9590,9 @@ class CalendarModule(Module):
     ) -> ButlerEventSourceHint | None:
         if source_hint is None:
             return None
-        normalized = source_hint.strip().lower()
-        if normalized in {"scheduled_task", "schedule", "scheduler"}:
+        if source_hint == BUTLER_EVENT_SOURCE_SCHEDULED:
             return BUTLER_EVENT_SOURCE_SCHEDULED
-        if normalized in {"butler_reminder", "reminder", "reminders"}:
+        if source_hint == BUTLER_EVENT_SOURCE_REMINDER:
             return BUTLER_EVENT_SOURCE_REMINDER
         raise ValueError("source_hint must be one of: scheduled_task | butler_reminder")
 
