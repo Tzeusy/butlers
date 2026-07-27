@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from butlers.core.dashboard_turns import DashboardTurnResult
 from butlers.core.model_routing import Complexity, coerce_complexity_tier
 from butlers.daemon import ButlerDaemon
 from butlers.tools.switchboard.routing.contracts import parse_route_envelope
@@ -185,8 +186,32 @@ def _make_trigger_mock():
     trigger_mock = AsyncMock()
     trigger_result = MagicMock()
     trigger_result.session_id = uuid.uuid4()
+    trigger_result.success = True
+    trigger_result.error = None
     trigger_mock.return_value = trigger_result
     return trigger_mock
+
+
+def _dashboard_turn_result(
+    outcome: str,
+    *,
+    message_id: uuid.UUID,
+    request_id: uuid.UUID,
+    inbox_id: uuid.UUID | None = None,
+) -> DashboardTurnResult:
+    return DashboardTurnResult(
+        outcome=outcome,
+        message_id=message_id,
+        conversation_id=uuid.uuid4(),
+        request_id=request_id,
+        target_butler="health",
+        target_kind="route",
+        route_inbox_id=inbox_id,
+        cancel_requested_at=None,
+        cancel_confirmed_at=None,
+        terminal_state=None,
+        terminal_at=None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +258,16 @@ async def test_accept_phase_and_background_dispatch(tmp_path: Path) -> None:
             new_callable=AsyncMock,
             return_value=uuid.uuid4(),
         ),
-        patch("butlers.core_tools._routing.route_inbox_mark_processing", new_callable=AsyncMock),
-        patch("butlers.core_tools._routing.route_inbox_mark_processed", new_callable=AsyncMock),
+        patch(
+            "butlers.core_tools._routing.route_inbox_claim_processing",
+            new_callable=AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
+        patch(
+            "butlers.core_tools._routing.route_inbox_mark_processed",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         await route_execute_fn(
             schema_version="route.v1",
@@ -247,6 +280,166 @@ async def test_accept_phase_and_background_dispatch(tmp_path: Path) -> None:
     call_kwargs = trigger_mock.call_args.kwargs
     assert call_kwargs["trigger_source"] == "route"
     assert call_kwargs["request_id"] == "018f6f4e-5b3b-7b2d-9c2f-7b7b6b6b6b6b"
+
+
+async def test_dashboard_route_acceptance_atomically_claims_and_enqueues_before_spawning(
+    tmp_path: Path,
+) -> None:
+    """A target cannot schedule a dashboard runtime outside the Stop transaction."""
+    patches = _patch_infra("health")
+    butler_dir = _make_butler_toml(tmp_path, butler_name="health")
+    daemon, route_execute_fn = await _start_daemon_with_route_execute(butler_dir, patches)
+    assert route_execute_fn is not None
+
+    message_id = uuid.uuid4()
+    request_id = uuid.UUID("018f6f4e-5b3b-7b2d-9c2f-7b7b6b6b6b6b")
+    inbox_id = uuid.uuid4()
+    conn = AsyncMock()
+    transaction_cm = MagicMock()
+    transaction_cm.__aenter__ = AsyncMock(return_value=conn)
+    transaction_cm.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction = MagicMock(return_value=transaction_cm)
+    acquire_cm = MagicMock()
+    acquire_cm.__aenter__ = AsyncMock(return_value=conn)
+    acquire_cm.__aexit__ = AsyncMock(return_value=False)
+    patches["mock_pool"].acquire = MagicMock(return_value=acquire_cm)
+    conn.fetchval = AsyncMock(return_value=None)
+
+    claim = AsyncMock(
+        return_value=_dashboard_turn_result("active", message_id=message_id, request_id=request_id)
+    )
+    insert = AsyncMock(return_value=inbox_id)
+    mark = AsyncMock(
+        return_value=_dashboard_turn_result(
+            "active",
+            message_id=message_id,
+            request_id=request_id,
+            inbox_id=inbox_id,
+        )
+    )
+    trigger = _make_trigger_mock()
+    daemon.spawner.trigger = trigger
+
+    with (
+        patch("butlers.core_tools._routing.claim_target", claim),
+        patch("butlers.core_tools._routing.route_inbox_insert_on_connection", insert),
+        patch("butlers.core_tools._routing.mark_route_enqueued", mark),
+        patch(
+            "butlers.core_tools._routing.route_inbox_claim_processing",
+            new_callable=AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
+        patch(
+            "butlers.core_tools._routing.route_inbox_mark_processed",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "butlers.core_tools._routing.route_inbox_insert", new_callable=AsyncMock
+        ) as legacy_insert,
+    ):
+        result = await route_execute_fn(
+            schema_version="route.v1",
+            request_context=_route_request_context(source_channel="dashboard"),
+            input={"prompt": "Record this fact."},
+            source_metadata={
+                "channel": "dashboard",
+                "identity": "dashboard:owner",
+                "tool_name": "ingest",
+                "dashboard_message_id": str(message_id),
+            },
+        )
+        await asyncio.sleep(0.05)
+
+    assert result["status"] == "accepted"
+    assert result["inbox_id"] == str(inbox_id)
+    claim.assert_awaited_once_with(
+        conn,
+        message_id=message_id,
+        request_id=request_id,
+        target_butler="health",
+    )
+    insert.assert_awaited_once()
+    assert insert.await_args.args == (conn,)
+    assert insert.await_args.kwargs["route_envelope"]["source_metadata"][
+        "dashboard_message_id"
+    ] == str(message_id)
+    mark.assert_awaited_once_with(conn, message_id=message_id, route_inbox_id=inbox_id)
+    legacy_insert.assert_not_awaited()
+    assert trigger.call_args.kwargs["dashboard_turn_id"] == message_id
+
+
+async def test_dashboard_route_recovery_rejoins_the_original_stop_turn() -> None:
+    """A restart must not replay dashboard work outside the Stop protocol."""
+    from types import SimpleNamespace
+
+    from butlers.switchboard_wiring import recover_route_inbox
+
+    pool = AsyncMock()
+    message_id = uuid.uuid4()
+    row_id = uuid.uuid4()
+    trigger = _make_trigger_mock()
+    daemon = SimpleNamespace(
+        config=SimpleNamespace(name="health"),
+        spawner=SimpleNamespace(trigger=trigger),
+    )
+    envelope = {
+        "schema_version": "route.v1",
+        "request_context": _route_request_context(source_channel="dashboard"),
+        "input": {"prompt": "Record this fact."},
+        "source_metadata": {
+            "channel": "dashboard",
+            "identity": "dashboard:owner",
+            "tool_name": "ingest",
+            "dashboard_message_id": str(message_id),
+        },
+    }
+
+    processing_claim_id = uuid.uuid4()
+    request_id = uuid.UUID(_route_request_context(source_channel="dashboard")["request_id"])
+
+    async def _recover_once(*_args, dispatch_fn, **_kwargs):
+        await dispatch_fn(
+            row_id=row_id,
+            route_envelope=envelope,
+            processing_claim_id=processing_claim_id,
+        )
+        return 1
+
+    with (
+        patch("butlers.switchboard_wiring.route_inbox_recovery_sweep", _recover_once),
+        patch(
+            "butlers.switchboard_wiring.reconcile_route_recovery",
+            new_callable=AsyncMock,
+            return_value=_dashboard_turn_result(
+                "active",
+                message_id=message_id,
+                request_id=request_id,
+                inbox_id=row_id,
+            ),
+        ) as reconcile,
+        patch(
+            "butlers.switchboard_wiring.route_inbox_mark_processed",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as processed,
+    ):
+        await recover_route_inbox(daemon, pool)
+
+    trigger.assert_awaited_once()
+    assert trigger.await_args.kwargs["dashboard_turn_id"] == message_id
+    reconcile.assert_awaited_once_with(
+        pool,
+        message_id=message_id,
+        request_id=request_id,
+        route_inbox_id=row_id,
+    )
+    processed.assert_awaited_once_with(
+        pool,
+        row_id,
+        trigger.return_value.session_id,
+        processing_claim_id=processing_claim_id,
+    )
 
 
 async def test_failure_recording_and_dedup(tmp_path: Path) -> None:
@@ -265,7 +458,11 @@ async def test_failure_recording_and_dedup(tmp_path: Path) -> None:
             new_callable=AsyncMock,
             return_value=uuid.uuid4(),
         ),
-        patch("butlers.core_tools._routing.route_inbox_mark_processing", new_callable=AsyncMock),
+        patch(
+            "butlers.core_tools._routing.route_inbox_claim_processing",
+            new_callable=AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
         patch("butlers.core_tools._routing.route_inbox_mark_errored", mock_errored),
     ):
         result = await route_execute_fn(
@@ -407,8 +604,16 @@ async def test_accept_path_coerces_complexity_and_plumbs_enum_to_trigger(
             new_callable=AsyncMock,
             return_value=uuid.uuid4(),
         ),
-        patch("butlers.core_tools._routing.route_inbox_mark_processing", new_callable=AsyncMock),
-        patch("butlers.core_tools._routing.route_inbox_mark_processed", new_callable=AsyncMock),
+        patch(
+            "butlers.core_tools._routing.route_inbox_claim_processing",
+            new_callable=AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
+        patch(
+            "butlers.core_tools._routing.route_inbox_mark_processed",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         await route_execute_fn(
             schema_version="route.v1",

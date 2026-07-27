@@ -22,12 +22,14 @@ from fastmcp import Client as MCPClient
 from opentelemetry import trace
 from opentelemetry.context import Context as OtelContext
 
+from butlers.core.dashboard_turns import reconcile_route_recovery
 from butlers.core.route_inbox import (
     route_inbox_mark_errored,
     route_inbox_mark_processed,
-    route_inbox_mark_processing,
+    route_inbox_processing_lease_heartbeat,
     route_inbox_recovery_sweep,
 )
+from butlers.core.spawner import SESSION_CANCELLED_ERROR
 from butlers.core.telemetry import tag_butler_span
 from butlers.mcp_patches import apply_streamable_http_client_disconnect_patch
 from butlers.routing_guidance import (
@@ -105,6 +107,12 @@ def build_buffer_pipeline_inputs(ref: Any) -> tuple[dict[str, Any], dict[str, An
         "request_id": ref.request_id,
         "request_context": request_context,
     }
+    if channel == "dashboard":
+        # The dashboard envelope's external event id is the immutable
+        # ``dashboard_messages.id``. Preserve it separately from source_id
+        # (sender identity) so every downstream Spawner can join the durable
+        # Stop protocol for this exact user turn.
+        tool_args["dashboard_message_id"] = ref.event.get("external_event_id", "")
     if source_id is not None:
         tool_args["source_id"] = source_id
     if sender_name is not None:
@@ -341,6 +349,7 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
         *,
         row_id: uuid.UUID,
         route_envelope: dict,
+        processing_claim_id: uuid.UUID,
     ) -> None:
         """Dispatch one recovered route_inbox row as a background task.
 
@@ -361,11 +370,20 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
                 pool,
                 row_id,
                 f"Invalid envelope on recovery: {exc}",
+                processing_claim_id=processing_claim_id,
             )
             return
 
         route_context = parsed.request_context.model_dump(mode="json")
         route_request_id = str(parsed.request_context.request_id)
+        dashboard_turn_id = (
+            parsed.source_metadata.dashboard_message_id
+            if (
+                parsed.request_context.source_channel == "dashboard"
+                and parsed.source_metadata is not None
+            )
+            else None
+        )
         context_text = _build_route_runtime_context(
             route_context=route_context,
             source_channel=parsed.request_context.source_channel,
@@ -376,6 +394,43 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
         )
         recovery_prompt = _wrap_routed_message(parsed.input.prompt)
 
+        if dashboard_turn_id is not None:
+            try:
+                recovery_control = await reconcile_route_recovery(
+                    pool,
+                    message_id=dashboard_turn_id,
+                    request_id=parsed.request_context.request_id,
+                    route_inbox_id=row_id,
+                )
+            except Exception:
+                logger.exception(
+                    "route_inbox recovery: could not reconcile dashboard predecessor id=%s",
+                    row_id,
+                )
+                await route_inbox_mark_errored(
+                    pool,
+                    row_id,
+                    "Could not reconcile the prior dashboard runtime before recovery.",
+                    processing_claim_id=processing_claim_id,
+                )
+                return
+            if recovery_control.outcome in {"cancelled", "finished"}:
+                await route_inbox_mark_processed(
+                    pool,
+                    row_id,
+                    None,
+                    processing_claim_id=processing_claim_id,
+                )
+                return
+            if recovery_control.outcome not in {"active", "cancelling"}:
+                await route_inbox_mark_errored(
+                    pool,
+                    row_id,
+                    f"Dashboard recovery control rejected route replay: {recovery_control.outcome}",
+                    processing_claim_id=processing_claim_id,
+                )
+                return
+
         _tracer = trace.get_tracer("butlers")
         # Fresh root span for recovery — no accept-phase span to link to.
         with _tracer.start_as_current_span(
@@ -384,27 +439,69 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
         ) as _recovery_span:
             tag_butler_span(_recovery_span, daemon.config.name)
             _recovery_span.set_attribute("request_id", route_request_id)
-            await route_inbox_mark_processing(pool, row_id)
             try:
-                result = await spawner.trigger(
-                    prompt=recovery_prompt,
-                    context=context_text,
-                    trigger_source="route",
-                    request_id=route_request_id,
-                    # Recovery dispatches replay the original ingest;
-                    # request_id is the same UUID7 the switchboard wrote
-                    # as public.ingestion_events.id, so persist it as the
-                    # session's ingestion_event_id FK to preserve the
-                    # chronicler contact-resolution join (mirrors the
-                    # primary route handler in core_tools/_routing.py).
-                    ingestion_event_id=route_request_id,
-                )
-                await route_inbox_mark_processed(pool, row_id, result.session_id)
+                async with route_inbox_processing_lease_heartbeat(
+                    pool,
+                    row_id,
+                    processing_claim_id,
+                ) as lease_lost:
+                    result = await spawner.trigger(
+                        prompt=recovery_prompt,
+                        context=context_text,
+                        trigger_source="route",
+                        request_id=route_request_id,
+                        # Recovery dispatches replay the original ingest;
+                        # request_id is the same UUID7 the switchboard wrote
+                        # as public.ingestion_events.id, so persist it as the
+                        # session's ingestion_event_id FK to preserve the
+                        # chronicler contact-resolution join (mirrors the
+                        # primary route handler in core_tools/_routing.py).
+                        ingestion_event_id=route_request_id,
+                        # Recovered dashboard work must rejoin the same durable
+                        # turn, otherwise a Stop during a process restart could
+                        # not prevent the replayed target runtime from starting.
+                        dashboard_turn_id=dashboard_turn_id,
+                    )
+                    if lease_lost.is_set():
+                        raise RuntimeError(
+                            "route inbox processing lease was lost before the runtime result "
+                            "could be recorded"
+                        )
+                    result_error = getattr(result, "error", None)
+                    if not bool(getattr(result, "success", False)) and (
+                        result_error != SESSION_CANCELLED_ERROR
+                    ):
+                        error_msg = (
+                            "Spawner returned unsuccessful result: "
+                            f"{result_error or 'unknown error'}"
+                        )
+                        _recovery_span.set_status(trace.StatusCode.ERROR, error_msg)
+                        await route_inbox_mark_errored(
+                            pool,
+                            row_id,
+                            error_msg,
+                            processing_claim_id=processing_claim_id,
+                        )
+                        return
+                    if not await route_inbox_mark_processed(
+                        pool,
+                        row_id,
+                        result.session_id,
+                        processing_claim_id=processing_claim_id,
+                    ):
+                        raise RuntimeError(
+                            "route inbox processing lease was lost while marking the result"
+                        )
             except Exception as exc:
                 error_msg = f"{type(exc).__name__}: {exc}"
                 logger.exception("route_inbox recovery: trigger failed for id=%s", row_id)
                 _recovery_span.set_status(trace.StatusCode.ERROR, error_msg)
-                await route_inbox_mark_errored(pool, row_id, error_msg)
+                await route_inbox_mark_errored(
+                    pool,
+                    row_id,
+                    error_msg,
+                    processing_claim_id=processing_claim_id,
+                )
 
     try:
         recovered = await route_inbox_recovery_sweep(

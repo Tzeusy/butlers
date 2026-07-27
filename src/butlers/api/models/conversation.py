@@ -139,18 +139,20 @@ class ConversationCancelResponse(BaseModel):
     not error conditions, and the frontend renders each honestly rather than
     treating a non-cancellation as calm success:
 
-    - ``cancelled=True``: an in-flight runtime invocation was found and
-      killed.
+    - ``cancelled=True``: Stop is durably authoritative for this message:
+      either its in-flight runtime accepted cancellation, or no runtime had
+      reached the invocation boundary and none can start.
     - ``cancelled=False, already_finished=True``: nothing was in flight for
       this conversation (the turn already completed, or Stop was clicked
       after the reply landed) -- a benign no-op, never rendered as a failure.
-    - ``cancelled=False, already_finished=False``: cancellation was
-      attempted but could not be confirmed (e.g. the routed butler was
-      unreachable) -- ``message`` explains why; the frontend must surface
+    - ``cancelled=False, already_finished=False``: Stop could not be
+      confirmed for work already invoking, or an irreversible side effect was
+      already committed. ``message`` explains why; the frontend must surface
       this as a real failure, never as "stopped".
     """
 
     cancelled: bool
     already_finished: bool
+    conversation_id: UUID | None = None
     session_id: UUID | None = None
     message: str | None = None

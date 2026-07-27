@@ -5157,6 +5157,23 @@ export function cancelConversationTurn(
   );
 }
 
+/**
+ * POST /api/butlers/{name}/conversation-turns/{messageId}/cancel — cancel
+ * one immutable dashboard user turn across classifier and routed runtimes.
+ * Unlike the legacy conversation-scoped endpoint, this remains precise while
+ * a Switchboard handoff is still in flight and even before SSE has delivered
+ * a newly-created conversation id.
+ */
+export function cancelConversationMessageTurn(
+  butlerName: string,
+  messageId: string,
+): Promise<ConversationCancelResponse> {
+  return apiFetch<ConversationCancelResponse>(
+    `/butlers/${encodeURIComponent(butlerName)}/conversation-turns/${encodeURIComponent(messageId)}/cancel`,
+    { method: "POST" },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Telegram Session Auth
 // ---------------------------------------------------------------------------

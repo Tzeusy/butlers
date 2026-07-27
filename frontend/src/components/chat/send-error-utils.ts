@@ -26,6 +26,15 @@ export type SendError =
 
 export type RetryableSendError = Exclude<SendError, { kind: "timeout" }>;
 
+/** A durable server cancellation is a terminal stream outcome, not a retryable send error. */
+export function isConfirmedConversationCancellation(data: unknown): boolean {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as ConversationSseErrorData).code === "SESSION_CANCELLED"
+  );
+}
+
 export function classifySendError(
   data: unknown,
   failedText: string,

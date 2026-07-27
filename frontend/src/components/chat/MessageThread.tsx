@@ -241,6 +241,8 @@ function MessageBubble({
 export interface StreamingState {
   /** Conversation ID that is currently streaming. */
   conversationId: string;
+  /** Immutable dashboard user-message ID for this exact cancellable turn. */
+  messageId: string;
   /** Content accumulated so far from SSE token events. */
   content: string;
   /** True while awaiting the first token (typing indicator phase). */
@@ -285,10 +287,12 @@ export function MessageThread({
     if (!userScrolledUp) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages.length, streaming?.content, userScrolledUp]);
+  }, [messages.length, streaming?.cancelError, streaming?.cancelled, streaming?.content, streaming?.pending, userScrolledUp]);
 
   const isStreamingThisConversation =
-    streaming !== null && streaming.conversationId === conversationId;
+    streaming !== null &&
+    (streaming.conversationId === conversationId ||
+      (streaming.conversationId === "pending" && conversationId === null));
 
   if (messages.length === 0 && !isStreamingThisConversation) {
     return (

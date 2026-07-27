@@ -207,16 +207,24 @@ The frontend SHALL connect to the SSE streaming endpoints for real-time response
 
 - **WHEN** the user clicks the "Stop" button during streaming
 - **THEN** the frontend calls `POST
-  /api/butlers/{name}/conversations/{conversation_id}/cancel` with a pending
-  ("Stopping…") state on the Stop button, disabling it against a second click
-- **AND** the backend resolves the conversation's active turn to its
-  in-flight session and kills the routed butler's runtime subprocess (not
-  merely detaching a watcher) via the `cancel_session` MCP tool
-- **AND** only once the server confirms `cancelled: true` does the frontend
-  abort its own SSE watch (`AbortController`) and render the partial
-  assistant message with a "Cancelled by owner" indicator, distinct from the
-  generic "Interrupted" indicator used for unrelated client-side aborts
-  (e.g. component unmount, switching conversations)
+  /api/butlers/{name}/conversation-turns/{message_id}/cancel`, where
+  `message_id` is the client-created immutable user-turn identifier; this
+  SHALL work before a new conversation has delivered its `conversation_id`
+  over SSE
+- **AND** the Stop button enters a pending ("Stopping…") state that prevents
+  a second request and exposes its state to assistive technology
+- **AND** the backend records cancellation intent against that durable turn,
+  preventing any later Switchboard ingress claim, classifier, target-route,
+  recovery, or runtime-invoke transition from starting work for it
+- **AND** if a runtime already crossed the invocation boundary, the backend
+  resolves every exact registered runtime session and kills the subprocesses
+  through the `cancel_session` MCP tool (not merely detaching a watcher)
+- **AND** only once the server confirms `cancelled: true` **or** emits the
+  terminal `SESSION_CANCELLED` SSE outcome from the durable turn record does
+  the frontend abort its own SSE watch (`AbortController`) and render the
+  partial assistant message with a "Cancelled by owner" indicator, distinct
+  from the generic "Interrupted" indicator used for unrelated client-side
+  aborts (e.g. component unmount, switching conversations)
 - **AND** the input is re-enabled
 
 #### Scenario: Stop click on an already-finished turn is a benign no-op
@@ -230,9 +238,10 @@ The frontend SHALL connect to the SSE streaming endpoints for real-time response
 #### Scenario: A failed cancel attempt is never rendered as calm
 
 - **WHEN** the cancel request itself fails (e.g. the routed butler is
-  unreachable) so the server cannot confirm the session was killed
-- **THEN** the frontend surfaces the failure message inline in the thread
-  and re-enables the Stop button for another attempt
+  unreachable), an already-ended runtime is still settling, or an irreversible
+  action was already committed, so the server cannot confirm cancellation
+- **THEN** the frontend surfaces the returned explanation inline in the thread
+  and gives the owner an actionable, truthful Stop state
 - **AND** it SHALL NOT render "Cancelled by owner", "Interrupted", or any
   other terminal-state indicator implying the session actually stopped
 

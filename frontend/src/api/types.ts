@@ -5211,10 +5211,12 @@ export interface SendMessageRequest {
 }
 
 /**
- * Response from POST /api/butlers/{name}/conversations/{id}/cancel (the
- * chat "Stop" button, bu-ep4ks.2). Always HTTP 200 -- mirrors the backend's
- * `ConversationCancelResponse`. Exactly one of three honest outcomes:
- *   - `cancelled: true` -- an in-flight session was actually killed.
+ * Response from a dashboard turn's POST `.../cancel` endpoint. Always HTTP
+ * 200 -- mirrors the backend's `ConversationCancelResponse`. Exactly one of
+ * three honest outcomes:
+ *   - `cancelled: true` -- the control plane either blocked every future
+ *     runtime before invocation or every already-invoking runtime confirmed
+ *     it had stopped.
  *   - `cancelled: false, already_finished: true` -- nothing was running;
  *     benign no-op, never rendered as a failure.
  *   - `cancelled: false, already_finished: false` -- cancellation was
@@ -5224,6 +5226,8 @@ export interface SendMessageRequest {
 export interface ConversationCancelResponse {
   cancelled: boolean;
   already_finished: boolean;
+  /** Persisted thread identity, including a just-created conversation. */
+  conversation_id?: string | null;
   session_id?: string | null;
   message?: string | null;
 }
@@ -5250,7 +5254,12 @@ export interface ConversationSseEvent {
  * "inspect session" link) from a deterministic rejection.
  */
 export interface ConversationSseErrorData {
-  code?: "SWITCHBOARD_UNAVAILABLE" | "INGEST_REJECTED" | "SWITCHBOARD_ERROR" | "SESSION_TIMEOUT";
+  code?:
+    | "SWITCHBOARD_UNAVAILABLE"
+    | "INGEST_REJECTED"
+    | "SWITCHBOARD_ERROR"
+    | "SESSION_TIMEOUT"
+    | "SESSION_CANCELLED";
   message?: string;
   session_id?: string | null;
 }

@@ -15,6 +15,7 @@ from butlers.core.route_inbox import (
     STATE_PROCESSED,
     STATE_PROCESSING,
     route_inbox_insert,
+    route_inbox_insert_on_connection,
     route_inbox_mark_errored,
     route_inbox_mark_processed,
     route_inbox_mark_processing,
@@ -63,34 +64,44 @@ async def test_insert_and_lifecycle_mutations() -> None:
     # route_envelope is passed as a dict (asyncpg JSONB codec handles encoding)
     assert conn.execute.call_args.args[2]["schema_version"] == "route.v1"
 
+    # A caller-owned connection is required when a route-inbox write must be
+    # atomic with another durable control-plane transition.
+    connection_id = await route_inbox_insert_on_connection(
+        conn,
+        route_envelope=_sample_envelope(),
+    )
+    assert isinstance(connection_id, uuid.UUID)
+    assert conn.execute.call_args.args[3] == STATE_ACCEPTED
+
     row_id = uuid.uuid4()
     session_id = uuid.uuid4()
 
     # mark_processing: transitions accepted -> processing for the row
     pool2, conn2 = _make_pool()
-    conn2.execute = AsyncMock()
-    await route_inbox_mark_processing(pool2, row_id)
-    args = conn2.execute.call_args.args
+    processing_claim_id = uuid.uuid4()
+    conn2.fetchval = AsyncMock(return_value=processing_claim_id)
+    assert await route_inbox_mark_processing(pool2, row_id) is True
+    args = conn2.fetchval.call_args.args
     assert STATE_PROCESSING in args and row_id in args and STATE_ACCEPTED in args
 
     # mark_processed (with and without session_id)
     pool3, conn3 = _make_pool()
-    conn3.execute = AsyncMock()
-    await route_inbox_mark_processed(pool3, row_id, session_id)
+    conn3.fetchval = AsyncMock(return_value=row_id)
+    assert await route_inbox_mark_processed(pool3, row_id, session_id) is True
     assert (
-        STATE_PROCESSED in conn3.execute.call_args.args
-        and session_id in conn3.execute.call_args.args
+        STATE_PROCESSED in conn3.fetchval.call_args.args
+        and session_id in conn3.fetchval.call_args.args
     )
-    conn3.execute.reset_mock()
+    conn3.fetchval.reset_mock()
     await route_inbox_mark_processed(pool3, row_id, None)
-    conn3.execute.assert_awaited_once()
+    conn3.fetchval.assert_awaited_once()
 
     # mark_errored: records the errored state and the error text
     pool4, conn4 = _make_pool()
-    conn4.execute = AsyncMock()
+    conn4.fetchval = AsyncMock(return_value=row_id)
     error = "TimeoutError: spawner timed out"
-    await route_inbox_mark_errored(pool4, row_id, error)
-    args4 = conn4.execute.call_args.args
+    assert await route_inbox_mark_errored(pool4, row_id, error) is True
+    args4 = conn4.fetchval.call_args.args
     assert STATE_ERRORED in args4 and error in args4 and row_id in args4
 
 
@@ -122,10 +133,10 @@ async def test_scan_and_recovery_sweep() -> None:
     await route_inbox_scan_unprocessed(pool, grace_s=42, batch_size=7)
     assert 42 in conn.fetch.call_args.args and 7 in conn.fetch.call_args.args
 
-    # States filter includes accepted + processing
+    # The stale-candidate filter includes accepted + processing separately.
     await route_inbox_scan_unprocessed(pool)
-    states_arg = conn.fetch.call_args.args[1]
-    assert STATE_ACCEPTED in states_arg and STATE_PROCESSING in states_arg
+    assert conn.fetch.call_args.args[1] == STATE_ACCEPTED
+    assert conn.fetch.call_args.args[2] == STATE_PROCESSING
 
     # Recovery: zero when no rows
     pool2, conn2 = _make_pool()
@@ -145,15 +156,20 @@ async def test_scan_and_recovery_sweep() -> None:
             }
         ]
     )
+    claim_id = uuid.uuid4()
+    conn2.fetchval = AsyncMock(return_value=claim_id)
     dispatch_calls: list[dict] = []
 
-    async def collect_dispatch(*, row_id: uuid.UUID, route_envelope: dict) -> None:
-        dispatch_calls.append({"row_id": row_id})
+    async def collect_dispatch(
+        *, row_id: uuid.UUID, route_envelope: dict, processing_claim_id: uuid.UUID
+    ) -> None:
+        dispatch_calls.append({"row_id": row_id, "processing_claim_id": processing_claim_id})
 
     recovered = await route_inbox_recovery_sweep(
         pool2, dispatch_fn=collect_dispatch, grace_s=10, batch_size=50
     )
     assert recovered == 1 and dispatch_calls[0]["row_id"] == rr_id
+    assert dispatch_calls[0]["processing_claim_id"] == claim_id
 
     # Recovery: continues on failure; count excludes failed rows
     rows = [
@@ -165,9 +181,12 @@ async def test_scan_and_recovery_sweep() -> None:
         for i in range(3)
     ]
     conn2.fetch = AsyncMock(return_value=rows)
+    conn2.fetchval = AsyncMock(return_value=uuid.uuid4())
     call_count = 0
 
-    async def dispatch_fn_fail(*, row_id: uuid.UUID, route_envelope: dict) -> None:
+    async def dispatch_fn_fail(
+        *, row_id: uuid.UUID, route_envelope: dict, processing_claim_id: uuid.UUID
+    ) -> None:
         nonlocal call_count
         call_count += 1
         if call_count == 2:
@@ -175,3 +194,10 @@ async def test_scan_and_recovery_sweep() -> None:
 
     recovered2 = await route_inbox_recovery_sweep(pool2, dispatch_fn=dispatch_fn_fail)
     assert recovered2 == 2 and call_count == 3
+
+    # A concurrent hot/recovery worker that won the lease suppresses replay.
+    conn2.fetch = AsyncMock(return_value=rows[:1])
+    conn2.fetchval = AsyncMock(return_value=None)
+    skipped_dispatch = AsyncMock()
+    assert await route_inbox_recovery_sweep(pool2, dispatch_fn=skipped_dispatch) == 0
+    skipped_dispatch.assert_not_awaited()
