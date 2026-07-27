@@ -144,14 +144,20 @@ digest and its escalation query:
 
 - issue identifier, title, status, type, priority, labels, timestamps, and
   native deadline fields;
+- the bounded structured decision context the current digest exposes:
+  description, normalized `metadata.decision.options` and
+  `metadata.decision.default`, plus per-record structured-details
+  availability and unavailable reason;
 - dependency edges and their timestamps/type;
 - an export/projection provenance record, content digest, completion time,
-  producer version, and validation result.
+  producer version, validation result, and the strict decision-convention
+  lint outcome required by the weekly digest.
 
-Descriptions, comments, arbitrary metadata, and raw export blobs are
-intentionally excluded until an approved consumer needs them. This avoids
-silently creating a broad governance-data replica merely because the exporter
-can read it.
+Comments, raw arbitrary metadata, and raw export blobs are intentionally
+excluded until an approved consumer needs them. The normalized decision fields
+above are an explicit bounded exception, not permission to replicate the
+source metadata object wholesale. This avoids silently creating a broad
+governance-data replica merely because the exporter can read it.
 
 ### Snapshot publication protocol
 
@@ -174,10 +180,17 @@ For each run, the service must:
 2. Parse and validate all records before publishing: JSON structure, unique
    issue ids, known dependency endpoints, timestamp parseability, bounded
    record sizes, and the fields required by the selected consumers.
-3. Insert the run and its candidate rows in PostgreSQL, then atomically mark
+3. Preserve the scheduled decision-convention lint contract against the
+   candidate's live issues, including unlabeled-marker detection, explicit
+   distinction between a clean result and an unavailable/malformed lint
+   result, and the normalized per-record result shape. The sync may execute
+   the current deterministic linter locally or implement equivalent validated
+   logic, but publication and readers must not turn lint failure into a calm
+   successful audit.
+4. Insert the run and its candidate rows in PostgreSQL, then atomically mark
    the snapshot current in the same transaction. A crash or database error
    leaves the previously completed snapshot current.
-4. Retain a bounded number of prior completed snapshots and failed-run
+5. Retain a bounded number of prior completed snapshots and failed-run
    metadata for diagnosis and rollback; the retention period is an owner
    decision.
 
@@ -194,7 +207,16 @@ A single typed provider (for example, a future
 `butlers.core.beads_projection` module) owns projection reads and freshness
 classification. `decision_review.py` keeps ownership of decision-label
 detection and escalation rules; the provider supplies a complete issue/edge
-snapshot rather than letting each caller parse JSONL or query tables directly.
+snapshot and strict-lint result rather than letting each caller parse JSONL or
+query tables directly.
+
+The provider must read the publication pointer, candidate metadata, issues,
+dependencies, and lint result as one coherent snapshot. It must use either one
+SQL statement rooted at the active publication pointer or a repeatable-read
+transaction; separate ordinary reads that can straddle a pointer flip are not
+allowed. Runtime roles receive access only to a bounded active-snapshot view or
+function owned by this provider. They receive no direct `SELECT` grant on
+snapshot history, failed runs, candidate rows, or `publication_state`.
 
 Every result must carry at least:
 
@@ -219,11 +241,12 @@ one source explicitly and report it in status/telemetry.
 - The sync process receives a dedicated PostgreSQL writer identity with access
   only to the projection schema and its required sequences/functions. It does
   not receive Butlers runtime secrets or broad application-schema privileges.
-- Projection tables grant `USAGE`/`SELECT` only to the exact roles used by
-  Switchboard and dashboard API reads. Do not assume existing blanket
-  `public` privileges are a safe authorization mechanism; the approved
-  migration must verify the live role/grant model and explicitly revoke
-  unnecessary access.
+- The projection schema grants runtime roles `USAGE` plus `SELECT` only on the
+  bounded active-snapshot surface described above; underlying projection
+  tables grant them no direct access. Do not assume existing blanket `public`
+  privileges are a safe authorization mechanism; the approved migration must
+  verify the live role/grant model and explicitly revoke unnecessary access,
+  including direct access to projection history tables.
 - Runtime containers receive no Dolt port, `bd` credential, `bd` write tool,
   or `.beads` mount. Their only new dependency is the existing PostgreSQL
   endpoint they already need.
@@ -320,7 +343,14 @@ This is an ordered proposal, not an approved work plan.
   their allowed projection surface; the sync role cannot read/write unrelated
   schemas; runtime roles cannot write the projection.
 - Digest parity tests: current JSONL and projection input yield the same
-  decision order and escalation result for shared fixtures.
+  decision order, structured decision context, escalation result, and strict
+  live-candidate/unlabeled-marker lint outcome for shared fixtures. Missing,
+  malformed, or internally inconsistent lint results fail closed rather than
+  becoming a calm audit.
+- Snapshot read-consistency tests: a reader cannot observe a publication
+  pointer with rows or lint results from another snapshot, including during a
+  concurrent pointer flip; runtime reader roles cannot query raw candidate or
+  history tables.
 - Freshness/failure tests: missing, stale, schema-mismatched, and read-error
   projection results propagate as degraded envelopes rather than empty queues.
 - Deployment test: no application container mount or egress path reaches
