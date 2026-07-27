@@ -2296,6 +2296,73 @@ def _mcp_result(text: str | None, *, is_error: bool = False) -> MagicMock:
     return result
 
 
+@pytest.mark.parametrize(
+    "route_template",
+    ("/api/approvals/actions/{action_id}/retry", "/api/approvals/{action_id}/retry"),
+)
+async def test_retry_reports_unreachable_owner_truthfully(app, route_template: str):
+    action = _make_action(status="approved")
+    _app_with_mock_db(app, fetchrow_return=action)
+    mock_mcp = MagicMock(spec=MCPClientManager)
+    mock_mcp.get_client = AsyncMock(side_effect=RuntimeError("connection refused"))
+    app.dependency_overrides[get_mcp_manager] = lambda: mock_mcp
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(route_template.format(action_id=action["id"]))
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "No reachable butler to dispatch action"
+    assert action["status"] == "approved"
+    assert action["execution_result"] is None
+
+
+@pytest.mark.parametrize(
+    "route_template",
+    ("/api/approvals/actions/{action_id}/retry", "/api/approvals/{action_id}/retry"),
+)
+async def test_retry_reports_reachable_executor_rejection_truthfully(app, route_template: str):
+    import json
+
+    action = _make_action(status="approved")
+    _app_with_mock_db(app, fetchrow_return=action)
+    client = MagicMock()
+    client.call_tool = AsyncMock(
+        return_value=_mcp_result(
+            json.dumps(
+                {
+                    "error": (
+                        "token=super-secret recipient=chatterbox97@gmail.com "
+                        "body=private-message "
+                        "email_reply_to_thread() got an unexpected "
+                        "keyword argument 'intent'"
+                    )
+                }
+            )
+        )
+    )
+    mock_mcp = MagicMock(spec=MCPClientManager)
+    mock_mcp.get_client = AsyncMock(return_value=client)
+    app.dependency_overrides[get_mcp_manager] = lambda: mock_mcp
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as api_client:
+        response = await api_client.post(route_template.format(action_id=action["id"]))
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "executor rejected" in detail.lower()
+    assert "unexpected keyword argument" in detail
+    assert "No reachable butler" not in detail
+    assert "super-secret" not in detail
+    assert "chatterbox97@gmail.com" not in detail
+    assert "private-message" not in detail
+    assert action["status"] == "approved"
+    assert action["execution_result"] is None
+
+
 async def test_dispatch_approved_action_never_falls_back_to_another_butler():
     """An action stays in its owning schema when that butler declines it."""
     import json
