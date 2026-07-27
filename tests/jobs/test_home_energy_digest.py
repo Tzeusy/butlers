@@ -586,6 +586,47 @@ async def test_fetch_weekly_statistics_uses_authenticated_websocket_commands():
     }
 
 
+async def test_fetch_weekly_statistics_preserves_data_on_closed_period_frame():
+    """A later closed frame preserves prior data and identifies the failed period."""
+    websocket = MagicMock()
+    websocket.receive_json = AsyncMock(
+        side_effect=[
+            {"type": "auth_required"},
+            {"type": "auth_ok"},
+            {
+                "id": 1,
+                "type": "result",
+                "success": True,
+                "result": {"sensor.energy": [{"sum": 12.5}]},
+            },
+            TypeError("WebSocket received a close frame"),
+        ]
+    )
+    websocket.send_json = AsyncMock()
+
+    websocket_context = MagicMock()
+    websocket_context.__aenter__ = AsyncMock(return_value=websocket)
+    websocket_context.__aexit__ = AsyncMock(return_value=None)
+
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.ws_connect.return_value = websocket_context
+
+    with patch("butlers.jobs.home.aiohttp.ClientSession", return_value=session):
+        result = await _fetch_weekly_statistics(
+            MagicMock(),
+            ["sensor.energy"],
+            ha_url="https://ha.example/",
+            ha_token="secret-token",
+        )
+
+    assert result == {
+        "statistics": {"sensor.energy": {"weekly_sum": 12.5}},
+        "errors": [{"period": "day", "code": "protocol_error"}],
+    }
+
+
 async def test_run_energy_digest_early_exits():
     """Empty snapshot → error; no energy sensors → error."""
     with patch("butlers.jobs.home._send_notify", new_callable=AsyncMock):
