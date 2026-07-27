@@ -170,7 +170,9 @@ async def execute_consolidation(
     for fact in parsed.updated_facts:
         try:
             predicate_is_temporal = await pool.fetchval(
-                "SELECT is_temporal FROM predicate_registry WHERE name = $1",
+                "SELECT is_temporal FROM predicate_registry "
+                "WHERE name = $1 OR $1 = ANY(aliases) "
+                "ORDER BY ($1 = ANY(aliases)) DESC LIMIT 1",
                 fact.predicate,
             )
             if predicate_is_temporal:

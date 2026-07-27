@@ -110,7 +110,51 @@ async def test_execute_consolidation_skips_registered_temporal_updated_fact(monk
     assert result["facts_updated"] == 0
     assert result["errors"] == [f"Skipped temporal updated fact ({target_id})"]
     pool.fetchval.assert_awaited_once_with(
-        "SELECT is_temporal FROM predicate_registry WHERE name = $1",
+        "SELECT is_temporal FROM predicate_registry "
+        "WHERE name = $1 OR $1 = ANY(aliases) "
+        "ORDER BY ($1 = ANY(aliases)) DESC LIMIT 1",
         "status_event",
     )
+    store_fact_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_consolidation_skips_temporal_updated_fact_by_predicate_alias(
+    monkeypatch,
+) -> None:
+    target_id = str(uuid.uuid4())
+    pool = AsyncMock()
+    pool.fetchval.side_effect = lambda query, _predicate: "aliases" in query
+    store_fact_mock = AsyncMock(
+        return_value={"id": uuid.uuid4(), "supersedes_id": None},
+    )
+
+    monkeypatch.setattr(consolidation_executor, "store_fact", store_fact_mock)
+    monkeypatch.setattr(
+        consolidation_executor,
+        "_lookup_episode_ttl_days",
+        AsyncMock(return_value=7),
+    )
+
+    parsed = ConsolidationResult(
+        updated_facts=[
+            UpdatedFact(
+                target_id=target_id,
+                subject="system",
+                predicate="status",
+                content="new status",
+            )
+        ],
+    )
+
+    result = await consolidation_executor.execute_consolidation(
+        pool=pool,
+        embedding_engine=object(),
+        parsed=parsed,
+        source_episode_ids=[],
+        butler_name="travel",
+    )
+
+    assert result["facts_updated"] == 0
+    assert result["errors"] == [f"Skipped temporal updated fact ({target_id})"]
     store_fact_mock.assert_not_awaited()
