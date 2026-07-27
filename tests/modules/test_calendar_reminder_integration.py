@@ -486,6 +486,58 @@ async def test_native_recurring_reminder_refreshes_rolling_window(reminder_pool)
     assert refreshed_count >= 10
 
 
+async def test_native_refresh_retains_and_dispatches_overdue_unnotified_instance(
+    reminder_pool,
+):
+    """Projection refresh cannot drop an occurrence before tick delivers it."""
+    pool = reminder_pool
+    mod = _make_module(pool, butler_name="finance")
+    start_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
+    event_id, _ = await mod._insert_reminder_to_calendar_events(
+        title="Overdue renewal review",
+        body=None,
+        starts_at=start_at,
+        ends_at=start_at + timedelta(minutes=15),
+        timezone="UTC",
+        recurrence_rule="RRULE:FREQ=WEEKLY",
+        entity_ids=[],
+    )
+    due_before_refresh = await pool.fetchval(
+        """
+        SELECT count(*)
+        FROM calendar_event_instances
+        WHERE event_id = $1
+          AND starts_at <= now()
+          AND status = 'confirmed'
+          AND metadata->>'notified_at' IS NULL
+        """,
+        event_id,
+    )
+    assert due_before_refresh == 1
+
+    mod._projection_tables_available_cache = True
+    await mod._project_native_reminder_instances()
+
+    due_after_refresh = await pool.fetchval(
+        """
+        SELECT count(*)
+        FROM calendar_event_instances
+        WHERE event_id = $1
+          AND starts_at <= now()
+          AND status = 'confirmed'
+          AND metadata->>'notified_at' IS NULL
+        """,
+        event_id,
+    )
+    assert due_after_refresh == 1
+
+    notify = AsyncMock()
+    assert await mod.tick("finance", notify_fn=notify) == 1
+    notify.assert_awaited_once()
+    assert await mod.tick("finance", notify_fn=notify) == 0
+    notify.assert_awaited_once()
+
+
 # ===========================================================================
 # 2. Recurring reminder: dismiss advances next_trigger_at, series stays active
 # ===========================================================================

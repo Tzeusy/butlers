@@ -7686,11 +7686,14 @@ class CalendarModule(Module):
         event_id: uuid.UUID,
         window_start: datetime,
         window_end: datetime,
+        retain_overdue_unnotified: bool = False,
     ) -> None:
         """Delete calendar_event_instances for *event_id* that fall outside the window.
 
         This prevents unbounded row growth as the rolling projection window advances.
-        Only instances that start before window_start or after window_end are deleted.
+        Reminder delivery callers can retain overdue confirmed instances until their
+        per-occurrence ``notified_at`` marker is written; scheduler projections keep
+        the original strict rolling-window pruning behavior.
         """
         pool = getattr(self._db, "pool", None) if self._db is not None else None
         if pool is None:
@@ -7699,11 +7702,22 @@ class CalendarModule(Module):
             """
             DELETE FROM calendar_event_instances
             WHERE event_id = $1
-              AND (starts_at < $2 OR starts_at > $3)
+              AND (
+                  starts_at > $3
+                  OR (
+                      starts_at < $2
+                      AND (
+                          NOT $4::boolean
+                          OR status <> 'confirmed'
+                          OR metadata->>'notified_at' IS NOT NULL
+                      )
+                  )
+              )
             """,
             event_id,
             window_start,
             window_end,
+            retain_overdue_unnotified,
         )
 
     async def _scheduler_projection_fingerprint(
@@ -7975,6 +7989,7 @@ class CalendarModule(Module):
                 event_id=row["id"],
                 window_start=window_start,
                 window_end=window_end,
+                retain_overdue_unnotified=True,
             )
             await self._materialize_native_reminder_instances(
                 row["id"],
