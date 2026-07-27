@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     origin_ref TEXT NOT NULL,
     title TEXT NOT NULL,
     description TEXT,
+    body TEXT,
     location TEXT,
     timezone TEXT NOT NULL,
     starts_at TIMESTAMPTZ NOT NULL,
@@ -91,6 +92,8 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     status TEXT NOT NULL DEFAULT 'confirmed',
     visibility TEXT NOT NULL DEFAULT 'default',
     recurrence_rule TEXT,
+    source_butler TEXT NOT NULL DEFAULT 'unknown',
+    source_session_id TEXT,
     etag TEXT,
     origin_updated_at TIMESTAMPTZ,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -326,6 +329,50 @@ async def test_full_lifecycle_update_title_and_time(reminder_pool):
         assert row["label"] == "Afternoon walk"
     if row["next_trigger_at"] is not None:
         assert row["next_trigger_at"] == new_start
+
+
+async def test_calendar_native_butler_reminder_lifecycle(reminder_pool):
+    """A native reminder can be resolved, updated, toggled, and deleted."""
+    pool = reminder_pool
+    mod = _make_module(pool, butler_name="finance")
+    start_at = datetime(2026, 6, 1, 8, 0, tzinfo=UTC)
+    end_at = start_at + timedelta(minutes=15)
+
+    event_id, _ = await mod._insert_reminder_to_calendar_events(
+        title="Review renewal",
+        body=None,
+        description="Cancel if unused",
+        location="Online",
+        starts_at=start_at,
+        ends_at=end_at,
+        timezone="UTC",
+        recurrence_rule=None,
+        entity_ids=[],
+    )
+
+    assert await mod._find_reminder_target(str(event_id)) == event_id
+
+    updated = await mod._update_native_reminder_event(
+        reminder_id=event_id,
+        title="Review subscription",
+        body="Check the latest invoice",
+        start_at=None,
+        end_at=None,
+        timezone=None,
+        until_at=None,
+        recurrence_rule=None,
+        enabled=None,
+    )
+    assert updated["title"] == "Review subscription"
+    assert updated["body"] == "Check the latest invoice"
+
+    paused = await mod._toggle_native_reminder_event(event_id, enabled=False)
+    assert paused["status"] == "cancelled"
+    resumed = await mod._toggle_native_reminder_event(event_id, enabled=True)
+    assert resumed["status"] == "confirmed"
+
+    assert await mod._delete_native_reminder_event(event_id) is True
+    assert await pool.fetchrow("SELECT id FROM calendar_events WHERE id = $1", event_id) is None
 
 
 # ===========================================================================
