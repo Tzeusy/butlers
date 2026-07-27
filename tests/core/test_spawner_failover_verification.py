@@ -181,10 +181,19 @@ class _FailThenOkAdapter(RuntimeAdapter):
 class _EmptyThenOkAdapter(_OkAdapter):
     """Adapter that reports usage but no usable result on its first call."""
 
+    def __init__(
+        self,
+        *,
+        empty_result_text: str | None = None,
+        result_text: str = "ok",
+    ) -> None:
+        super().__init__(result_text=result_text)
+        self._empty_result_text = empty_result_text
+
     async def invoke(self, *_a: Any, **_kw: Any) -> tuple[str | None, list, dict[str, int] | None]:
         self.invoke_calls += 1
         if self.invoke_calls == 1:
-            return None, [], {"input_tokens": 10, "output_tokens": 0}
+            return self._empty_result_text, [], {"input_tokens": 10, "output_tokens": 0}
         return self._result_text, [], None
 
 
@@ -452,12 +461,24 @@ class TestEligibleRuntimeFailureRetry:
     Verify provenance: primary=runtime_failure, fallback=success.
     """
 
-    async def test_empty_adapter_result_triggers_failover(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "empty_result_text",
+        [None, "", " \t\n"],
+        ids=["none", "empty-string", "whitespace"],
+    )
+    async def test_empty_adapter_result_triggers_failover(
+        self,
+        tmp_path: Path,
+        empty_result_text: str | None,
+    ) -> None:
         """No text or tool calls is a failed attempt even when usage was reported."""
         config_dir = tmp_path / "cfg"
         config_dir.mkdir()
         mock_pool = AsyncMock()
-        adapter = _EmptyThenOkAdapter(result_text="fallback-ok")
+        adapter = _EmptyThenOkAdapter(
+            empty_result_text=empty_result_text,
+            result_text="fallback-ok",
+        )
 
         with (
             patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_sc,

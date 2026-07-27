@@ -1943,7 +1943,8 @@ class Spawner:
                 # action.  Merge daemon-side capture before deciding: a tool-only
                 # session is valid, while a response with no text and no confirmed
                 # MCP call must enter the normal failure/failover path.
-                if _attempt_exc is None and result_text is None:
+                if _attempt_exc is None and (result_text is None or not result_text.strip()):
+                    result_text = None
                     executed_tool_calls = (
                         consume_runtime_session_tool_calls(runtime_session_id)
                         if runtime_session_id
