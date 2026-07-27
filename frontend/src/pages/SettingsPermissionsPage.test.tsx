@@ -425,12 +425,13 @@ describe("SettingsPermissionsPage — audit reel filters operational noise [bu-9
   });
 
   it("shows a degraded note (not the empty state) when the audit log query errors [bu-ep4ks.5]", async () => {
+    const refetch = vi.fn();
     useAuditLogMock.mockReturnValue({
       data: undefined,
       isLoading: false,
       isError: true,
       error: new Error("audit log fetch failed"),
-      refetch: vi.fn(),
+      refetch,
     } as unknown as ReturnType<typeof useAuditLogMock>);
 
     await act(async () => {
@@ -439,6 +440,8 @@ describe("SettingsPermissionsPage — audit reel filters operational noise [bu-9
 
     expect(screen.getByTestId("audit-reel-degraded")).toBeTruthy();
     expect(screen.queryByText("No recent audit entries.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 
   it("keeps cached audit rows visibly degraded when refresh fails", async () => {
