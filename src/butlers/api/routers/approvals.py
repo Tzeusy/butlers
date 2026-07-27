@@ -967,11 +967,11 @@ async def approve_action(
         raw_args = action_row["tool_args"]
         tool_args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
 
-        dispatch_result = await _dispatch_approved_action(
+        dispatch_outcome = await _dispatch_approved_action_outcome(
             mcp_mgr, db_mgr, target_pool, action_id, tool_name, tool_args, action_butler
         )
-        if dispatch_result is not None:
-            result = dispatch_result
+        if dispatch_outcome.kind == "executed" and dispatch_outcome.action is not None:
+            result = dispatch_outcome.action
 
     # Build the ApprovalAction from the result dict, injecting the butler name
     result.setdefault("butler", action_butler)
@@ -1231,28 +1231,6 @@ async def _dispatch_approved_action_outcome(
         action_id,
     )
     return _DispatchOutcome(kind="unreachable")
-
-
-async def _dispatch_approved_action(
-    mcp_mgr: MCPClientManager,
-    db_mgr: DatabaseManager,
-    pool: asyncpg.Pool,
-    action_id: str,
-    tool_name: str,
-    tool_args: dict,
-    action_butler: str | None = None,
-) -> dict[str, Any] | None:
-    """Compatibility wrapper for approval flows that only consume success."""
-    outcome = await _dispatch_approved_action_outcome(
-        mcp_mgr,
-        db_mgr,
-        pool,
-        action_id,
-        tool_name,
-        tool_args,
-        action_butler,
-    )
-    return outcome.action
 
 
 def _raise_retry_dispatch_failure(outcome: _DispatchOutcome) -> None:
@@ -2696,7 +2674,7 @@ async def approve_approval(
         if request.edits:
             tool_args_for_dispatch.update(request.edits)
 
-        dispatch_result = await _dispatch_approved_action(
+        dispatch_outcome = await _dispatch_approved_action_outcome(
             mcp_mgr,
             db_mgr,
             target_pool,
@@ -2705,8 +2683,8 @@ async def approve_approval(
             tool_args_for_dispatch,
             action_butler,
         )
-        if dispatch_result is not None:
-            result = dispatch_result
+        if dispatch_outcome.kind == "executed" and dispatch_outcome.action is not None:
+            result = dispatch_outcome.action
 
     result.setdefault("butler", action_butler)
     action_resp = ApprovalAction(
