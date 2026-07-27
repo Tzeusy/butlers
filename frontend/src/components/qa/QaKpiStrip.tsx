@@ -118,7 +118,9 @@ export function QaKpiStrip({ kpis, active, className }: QaKpiStripProps) {
       // "no repairs" here, never a fast MTTR (bu-hmdqz.9) -- failed-24h below
       // carries the crash count instead.
       sub:
-        kpis?.mttr_24h_seconds == null
+        kpis == null
+          ? "summary unavailable"
+          : kpis.mttr_24h_seconds == null
           ? "no repairs merged in 24h"
           : (mttrDelta ?? "repairs merged in 24h"),
     },
