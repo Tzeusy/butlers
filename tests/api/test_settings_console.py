@@ -130,6 +130,30 @@ def _reset_cache():
     console_mod._cache_payload = None
 
 
+@pytest.mark.asyncio
+async def test_approval_and_model_headers_are_unavailable_without_db_manager():
+    approvals, approval_err = await console_mod._count_open_approvals(None)
+    verified, total, model_err = await console_mod._count_models(None)
+    assert approvals is None and approval_err is not None
+    assert verified is None and total is None and model_err is not None
+
+
+@pytest.mark.asyncio
+async def test_approval_pool_failure_never_silently_reduces_total():
+    good = MagicMock()
+    good.fetchval = AsyncMock(return_value=2)
+    bad = MagicMock()
+    bad.fetchval = AsyncMock(side_effect=RuntimeError("down"))
+    db = MagicMock(spec=DatabaseManager)
+    with patch(
+        "butlers.api.routers.approvals._find_all_approvals_pools",
+        new=AsyncMock(return_value=[good, bad]),
+    ):
+        total, err = await console_mod._count_open_approvals(db)
+    assert total is None
+    assert err is not None
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
