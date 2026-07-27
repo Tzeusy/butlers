@@ -1023,3 +1023,17 @@ async def test_settings_console_delta_loop_rejects_non_positive_interval():
         await console_mod.run_settings_console_delta_loop(
             _BUTLER_CONFIG, MagicMock(), _PRICING, None, interval_s=0
         )
+
+
+@pytest.mark.asyncio
+async def test_console_endpoint_db_none_marks_approval_and_models_unavailable():
+    app = _make_app(db=None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/settings/console")
+    body = response.json()["data"]
+    assert body["header_counts"]["open_approvals"] is None
+    assert body["header_counts"]["models_total"] is None
+    assert {item["id"] for item in body["attention"]} >= {
+        "subsystem_error:approvals",
+        "subsystem_error:models",
+    }
