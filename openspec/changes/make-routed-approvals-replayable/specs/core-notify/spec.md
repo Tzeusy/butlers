@@ -33,3 +33,27 @@ exact arguments accepted by that tool's handler.
 
 - **WHEN** Messenger processes a WhatsApp `send` or the currently supported routed-reply behavior
 - **THEN** its native command is `whatsapp_send_message` with `recipient` and `text`
+
+## MODIFIED Requirements
+
+### Requirement: Channel Validation
+
+The public `notify()` envelope-construction surface MUST accept only `telegram` and
+`email`. Messenger `route.execute` termination MUST accept routed `notify.v1`
+delivery through `telegram`, `email`, and `whatsapp`. Each surface MUST reject
+channels outside its supported set immediately.
+
+#### Scenario: Supported notify channel
+
+- **WHEN** `channel="telegram"` or `channel="email"` is passed to `notify()`
+- **THEN** the notify tool proceeds with envelope construction
+
+#### Scenario: Supported routed-delivery channel
+
+- **WHEN** Messenger `route.execute` receives a valid routed `notify.v1` envelope with `channel="telegram"`, `channel="email"`, or `channel="whatsapp"`
+- **THEN** it proceeds with channel-specific delivery validation
+
+#### Scenario: Unsupported channel
+
+- **WHEN** `channel="sms"` is passed to `notify()`
+- **THEN** the tool returns `{"status": "error", "error": "Unsupported channel 'sms'..."}`

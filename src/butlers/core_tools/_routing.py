@@ -369,9 +369,7 @@ async def _build_routed_delivery_command(
             raise RuntimeError("Messenger whatsapp adapter is unavailable.")
         send_tool = getattr(whatsapp_module, "_send_message_with_policy", None)
         if send_tool is None or not callable(send_tool):
-            raise RuntimeError(
-                "WhatsApp module does not expose policy-aware send method."
-            )
+            raise RuntimeError("WhatsApp module does not expose policy-aware send method.")
         if intent == "send":
             target = recipient
             if not target:

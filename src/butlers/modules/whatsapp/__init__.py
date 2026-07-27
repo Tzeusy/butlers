@@ -40,6 +40,7 @@ _SEND_DISABLED_ERROR = (
 class _WhatsAppSendDisabledError(RuntimeError):
     """Raised when outbound WhatsApp execution is disabled by runtime policy."""
 
+
 # Shared connector-owned bridge socket. The default matches the compose
 # ``wa_bridge_socket`` volume mount; ``WHATSAPP_BRIDGE_SOCKET`` overrides it (the
 # same env var the dashboard WhatsApp router reads — kept in lockstep so the two
