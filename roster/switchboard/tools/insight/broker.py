@@ -779,31 +779,36 @@ def _candidate_time_window(candidate: dict[str, Any]) -> tuple[datetime, datetim
     Supports two producer shapes: an explicit ``event_window: {start, end}``
     (ISO 8601 timestamps), or a coarser ``event_date`` (ISO date, normalized to
     a full UTC day). Both forms use half-open ``[start, end)`` semantics, so
-    adjacent windows share no event time. Explicit windows must have positive
-    duration; malformed, partial, or non-positive values fail open to "no
-    correlation data" (returns None) rather than raising — a producer's
-    metadata typo must not break digest formatting.
+    adjacent windows share no event time. An explicit ``event_window`` is
+    authoritative: ``event_date`` is considered only when the window key is
+    absent. Explicit windows must have positive duration; malformed, partial,
+    or non-positive values fail open to "no correlation data" (returns None)
+    rather than raising — a producer's metadata typo must not break digest
+    formatting or silently choose a different correlation shape.
     """
     metadata = candidate.get("metadata")
     if not isinstance(metadata, dict):
         return None
 
-    window = metadata.get("event_window")
-    if isinstance(window, dict):
+    if "event_window" in metadata:
+        window = metadata["event_window"]
+        if not isinstance(window, dict):
+            return None
         start_raw, end_raw = window.get("start"), window.get("end")
-        if start_raw and end_raw:
-            try:
-                start = datetime.fromisoformat(str(start_raw))
-                end = datetime.fromisoformat(str(end_raw))
-            except ValueError:
-                return None
-            if start.tzinfo is None:
-                start = start.replace(tzinfo=UTC)
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=UTC)
-            if end <= start:
-                return None
-            return (start, end)
+        if not start_raw or not end_raw:
+            return None
+        try:
+            start = datetime.fromisoformat(str(start_raw))
+            end = datetime.fromisoformat(str(end_raw))
+        except ValueError:
+            return None
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=UTC)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=UTC)
+        if end <= start:
+            return None
+        return (start, end)
 
     event_date = metadata.get("event_date")
     if isinstance(event_date, str):
