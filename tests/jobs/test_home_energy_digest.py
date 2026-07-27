@@ -240,8 +240,9 @@ async def test_fetch_weekly_statistics_returns_empty_when_authentication_is_reje
     websocket.send_json.assert_awaited_once_with({"type": "auth", "access_token": "token"})
 
 
-async def test_fetch_weekly_statistics_returns_empty_when_aggregate_command_is_rejected():
+async def test_fetch_weekly_statistics_returns_empty_when_aggregate_command_is_rejected(caplog):
     """A daily-only partial response must not masquerade as a zero-consumption week."""
+    untrusted_secret = "ha-access-token-value-that-must-not-be-logged"
     websocket = MagicMock()
     websocket.receive_json = AsyncMock(
         side_effect=[
@@ -251,7 +252,10 @@ async def test_fetch_weekly_statistics_returns_empty_when_aggregate_command_is_r
                 "id": 1,
                 "type": "result",
                 "success": False,
-                "error": {"code": "unknown_error", "message": "Statistics unavailable"},
+                "error": {
+                    "code": "unknown_error",
+                    "message": f"Statistics unavailable: token={untrusted_secret}",
+                },
             },
             {
                 "id": 2,
@@ -288,6 +292,8 @@ async def test_fetch_weekly_statistics_returns_empty_when_aggregate_command_is_r
         )
 
     assert result == {}
+    assert "unknown_error" in caplog.text
+    assert untrusted_secret not in caplog.text
 
 
 # ---------------------------------------------------------------------------

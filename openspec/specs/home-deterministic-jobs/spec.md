@@ -257,7 +257,7 @@ Job handlers read current entity state from the connector-populated `ha_entity_s
 #### Scenario: Statistics command error handling
 
 - **WHEN** an HA statistics command returns an unsuccessful result
-- **THEN** the job SHALL log the error code and redacted message
+- **THEN** the job SHALL log an allowlisted error code and SHALL omit the server-controlled error message
 - **AND** it SHALL continue processing remaining work without the rejected statistics
 
 #### Scenario: HA unreachable for historical queries

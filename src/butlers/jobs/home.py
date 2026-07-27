@@ -1349,11 +1349,16 @@ async def _fetch_weekly_statistics(
             or not message.get("success")
         ):
             error = message.get("error") or {}
+            error_code = error.get("code")
+            if (
+                not isinstance(error_code, str)
+                or re.fullmatch(r"[a-z0-9_]{1,64}", error_code) is None
+            ):
+                error_code = "unknown"
             logger.error(
-                "HA WebSocket error fetching %s stats: code=%r message=%r",
+                "HA WebSocket error fetching %s stats: code=%s",
                 period,
-                error.get("code"),
-                str(error.get("message", ""))[:200],
+                error_code,
             )
             return None
 
