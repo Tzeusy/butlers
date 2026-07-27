@@ -68,6 +68,20 @@ An endpoint returning energy consumption time-series data for dashboard charts.
 - **AND** each entry SHALL include `entity_id`, `friendly_name`, `total_kwh`, and `percentage` of total consumption
 - **AND** totals SHALL be computed by summing per-period `change` values rather than cumulative `sum` values
 
+#### Scenario: Partial cumulative-energy statistics
+
+- **WHEN** at least one discovered sensor has a non-empty series whose every bucket contains a finite numeric `change` and at least one discovered sensor does not
+- **THEN** both energy endpoints SHALL omit each unsupported sensor instead of substituting zero
+- **AND** an explicit numeric `change=0` SHALL remain valid zero consumption
+- **AND** the response list body SHALL retain its existing schema
+- **AND** the response SHALL include `X-Butlers-Energy-Data-Status: partial` and `X-Butlers-Omitted-Sensors: <count>` headers
+
+#### Scenario: No cumulative-energy statistics
+
+- **WHEN** every discovered sensor lacks a complete finite numeric `change` series
+- **THEN** both energy endpoints SHALL return HTTP 503 indicating that cumulative-energy change data is unavailable
+- **AND** they SHALL NOT fabricate zero consumption
+
 #### Scenario: HA unavailable fallback
 
 - **WHEN** the HA WebSocket API is unreachable during an energy endpoint call

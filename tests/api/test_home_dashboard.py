@@ -210,6 +210,164 @@ async def test_top_consumers_sum_changes_not_cumulative_totals(app, monkeypatch)
     assert statistics_client.get_statistics.await_args.kwargs["types"] == ("change",)
 
 
+@pytest.mark.parametrize(
+    "invalid_bucket",
+    [
+        pytest.param({}, id="missing"),
+        pytest.param({"change": "not-a-number"}, id="nonnumeric"),
+        pytest.param({"change": float("inf")}, id="infinite"),
+        pytest.param({"change": float("nan")}, id="nan"),
+    ],
+)
+async def test_energy_omits_unsupported_series_and_preserves_zero(
+    app,
+    monkeypatch,
+    invalid_bucket,
+):
+    _app, pool = _app_with_mock_db(app)
+    pool.fetch.side_effect = [
+        [
+            {"key": "ha_url", "value": "https://ha.example"},
+            {"key": "ha_token", "value": "secret-token"},
+        ],
+        [
+            {"entity_id": "sensor.energy", "friendly_name": "Whole Home"},
+            {"entity_id": "sensor.power", "friendly_name": "Instantaneous Power"},
+        ],
+    ]
+    timestamp = "2026-07-27T00:00:00+00:00"
+    statistics_client = MagicMock()
+    statistics_client.get_statistics = AsyncMock(
+        return_value={
+            "sensor.energy": [{"start": timestamp, "change": 0}],
+            "sensor.power": [{"start": timestamp, **invalid_bucket}],
+        }
+    )
+    monkeypatch.setattr(
+        _home_router_module(app),
+        "HAStatisticsClient",
+        MagicMock(return_value=statistics_client),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/home/energy",
+            params={
+                "period": "hour",
+                "start": "2026-07-27T00:00:00Z",
+                "end": "2026-07-27T01:00:00Z",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert resp.headers["x-butlers-energy-data-status"] == "partial"
+    assert resp.headers["x-butlers-omitted-sensors"] == "1"
+    assert resp.json() == [
+        {
+            "timestamp": "2026-07-27T00:00:00Z",
+            "total_kwh": 0.0,
+            "devices": {"sensor.energy": 0.0},
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "invalid_bucket",
+    [
+        pytest.param({}, id="missing"),
+        pytest.param({"change": "not-a-number"}, id="nonnumeric"),
+        pytest.param({"change": float("inf")}, id="infinite"),
+        pytest.param({"change": float("nan")}, id="nan"),
+    ],
+)
+async def test_top_consumers_omits_unsupported_series(
+    app,
+    monkeypatch,
+    invalid_bucket,
+):
+    _app, pool = _app_with_mock_db(app)
+    pool.fetch.side_effect = [
+        [
+            {"key": "ha_url", "value": "https://ha.example"},
+            {"key": "ha_token", "value": "secret-token"},
+        ],
+        [
+            {"entity_id": "sensor.energy", "friendly_name": "Whole Home"},
+            {"entity_id": "sensor.power", "friendly_name": "Instantaneous Power"},
+        ],
+    ]
+    statistics_client = MagicMock()
+    statistics_client.get_statistics = AsyncMock(
+        return_value={
+            "sensor.energy": [{"change": 2.5}],
+            "sensor.power": [invalid_bucket],
+        }
+    )
+    monkeypatch.setattr(
+        _home_router_module(app),
+        "HAStatisticsClient",
+        MagicMock(return_value=statistics_client),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/home/energy/top-consumers")
+
+    assert resp.status_code == 200
+    assert resp.headers["x-butlers-energy-data-status"] == "partial"
+    assert resp.headers["x-butlers-omitted-sensors"] == "1"
+    assert resp.json() == [
+        {
+            "entity_id": "sensor.energy",
+            "friendly_name": "Whole Home",
+            "total_kwh": 2.5,
+            "percentage": 100.0,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/api/home/energy", "/api/home/energy/top-consumers"],
+)
+async def test_energy_endpoints_report_all_unsupported_statistics_unavailable(
+    app,
+    monkeypatch,
+    path,
+):
+    _app, pool = _app_with_mock_db(app)
+    pool.fetch.side_effect = [
+        [
+            {"key": "ha_url", "value": "https://ha.example"},
+            {"key": "ha_token", "value": "secret-token"},
+        ],
+        [{"entity_id": "sensor.power", "friendly_name": "Instantaneous Power"}],
+    ]
+    statistics_client = MagicMock()
+    statistics_client.get_statistics = AsyncMock(return_value={"sensor.power": [{"mean": 125.0}]})
+    monkeypatch.setattr(
+        _home_router_module(app),
+        "HAStatisticsClient",
+        MagicMock(return_value=statistics_client),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(path)
+
+    assert resp.status_code == 503
+    assert resp.json() == {
+        "detail": (
+            "Energy statistics unavailable: discovered sensors do not provide "
+            "finite cumulative-energy change data"
+        )
+    }
+
+
 # ---------------------------------------------------------------------------
 # Maintenance — status classification (parametrized)
 # ---------------------------------------------------------------------------

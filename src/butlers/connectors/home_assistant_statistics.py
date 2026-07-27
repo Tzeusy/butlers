@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Literal
 
@@ -46,6 +47,30 @@ def _provider_error_code(error: object) -> str:
     if isinstance(code, str) and code in _SAFE_PROVIDER_ERROR_CODES:
         return code
     return "provider_error"
+
+
+def parse_statistics_change_series(series: object) -> list[float] | None:
+    """Return finite per-period changes, or ``None`` for an unsupported series.
+
+    A cumulative-energy series is usable only when it is non-empty and every
+    bucket explicitly contains a finite JSON number. In particular, a missing
+    value is not zero, while an explicit numeric zero remains valid.
+    """
+    if not isinstance(series, list) or not series:
+        return None
+
+    changes: list[float] = []
+    for bucket in series:
+        if not isinstance(bucket, dict) or "change" not in bucket:
+            return None
+        value = bucket["change"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        change = float(value)
+        if not math.isfinite(change):
+            return None
+        changes.append(change)
+    return changes
 
 
 class HAStatisticsClient:

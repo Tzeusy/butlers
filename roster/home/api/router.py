@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from butlers.api.audit_emit import emit_dashboard_audit
 from butlers.api.db import DatabaseManager
@@ -25,6 +25,7 @@ from butlers.api.models import PaginatedResponse, PaginationMeta
 from butlers.connectors.home_assistant_statistics import (
     HAStatisticsClient,
     HAStatisticsError,
+    parse_statistics_change_series,
 )
 from butlers.credential_store import upsert_owner_entity_info
 
@@ -70,6 +71,13 @@ _THRESHOLD_OFFLINE_KEY = "home:thresholds:offline_hours"
 _THRESHOLD_COMFORT_DEFAULTS_KEY = "home:thresholds:comfort_defaults"
 _THRESHOLD_COMFORT_DEVIATION_KEY = "home:thresholds:comfort_deviation"
 _THRESHOLD_ENERGY_KEY = "home:thresholds:energy"
+
+_ENERGY_UNAVAILABLE_DETAIL = (
+    "Energy statistics unavailable: discovered sensors do not provide "
+    "finite cumulative-energy change data"
+)
+_ENERGY_DATA_STATUS_HEADER = "X-Butlers-Energy-Data-Status"
+_ENERGY_OMITTED_SENSORS_HEADER = "X-Butlers-Omitted-Sensors"
 
 
 def _get_db_manager() -> DatabaseManager:
@@ -487,8 +495,32 @@ def _statistics_timestamp(value: object) -> datetime | None:
     return None
 
 
+def _partition_energy_statistics(
+    statistic_ids: list[str],
+    ha_data: dict[str, Any],
+) -> tuple[dict[str, tuple[list[dict[str, Any]], list[float]]], list[str]]:
+    """Separate supported cumulative-energy series from unsupported sensors."""
+    supported: dict[str, tuple[list[dict[str, Any]], list[float]]] = {}
+    unsupported: list[str] = []
+    for entity_id in statistic_ids:
+        series = ha_data.get(entity_id)
+        changes = parse_statistics_change_series(series)
+        if changes is None:
+            unsupported.append(entity_id)
+            continue
+        supported[entity_id] = (series, changes)
+    return supported, unsupported
+
+
+def _set_partial_energy_headers(response: Response, omitted_count: int) -> None:
+    if omitted_count:
+        response.headers[_ENERGY_DATA_STATUS_HEADER] = "partial"
+        response.headers[_ENERGY_OMITTED_SENSORS_HEADER] = str(omitted_count)
+
+
 @router.get("/energy")
 async def get_energy(
+    response: Response,
     period: str = Query("day", description="Aggregation period: 'day' or 'hour'"),
     start: str | None = Query(None, description="Start date (ISO 8601). Default: 7 days ago."),
     end: str | None = Query(None, description="End date (ISO 8601). Default: now."),
@@ -568,19 +600,19 @@ async def get_energy(
             detail="Home Assistant is unavailable",
         ) from None
 
+    supported, unsupported = _partition_energy_statistics(statistic_ids, ha_data)
+    if not supported:
+        raise HTTPException(status_code=503, detail=_ENERGY_UNAVAILABLE_DETAIL)
+    _set_partial_energy_headers(response, len(unsupported))
+
     # Aggregate by timestamp bucket
     buckets: dict[datetime, dict[str, float]] = {}
-    for entity_id, stat_list in ha_data.items():
-        if not isinstance(stat_list, list):
-            continue
-        for stat in stat_list:
-            if not isinstance(stat, dict):
-                continue
+    for entity_id, (stat_list, changes) in supported.items():
+        for stat, kwh in zip(stat_list, changes, strict=True):
             ts = stat.get("start") or stat.get("end")
             ts_dt = _statistics_timestamp(ts)
             if ts_dt is None:
                 continue
-            kwh = float(stat.get("change") or 0)
             if ts_dt not in buckets:
                 buckets[ts_dt] = {}
             buckets[ts_dt][entity_id] = buckets[ts_dt].get(entity_id, 0) + kwh
@@ -607,6 +639,7 @@ async def get_energy(
 
 @router.get("/energy/top-consumers")
 async def get_energy_top_consumers(
+    response: Response,
     start: str | None = Query(None, description="Start date (ISO 8601). Default: 7 days ago."),
     end: str | None = Query(None, description="End date (ISO 8601). Default: now."),
     db: DatabaseManager = Depends(_get_db_manager),
@@ -684,19 +717,13 @@ async def get_energy_top_consumers(
             detail="Home Assistant is unavailable",
         ) from None
 
-    def _get_stat_value(s: dict) -> float:
-        value = s.get("change")
-        if value is None:
-            return 0.0
-        return float(value)
+    supported, unsupported = _partition_energy_statistics(statistic_ids, ha_data)
+    if not supported:
+        raise HTTPException(status_code=503, detail=_ENERGY_UNAVAILABLE_DETAIL)
+    _set_partial_energy_headers(response, len(unsupported))
 
     # Sum per device
-    device_totals: dict[str, float] = {}
-    for entity_id, stat_list in ha_data.items():
-        if not isinstance(stat_list, list):
-            continue
-        total = sum(_get_stat_value(s) for s in stat_list if isinstance(s, dict))
-        device_totals[entity_id] = total
+    device_totals = {entity_id: sum(changes) for entity_id, (_series, changes) in supported.items()}
 
     grand_total = sum(device_totals.values())
 
