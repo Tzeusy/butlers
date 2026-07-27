@@ -254,6 +254,7 @@ describe("QaOverviewPage -- dossier shell", () => {
     });
     const html = renderPage();
     expect(html).toContain('data-testid="qa-case-rail-degraded"');
+    expect(html).toContain("Case rail: is unavailable");
     expect(html).toContain("Retry");
     expect(html).not.toContain("Nothing in the dossier.");
   });

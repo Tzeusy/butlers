@@ -16,3 +16,8 @@ The QA overview SHALL distinguish an unavailable summary or case source from a s
 - **WHEN** the case rail query errors
 - **THEN** it renders a named degraded note with retry
 - **AND** a successful empty query continues to render "Nothing in the dossier."
+
+## Source References
+
+- Doctrine rule: `about/craft-and-care/review-and-documentation.md` -- failure states must remain diagnosable.
+- RFC: `about/legends-and-lore/` source-honesty and degraded-envelope conventions.
