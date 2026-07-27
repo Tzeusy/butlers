@@ -37,7 +37,10 @@ a catalog candidate is selected but cannot safely complete the invocation.
 - **THEN** the spawner SHALL classify the attempt as an empty-response failure even when
   the adapter reported token usage
 - **AND** reported usage SHALL be recorded against the failed catalog entry before the
-  spawner retries the next eligible same-tier model
+  spawner makes any failover decision
+- **AND** same-tier failover SHALL proceed only when the merged tool-call list is empty
+- **AND** command-execution evidence SHALL be preserved on the failed attempt and SHALL
+  suppress failover because shell work may have produced side effects
 - **AND** a return with a confirmed non-command MCP tool call SHALL remain a successful
   tool-only completion and SHALL NOT be retried
 

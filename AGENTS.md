@@ -280,7 +280,7 @@ No page uses a Tier-2 hero (PulseStrip) unless the record has an associated enti
 - The deterministic `memory_consolidation` handler must supply the daemon's registered live `Spawner` but resolve its database pool and embedding engine through the active MemoryModule hook. Calling the embedding helper directly loses custom model/cache lifecycle; using the daemon pool breaks private memory schemas such as Chronicler's `chronicler_mem`. Missing module or Spawner wiring fails closed so the scheduler records the error.
 
 ### Empty-response failover contract
-- `Spawner` must merge adapter-reported and daemon-captured tool calls before accepting a normal return with no result text. No text plus no confirmed non-command MCP action is a classifier-eligible empty-response failure even when token usage exists; a confirmed tool-only completion remains successful so failover cannot duplicate its side effects.
+- `Spawner` must merge adapter-reported and daemon-captured tool calls before accepting a normal return with no result text. No text plus no confirmed non-command MCP action is an empty-response failure even when token usage exists; same-tier retry is safe only when the merged tool-call list is empty. Command-execution evidence suppresses retry because shell work may have side effects, while a confirmed MCP tool-only completion remains successful.
 - OpenCode exit 0 with no result text, no tool calls, no token usage, and empty stderr is rejected earlier by `OpenCodeAdapter` with the same classifier-eligible posture.
 
 ### Model catalog timeout authority contract
