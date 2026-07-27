@@ -538,6 +538,276 @@ async def test_native_refresh_retains_and_dispatches_overdue_unnotified_instance
     notify.assert_awaited_once()
 
 
+async def test_native_recurring_update_preserves_cancelled_and_notified_instances(
+    reminder_pool,
+):
+    """Changing recurrence replaces only future undispatched occurrence rows."""
+    pool = reminder_pool
+    mod = _make_module(pool, butler_name="finance")
+    start_at = datetime.now(UTC).replace(microsecond=0) + timedelta(days=1)
+    end_at = start_at + timedelta(minutes=15)
+    event_id, _ = await mod._insert_reminder_to_calendar_events(
+        title="Weekly renewal review",
+        body=None,
+        starts_at=start_at,
+        ends_at=end_at,
+        timezone="UTC",
+        recurrence_rule="RRULE:FREQ=WEEKLY",
+        entity_ids=[],
+    )
+    instances = await pool.fetch(
+        """
+        SELECT id, starts_at
+        FROM calendar_event_instances
+        WHERE event_id = $1
+        ORDER BY starts_at
+        LIMIT 3
+        """,
+        event_id,
+    )
+    assert len(instances) == 3
+    cancelled, notified, replaceable = instances
+    await pool.execute(
+        """
+        UPDATE calendar_event_instances
+        SET status = 'cancelled'
+        WHERE id = $1
+        """,
+        cancelled["id"],
+    )
+    await pool.execute(
+        """
+        UPDATE calendar_event_instances
+        SET metadata = metadata || '{"notified_at":"2026-01-01T00:00:00Z"}'::jsonb
+        WHERE id = $1
+        """,
+        notified["id"],
+    )
+
+    shifted_start = start_at + timedelta(hours=1)
+    await mod._update_native_reminder_event(
+        reminder_id=event_id,
+        title=None,
+        body=None,
+        start_at=shifted_start,
+        end_at=end_at + timedelta(hours=1),
+        timezone=None,
+        until_at=None,
+        recurrence_rule="RRULE:FREQ=DAILY",
+        enabled=None,
+    )
+
+    cancelled_after = await pool.fetchrow(
+        """
+        SELECT status
+        FROM calendar_event_instances
+        WHERE id = $1
+        """,
+        cancelled["id"],
+    )
+    notified_after = await pool.fetchrow(
+        """
+        SELECT metadata->>'notified_at' AS notified_at
+        FROM calendar_event_instances
+        WHERE id = $1
+        """,
+        notified["id"],
+    )
+    assert cancelled_after["status"] == "cancelled"
+    assert notified_after["notified_at"] == "2026-01-01T00:00:00Z"
+    assert (
+        await pool.fetchval(
+            "SELECT count(*) FROM calendar_event_instances WHERE id = $1",
+            replaceable["id"],
+        )
+        == 0
+    )
+    assert (
+        await pool.fetchval(
+            """
+            SELECT count(*)
+            FROM calendar_event_instances
+            WHERE event_id = $1
+              AND starts_at = $2
+              AND status = 'confirmed'
+            """,
+            event_id,
+            shifted_start,
+        )
+        == 1
+    )
+
+
+async def test_native_recurring_update_rolls_back_event_and_instances_on_refresh_failure(
+    reminder_pool,
+):
+    """Event and occurrence replacement commit atomically."""
+    pool = reminder_pool
+    mod = _make_module(pool, butler_name="finance")
+    start_at = datetime.now(UTC).replace(microsecond=0) + timedelta(days=1)
+    end_at = start_at + timedelta(minutes=15)
+    event_id, _ = await mod._insert_reminder_to_calendar_events(
+        title="Weekly renewal review",
+        body=None,
+        starts_at=start_at,
+        ends_at=end_at,
+        timezone="UTC",
+        recurrence_rule="RRULE:FREQ=WEEKLY",
+        entity_ids=[],
+    )
+    initial_count = await pool.fetchval(
+        "SELECT count(*) FROM calendar_event_instances WHERE event_id = $1",
+        event_id,
+    )
+    mod._materialize_native_reminder_instances = AsyncMock(
+        side_effect=RuntimeError("synthetic materialization failure")
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic materialization failure"):
+        await mod._update_native_reminder_event(
+            reminder_id=event_id,
+            title="Changed title",
+            body=None,
+            start_at=start_at + timedelta(hours=1),
+            end_at=end_at + timedelta(hours=1),
+            timezone=None,
+            until_at=None,
+            recurrence_rule="RRULE:FREQ=DAILY",
+            enabled=None,
+        )
+
+    event = await pool.fetchrow(
+        "SELECT title, starts_at, recurrence_rule FROM calendar_events WHERE id = $1",
+        event_id,
+    )
+    assert event["title"] == "Weekly renewal review"
+    assert event["starts_at"] == start_at
+    assert event["recurrence_rule"] == "RRULE:FREQ=WEEKLY"
+    assert (
+        await pool.fetchval(
+            "SELECT count(*) FROM calendar_event_instances WHERE event_id = $1",
+            event_id,
+        )
+        == initial_count
+    )
+
+
+async def test_native_recurring_delete_supports_this_and_following_scopes(
+    reminder_pool,
+):
+    """Occurrence deletion keeps the series row and preserves earlier instances."""
+    pool = reminder_pool
+    mod = _make_module(pool, butler_name="finance")
+    start_at = datetime.now(UTC).replace(microsecond=0) + timedelta(days=1)
+    event_id, _ = await mod._insert_reminder_to_calendar_events(
+        title="Weekly renewal review",
+        body=None,
+        starts_at=start_at,
+        ends_at=start_at + timedelta(minutes=15),
+        timezone="UTC",
+        recurrence_rule="RRULE:FREQ=WEEKLY",
+        entity_ids=[],
+    )
+    instances = await pool.fetch(
+        """
+        SELECT id, starts_at
+        FROM calendar_event_instances
+        WHERE event_id = $1
+        ORDER BY starts_at
+        LIMIT 4
+        """,
+        event_id,
+    )
+    assert len(instances) == 4
+
+    assert await mod._delete_native_reminder_event(
+        event_id,
+        scope="this",
+        instance_start_at=instances[0]["starts_at"],
+    )
+    first = await pool.fetchrow(
+        "SELECT status, is_exception FROM calendar_event_instances WHERE id = $1",
+        instances[0]["id"],
+    )
+    second = await pool.fetchrow(
+        "SELECT status, is_exception FROM calendar_event_instances WHERE id = $1",
+        instances[1]["id"],
+    )
+    assert dict(first) == {"status": "cancelled", "is_exception": True}
+    assert dict(second) == {"status": "confirmed", "is_exception": False}
+
+    boundary = instances[2]["starts_at"]
+    assert await mod._delete_native_reminder_event(
+        event_id,
+        scope="following",
+        instance_start_at=boundary,
+    )
+    event = await pool.fetchrow(
+        "SELECT recurrence_rule FROM calendar_events WHERE id = $1",
+        event_id,
+    )
+    before_boundary = await pool.fetchrow(
+        "SELECT status, is_exception FROM calendar_event_instances WHERE id = $1",
+        instances[1]["id"],
+    )
+    following = await pool.fetch(
+        """
+        SELECT status, is_exception
+        FROM calendar_event_instances
+        WHERE event_id = $1 AND starts_at >= $2
+        """,
+        event_id,
+        boundary,
+    )
+    assert "UNTIL=" in event["recurrence_rule"]
+    assert dict(before_boundary) == {"status": "confirmed", "is_exception": False}
+    assert following
+    assert all(row["status"] == "cancelled" and row["is_exception"] for row in following)
+
+
+async def test_native_following_delete_rejects_non_occurrence_boundary_without_mutation(
+    reminder_pool,
+):
+    """An arbitrary timestamp cannot silently truncate a recurring reminder."""
+    pool = reminder_pool
+    mod = _make_module(pool, butler_name="finance")
+    start_at = datetime.now(UTC).replace(microsecond=0) + timedelta(days=1)
+    event_id, _ = await mod._insert_reminder_to_calendar_events(
+        title="Weekly renewal review",
+        body=None,
+        starts_at=start_at,
+        ends_at=start_at + timedelta(minutes=15),
+        timezone="UTC",
+        recurrence_rule="RRULE:FREQ=WEEKLY",
+        entity_ids=[],
+    )
+
+    assert (
+        await mod._delete_native_reminder_event(
+            event_id,
+            scope="following",
+            instance_start_at=start_at + timedelta(days=2),
+        )
+        is False
+    )
+    event = await pool.fetchrow(
+        "SELECT recurrence_rule FROM calendar_events WHERE id = $1",
+        event_id,
+    )
+    assert event["recurrence_rule"] == "RRULE:FREQ=WEEKLY"
+    assert (
+        await pool.fetchval(
+            """
+            SELECT count(*)
+            FROM calendar_event_instances
+            WHERE event_id = $1 AND status = 'cancelled'
+            """,
+            event_id,
+        )
+        == 0
+    )
+
+
 # ===========================================================================
 # 2. Recurring reminder: dismiss advances next_trigger_at, series stays active
 # ===========================================================================

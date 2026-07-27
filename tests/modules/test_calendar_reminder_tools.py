@@ -507,10 +507,42 @@ class TestCreateButlerReminder:
             entity_ids=[entity_id],
         )
         mod._toggle_native_reminder_event.assert_awaited_once_with(event_id, False)
-        mod._delete_native_reminder_event.assert_awaited_once_with(event_id)
+        mod._delete_native_reminder_event.assert_awaited_once_with(
+            event_id,
+            scope="series",
+            instance_start_at=None,
+        )
         mod._update_reminder_event.assert_not_awaited()
         mod._toggle_reminder_event.assert_not_awaited()
         mod._delete_reminder_event.assert_not_awaited()
+
+    async def test_native_reminder_delete_forwards_occurrence_scope(self):
+        """Occurrence-scoped deletion reaches the native reminder backend."""
+        mcp, mod = await _make_module(butler_name="finance", pool=_make_pool())
+        event_id = uuid.uuid4()
+
+        mod._prepare_workspace_mutation = AsyncMock(return_value=("key", None))
+        mod._find_reminder_target = AsyncMock(return_value=event_id)
+        mod._find_native_reminder_target = AsyncMock(return_value=event_id)
+        mod._resolve_action_source_id = AsyncMock(return_value=_SOURCE_ID)
+        mod._delete_native_reminder_event = AsyncMock(return_value=True)
+        mod._refresh_butler_projection = AsyncMock(return_value={"available": True})
+        mod._finalize_workspace_mutation = AsyncMock()
+
+        result = await mcp.tools["calendar_delete_butler_event"](
+            event_id=str(event_id),
+            scope="this",
+            instance_start_at=_DUE_AT,
+            source_hint="butler_reminder",
+        )
+
+        assert result["status"] == "deleted"
+        assert result["scope"] == "this"
+        mod._delete_native_reminder_event.assert_awaited_once_with(
+            event_id,
+            scope="this",
+            instance_start_at=_DUE_AT,
+        )
 
 
 class TestButlerReminderTargetResolution:
