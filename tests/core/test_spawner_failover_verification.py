@@ -507,6 +507,60 @@ class TestEligibleRuntimeFailureRetry:
         assert result.tool_calls == [{"id": "call-1", "name": "notify", "input": {}}]
         assert adapter.invoke_calls == 1
 
+    async def test_daemon_captured_tool_only_result_remains_successful(
+        self, tmp_path: Path
+    ) -> None:
+        """Daemon-confirmed MCP work prevents failover after an empty adapter return."""
+        config_dir = tmp_path / "cfg"
+        config_dir.mkdir()
+        mock_pool = AsyncMock()
+        adapter = _EmptyThenOkAdapter(result_text="fallback-must-not-run")
+        captured_call = {
+            "id": "call-captured",
+            "name": "notify",
+            "input": {"message": "done"},
+        }
+
+        with (
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as mock_sc,
+            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock),
+            patch("butlers.core.spawner.record_token_usage", new_callable=AsyncMock),
+            patch.object(Spawner, "_ensure_mcp_endpoints_warmed", new_callable=AsyncMock),
+            patch(
+                "butlers.core.spawner.resolve_model_with_effective_tier",
+                new_callable=AsyncMock,
+                return_value=_catalog_primary(model="primary-model", tier="workhorse"),
+            ),
+            patch(
+                "butlers.core.spawner.check_token_quota",
+                new_callable=AsyncMock,
+                return_value=_QUOTA_OK,
+            ),
+            patch(
+                "butlers.core.spawner.next_same_tier_candidate",
+                new_callable=AsyncMock,
+            ) as mock_next,
+            patch(
+                "butlers.core.spawner.consume_runtime_session_tool_calls",
+                return_value=[captured_call],
+            ) as mock_capture,
+        ):
+            mock_sc.return_value = _SESSION_ID
+            result = await Spawner(
+                config=_make_config(),
+                config_dir=config_dir,
+                pool=mock_pool,
+                runtime=adapter,
+            ).trigger("notify", "tick")
+
+        assert result.success is True
+        assert result.output is None
+        assert result.model == "primary-model"
+        assert result.tool_calls == [captured_call]
+        assert adapter.invoke_calls == 1
+        mock_capture.assert_called_once_with(str(_SESSION_ID))
+        mock_next.assert_not_awaited()
+
     async def test_rate_limit_triggers_failover_provenance(self, tmp_path: Path) -> None:
         """Rate-limit error before any tool call: classifier eligible → retry succeeds."""
         config_dir = tmp_path / "cfg"
