@@ -133,6 +133,29 @@ describe("SessionsPinnedStrip — recent failures", () => {
     expect(getByTestId("pinned-failure-excerpt").textContent).toBe("Loading error detail…");
   });
 
+  it("announces a detail failure when it replaces the loading state", () => {
+    const failed = makeSession({ id: "fail-1", success: false });
+    const retry = vi.fn();
+    setup({ errors: new Map() });
+
+    const view = render(
+      <SessionsPinnedStrip runningSessions={[]} recentFailures={[failed]} onSessionClick={vi.fn()} />,
+    );
+
+    expect(view.getByTestId("pinned-failure-excerpt").getAttribute("role")).toBe("status");
+    expect(view.queryByRole("alert")).toBeNull();
+
+    setup({ errors: new Map([["fail-1", { kind: "error", retry }]]) });
+    view.rerender(
+      <SessionsPinnedStrip runningSessions={[]} recentFailures={[failed]} onSessionClick={vi.fn()} />,
+    );
+
+    const alert = view.getByRole("alert");
+    expect(alert.textContent).toContain("Error detail temporarily unavailable.");
+    expect(alert.closest('[role="button"]')).toBeNull();
+    expect(view.getByRole("button", { name: "Retry error detail for health" })).toBeTruthy();
+  });
+
   it("pins a recent failure with its Failed badge and an inline error excerpt", () => {
     const failed = makeSession({ id: "fail-1", success: false });
     setup({

@@ -31,6 +31,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { FetchingDim } from "@/components/ui/fetching-dim";
 import { LiveStatusBadge } from "@/components/ui/live-status-badge";
+import { SourceDegradedNote } from "@/components/ui/query-boundary";
 import { DispatchLayout, DispatchHeader, DispatchSurface } from "@/components/ingestion/dispatch";
 import { NewEventsPill } from "@/components/timeline/NewEventsPill";
 import { TimelineLedger } from "@/components/timeline/TimelineLedger";
@@ -242,6 +243,15 @@ export default function TimelinePage() {
   const latestReceivedAt = isLoading ? undefined : (events[0]?.timestamp ?? null);
 
   const hasDegradedSource = degradedSources.length > 0 || degradedButlers.length > 0;
+  const degradedSourceDetail = [
+    degradedSources.length > 0
+      ? `Partial data: ${degradedSources.join(", ")} temporarily unavailable.`
+      : null,
+    degradedButlers.length > 0 ? `Session data from ${degradedButlers.join(", ")} is unavailable.` : null,
+    "This page may be missing some events from that source.",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const isLiveHeadRefreshing = pinned && isFetching && !isLoading && !isError;
 
   // Hot-loop keyboard coverage (bu-ep4ks.12): this was the densest telemetry
@@ -306,20 +316,12 @@ export default function TimelinePage() {
         )}
 
         {hasDegradedSource && (
-          <p
-            className="font-mono text-[11px] text-[var(--amber-text)] border border-[var(--amber)]/30 bg-[var(--amber)]/5 rounded px-3 py-1.5"
-            data-testid="timeline-degraded-banner"
-          >
-            {degradedSources.length > 0 && (
-              <>Partial data: {degradedSources.join(", ")} temporarily unavailable.{" "}</>
-            )}
-            {degradedButlers.length > 0 && (
-              <>
-                Session data from {degradedButlers.join(", ")} is unavailable.{" "}
-              </>
-            )}
-            This page may be missing some events from that source.
-          </p>
+          <SourceDegradedNote
+            label="Timeline"
+            detail={degradedSourceDetail}
+            testId="timeline-degraded-banner"
+            className="font-mono text-[11px]"
+          />
         )}
 
         {heartbeatRollup.ticks > 0 && (

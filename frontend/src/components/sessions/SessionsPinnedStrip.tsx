@@ -246,7 +246,11 @@ export function SessionsPinnedStrip({
             }
             if (excerpt.kind === "error") {
               return (
-                <span className="text-[var(--amber-text)]" data-testid="pinned-failure-excerpt">
+                <span
+                  className="text-[var(--amber-text)]"
+                  data-testid="pinned-failure-excerpt"
+                  aria-hidden="true"
+                >
                   Error detail temporarily unavailable.
                 </span>
               );
@@ -266,15 +270,20 @@ export function SessionsPinnedStrip({
               trailing={trailing}
               after={
                 excerpt.kind === "error" ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    onClick={excerpt.retry}
-                    aria-label={`Retry error detail for ${session.butler ?? "session"}`}
-                  >
-                    Retry error detail
-                  </Button>
+                  <>
+                    <span className="sr-only" role="alert">
+                      Error detail temporarily unavailable. Retry error detail for {session.butler ?? "session"}.
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={excerpt.retry}
+                      aria-label={`Retry error detail for ${session.butler ?? "session"}`}
+                    >
+                      Retry error detail
+                    </Button>
+                  </>
                 ) : undefined
               }
             />

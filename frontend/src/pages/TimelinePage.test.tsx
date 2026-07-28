@@ -121,6 +121,28 @@ describe("TimelinePage — error vs empty state", () => {
     expect(html).toContain("notifications");
   });
 
+  it("announces partial-source evidence when it arrives after the initial timeline paint", () => {
+    setLedger({ degradedSources: [], degradedButlers: [] });
+    const view = renderDom(
+      <MemoryRouter initialEntries={["/timeline"]}>
+        <TimelinePage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByTestId("timeline-degraded-banner")).toBeNull();
+
+    setLedger({ degradedSources: ["sessions"], degradedButlers: ["home"] });
+    view.rerender(
+      <MemoryRouter initialEntries={["/timeline"]}>
+        <TimelinePage />
+      </MemoryRouter>,
+    );
+
+    const alert = screen.getByTestId("timeline-degraded-banner");
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.textContent).toContain("Session data from home is unavailable.");
+  });
+
   it("names the failed butler pools alongside generic partial Timeline metadata", () => {
     setLedger({
       degradedSources: ["sessions"],
