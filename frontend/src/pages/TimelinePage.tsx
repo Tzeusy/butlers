@@ -484,6 +484,7 @@ export default function TimelinePage() {
             includeInternal={includeInternal}
             isError={isError}
             onRetry={refetch}
+            hasPartialData={hasDegradedSource}
             hasMore={hasMore}
             onLoadMore={loadMore}
             loadMoreError={loadMoreError}

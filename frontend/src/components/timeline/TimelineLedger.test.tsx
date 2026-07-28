@@ -94,6 +94,13 @@ describe("TimelineLedger — states", () => {
     renderLedger({ isLoading: false, isError: false, events: [] });
     expect(container.textContent).toContain("No events found.");
   });
+
+  it("renders a partial-empty state instead of a genuine empty result when the page reports degraded evidence", () => {
+    renderLedger({ hasPartialData: true } as unknown as Partial<React.ComponentProps<typeof TimelineLedger>>);
+
+    expect(container.textContent).toContain("Timeline data is partially unavailable.");
+    expect(container.textContent).not.toContain("No events found.");
+  });
 });
 
 describe("TimelineLedger — hour grouping", () => {

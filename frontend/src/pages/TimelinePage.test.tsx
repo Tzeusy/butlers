@@ -101,6 +101,19 @@ describe("TimelinePage — error vs empty state", () => {
     expect(html).not.toContain("Could not load the timeline.");
   });
 
+  it.each([
+    ["a Timeline source", { degradedSources: ["notifications"] }],
+    ["a named session butler", { degradedButlers: ["atlas"] }],
+  ])("does not present an empty partial snapshot as a genuine empty result when %s is unavailable", (_, degraded) => {
+    setLedger({ events: [], isError: false, ...degraded } as Partial<UseTimelineLedgerResult>);
+
+    const html = render();
+
+    expect(html).toContain("Timeline data is partially unavailable.");
+    expect(html).not.toContain("No events found.");
+    expect(html).toContain('data-testid="timeline-degraded-banner"');
+  });
+
   it("renders the degraded-sources banner when a source is partial", () => {
     setLedger({ degradedSources: ["notifications"] });
     const html = render();

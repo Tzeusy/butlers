@@ -49,6 +49,8 @@ export interface TimelineLedgerProps {
   includeInternal?: boolean;
   isError?: boolean;
   onRetry?: () => void;
+  /** The current snapshot excludes one or more unavailable Timeline sources. */
+  hasPartialData?: boolean;
   hasMore?: boolean;
   onLoadMore?: () => void;
   /** An older-page request failed after the ledger had already rendered rows. */
@@ -503,6 +505,18 @@ function EmptyState() {
   );
 }
 
+function PartialEmptyState() {
+  return (
+    <div role="status" aria-live="polite" data-testid="timeline-partial-empty">
+      <EmptyStateUI
+        variant="page"
+        title="Timeline data is partially unavailable."
+        description="No events were returned by reachable sources, so this is not a complete empty result."
+      />
+    </div>
+  );
+}
+
 function InternalMaintenanceEmptyState() {
   return (
     <EmptyStateUI
@@ -572,6 +586,7 @@ export function TimelineLedger({
   includeInternal = false,
   isError,
   onRetry,
+  hasPartialData = false,
   hasMore,
   onLoadMore,
   loadMoreError = false,
@@ -599,7 +614,7 @@ export function TimelineLedger({
         {drawerEventMissing && drawerEventId && (
           <EventNotFoundNotice eventId={drawerEventId} onClose={closeDrawer} />
         )}
-        <EmptyState />
+        {hasPartialData ? <PartialEmptyState /> : <EmptyState />}
       </>
     );
   }
