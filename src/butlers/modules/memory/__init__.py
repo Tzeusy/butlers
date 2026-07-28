@@ -1268,6 +1268,27 @@ class MemoryModule(Module):
                 memory_id,
             )
 
+        # Relationship's deterministic episodic-fact curator parks this
+        # command directly.  Keep the registered handler available on its
+        # owning daemon even if a future memory tool-group prune removes the
+        # broader admin surface; the approval executor validates this exact
+        # native signature at startup and invokes it only after the gate.
+        if butler_name == "relationship":
+
+            @mcp.tool()
+            async def memory_reclassify(
+                memory_type: str,
+                memory_id: str,
+                permanence_target: str,
+            ) -> dict[str, Any]:
+                """Reclassify an approved active fact's permanence."""
+                return await _management.memory_reclassify(
+                    module._get_pool(),
+                    memory_type,
+                    memory_id,
+                    permanence_target,
+                )
+
         @_tool("admin")
         async def memory_stats(
             scope: str | None = None,
