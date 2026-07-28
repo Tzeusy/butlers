@@ -7163,8 +7163,12 @@ export interface ChroniclesBriefing {
   kpi: ChroniclesKpi;
   attention_items: ChroniclesAttentionItem[];
   recent_days: ChroniclesRecentDay[];
-  /** Stable per-subquery availability ledger for honest degraded rendering. */
-  subquery_availability: ChroniclesSubqueryAvailability[];
+  /**
+   * Stable per-subquery availability ledger for honest degraded rendering.
+   * Optional for rolling deploys against a backend that predates this
+   * additive response field; consumers should treat absence as an empty list.
+   */
+  subquery_availability?: ChroniclesSubqueryAvailability[];
   /** Earliest chronicled day (owner tz, YYYY-MM-DD), or null when no data.
    * Bounds backward archive navigation. */
   earliest_date?: string | null;

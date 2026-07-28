@@ -159,6 +159,17 @@ describe("ChroniclesPage editorial archetype", () => {
     expect(html).toContain("Recent days");
   });
 
+  it("renders a legacy briefing response without the availability ledger", () => {
+    const legacyBriefing = buildBriefing();
+    delete legacyBriefing.subquery_availability;
+    _briefing = legacyBriefing;
+
+    const html = renderPage();
+
+    expect(html).toContain("Quiet day.");
+    expect(html).toContain("The day was led by butler_ops");
+  });
+
   it("renders the date stepper controls", () => {
     _briefing = buildBriefing();
     const html = renderPage();
