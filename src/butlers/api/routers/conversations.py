@@ -29,12 +29,16 @@ POST /api/butlers/{name}/conversations/{conversation_id}/messages
     Response: SSE stream with ``token``, ``message_complete``, and
     ``done`` events.
 
+POST /api/butlers/{name}/conversation-turns/{message_id}/cancel
+    Canonical chat Stop endpoint. Cancels one immutable dashboard user turn
+    through the durable control plane, including before SSE has delivered a
+    newly-created conversation id. Always returns the raw typed
+    ``ConversationCancelResponse``.
+
 POST /api/butlers/{name}/conversations/{conversation_id}/cancel
-    Cancel the in-flight session behind the conversation's current turn
-    (the chat "Stop" button) -- a real terminate of the routed butler's
-    runtime subprocess, not a client-side stream detach. Always 200; see
-    ``ConversationCancelResponse`` for the cancelled/already_finished/failed
-    outcomes.
+    Legacy compatibility Stop endpoint. Dashboard clients MUST use the
+    message-scoped endpoint above; this route only forwards a supplied or
+    process-locally known message id when possible.
 
 PATCH /api/butlers/{name}/conversations/{conversation_id}
     Update conversation title or status (archive/unarchive).
@@ -56,6 +60,10 @@ SSE event types
     carries ``session_id``, non-null when the routed session could be
     identified). ``code`` is one of ``SESSION_CANCELLED`` (the durable Stop
     protocol confirmed cancellation while the SSE request was settling),
+    ``TURN_OUTCOME_UNKNOWN`` (a recovered dashboard predecessor cannot be
+    proved stopped, so automatic replay is suppressed),
+    ``INGEST_IN_PROGRESS`` (another caller owns or is settling the same
+    durable ingress; observe or check again, never replay),
     ``SWITCHBOARD_UNAVAILABLE`` (MCP
     unreachable — message already persisted; a retry re-submits the same
     content and is deduplicated idempotently at the Switchboard ingest
@@ -1524,7 +1532,10 @@ async def cancel_dashboard_message_turn(
 
     This is the canonical widget endpoint.  It survives API restarts and the
     Switchboard-to-target handoff because the durable control record, rather
-    than a conversation-local process map, owns the cancellation state.
+    than a conversation-local process map, owns the cancellation state. The
+    ``name`` path segment is retained for the established butler-route
+    namespace; the immutable ``message_id`` is the exact durable control key.
+    It is not a second conversation or target selector.
     """
     del name  # The immutable message id is the capability being cancelled.
     return await _cancel_dashboard_message_turn(db=db, mcp_mgr=mcp_mgr, message_id=message_id)
@@ -1549,7 +1560,11 @@ async def cancel_conversation_turn(
     mcp_mgr: MCPClientManager = Depends(get_mcp_manager),
     db: DatabaseManager = Depends(_get_db_manager),
 ) -> ConversationCancelResponse:
-    """Cancel the in-flight session behind this conversation's current turn.
+    """Compatibility cancel for an in-flight conversation turn.
+
+    New dashboard callers MUST use ``conversation-turns/{message_id}/cancel``.
+    This older conversation-scoped route remains only for callers that cannot
+    yet address the immutable user-message turn directly.
 
     Implements the chat "Stop" button (bu-ep4ks.2) as a real terminate, not a
     client-side stream detach: resolves ``conversation_id`` -> the active

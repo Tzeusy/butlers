@@ -342,7 +342,9 @@ async def test_existing_sse_observes_a_stop_settled_by_another_client(monkeypatc
 
     message_id = uuid4()
     accepted = _turn("accepted", message_id=message_id)
+    submit = AsyncMock()
     monkeypatch.setattr(subject, "claim_ingress", AsyncMock(return_value=accepted))
+    monkeypatch.setattr(subject, "_submit_to_switchboard", submit)
     monkeypatch.setattr(
         subject,
         "dispatch_status",
@@ -380,6 +382,7 @@ async def test_existing_sse_observes_a_stop_settled_by_another_client(monkeypatc
     stream = "".join(events)
     assert "SESSION_CANCELLED" in stream
     assert "SESSION_TIMEOUT" not in stream
+    submit.assert_not_awaited()
 
 
 async def test_existing_sse_surfaces_an_unprovable_runtime_as_unknown(monkeypatch) -> None:

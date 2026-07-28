@@ -37,8 +37,9 @@ class ConversationCreateRequest(BaseModel):
     message_id: UUID | None = Field(
         None,
         description=(
-            "Client-generated UUID for this user message. Reuse it when retrying "
-            "the same submission so ingestion remains idempotent."
+            "Client-generated UUID for this user message. Dashboard UI clients must "
+            "supply and reuse it for retries and pre-SSE Stop; omission is only "
+            "legacy API compatibility."
         ),
     )
     page_context: PageContext | None = Field(
@@ -53,8 +54,9 @@ class MessageCreateRequest(BaseModel):
     message_id: UUID | None = Field(
         None,
         description=(
-            "Client-generated UUID for this user message. Reuse it when retrying "
-            "the same submission so ingestion remains idempotent."
+            "Client-generated UUID for this user message. Dashboard UI clients must "
+            "supply and reuse it for retries and pre-SSE Stop; omission is only "
+            "legacy API compatibility."
         ),
     )
     page_context: PageContext | None = Field(
@@ -133,7 +135,10 @@ class ConversationStats(BaseModel):
 
 
 class ConversationCancelResponse(BaseModel):
-    """Response for ``POST .../conversations/{id}/cancel`` (bu-ep4ks.2).
+    """Raw response for the canonical message-scoped dashboard Stop endpoint.
+
+    ``POST .../conversation-turns/{message_id}/cancel`` is canonical; the
+    conversation-scoped cancel route is compatibility-only.
 
     Always HTTP 200 -- the three outcomes below are all legitimate results,
     not error conditions, and the frontend renders each honestly rather than
@@ -143,7 +148,7 @@ class ConversationCancelResponse(BaseModel):
       either its in-flight runtime accepted cancellation, or no runtime had
       reached the invocation boundary and none can start.
     - ``cancelled=False, already_finished=True``: nothing was in flight for
-      this conversation (the turn already completed, or Stop was clicked
+      this message turn (the turn already completed, or Stop was clicked
       after the reply landed) -- a benign no-op, never rendered as a failure.
     - ``cancelled=False, already_finished=False``: Stop could not be
       confirmed for work already invoking, or an irreversible side effect was

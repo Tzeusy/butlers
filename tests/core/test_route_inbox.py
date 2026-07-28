@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from butlers.core import route_inbox as route_inbox_module
 from butlers.core.route_inbox import (
     STATE_ACCEPTED,
     STATE_ERRORED,
@@ -21,6 +22,7 @@ from butlers.core.route_inbox import (
     route_inbox_mark_errored,
     route_inbox_mark_processed,
     route_inbox_mark_processing,
+    route_inbox_processing_lease_heartbeat,
     route_inbox_recovery_sweep,
     route_inbox_scan_unprocessed,
     route_inbox_wait_while_claimed,
@@ -153,6 +155,10 @@ async def test_terminal_writes_are_monotonic_after_the_first_processing_settleme
 async def test_lease_loss_cancels_a_live_invocation_before_recovery_can_replay() -> None:
     """A local worker must not keep invoking after it loses its route lease."""
 
+    pool, conn = _make_pool()
+    row_id = uuid.uuid4()
+    claim_id = uuid.uuid4()
+    conn.fetchval = AsyncMock(return_value=row_id)
     lease_lost = asyncio.Event()
     started = asyncio.Event()
     stopped = asyncio.Event()
@@ -165,7 +171,9 @@ async def test_lease_loss_cancels_a_live_invocation_before_recovery_can_replay()
         finally:
             stopped.set()
 
-    waiter = asyncio.create_task(route_inbox_wait_while_claimed(lease_lost, live_invocation))
+    waiter = asyncio.create_task(
+        route_inbox_wait_while_claimed(pool, row_id, claim_id, lease_lost, live_invocation)
+    )
     await started.wait()
     lease_lost.set()
 
@@ -177,6 +185,9 @@ async def test_lease_loss_cancels_a_live_invocation_before_recovery_can_replay()
 async def test_lease_loss_before_start_does_not_construct_an_invocation() -> None:
     """A known-lost claim must not create work that cannot be safely owned."""
 
+    pool, _ = _make_pool()
+    row_id = uuid.uuid4()
+    claim_id = uuid.uuid4()
     lease_lost = asyncio.Event()
     lease_lost.set()
     invoked = False
@@ -186,7 +197,61 @@ async def test_lease_loss_before_start_does_not_construct_an_invocation() -> Non
         invoked = True
 
     with pytest.raises(RouteInboxLeaseLost):
-        await route_inbox_wait_while_claimed(lease_lost, invocation)
+        await route_inbox_wait_while_claimed(pool, row_id, claim_id, lease_lost, invocation)
+
+    assert invoked is False
+
+
+async def test_processing_lease_heartbeat_refuses_lost_claim_before_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A displaced claim cannot enter protected pre-spawn work."""
+
+    pool, _ = _make_pool()
+    row_id = uuid.uuid4()
+    claim_id = uuid.uuid4()
+    monkeypatch.setattr(
+        route_inbox_module,
+        "route_inbox_renew_processing_claim",
+        AsyncMock(return_value=False),
+    )
+
+    entered = False
+    with pytest.raises(RouteInboxLeaseLost, match="before protected work"):
+        async with route_inbox_processing_lease_heartbeat(pool, row_id, claim_id):
+            entered = True
+
+    assert entered is False
+
+
+async def test_wait_while_claimed_fences_database_ownership_before_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale in-memory event cannot bypass the authoritative claim fence."""
+
+    pool, _ = _make_pool()
+    row_id = uuid.uuid4()
+    claim_id = uuid.uuid4()
+    monkeypatch.setattr(
+        route_inbox_module,
+        "route_inbox_renew_processing_claim",
+        AsyncMock(return_value=False),
+    )
+
+    invoked = False
+
+    async def invocation() -> None:
+        nonlocal invoked
+        invoked = True
+
+    with pytest.raises(RouteInboxLeaseLost, match="before invocation"):
+        await route_inbox_wait_while_claimed(
+            pool,
+            row_id,
+            claim_id,
+            asyncio.Event(),
+            invocation,
+        )
 
     assert invoked is False
 
@@ -194,6 +259,10 @@ async def test_lease_loss_before_start_does_not_construct_an_invocation() -> Non
 async def test_lease_loss_dominates_runtime_cleanup_failure() -> None:
     """Cancellation cleanup cannot fall through to a generic queue settlement."""
 
+    pool, conn = _make_pool()
+    row_id = uuid.uuid4()
+    claim_id = uuid.uuid4()
+    conn.fetchval = AsyncMock(return_value=row_id)
     lease_lost = asyncio.Event()
     started = asyncio.Event()
     never = asyncio.Event()
@@ -205,7 +274,9 @@ async def test_lease_loss_dominates_runtime_cleanup_failure() -> None:
         except asyncio.CancelledError as exc:
             raise RuntimeError("runtime cleanup failed") from exc
 
-    waiter = asyncio.create_task(route_inbox_wait_while_claimed(lease_lost, invocation))
+    waiter = asyncio.create_task(
+        route_inbox_wait_while_claimed(pool, row_id, claim_id, lease_lost, invocation)
+    )
     await started.wait()
     lease_lost.set()
 

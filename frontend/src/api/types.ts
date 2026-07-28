@@ -5194,7 +5194,10 @@ export interface PageContext {
 /** Request body for POST /api/butlers/{name}/conversations. */
 export interface CreateConversationRequest {
   message: string;
-  /** Client-generated UUID reused if this message submission is retried. */
+  /**
+   * Immutable client-generated UUID. Dashboard UI reuses it for retries and
+   * pre-SSE Stop; omission is legacy API compatibility only.
+   */
   message_id?: string;
   title?: string;
   /** See `PageContext` — unpopulated seam for bu-p6ey8.4. */
@@ -5204,15 +5207,19 @@ export interface CreateConversationRequest {
 /** Request body for POST /api/butlers/{name}/conversations/{id}/messages. */
 export interface SendMessageRequest {
   message: string;
-  /** Client-generated UUID reused if this message submission is retried. */
+  /**
+   * Immutable client-generated UUID. Dashboard UI reuses it for retries and
+   * pre-SSE Stop; omission is legacy API compatibility only.
+   */
   message_id?: string;
   /** See `PageContext` — unpopulated seam for bu-p6ey8.4. */
   page_context?: PageContext;
 }
 
 /**
- * Response from a dashboard turn's POST `.../cancel` endpoint. Always HTTP
- * 200 -- mirrors the backend's `ConversationCancelResponse`. Exactly one of
+ * Raw response from the canonical message-scoped dashboard-turn Stop endpoint
+ * (`.../conversation-turns/{message_id}/cancel`). Always HTTP 200 -- mirrors
+ * the backend's `ConversationCancelResponse`. Exactly one of
  * three honest outcomes:
  *   - `cancelled: true` -- the control plane either blocked every future
  *     runtime before invocation or every already-invoking runtime confirmed
@@ -5251,7 +5258,8 @@ export interface ConversationSseEvent {
  * `src/butlers/api/routers/conversations.py` module docstring for the
  * authoritative contract). `code` distinguishes a retryable connectivity
  * failure from a graceful reply timeout (which carries `session_id` for an
- * "inspect session" link), a terminal unknown outcome that cannot be retried,
+ * "inspect session" link), an in-progress durable handoff that needs Check
+ * again rather than Retry, a terminal unknown outcome that cannot be retried,
  * or a deterministic rejection.
  */
 export interface ConversationSseErrorData {
@@ -5259,6 +5267,7 @@ export interface ConversationSseErrorData {
     | "SWITCHBOARD_UNAVAILABLE"
     | "INGEST_REJECTED"
     | "SWITCHBOARD_ERROR"
+    | "INGEST_IN_PROGRESS"
     | "SESSION_TIMEOUT"
     | "SESSION_CANCELLED"
     | "TURN_OUTCOME_UNKNOWN";

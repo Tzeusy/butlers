@@ -333,11 +333,12 @@ def wire_pipelines(daemon: Any, pool: Any) -> None:
 
 
 async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
-    """Re-dispatch route_inbox rows that were accepted but never processed.
+    """Recover eligible route-inbox rows under a fenced processing lease.
 
-    Called on startup to recover from crashes or restarts.  Rows in
-    'accepted' state older than the grace period are re-dispatched
-    as background tasks through the same path as the hot path.
+    Called on startup to recover from crashes or restarts.  Accepted rows and
+    stale processing leases are eligible for recovery through the normal
+    dispatch path, except that a reclaimed dashboard processing row first
+    reconciles its durable predecessor and never replays it when unprovable.
 
     This is the implementation extracted from
     :meth:`~butlers.daemon.ButlerDaemon._recover_route_inbox`.
@@ -397,44 +398,6 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
         )
         recovery_prompt = _wrap_routed_message(parsed.input.prompt)
 
-        if dashboard_turn_id is not None and recovery_from_processing:
-            try:
-                recovery_control = await reconcile_route_recovery(
-                    pool,
-                    message_id=dashboard_turn_id,
-                    request_id=parsed.request_context.request_id,
-                    route_inbox_id=row_id,
-                )
-            except Exception:
-                logger.exception(
-                    "route_inbox recovery: could not reconcile dashboard predecessor id=%s",
-                    row_id,
-                )
-                await route_inbox_mark_errored(
-                    pool,
-                    row_id,
-                    "Could not reconcile the prior dashboard runtime before recovery.",
-                    processing_claim_id=processing_claim_id,
-                )
-                return
-            if recovery_control.outcome in {"cancelled", "finished"}:
-                await route_inbox_mark_processed(
-                    pool,
-                    row_id,
-                    None,
-                    processing_claim_id=processing_claim_id,
-                )
-                return
-            if recovery_control.outcome not in {"active", "cancelling"}:
-                await route_inbox_mark_errored(
-                    pool,
-                    row_id,
-                    "Dashboard recovery could not prove the prior runtime stopped; "
-                    f"automatic replay was suppressed ({recovery_control.outcome}).",
-                    processing_claim_id=processing_claim_id,
-                )
-                return
-
         _tracer = trace.get_tracer("butlers")
         # Fresh root span for recovery — no accept-phase span to link to.
         with _tracer.start_as_current_span(
@@ -449,7 +412,69 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
                     row_id,
                     processing_claim_id,
                 ) as lease_lost:
+                    if dashboard_turn_id is not None and recovery_from_processing:
+                        try:
+                            recovery_control = await reconcile_route_recovery(
+                                pool,
+                                message_id=dashboard_turn_id,
+                                request_id=parsed.request_context.request_id,
+                                route_inbox_id=row_id,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "route_inbox recovery: could not reconcile dashboard "
+                                "predecessor id=%s",
+                                row_id,
+                            )
+                            if lease_lost.is_set():
+                                raise RouteInboxLeaseLost(
+                                    "route inbox processing lease was lost during "
+                                    "dashboard recovery reconciliation"
+                                )
+                            await route_inbox_mark_errored(
+                                pool,
+                                row_id,
+                                "Could not reconcile the prior dashboard runtime before "
+                                "recovery.",
+                                processing_claim_id=processing_claim_id,
+                            )
+                            return
+                        if lease_lost.is_set():
+                            raise RouteInboxLeaseLost(
+                                "route inbox processing lease was lost during "
+                                "dashboard recovery reconciliation"
+                            )
+                        if recovery_control.outcome in {"cancelled", "finished"}:
+                            if not await route_inbox_mark_processed(
+                                pool,
+                                row_id,
+                                None,
+                                processing_claim_id=processing_claim_id,
+                            ):
+                                raise RouteInboxLeaseLost(
+                                    "route inbox processing lease was lost while marking "
+                                    "the recovered dashboard turn"
+                                )
+                            return
+                        # A reclaimed dashboard row represents a predecessor
+                        # runtime whose termination cannot be established by
+                        # the route inbox alone.  Only a terminal prior turn
+                        # can safely settle this row; every other present or
+                        # future reconciliation result must fail closed rather
+                        # than start a duplicate runtime.
+                        await route_inbox_mark_errored(
+                            pool,
+                            row_id,
+                            "Dashboard recovery could not prove the prior runtime stopped; "
+                            f"automatic replay was suppressed ({recovery_control.outcome}).",
+                            processing_claim_id=processing_claim_id,
+                        )
+                        return
+
                     result = await route_inbox_wait_while_claimed(
+                        pool,
+                        row_id,
+                        processing_claim_id,
                         lease_lost,
                         lambda: spawner.trigger(
                             prompt=recovery_prompt,
@@ -470,6 +495,10 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
                             route_lease_lost=lease_lost,
                         ),
                     )
+                    if lease_lost.is_set():
+                        raise RouteInboxLeaseLost(
+                            "route inbox processing lease was lost after runtime completion"
+                        )
                     result_error = getattr(result, "error", None)
                     if not bool(getattr(result, "success", False)) and (
                         result_error != SESSION_CANCELLED_ERROR
@@ -492,7 +521,7 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
                         result.session_id,
                         processing_claim_id=processing_claim_id,
                     ):
-                        raise RuntimeError(
+                        raise RouteInboxLeaseLost(
                             "route inbox processing lease was lost while marking the result"
                         )
             except RouteInboxLeaseLost:

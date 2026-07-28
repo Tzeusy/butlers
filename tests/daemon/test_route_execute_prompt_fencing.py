@@ -49,6 +49,10 @@ def _mock_route_inbox(monkeypatch):
         "butlers.core_tools._routing.route_inbox_processing_lease_heartbeat",
         MagicMock(return_value=_NoopLeaseHeartbeat()),
     )
+    monkeypatch.setattr(
+        "butlers.core.route_inbox.route_inbox_renew_processing_claim",
+        AsyncMock(return_value=True),
+    )
     monkeypatch.setattr("butlers.core_tools._routing.route_inbox_mark_processed", AsyncMock())
     monkeypatch.setattr("butlers.core_tools._routing.route_inbox_mark_errored", AsyncMock())
     return mock_insert

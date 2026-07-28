@@ -939,52 +939,58 @@ def register_routing_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> 
                         if _sender_entity_id is not None:
                             _routing_ctx_var.set({"source_entity_id": _sender_entity_id})
 
-                        # Channel-agnostic conversation anchor (bu-ep4ks.8
-                        # follow-up, bu-bkthr): give every inbound thread that
-                        # already normalizes a source_thread_identity at ingest
-                        # (Telegram, email, ...) a durable dashboard_conversations
-                        # row on the TARGET butler, so the spawner below can
-                        # attach a provider resume handle to it. Idempotent
-                        # upsert (core_185's partial unique index) -- safe to
-                        # call on every accepted route.execute for this thread.
-                        # Best-effort: a lookup/create failure must never block
-                        # routing, it just means this turn has no resume lineage.
-                        _conversation_id: uuid.UUID | None = None
-                        if source_thread_identity:
-                            try:
-                                from butlers.api.conversations import (
-                                    conversation_get_or_create_by_thread,
-                                )
-
-                                _conversation, _ = await conversation_get_or_create_by_thread(
-                                    _pool,
-                                    butler_name=butler_name,
-                                    source_channel=source_channel,
-                                    source_thread_identity=source_thread_identity,
-                                    # The raw, un-fenced prompt -- _prompt is the
-                                    # <routed_message>-wrapped text (_wrap_routed_
-                                    # message), which would otherwise pollute the
-                                    # conversation's auto-generated title.
-                                    first_message=parsed_route.input.prompt,
-                                )
-                                _conversation_id = _conversation["id"]
-                            except Exception:
-                                logger.debug(
-                                    "conversation anchor lookup/create failed for "
-                                    "butler=%s source_channel=%s "
-                                    "source_thread_identity=%s",
-                                    butler_name,
-                                    source_channel,
-                                    source_thread_identity,
-                                    exc_info=True,
-                                )
-
                         async with route_inbox_processing_lease_heartbeat(
                             _pool,
                             _inbox_id,
                             processing_claim_id,
                         ) as lease_lost:
+                            # Channel-agnostic conversation anchor (bu-ep4ks.8
+                            # follow-up, bu-bkthr): give every inbound thread that
+                            # already normalizes a source_thread_identity at ingest
+                            # (Telegram, email, ...) a durable dashboard_conversations
+                            # row on the TARGET butler, so the spawner below can
+                            # attach a provider resume handle to it. Idempotent
+                            # upsert (core_185's partial unique index) -- safe to
+                            # call on every accepted route.execute for this thread.
+                            # Best-effort: a lookup/create failure must never block
+                            # routing, it just means this turn has no resume lineage.
+                            # It nevertheless stays inside the lease heartbeat: a
+                            # slow anchor must not make a healthy worker appear dead
+                            # to recovery before it reaches the Spawner boundary.
+                            _conversation_id: uuid.UUID | None = None
+                            if source_thread_identity:
+                                try:
+                                    from butlers.api.conversations import (
+                                        conversation_get_or_create_by_thread,
+                                    )
+
+                                    _conversation, _ = await conversation_get_or_create_by_thread(
+                                        _pool,
+                                        butler_name=butler_name,
+                                        source_channel=source_channel,
+                                        source_thread_identity=source_thread_identity,
+                                        # The raw, un-fenced prompt -- _prompt is the
+                                        # <routed_message>-wrapped text (_wrap_routed_
+                                        # message), which would otherwise pollute the
+                                        # conversation's auto-generated title.
+                                        first_message=parsed_route.input.prompt,
+                                    )
+                                    _conversation_id = _conversation["id"]
+                                except Exception:
+                                    logger.debug(
+                                        "conversation anchor lookup/create failed for "
+                                        "butler=%s source_channel=%s "
+                                        "source_thread_identity=%s",
+                                        butler_name,
+                                        source_channel,
+                                        source_thread_identity,
+                                        exc_info=True,
+                                    )
+
                             result = await route_inbox_wait_while_claimed(
+                                _pool,
+                                _inbox_id,
+                                processing_claim_id,
                                 lease_lost,
                                 lambda: _spawner.trigger(
                                     prompt=_prompt,
@@ -1009,6 +1015,10 @@ def register_routing_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> 
                                     route_lease_lost=lease_lost,
                                 ),
                             )
+                            if lease_lost.is_set():
+                                raise RouteInboxLeaseLost(
+                                    "route inbox processing lease was lost after runtime completion"
+                                )
                             result_error = getattr(result, "error", None)
                             if not bool(getattr(result, "success", False)) and (
                                 result_error != SESSION_CANCELLED_ERROR
@@ -1037,7 +1047,7 @@ def register_routing_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> 
                                 result.session_id,
                                 processing_claim_id=processing_claim_id,
                             ):
-                                raise RuntimeError(
+                                raise RouteInboxLeaseLost(
                                     "route inbox processing lease was lost while marking the result"
                                 )
                     except RouteInboxLeaseLost:

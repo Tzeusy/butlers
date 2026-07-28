@@ -22,7 +22,7 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -2949,11 +2949,21 @@ class TestCancelSession:
         message_id = uuid.uuid4()
         request_id = uuid.uuid4()
         session_id = uuid.uuid4()
+        route_row_id = uuid.uuid4()
+        route_claim_id = uuid.uuid4()
         active = _dashboard_turn_result("active", message_id=message_id, request_id=request_id)
         lease_lost = asyncio.Event()
         invocation_started = asyncio.Event()
         invocation_cancelled = asyncio.Event()
         never = asyncio.Event()
+        claim_conn = AsyncMock()
+        claim_conn.fetchval = AsyncMock(return_value=route_row_id)
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=claim_conn),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
 
         class BlockingAdapter(MockAdapter):
             async def invoke(self, *args: Any, **kwargs: Any):
@@ -2994,6 +3004,9 @@ class TestCancelSession:
             )
             waiter = asyncio.create_task(
                 route_inbox_wait_while_claimed(
+                    mock_pool,
+                    route_row_id,
+                    route_claim_id,
                     lease_lost,
                     lambda: spawner.trigger(
                         "cancel on route lease loss",

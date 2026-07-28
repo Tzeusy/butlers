@@ -17,6 +17,8 @@
 //     working).
 //   - `TURN_OUTCOME_UNKNOWN` -> an ambiguous terminal outcome (no retry — a
 //     replay could duplicate work whose prior outcome cannot be proven).
+//   - `INGEST_IN_PROGRESS` -> an existing durable handoff or Stop is still
+//     settling (no retry — inspect the same conversation again instead).
 // ---------------------------------------------------------------------------
 
 import type { ConversationSseErrorData } from "@/api/types.ts";
@@ -25,9 +27,13 @@ export type SendError =
   | { kind: "offline"; message: string; failedText: string; messageId: string }
   | { kind: "timeout"; message: string; sessionId: string | null }
   | { kind: "ambiguous"; message: string }
+  | { kind: "pending"; message: string }
   | { kind: "generic"; message: string; failedText: string; messageId: string };
 
-export type RetryableSendError = Exclude<SendError, { kind: "timeout" | "ambiguous" }>;
+export type RetryableSendError = Exclude<
+  SendError,
+  { kind: "timeout" | "ambiguous" | "pending" }
+>;
 
 /** A durable server cancellation is a terminal stream outcome, not a retryable send error. */
 export function isConfirmedConversationCancellation(data: unknown): boolean {
@@ -52,6 +58,9 @@ export function classifySendError(
   }
   if (errData.code === "TURN_OUTCOME_UNKNOWN") {
     return { kind: "ambiguous", message };
+  }
+  if (errData.code === "INGEST_IN_PROGRESS") {
+    return { kind: "pending", message };
   }
   if (errData.code === "SWITCHBOARD_UNAVAILABLE") {
     return { kind: "offline", message, failedText, messageId };

@@ -190,8 +190,28 @@ async def route_inbox_processing_lease_heartbeat(
     *,
     interval_s: float = _DEFAULT_PROCESSING_HEARTBEAT_S,
 ) -> AsyncIterator[asyncio.Event]:
-    """Keep a processing claim fresh and expose a lease-loss event to the caller."""
+    """Fence a processing claim before protected work and keep it fresh."""
     lease_lost = asyncio.Event()
+
+    try:
+        owns_claim = await route_inbox_renew_processing_claim(
+            pool,
+            row_id,
+            processing_claim_id,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "route_inbox: initial processing lease fence failed id=%s claim=%s",
+            row_id,
+            processing_claim_id,
+        )
+        raise RouteInboxLeaseLost(
+            "route inbox processing lease could not be verified before protected work"
+        ) from exc
+    if not owns_claim:
+        raise RouteInboxLeaseLost("route inbox processing lease was lost before protected work")
 
     async def _heartbeat() -> None:
         try:
@@ -237,6 +257,9 @@ async def route_inbox_processing_lease_heartbeat(
 
 
 async def route_inbox_wait_while_claimed[ResultT](
+    pool: asyncpg.Pool,
+    row_id: uuid.UUID,
+    processing_claim_id: uuid.UUID,
     lease_lost: asyncio.Event,
     invocation_factory: Callable[[], Awaitable[ResultT]],
 ) -> ResultT:
@@ -250,11 +273,34 @@ async def route_inbox_wait_while_claimed[ResultT](
     recovery separately treats an unprovable predecessor as ambiguous rather
     than automatically replaying it.
     """
-    # Do not create the runtime coroutine until ownership is known.  Creating
+    # Do not create the runtime coroutine until ownership is known. Creating
     # it first makes a pre-existing loss both observable too late and easy to
-    # leak as an un-awaited coroutine in callers/tests.
+    # leak as an un-awaited coroutine in callers/tests. The heartbeat covers
+    # long-running protected work; this immediate database fence closes the
+    # final handoff between that work and runtime creation.
     if lease_lost.is_set():
         raise RouteInboxLeaseLost("route inbox processing lease was already lost")
+    try:
+        owns_claim = await route_inbox_renew_processing_claim(
+            pool,
+            row_id,
+            processing_claim_id,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "route_inbox: pre-invocation processing lease fence failed id=%s claim=%s",
+            row_id,
+            processing_claim_id,
+        )
+        lease_lost.set()
+        raise RouteInboxLeaseLost(
+            "route inbox processing lease could not be verified before invocation"
+        ) from exc
+    if not owns_claim or lease_lost.is_set():
+        lease_lost.set()
+        raise RouteInboxLeaseLost("route inbox processing lease was lost before invocation")
 
     invocation_task = asyncio.ensure_future(invocation_factory())
     lease_wait_task = asyncio.create_task(lease_lost.wait())

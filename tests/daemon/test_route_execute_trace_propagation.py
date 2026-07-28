@@ -223,6 +223,10 @@ def _mock_route_inbox(monkeypatch):
         MagicMock(side_effect=lambda *_args, **_kwargs: _NoopLeaseHeartbeat()),
     )
     monkeypatch.setattr(
+        "butlers.core.route_inbox.route_inbox_renew_processing_claim",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
         "butlers.core_tools._routing.route_inbox_mark_processed",
         AsyncMock(),
     )

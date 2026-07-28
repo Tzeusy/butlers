@@ -546,6 +546,32 @@ describe("ChatContent — send-error classification", () => {
     expect(screen.queryByTestId("chat-widget-timeout-session-link")).toBeNull();
   });
 
+  it("offers check again, not retry, while INGEST_IN_PROGRESS owns the same turn", async () => {
+    createConversationMock.mockResolvedValue({ ok: true } as Response);
+    scriptedEvents = [
+      {
+        event: "error",
+        data: {
+          code: "INGEST_IN_PROGRESS",
+          message: "This message is already being submitted.",
+        },
+      },
+      { event: "done", data: {} },
+    ];
+
+    renderChatContent();
+    const input = screen.getByPlaceholderText("Type a message...");
+    fireEvent.change(input, { target: { value: "report a bug" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTitle("Send message"));
+    });
+
+    const banner = screen.getByTestId("chat-widget-pending-banner");
+    expect(banner.textContent).toContain("already being submitted");
+    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
   it("dismissing the offline banner clears it without resending", async () => {
     createConversationMock.mockResolvedValue({ ok: true } as Response);
     scriptedEvents = [
