@@ -1816,6 +1816,22 @@ class MessagePipeline:
 
         source_metadata = self._build_source_metadata(args, tool_name=tool_name)
         source = source_metadata["channel"]
+        # The normal scanner preserves this immutable message id in
+        # ``tool_args``.  Direct pipeline callers can instead supply just the
+        # persisted inbox id, so recover the same source-of-truth value before
+        # deciding whether a dashboard turn is safe to dispatch.  Without the
+        # fallback, a real dashboard request could be rejected solely because
+        # a caller omitted a redundant transport field even though Stop can be
+        # joined to the turn from the accepted envelope.
+        dashboard_context: dict[str, Any] | None = None
+        if source == "dashboard" and "dashboard_message_id" not in source_metadata:
+            dashboard_context = await self._load_dashboard_context(message_inbox_id)
+            raw_dashboard_message_id = (
+                dashboard_context.get("message_id") if dashboard_context is not None else None
+            )
+            if raw_dashboard_message_id not in (None, ""):
+                args["dashboard_message_id"] = str(raw_dashboard_message_id)
+                source_metadata = self._build_source_metadata(args, tool_name=tool_name)
         dashboard_turn_id: UUID | None = None
         if source == "dashboard":
             raw_dashboard_message_id = source_metadata.get("dashboard_message_id")
@@ -2376,10 +2392,6 @@ class MessagePipeline:
                 # Build routing prompt and spawn CC
                 start = time.perf_counter()
                 spawn_start = time.perf_counter()
-                # Bound before the try so the classifier spawn-exception handler
-                # (which may fire before the dashboard_context load below runs)
-                # can always safely reference it without an UnboundLocalError.
-                dashboard_context: dict[str, Any] | None = None
                 try:
                     # Load conversation history — use structured batch data
                     # from the decomposition branch if available, otherwise
@@ -2492,7 +2504,8 @@ class MessagePipeline:
                     # file_bug_report can deterministically inject them downstream.
                     # (already bound to None above the try/except)
                     if source == "dashboard" and _payload_type != "conversation_history":
-                        dashboard_context = await self._load_dashboard_context(message_inbox_id)
+                        if dashboard_context is None:
+                            dashboard_context = await self._load_dashboard_context(message_inbox_id)
                         if dashboard_context is None:
                             dashboard_context = {"message_id": str(dashboard_turn_id)}
                         else:

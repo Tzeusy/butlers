@@ -201,6 +201,59 @@ class TestMessagePipelineProcess:
         assert result.acked_targets == ["health"]
         assert str(captured_kwargs["dashboard_turn_id"]) == ("d1d1d1d1-0000-7000-8000-000000000001")
 
+    @patch.object(
+        MessagePipeline,
+        "_load_dashboard_context",
+        new_callable=AsyncMock,
+        return_value={
+            "conversation_id": "c1c1c1c1-0000-7000-8000-000000000001",
+            "message_id": "d1d1d1d1-0000-7000-8000-000000000001",
+            "page_context": None,
+        },
+    )
+    @patch(
+        "butlers.tools.switchboard.routing.classify._load_available_butlers",
+        new_callable=AsyncMock,
+        return_value=_MOCK_BUTLERS,
+    )
+    async def test_dashboard_dispatch_recovers_immutable_turn_id_from_inbox(
+        self, _mock_load, mock_dashboard_context
+    ):
+        """Direct pipeline callers may omit transport-only dashboard metadata."""
+        captured_kwargs: dict[str, Any] = {}
+
+        async def mock_dispatch(**kwargs):
+            captured_kwargs.update(kwargs)
+            return FakeSpawnerResult(
+                output="Routed to health.",
+                tool_calls=[
+                    {
+                        "name": "route_to_butler",
+                        "args": {"butler": "health", "prompt": "Track headache"},
+                        "result": {"status": "accepted", "butler": "health"},
+                    }
+                ],
+            )
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(), dispatch_fn=mock_dispatch, source_butler="switchboard"
+        )
+        result = await pipeline.process(
+            "I have a headache",
+            tool_args={
+                "source": "dashboard",
+                "source_channel": "dashboard",
+                "source_identity": "dashboard:operator",
+                "source_tool": "ingest",
+                "request_id": "019c8812-fb0f-77f3-88b9-5763c1336b27",
+            },
+            message_inbox_id="019c8812-fb0f-77f3-88b9-5763c1336b27",
+        )
+
+        assert result.acked_targets == ["health"]
+        assert str(captured_kwargs["dashboard_turn_id"]) == "d1d1d1d1-0000-7000-8000-000000000001"
+        mock_dashboard_context.assert_awaited_once_with("019c8812-fb0f-77f3-88b9-5763c1336b27")
+
     @patch(
         "butlers.tools.switchboard.routing.classify._load_available_butlers",
         new_callable=AsyncMock,
