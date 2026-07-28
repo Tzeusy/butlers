@@ -22,6 +22,9 @@ registry after tool registration and before accepting approval dispatch.
 - **WHEN** episodic-predicate curation proposes reclassifying an active fact
 - **THEN** the pending action stores `tool_name = "memory_reclassify"` and
   exactly `memory_type`, `memory_id`, and `permanence_target` arguments
+- **AND** the command accepts only `memory_type = "fact"` and
+  `permanence_target = "volatile"`
+- **AND** standing rules must pin all three safety-critical arguments
 - **AND** Relationship's registered original handler accepts those arguments
   after approval without re-entering the gate
 

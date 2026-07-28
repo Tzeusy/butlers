@@ -16,7 +16,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, BeforeValidator, Field
 
 from butlers.core.tool_call_capture import get_current_runtime_session_routing_context
-from butlers.modules.base import Module, ToolGroupMixin, group_enabled
+from butlers.modules.base import Module, ToolGroupMixin, ToolMeta, group_enabled
 
 
 def _coerce_json_list(v: Any) -> Any:
@@ -308,6 +308,18 @@ class MemoryModule(Module):
     @property
     def dependencies(self) -> list[str]:
         return []
+
+    def tool_metadata(self) -> dict[str, ToolMeta]:
+        """Declare the full reclassification command as safety-critical."""
+        return {
+            "memory_reclassify": ToolMeta(
+                arg_sensitivities={
+                    "memory_type": True,
+                    "memory_id": True,
+                    "permanence_target": True,
+                }
+            )
+        }
 
     def migration_revisions(self) -> str | None:
         return "memory"

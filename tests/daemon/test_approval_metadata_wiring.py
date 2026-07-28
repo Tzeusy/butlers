@@ -57,11 +57,11 @@ class _UnexpectedMetadataModule:
         raise AssertionError("ToolMeta must not be collected without an approvals module")
 
 
-@pytest.mark.parametrize("roster_name", ("relationship", "home"))
-async def test_disabled_rosters_inject_metadata_for_manual_approvals(
-    roster_name: str, monkeypatch: pytest.MonkeyPatch
+async def test_disabled_roster_injects_metadata_for_manual_approvals(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Configured ApprovalsModule receives ToolMeta even when it has no gates."""
+    roster_name = "home"
     config = load_config(_REPO_ROOT / "roster" / roster_name)
     approvals = _ApprovalsModuleProbe()
     apply_gates = AsyncMock()
@@ -128,12 +128,13 @@ async def test_relationship_registration_dispatches_legacy_merge_via_memory_call
 ) -> None:
     """The real Relationship module registration owns legacy merge recovery.
 
-    Relationship enables the approvals action surface but has no gated tools.
-    Its registered executor must therefore resolve the canonical memory MCP
-    callable directly, rather than re-enter a gate or depend on another
-    butler. The legacy action name is deliberately mapped only at this runtime
-    boundary; the row itself remains untouched until the successful execution
-    transition persists its result and audit event.
+    Relationship enables the approvals action surface and gates only the new
+    curation replay command. Its registered executor must still resolve the
+    canonical legacy merge memory callable directly, rather than re-enter a
+    gate or depend on another butler. The legacy action name is deliberately
+    mapped only at this runtime boundary; the row itself remains untouched
+    until the successful execution transition persists its result and audit
+    event.
     """
     config = load_config(_REPO_ROOT / "roster" / "relationship")
     db = MockDB()
@@ -165,7 +166,7 @@ async def test_relationship_registration_dispatches_legacy_merge_via_memory_call
 
     originals = await daemon._apply_approval_gates()
 
-    assert originals == {}
+    assert set(originals) == {"memory_reclassify"}
     assert approvals._tool_executor is not None
 
     action_id = db._insert_action(

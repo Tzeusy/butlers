@@ -73,6 +73,8 @@ async def memory_reclassify(
     """
     if memory_type != "fact":
         raise ValueError("memory_reclassify only supports memory_type='fact'")
+    if permanence_target != "volatile":
+        raise ValueError("memory_reclassify only supports permanence_target='volatile'")
 
     fact_id = uuid.UUID(memory_id)
     decay_rate = _storage.validate_permanence(permanence_target)

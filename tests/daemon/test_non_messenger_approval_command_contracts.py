@@ -202,6 +202,50 @@ async def test_approved_memory_reclassification_executes_exact_relationship_comm
     assert approval_db.facts[fact_id]["permanence"] == "volatile"
 
 
+async def test_memory_reclassification_rejects_non_volatile_target_without_mutation() -> None:
+    """The curation replay command cannot become a general permanence editor."""
+    fact_id = uuid.uuid4()
+    _, approvals, approval_db = await _relationship_approval_daemon(fact_id)
+    action_id = approval_db._insert_action(
+        tool_name="memory_reclassify",
+        tool_args={
+            "memory_type": "fact",
+            "memory_id": str(fact_id),
+            "permanence_target": "permanent",
+        },
+        status="pending",
+    )
+
+    result = await approvals._approve_action(str(action_id), actor=_human_actor())
+
+    assert result["status"] == "approved"
+    assert approval_db.pending_actions[action_id]["status"] == "approved"
+    assert approval_db.pending_actions[action_id]["execution_result"] is None
+    assert approval_db.facts[fact_id]["permanence"] == "stable"
+
+
+async def test_memory_reclassification_broad_rule_parks_instead_of_auto_executing() -> None:
+    """An unpinned standing rule cannot authorize a different fact mutation."""
+    fact_id = uuid.uuid4()
+    daemon, _, approval_db = await _relationship_approval_daemon(fact_id)
+    approval_db._insert_rule(
+        tool_name="memory_reclassify",
+        arg_constraints={},
+    )
+    tool = await daemon.mcp.get_tool("memory_reclassify")
+
+    result = await tool.fn(
+        memory_type="fact",
+        memory_id=str(fact_id),
+        permanence_target="volatile",
+        _why="Episodic-predicate curation proposed this bounded reclassification.",
+        _evidence=[],
+    )
+
+    assert result["status"] == "pending_approval"
+    assert approval_db.facts[fact_id]["permanence"] == "stable"
+
+
 async def test_historic_unknown_command_stays_approved_and_truthful() -> None:
     """No alias or argument guess turns historic evidence into a new command."""
     _, approvals, approval_db, _ = await _switchboard_approval_daemon()
@@ -257,6 +301,39 @@ async def test_owner_command_registry_rejects_non_keyword_handler() -> None:
         await validate_owner_command_registry(mcp, "switchboard")
 
 
+def _switchboard_validation_daemon(mcp: Any) -> ButlerDaemon:
+    """Build the real daemon gate-wiring path around a candidate MCP registry."""
+    config = load_config(_REPO_ROOT / "roster" / "switchboard")
+    daemon = ButlerDaemon(_REPO_ROOT / "roster" / "switchboard", db=MockDB())
+    daemon.config = config
+    daemon.mcp = mcp
+    daemon._modules = [ApprovalsModule()]
+    return daemon
+
+
+async def test_daemon_startup_rejects_missing_declared_handler() -> None:
+    """The real daemon gate-wiring path fails before serving a missing command."""
+    daemon = _switchboard_validation_daemon(FastMCP("switchboard-missing-handler"))
+
+    with pytest.raises(ApprovalCommandContractError, match="connector_disconnect"):
+        await daemon._apply_approval_gates()
+
+
+async def test_daemon_startup_rejects_variadic_declared_handler() -> None:
+    """The real daemon gate-wiring path rejects handler kwargs it cannot prove."""
+
+    async def connector_disconnect(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"success": True, "args": args, "kwargs": kwargs}
+
+    mcp = SimpleNamespace(
+        get_tool=lambda _name: SimpleNamespace(fn=connector_disconnect),
+    )
+    daemon = _switchboard_validation_daemon(mcp)
+
+    with pytest.raises(ApprovalCommandContractError, match="explicit keyword"):
+        await daemon._apply_approval_gates()
+
+
 def test_switchboard_disconnect_marks_the_full_resource_identity_critical() -> None:
     """A standing rule cannot blanket-approve a different connector identity."""
     metadata = SwitchboardModule().tool_metadata()["connector_disconnect"]
@@ -264,6 +341,17 @@ def test_switchboard_disconnect_marks_the_full_resource_identity_critical() -> N
     assert metadata.arg_sensitivities == {
         "connector_type": True,
         "endpoint_identity": True,
+    }
+
+
+def test_relationship_reclassification_marks_full_command_safety_critical() -> None:
+    """Standing rules must pin the fact and the only supported mutation."""
+    metadata = MemoryModule().tool_metadata()["memory_reclassify"]
+
+    assert metadata.arg_sensitivities == {
+        "memory_type": True,
+        "memory_id": True,
+        "permanence_target": True,
     }
 
 

@@ -59,9 +59,11 @@ provenance unreliable.
 Switchboard owns `connector_registry`, so `connector_disconnect` becomes a
 Switchboard MCP tool that performs an idempotent soft delete. Relationship owns
 the curation queue and its memory schema, so `memory_reclassify` becomes a
-Relationship-only memory MCP tool which updates an active fact's permanence
-and matching decay rate. Both names are approval-gated in their rosters; the
-executor uses the preserved original handler after approval.
+Relationship-only memory MCP tool which updates an active fact to `volatile`
+permanence and its matching decay rate. Its memory type, fact ID, and target
+permanence are all safety-critical approval-rule arguments, so a standing rule
+must pin the complete command. Both names are approval-gated in their rosters;
+the executor uses the preserved original handler after approval.
 
 Alternative: run the dashboard HTTP handler from dispatch. Rejected because
 the handler is a submission boundary and would park a new action rather than

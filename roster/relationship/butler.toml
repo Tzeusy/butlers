@@ -163,6 +163,7 @@ groups = ["core", "feedback", "entity", "admin"]
 
 [modules.approvals]
 groups = ["actions"]
+enabled = true
 
 [modules.approvals.gated_tools.memory_reclassify]
 risk_tier = "medium"
