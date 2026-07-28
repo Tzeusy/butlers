@@ -288,7 +288,13 @@ class TestProcessSpanTraceContinuity:
 
         trigger_result = MagicMock()
         trigger_result.session_id = uuid.uuid4()
-        daemon.spawner.trigger = AsyncMock(return_value=trigger_result)
+        trigger_started = asyncio.Event()
+
+        async def _trigger(**_kwargs: Any) -> MagicMock:
+            trigger_started.set()
+            return trigger_result
+
+        daemon.spawner.trigger = AsyncMock(side_effect=_trigger)
 
         parent_tracer = trace.get_tracer("test")
         with parent_tracer.start_as_current_span("switchboard.route") as parent_span:
@@ -303,7 +309,11 @@ class TestProcessSpanTraceContinuity:
             trace_context=trace_context,
         )
         assert result["status"] == "accepted"
-        await asyncio.sleep(0.1)
+        await asyncio.wait_for(trigger_started.wait(), timeout=1)
+        await asyncio.wait_for(
+            asyncio.gather(*daemon._route_inbox_tasks),
+            timeout=1,
+        )
 
         spans = otel_provider.get_finished_spans()
         process_spans = [s for s in spans if s.name == "route.process"]
@@ -331,7 +341,13 @@ class TestSpanLink:
 
         trigger_result = MagicMock()
         trigger_result.session_id = uuid.uuid4()
-        daemon.spawner.trigger = AsyncMock(return_value=trigger_result)
+        trigger_started = asyncio.Event()
+
+        async def _trigger(**_kwargs: Any) -> MagicMock:
+            trigger_started.set()
+            return trigger_result
+
+        daemon.spawner.trigger = AsyncMock(side_effect=_trigger)
 
         result = await route_execute_fn(
             schema_version="route.v1",
@@ -339,7 +355,11 @@ class TestSpanLink:
             input={"prompt": "Run health check."},
         )
         assert result["status"] == "accepted"
-        await asyncio.sleep(0.1)
+        await asyncio.wait_for(trigger_started.wait(), timeout=1)
+        await asyncio.wait_for(
+            asyncio.gather(*daemon._route_inbox_tasks),
+            timeout=1,
+        )
 
         spans = otel_provider.get_finished_spans()
         accept_spans = [s for s in spans if s.name == "butler.tool.route.execute"]

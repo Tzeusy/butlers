@@ -136,7 +136,11 @@ async def test_recovery_sweep_dispatches_once_per_row() -> None:
     dispatched: list[uuid.UUID] = []
 
     async def dispatch_fn(
-        *, row_id: uuid.UUID, route_envelope: dict, processing_claim_id: uuid.UUID
+        *,
+        row_id: uuid.UUID,
+        route_envelope: dict,
+        processing_claim_id: uuid.UUID,
+        recovery_from_processing: bool,
     ) -> None:
         dispatched.append(row_id)
 
@@ -172,7 +176,11 @@ async def test_recovery_sweep_counts_only_successful_dispatches() -> None:
     call_count = 0
 
     async def dispatch_fn_one_fail(
-        *, row_id: uuid.UUID, route_envelope: dict, processing_claim_id: uuid.UUID
+        *,
+        row_id: uuid.UUID,
+        route_envelope: dict,
+        processing_claim_id: uuid.UUID,
+        recovery_from_processing: bool,
     ) -> None:
         nonlocal call_count
         call_count += 1
@@ -208,7 +216,11 @@ async def test_recovered_row_reaches_terminal_state() -> None:
     terminal_reached = False
 
     async def dispatch_fn(
-        *, row_id: uuid.UUID, route_envelope: dict, processing_claim_id: uuid.UUID
+        *,
+        row_id: uuid.UUID,
+        route_envelope: dict,
+        processing_claim_id: uuid.UUID,
+        recovery_from_processing: bool,
     ) -> None:
         nonlocal terminal_reached
         # Successful dispatch: mark the row as processed (terminal state).

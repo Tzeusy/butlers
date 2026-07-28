@@ -336,6 +336,7 @@ export function ChatContent({ butlerName }: ChatContentProps) {
         content: "",
         pending: true,
         interrupted: false,
+        stopReady: false,
       });
 
       try {
@@ -355,6 +356,13 @@ export function ChatContent({ butlerName }: ChatContentProps) {
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
+
+        // The API creates the durable user-message/turn record before it
+        // returns its SSE response. Stop may become actionable now, even
+        // though the first conversation_created event can still be pending.
+        setStreaming((prev) =>
+          prev?.messageId === messageId ? { ...prev, stopReady: true } : prev,
+        );
 
         await consumeSseStream(response, (event) => {
           if (
@@ -481,7 +489,7 @@ export function ChatContent({ butlerName }: ChatContentProps) {
   }
 
   async function handleStop() {
-    if (!streaming || streaming.cancelling) return;
+    if (!streaming || !streaming.stopReady || streaming.cancelling) return;
     const messageId = streaming.messageId;
     if (activeMessageIdRef.current !== messageId) return;
 
@@ -504,11 +512,20 @@ export function ChatContent({ butlerName }: ChatContentProps) {
           // before aborting the SSE: completion can commit just before this
           // status read, while its message_complete event is still buffered.
           const conversationId =
-            streaming.conversationId === "pending" ? activeConversationId : streaming.conversationId;
+            result.conversation_id ??
+            (streaming.conversationId === "pending" ? activeConversationId : streaming.conversationId);
           void queryClient.invalidateQueries({
             queryKey: conversationKeys.all(butlerName),
           });
           if (conversationId) {
+            setActiveConversationId(conversationId);
+            setLocalMessages((prev) =>
+              prev.map((message) =>
+                message.id === optimisticUserMessageId(messageId)
+                  ? { ...message, conversation_id: conversationId }
+                  : message,
+              ),
+            );
             void queryClient.invalidateQueries({
               queryKey: conversationKeys.messages(butlerName, conversationId),
             });
@@ -619,6 +636,7 @@ export function ChatContent({ butlerName }: ChatContentProps) {
           onSend={handleSend}
           onStop={handleStop}
           stopPending={streaming?.cancelling ?? false}
+          stopAvailable={streaming?.stopReady ?? true}
           stopStatus={
             streaming?.cancelling
               ? "Stopping this turn."

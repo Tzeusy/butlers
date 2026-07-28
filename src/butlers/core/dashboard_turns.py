@@ -220,12 +220,12 @@ async def reconcile_route_recovery(
     request_id: UUID,
     route_inbox_id: UUID,
 ) -> DashboardTurnResult:
-    """Close a crashed target predecessor before its leased route replay starts.
+    """Mark a route predecessor with an unprovable stale lease as ambiguous.
 
     Callers must hold the corresponding ``route_inbox`` processing lease.  The
     SQL control function additionally binds the operation to this target,
-    request, and inbox id, so a recovery worker cannot abandon an unrelated
-    dashboard runtime.
+    request, and inbox id.  A stale lease is not proof that an already-started
+    runtime died, so dashboard recovery must not replay it automatically.
     """
     row = await conn.fetchrow(
         "SELECT * FROM public.dashboard_turn_reconcile_route_recovery($1, $2, $3)",

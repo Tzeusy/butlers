@@ -5251,7 +5251,8 @@ export interface ConversationSseEvent {
  * `src/butlers/api/routers/conversations.py` module docstring for the
  * authoritative contract). `code` distinguishes a retryable connectivity
  * failure from a graceful reply timeout (which carries `session_id` for an
- * "inspect session" link) from a deterministic rejection.
+ * "inspect session" link), a terminal unknown outcome that cannot be retried,
+ * or a deterministic rejection.
  */
 export interface ConversationSseErrorData {
   code?:
@@ -5259,7 +5260,8 @@ export interface ConversationSseErrorData {
     | "INGEST_REJECTED"
     | "SWITCHBOARD_ERROR"
     | "SESSION_TIMEOUT"
-    | "SESSION_CANCELLED";
+    | "SESSION_CANCELLED"
+    | "TURN_OUTCOME_UNKNOWN";
   message?: string;
   session_id?: string | null;
 }

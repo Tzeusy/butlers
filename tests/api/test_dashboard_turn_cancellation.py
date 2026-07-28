@@ -60,6 +60,36 @@ async def test_durable_stop_succeeds_before_any_runtime_invokes(monkeypatch) -> 
     mcp_mgr.get_client.assert_not_awaited()
 
 
+async def test_durable_stop_reports_an_unprovable_runtime_as_unknown(monkeypatch) -> None:
+    """A lost runtime lease cannot be represented as a confirmed Stop or completion."""
+    from butlers.api.routers import conversations as subject
+
+    message_id = uuid4()
+    monkeypatch.setattr(
+        subject,
+        "request_cancel",
+        AsyncMock(
+            return_value=_turn("ambiguous", message_id=message_id, terminal_state="ambiguous")
+        ),
+    )
+
+    db = MagicMock(spec=DatabaseManager)
+    db.credential_shared_pool.return_value = AsyncMock()
+    mcp_mgr = MagicMock(spec=MCPClientManager)
+
+    result = await subject._cancel_dashboard_message_turn(
+        db=db,
+        mcp_mgr=mcp_mgr,
+        message_id=message_id,
+    )
+
+    assert result.cancelled is False
+    assert result.already_finished is False
+    assert result.message is not None
+    assert "outcome is unknown" in result.message
+    mcp_mgr.get_client.assert_not_awaited()
+
+
 async def test_message_scoped_stop_endpoint_never_needs_a_live_api_process_map(
     app, monkeypatch
 ) -> None:
@@ -253,6 +283,47 @@ async def test_existing_sse_observes_a_stop_settled_by_another_client(monkeypatc
 
     stream = "".join(events)
     assert "SESSION_CANCELLED" in stream
+    assert "SESSION_TIMEOUT" not in stream
+
+
+async def test_existing_sse_surfaces_an_unprovable_runtime_as_unknown(monkeypatch) -> None:
+    """A persisted ambiguous terminal state is not a timeout and must not invite retry."""
+    from butlers.api.routers import conversations as subject
+
+    message_id = uuid4()
+    accepted = _turn("accepted", message_id=message_id)
+    monkeypatch.setattr(subject, "claim_ingress", AsyncMock(return_value=accepted))
+    monkeypatch.setattr(
+        subject,
+        "dispatch_status",
+        AsyncMock(
+            return_value=_turn("ambiguous", message_id=message_id, terminal_state="ambiguous")
+        ),
+    )
+
+    class _Request:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    db = MagicMock(spec=DatabaseManager)
+    db.credential_shared_pool.return_value = AsyncMock()
+
+    events = [
+        event
+        async for event in subject._stream_conversation_response(
+            request=_Request(),
+            butler_name="switchboard",
+            conversation_id=uuid4(),
+            message_created_at=datetime.now(UTC),
+            envelope={},
+            db=db,
+            mcp_mgr=MagicMock(spec=MCPClientManager),
+            message_id=message_id,
+        )
+    ]
+
+    stream = "".join(events)
+    assert "TURN_OUTCOME_UNKNOWN" in stream
     assert "SESSION_TIMEOUT" not in stream
 
 

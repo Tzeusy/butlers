@@ -194,7 +194,7 @@ def _create_schema() -> None:
             terminal_state TEXT
                 CHECK (
                     terminal_state IS NULL
-                    OR terminal_state IN ('completed', 'failed', 'cancelled')
+                    OR terminal_state IN ('completed', 'failed', 'cancelled', 'ambiguous')
                 ),
             terminal_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -318,6 +318,7 @@ def _create_functions() -> None:
             IF v_turn.terminal_at IS NOT NULL THEN
                 p_outcome := CASE
                     WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                    WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                     ELSE 'finished'
                 END;
                 {_RETURN_TURN}
@@ -812,29 +813,26 @@ def _create_functions() -> None:
             IF v_turn.terminal_at IS NOT NULL THEN
                 p_outcome := CASE
                     WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                    WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                     ELSE 'finished'
                 END;
                 {_RETURN_TURN}
             END IF;
 
-            -- The caller holds the matching route_inbox processing lease. A
-            -- daemon crash kills its runtime but leaves this public session
-            -- row open; close only the predecessor for this target/request
-            -- before the fenced recovery worker can register its replacement.
-            UPDATE public.dashboard_conversation_turn_sessions
-            SET invoke_active = FALSE,
-                completed_at = coalesce(completed_at, now()),
-                success = coalesce(success, FALSE)
+            -- A stale route-inbox lease is evidence that the predecessor
+            -- cannot be contacted through the queue, not proof that its
+            -- runtime died.  A database/network partition can leave that
+            -- runtime live after a recovery worker takes the lease. Preserve
+            -- every predecessor session for Stop enumeration and surface the
+            -- turn as ambiguous instead of starting a duplicate runtime.
+            UPDATE public.dashboard_conversation_turns
+            SET terminal_state = 'ambiguous',
+                terminal_at = now(),
+                updated_at = now()
             WHERE message_id = p_message_id
-              AND request_id = p_request_id
-              AND butler_name = v_turn.target_butler
-              AND phase = 'route'
-              AND completed_at IS NULL;
+            RETURNING * INTO v_turn;
 
-            p_outcome := CASE
-                WHEN v_turn.cancel_requested_at IS NOT NULL THEN 'cancelling'
-                ELSE 'active'
-            END;
+            p_outcome := 'ambiguous';
             {_RETURN_TURN}
         END;
         $fn$;
@@ -1198,6 +1196,7 @@ def _create_functions() -> None:
             IF v_turn.terminal_at IS NOT NULL THEN
                 p_outcome := CASE
                     WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                    WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                     ELSE 'finished'
                 END;
                 {_RETURN_TURN}
@@ -1263,6 +1262,7 @@ def _create_functions() -> None:
             IF v_turn.terminal_at IS NOT NULL THEN
                 p_outcome := CASE
                     WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                    WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                     ELSE 'finished'
                 END;
                 {_RETURN_TURN}
@@ -1514,6 +1514,7 @@ def _create_functions() -> None:
             END IF;
             p_outcome := CASE
                 WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                 WHEN v_turn.terminal_at IS NOT NULL THEN 'finished'
                 WHEN v_turn.cancel_requested_at IS NOT NULL THEN 'cancelling'
                 WHEN v_turn.target_kind IN ('bug_report', 'dead_letter')

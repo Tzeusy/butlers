@@ -18,15 +18,15 @@ export interface SendErrorBannerProps {
 }
 
 export function SendErrorBanner({ error, onRetry, onCheckAgain, onDismiss }: SendErrorBannerProps) {
-  if (error.kind === "timeout") {
+  if (error.kind === "timeout" || error.kind === "ambiguous") {
     return (
       <div
         className="flex items-center justify-between gap-2 border-t bg-muted/40 px-3 py-2 text-xs"
-        data-testid="chat-widget-timeout-banner"
+        data-testid={error.kind === "timeout" ? "chat-widget-timeout-banner" : "chat-widget-ambiguous-banner"}
       >
         <span className="text-muted-foreground">{error.message}</span>
         <div className="flex shrink-0 items-center gap-2">
-          {error.sessionId && (
+          {error.kind === "timeout" && error.sessionId && (
             <a
               href={`/sessions/${error.sessionId}`}
               target="_blank"

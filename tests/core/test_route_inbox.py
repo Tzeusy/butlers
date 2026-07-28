@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -14,6 +15,7 @@ from butlers.core.route_inbox import (
     STATE_ERRORED,
     STATE_PROCESSED,
     STATE_PROCESSING,
+    RouteInboxLeaseLost,
     route_inbox_insert,
     route_inbox_insert_on_connection,
     route_inbox_mark_errored,
@@ -21,6 +23,7 @@ from butlers.core.route_inbox import (
     route_inbox_mark_processing,
     route_inbox_recovery_sweep,
     route_inbox_scan_unprocessed,
+    route_inbox_wait_while_claimed,
 )
 
 pytestmark = pytest.mark.unit
@@ -105,6 +108,72 @@ async def test_insert_and_lifecycle_mutations() -> None:
     assert STATE_ERRORED in args4 and error in args4 and row_id in args4
 
 
+async def test_terminal_writes_are_monotonic_after_the_first_processing_settlement() -> None:
+    """An uncertain DB response cannot turn a committed success into an error."""
+
+    row_id = uuid.uuid4()
+    claim_id = uuid.uuid4()
+
+    class _MonotonicConnection:
+        lifecycle_state = STATE_PROCESSING
+
+        async def fetchval(self, query: str, new_state: str, *_args: object) -> uuid.UUID | None:
+            # The database predicate is the actual compare-and-set boundary;
+            # a claim id alone remains valid after the row becomes terminal.
+            assert "AND lifecycle_state = $5" in query
+            if self.lifecycle_state != STATE_PROCESSING:
+                return None
+            self.lifecycle_state = new_state
+            return row_id
+
+    conn = _MonotonicConnection()
+    pool = MagicMock()
+    pool.acquire = MagicMock(
+        return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=conn),
+            __aexit__=AsyncMock(return_value=False),
+        )
+    )
+
+    assert await route_inbox_mark_processed(
+        pool,
+        row_id,
+        uuid.uuid4(),
+        processing_claim_id=claim_id,
+    )
+    assert not await route_inbox_mark_errored(
+        pool,
+        row_id,
+        "response lost after committed success",
+        processing_claim_id=claim_id,
+    )
+    assert conn.lifecycle_state == STATE_PROCESSED
+
+
+async def test_lease_loss_cancels_a_live_invocation_before_recovery_can_replay() -> None:
+    """A local worker must not keep invoking after it loses its route lease."""
+
+    lease_lost = asyncio.Event()
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+    never = asyncio.Event()
+
+    async def live_invocation() -> None:
+        started.set()
+        try:
+            await never.wait()
+        finally:
+            stopped.set()
+
+    waiter = asyncio.create_task(route_inbox_wait_while_claimed(lease_lost, live_invocation()))
+    await started.wait()
+    lease_lost.set()
+
+    with pytest.raises(RouteInboxLeaseLost):
+        await waiter
+    assert stopped.is_set()
+
+
 async def test_scan_and_recovery_sweep() -> None:
     """scan: empty/with rows/grace_s+batch_size params/states filter; recovery:
     count/dispatch/continue on failure."""
@@ -161,15 +230,50 @@ async def test_scan_and_recovery_sweep() -> None:
     dispatch_calls: list[dict] = []
 
     async def collect_dispatch(
-        *, row_id: uuid.UUID, route_envelope: dict, processing_claim_id: uuid.UUID
+        *,
+        row_id: uuid.UUID,
+        route_envelope: dict,
+        processing_claim_id: uuid.UUID,
+        recovery_from_processing: bool,
     ) -> None:
-        dispatch_calls.append({"row_id": row_id, "processing_claim_id": processing_claim_id})
+        dispatch_calls.append(
+            {
+                "row_id": row_id,
+                "processing_claim_id": processing_claim_id,
+                "recovery_from_processing": recovery_from_processing,
+            }
+        )
 
     recovered = await route_inbox_recovery_sweep(
         pool2, dispatch_fn=collect_dispatch, grace_s=10, batch_size=50
     )
     assert recovered == 1 and dispatch_calls[0]["row_id"] == rr_id
     assert dispatch_calls[0]["processing_claim_id"] == claim_id
+    assert dispatch_calls[0]["recovery_from_processing"] is False
+
+    # A stale processing row has already crossed the runtime handoff boundary.
+    # Its dispatcher needs that fact to avoid a dashboard replay.
+    conn2.fetch = AsyncMock(
+        return_value=[
+            {
+                "id": rr_id,
+                "received_at": now.replace(tzinfo=None),
+                "route_envelope": {"schema_version": "route.v1", "input": {"prompt": "hi"}},
+                "lifecycle_state": STATE_PROCESSING,
+            }
+        ]
+    )
+    stale_claim_id = uuid.uuid4()
+    conn2.fetchval = AsyncMock(return_value=stale_claim_id)
+    recovered_processing = await route_inbox_recovery_sweep(
+        pool2, dispatch_fn=collect_dispatch, grace_s=10, batch_size=50
+    )
+    assert recovered_processing == 1
+    assert dispatch_calls[-1] == {
+        "row_id": rr_id,
+        "processing_claim_id": stale_claim_id,
+        "recovery_from_processing": True,
+    }
 
     # Recovery: continues on failure; count excludes failed rows
     rows = [
@@ -185,7 +289,11 @@ async def test_scan_and_recovery_sweep() -> None:
     call_count = 0
 
     async def dispatch_fn_fail(
-        *, row_id: uuid.UUID, route_envelope: dict, processing_claim_id: uuid.UUID
+        *,
+        row_id: uuid.UUID,
+        route_envelope: dict,
+        processing_claim_id: uuid.UUID,
+        recovery_from_processing: bool,
     ) -> None:
         nonlocal call_count
         call_count += 1

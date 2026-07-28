@@ -24,10 +24,12 @@ from opentelemetry.context import Context as OtelContext
 
 from butlers.core.dashboard_turns import reconcile_route_recovery
 from butlers.core.route_inbox import (
+    RouteInboxLeaseLost,
     route_inbox_mark_errored,
     route_inbox_mark_processed,
     route_inbox_processing_lease_heartbeat,
     route_inbox_recovery_sweep,
+    route_inbox_wait_while_claimed,
 )
 from butlers.core.spawner import SESSION_CANCELLED_ERROR
 from butlers.core.telemetry import tag_butler_span
@@ -350,6 +352,7 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
         row_id: uuid.UUID,
         route_envelope: dict,
         processing_claim_id: uuid.UUID,
+        recovery_from_processing: bool,
     ) -> None:
         """Dispatch one recovered route_inbox row as a background task.
 
@@ -394,7 +397,7 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
         )
         recovery_prompt = _wrap_routed_message(parsed.input.prompt)
 
-        if dashboard_turn_id is not None:
+        if dashboard_turn_id is not None and recovery_from_processing:
             try:
                 recovery_control = await reconcile_route_recovery(
                     pool,
@@ -426,7 +429,8 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
                 await route_inbox_mark_errored(
                     pool,
                     row_id,
-                    f"Dashboard recovery control rejected route replay: {recovery_control.outcome}",
+                    "Dashboard recovery could not prove the prior runtime stopped; "
+                    f"automatic replay was suppressed ({recovery_control.outcome}).",
                     processing_claim_id=processing_claim_id,
                 )
                 return
@@ -445,28 +449,26 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
                     row_id,
                     processing_claim_id,
                 ) as lease_lost:
-                    result = await spawner.trigger(
-                        prompt=recovery_prompt,
-                        context=context_text,
-                        trigger_source="route",
-                        request_id=route_request_id,
-                        # Recovery dispatches replay the original ingest;
-                        # request_id is the same UUID7 the switchboard wrote
-                        # as public.ingestion_events.id, so persist it as the
-                        # session's ingestion_event_id FK to preserve the
-                        # chronicler contact-resolution join (mirrors the
-                        # primary route handler in core_tools/_routing.py).
-                        ingestion_event_id=route_request_id,
-                        # Recovered dashboard work must rejoin the same durable
-                        # turn, otherwise a Stop during a process restart could
-                        # not prevent the replayed target runtime from starting.
-                        dashboard_turn_id=dashboard_turn_id,
+                    result = await route_inbox_wait_while_claimed(
+                        lease_lost,
+                        spawner.trigger(
+                            prompt=recovery_prompt,
+                            context=context_text,
+                            trigger_source="route",
+                            request_id=route_request_id,
+                            # Recovery dispatches replay the original ingest;
+                            # request_id is the same UUID7 the switchboard wrote
+                            # as public.ingestion_events.id, so persist it as the
+                            # session's ingestion_event_id FK to preserve the
+                            # chronicler contact-resolution join (mirrors the
+                            # primary route handler in core_tools/_routing.py).
+                            ingestion_event_id=route_request_id,
+                            # Recovered dashboard work must rejoin the same durable
+                            # turn, otherwise a Stop during a process restart could
+                            # not prevent the replayed target runtime from starting.
+                            dashboard_turn_id=dashboard_turn_id,
+                        ),
                     )
-                    if lease_lost.is_set():
-                        raise RuntimeError(
-                            "route inbox processing lease was lost before the runtime result "
-                            "could be recorded"
-                        )
                     result_error = getattr(result, "error", None)
                     if not bool(getattr(result, "success", False)) and (
                         result_error != SESSION_CANCELLED_ERROR
@@ -492,6 +494,14 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
                         raise RuntimeError(
                             "route inbox processing lease was lost while marking the result"
                         )
+            except RouteInboxLeaseLost:
+                # Do not race the recovery owner with a terminal write after
+                # heartbeat ownership is lost.  A later sweep reconciles it.
+                logger.warning(
+                    "route_inbox recovery: relinquished processing lease id=%s",
+                    row_id,
+                )
+                return
             except Exception as exc:
                 error_msg = f"{type(exc).__name__}: {exc}"
                 logger.exception("route_inbox recovery: trigger failed for id=%s", row_id)

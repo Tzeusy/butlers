@@ -520,6 +520,32 @@ describe("ChatContent — send-error classification", () => {
     expect(link.getAttribute("href")).toBe("/sessions/session-abc-123");
   });
 
+  it("does not offer retry when TURN_OUTCOME_UNKNOWN prevents a safe replay", async () => {
+    createConversationMock.mockResolvedValue({ ok: true } as Response);
+    scriptedEvents = [
+      {
+        event: "error",
+        data: {
+          code: "TURN_OUTCOME_UNKNOWN",
+          message: "This request may still have completed.",
+        },
+      },
+      { event: "done", data: {} },
+    ];
+
+    renderChatContent();
+    const input = screen.getByPlaceholderText("Type a message...");
+    fireEvent.change(input, { target: { value: "report a bug" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTitle("Send message"));
+    });
+
+    const banner = screen.getByTestId("chat-widget-ambiguous-banner");
+    expect(banner.textContent).toContain("may still have completed");
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByTestId("chat-widget-timeout-session-link")).toBeNull();
+  });
+
   it("dismissing the offline banner clears it without resending", async () => {
     createConversationMock.mockResolvedValue({ ok: true } as Response);
     scriptedEvents = [
@@ -573,6 +599,44 @@ describe("ChatContent — Stop button", () => {
     expect(screen.getByTestId("chat-stop-button")).toBeDefined();
     return view;
   }
+
+  it("does not send Stop until the create response proves the durable turn exists", async () => {
+    let resolveCreate!: (response: Response) => void;
+    createConversationMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+
+    renderChatContent();
+    fireEvent.change(screen.getByPlaceholderText("Type a message..."), {
+      target: { value: "hello" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTitle("Send message"));
+      await Promise.resolve();
+    });
+
+    const stopButton = screen.getByTestId("chat-stop-button") as HTMLButtonElement;
+    expect(stopButton.disabled).toBe(true);
+    fireEvent.click(stopButton);
+    expect(cancelConversationMessageTurnMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveCreate({ ok: true } as Response);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect((screen.getByTestId("chat-stop-button") as HTMLButtonElement).disabled).toBe(false));
+
+    cancelConversationMessageTurnMock.mockResolvedValue({
+      cancelled: true,
+      already_finished: false,
+      message: null,
+    });
+    fireEvent.click(screen.getByTestId("chat-stop-button"));
+    await waitFor(() => expect(cancelConversationMessageTurnMock).toHaveBeenCalledOnce());
+  });
 
   it("kills the session and renders the confirmed cancellation, never claiming success beforehand", async () => {
     await sendAndEnterStreamingState();
@@ -734,11 +798,15 @@ describe("ChatContent — Stop button", () => {
   });
 
   it("quietly stops watching without a false 'stopped' claim when the turn already finished", async () => {
-    const { queryClient } = await sendAndEnterStreamingState();
+    const { queryClient } = await sendAndEnterStreamingState({
+      conversationCreated: false,
+      token: false,
+    });
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
     cancelConversationMessageTurnMock.mockResolvedValue({
       cancelled: false,
       already_finished: true,
+      conversation_id: "conv-finished-1",
       session_id: null,
       message: null,
     });
@@ -753,7 +821,8 @@ describe("ChatContent — Stop button", () => {
       queryKey: ["conversations", "switchboard"],
     });
     expect(invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ["conversation-messages", "switchboard", "conv-stop-1"],
+      queryKey: ["conversation-messages", "switchboard", "conv-finished-1"],
     });
+    expect(useConversationMessages).toHaveBeenLastCalledWith("switchboard", "conv-finished-1");
   });
 });

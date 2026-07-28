@@ -251,6 +251,8 @@ export interface StreamingState {
   interrupted: boolean;
   /** True while a POST .../cancel call for this stream is in flight. */
   cancelling?: boolean;
+  /** True after the create/send response proves the durable turn exists. */
+  stopReady?: boolean;
   /** True once the server confirmed the in-flight session was killed. */
   cancelled?: boolean;
   /** Set when a cancel attempt failed — surfaced honestly, never dropped. */

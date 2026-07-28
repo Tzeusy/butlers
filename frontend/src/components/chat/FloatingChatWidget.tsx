@@ -310,6 +310,7 @@ function WidgetPanel({ onClose }: WidgetPanelProps) {
         content: "",
         pending: true,
         interrupted: false,
+        stopReady: false,
       });
 
       // Snapshot page context NOW, not before — this is the exact moment of
@@ -334,6 +335,13 @@ function WidgetPanel({ onClose }: WidgetPanelProps) {
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
+
+        // The API creates the durable user-message/turn record before it
+        // returns its SSE response. Stop may become actionable now, even
+        // though the first conversation_created event can still be pending.
+        setStreaming((prev) =>
+          prev?.messageId === messageId ? { ...prev, stopReady: true } : prev,
+        );
 
         await consumeSseStream(response, (event) => {
           if (
@@ -455,7 +463,7 @@ function WidgetPanel({ onClose }: WidgetPanelProps) {
   }
 
   async function handleStop() {
-    if (!streaming || streaming.cancelling) return;
+    if (!streaming || !streaming.stopReady || streaming.cancelling) return;
     const messageId = streaming.messageId;
     if (activeMessageIdRef.current !== messageId) return;
 
@@ -478,11 +486,20 @@ function WidgetPanel({ onClose }: WidgetPanelProps) {
           // before aborting the SSE: completion can commit just before this
           // status read, while its message_complete event is still buffered.
           const conversationId =
-            streaming.conversationId === "pending" ? activeConversationId : streaming.conversationId;
+            result.conversation_id ??
+            (streaming.conversationId === "pending" ? activeConversationId : streaming.conversationId);
           void queryClient.invalidateQueries({
             queryKey: conversationKeys.all(WIDGET_BUTLER),
           });
           if (conversationId) {
+            setActiveConversationId(conversationId);
+            setLocalMessages((prev) =>
+              prev.map((message) =>
+                message.id === optimisticUserMessageId(messageId)
+                  ? { ...message, conversation_id: conversationId }
+                  : message,
+              ),
+            );
             void queryClient.invalidateQueries({
               queryKey: conversationKeys.messages(WIDGET_BUTLER, conversationId),
             });
@@ -665,6 +682,7 @@ function WidgetPanel({ onClose }: WidgetPanelProps) {
             onSend={handleSendClick}
             onStop={handleStop}
             stopPending={streaming?.cancelling ?? false}
+            stopAvailable={streaming?.stopReady ?? true}
             stopStatus={
               streaming?.cancelling
                 ? "Stopping this turn."

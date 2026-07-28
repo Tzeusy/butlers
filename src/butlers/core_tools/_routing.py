@@ -26,12 +26,14 @@ from pydantic import ValidationError
 from butlers.core.dashboard_turns import claim_target, mark_route_enqueued, mark_terminal
 from butlers.core.model_routing import Complexity, coerce_complexity_tier
 from butlers.core.route_inbox import (
+    RouteInboxLeaseLost,
     route_inbox_claim_processing,
     route_inbox_insert,
     route_inbox_insert_on_connection,
     route_inbox_mark_errored,
     route_inbox_mark_processed,
     route_inbox_processing_lease_heartbeat,
+    route_inbox_wait_while_claimed,
 )
 from butlers.core.routing_context import _routing_ctx_var
 from butlers.core.spawner import SESSION_CANCELLED_ERROR, Spawner
@@ -982,27 +984,25 @@ def register_routing_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> 
                             _inbox_id,
                             processing_claim_id,
                         ) as lease_lost:
-                            result = await _spawner.trigger(
-                                prompt=_prompt,
-                                context=_context,
-                                trigger_source="route",
-                                request_id=_request_id,
-                                complexity=_complexity,
-                                # The ingestion request_id is the same UUID7 as
-                                # public.ingestion_events.id (inserted in the same
-                                # transaction by switchboard.ingest). Persist it as
-                                # the session's ingestion_event_id FK so chronicler
-                                # contact resolution can join sessions back to the
-                                # originating channel/contact.
-                                ingestion_event_id=_request_id,
-                                conversation_id=_conversation_id,
-                                dashboard_turn_id=_dashboard_turn_id,
+                            result = await route_inbox_wait_while_claimed(
+                                lease_lost,
+                                _spawner.trigger(
+                                    prompt=_prompt,
+                                    context=_context,
+                                    trigger_source="route",
+                                    request_id=_request_id,
+                                    complexity=_complexity,
+                                    # The ingestion request_id is the same UUID7 as
+                                    # public.ingestion_events.id (inserted in the same
+                                    # transaction by switchboard.ingest). Persist it as
+                                    # the session's ingestion_event_id FK so chronicler
+                                    # contact resolution can join sessions back to the
+                                    # originating channel/contact.
+                                    ingestion_event_id=_request_id,
+                                    conversation_id=_conversation_id,
+                                    dashboard_turn_id=_dashboard_turn_id,
+                                ),
                             )
-                            if lease_lost.is_set():
-                                raise RuntimeError(
-                                    "route inbox processing lease was lost before the "
-                                    "runtime result could be recorded"
-                                )
                             result_error = getattr(result, "error", None)
                             if not bool(getattr(result, "success", False)) and (
                                 result_error != SESSION_CANCELLED_ERROR
@@ -1034,6 +1034,16 @@ def register_routing_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> 
                                 raise RuntimeError(
                                     "route inbox processing lease was lost while marking the result"
                                 )
+                    except RouteInboxLeaseLost:
+                        # The heartbeat could no longer prove this worker owns the
+                        # row.  Do not race a recovery owner with another terminal
+                        # write; the fenced claim will be reconciled by recovery.
+                        logger.warning(
+                            "route_inbox: relinquished processing lease id=%s request_id=%s",
+                            _inbox_id,
+                            _request_id,
+                        )
+                        return
                     except Exception as exc:
                         error_msg = f"{type(exc).__name__}: {exc}"
                         logger.exception(

@@ -369,8 +369,8 @@ async def test_dashboard_route_acceptance_atomically_claims_and_enqueues_before_
     assert trigger.call_args.kwargs["dashboard_turn_id"] == message_id
 
 
-async def test_dashboard_route_recovery_rejoins_the_original_stop_turn() -> None:
-    """A restart must not replay dashboard work outside the Stop protocol."""
+async def test_dashboard_processing_recovery_parks_an_unprovable_predecessor() -> None:
+    """A stale dashboard runtime is ambiguous, never an automatic duplicate replay."""
     from types import SimpleNamespace
 
     from butlers.switchboard_wiring import recover_route_inbox
@@ -403,6 +403,7 @@ async def test_dashboard_route_recovery_rejoins_the_original_stop_turn() -> None
             row_id=row_id,
             route_envelope=envelope,
             processing_claim_id=processing_claim_id,
+            recovery_from_processing=True,
         )
         return 1
 
@@ -412,32 +413,32 @@ async def test_dashboard_route_recovery_rejoins_the_original_stop_turn() -> None
             "butlers.switchboard_wiring.reconcile_route_recovery",
             new_callable=AsyncMock,
             return_value=_dashboard_turn_result(
-                "active",
+                "ambiguous",
                 message_id=message_id,
                 request_id=request_id,
                 inbox_id=row_id,
             ),
         ) as reconcile,
         patch(
-            "butlers.switchboard_wiring.route_inbox_mark_processed",
+            "butlers.switchboard_wiring.route_inbox_mark_errored",
             new_callable=AsyncMock,
             return_value=True,
-        ) as processed,
+        ) as errored,
     ):
         await recover_route_inbox(daemon, pool)
 
-    trigger.assert_awaited_once()
-    assert trigger.await_args.kwargs["dashboard_turn_id"] == message_id
+    trigger.assert_not_awaited()
     reconcile.assert_awaited_once_with(
         pool,
         message_id=message_id,
         request_id=request_id,
         route_inbox_id=row_id,
     )
-    processed.assert_awaited_once_with(
+    errored.assert_awaited_once_with(
         pool,
         row_id,
-        trigger.return_value.session_id,
+        "Dashboard recovery could not prove the prior runtime stopped; "
+        "automatic replay was suppressed (ambiguous).",
         processing_claim_id=processing_claim_id,
     )
 
@@ -451,7 +452,12 @@ async def test_failure_recording_and_dedup(tmp_path: Path) -> None:
 
     # Failure path
     daemon.spawner.trigger = AsyncMock(side_effect=RuntimeError("spawner crash"))
-    mock_errored = AsyncMock()
+    error_recorded = asyncio.Event()
+
+    async def _record_error(*_args: Any, **_kwargs: Any) -> None:
+        error_recorded.set()
+
+    mock_errored = AsyncMock(side_effect=_record_error)
     with (
         patch(
             "butlers.core_tools._routing.route_inbox_insert",
@@ -471,7 +477,7 @@ async def test_failure_recording_and_dedup(tmp_path: Path) -> None:
             input={"prompt": "Run health check."},
         )
         assert result["status"] == "accepted"
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(error_recorded.wait(), timeout=1)
     mock_errored.assert_awaited_once()
 
     # Dedup: existing session → skip insert, return accepted with dedup=True
@@ -487,6 +493,54 @@ async def test_failure_recording_and_dedup(tmp_path: Path) -> None:
     assert result2["status"] == "accepted"
     assert result2.get("dedup") is True
     mock_insert.assert_not_awaited()
+
+
+async def test_lease_loss_does_not_settle_a_route_inbox_row(tmp_path: Path) -> None:
+    """A worker that loses its lease leaves terminal settlement to the current owner."""
+
+    patches = _patch_infra("health")
+    butler_dir = _make_butler_toml(tmp_path, butler_name="health")
+    daemon, route_execute_fn = await _start_daemon_with_route_execute(butler_dir, patches)
+    assert route_execute_fn is not None
+
+    from butlers.core.route_inbox import RouteInboxLeaseLost
+
+    lease_loss_observed = asyncio.Event()
+
+    async def _lose_lease(_lease_lost: asyncio.Event, invocation: Any) -> None:
+        # The patched boundary takes ownership of the created trigger
+        # coroutine just like the production helper does; close it before
+        # raising so this regression test does not hide an unawaited runtime.
+        invocation.close()
+        lease_loss_observed.set()
+        raise RouteInboxLeaseLost("test lease loss")
+
+    mock_errored = AsyncMock()
+    with (
+        patch(
+            "butlers.core_tools._routing.route_inbox_insert",
+            new_callable=AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
+        patch(
+            "butlers.core_tools._routing.route_inbox_claim_processing",
+            new_callable=AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
+        patch("butlers.core_tools._routing.route_inbox_wait_while_claimed", _lose_lease),
+        patch("butlers.core_tools._routing.route_inbox_mark_errored", mock_errored),
+    ):
+        result = await route_execute_fn(
+            schema_version="route.v1",
+            request_context=_route_request_context(),
+            input={"prompt": "Run health check."},
+        )
+        assert result["status"] == "accepted"
+        await asyncio.wait_for(lease_loss_observed.wait(), timeout=1)
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+    mock_errored.assert_not_awaited()
 
 
 async def test_crash_recovery_on_startup(tmp_path: Path) -> None:

@@ -452,10 +452,11 @@ def test_dashboard_turn_stop_transitions_and_runtime_acl(postgres_container) -> 
             assert settled["outcome"] == "finished"
             assert settled["terminal_state"] == "failed"
 
-            # A crash can leave the prior target session marked invoke_active.
-            # Recovery owns the route-inbox lease, closes only that predecessor,
-            # and lets the replacement observe the already-requested Stop rather
-            # than leaving the turn permanently "cancelling".
+            # A stale route-inbox lease does not prove that the old target
+            # runtime is dead. Recovery must therefore preserve the live
+            # predecessor as evidence, terminalize the turn as ambiguous, and
+            # never authorize a replacement runtime that could duplicate its
+            # external effects.
             conversation_id, message_id = _seed_dashboard_user_turn(conn)
             request_id = uuid.uuid4()
             inbox_id = uuid.uuid4()
@@ -508,12 +509,6 @@ def test_dashboard_turn_stop_transitions_and_runtime_acl(postgres_container) -> 
                 p_message_id=message_id,
                 p_session_id=crashed_session_id,
             )
-            assert (
-                _turn_call(conn, "dashboard_turn_request_cancel", p_message_id=message_id)[
-                    "outcome"
-                ]
-                == "cancelling"
-            )
             recovered = _turn_call(
                 conn,
                 "dashboard_turn_reconcile_route_recovery",
@@ -522,7 +517,8 @@ def test_dashboard_turn_stop_transitions_and_runtime_acl(postgres_container) -> 
                 p_request_id=request_id,
                 p_route_inbox_id=inbox_id,
             )
-            assert recovered["outcome"] == "cancelling"
+            assert recovered["outcome"] == "ambiguous"
+            assert recovered["terminal_state"] == "ambiguous"
             crashed_session = (
                 conn.execute(
                     text(
@@ -537,8 +533,21 @@ def test_dashboard_turn_stop_transitions_and_runtime_acl(postgres_container) -> 
                 .mappings()
                 .one()
             )
-            assert crashed_session["invoke_active"] is False
-            assert crashed_session["completed_at"] is not None
+            assert crashed_session["invoke_active"] is True
+            assert crashed_session["completed_at"] is None
+            # Repeated recovery observes the same unresolved terminal fact;
+            # it must not recast it as a normal finished turn.
+            assert (
+                _turn_call(
+                    conn,
+                    "dashboard_turn_reconcile_route_recovery",
+                    role="butler_general_rw",
+                    p_message_id=message_id,
+                    p_request_id=request_id,
+                    p_route_inbox_id=inbox_id,
+                )["outcome"]
+                == "ambiguous"
+            )
             assert (
                 _turn_call(
                     conn,
@@ -550,18 +559,8 @@ def test_dashboard_turn_stop_transitions_and_runtime_acl(postgres_container) -> 
                     p_butler_name="general",
                     p_phase="route",
                 )["outcome"]
-                == "cancelled"
+                == "finished"
             )
-            replacement_completion = _turn_call(
-                conn,
-                "dashboard_turn_complete_session",
-                role="butler_general_rw",
-                p_message_id=message_id,
-                p_session_id=replacement_session_id,
-                p_success=False,
-            )
-            assert replacement_completion["outcome"] == "cancelled"
-            assert replacement_completion["terminal_state"] == "cancelled"
 
             # A target runtime may only mutate the target assigned to its own
             # active database role; General cannot terminalize a Finance turn.

@@ -24,7 +24,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -47,6 +47,10 @@ _DEFAULT_RECOVERY_BATCH = 50
 # lease is a crash detector, not a runtime deadline: a healthy long-running
 # session keeps renewing it until it settles.
 _DEFAULT_PROCESSING_HEARTBEAT_S = 3
+
+
+class RouteInboxLeaseLost(RuntimeError):
+    """Raised after a live invocation is cancelled because its queue lease was lost."""
 
 
 async def route_inbox_insert_on_connection(
@@ -232,6 +236,59 @@ async def route_inbox_processing_lease_heartbeat(
             pass
 
 
+async def route_inbox_wait_while_claimed[ResultT](
+    lease_lost: asyncio.Event,
+    invocation: Awaitable[ResultT],
+) -> ResultT:
+    """Await an invocation only while its route-inbox processing lease remains owned.
+
+    A fenced terminal write prevents a displaced worker from changing queue
+    state, but it cannot stop an already-running local runtime.  Race the
+    invocation with the heartbeat's lease-loss event so this worker cancels
+    its own runtime before a recovery owner can consider the row again.  This
+    remains best-effort across a process or database partition; dashboard
+    recovery separately treats an unprovable predecessor as ambiguous rather
+    than automatically replaying it.
+    """
+    invocation_task = asyncio.ensure_future(invocation)
+    lease_wait_task = asyncio.create_task(lease_lost.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {invocation_task, lease_wait_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if lease_wait_task in done or lease_lost.is_set():
+            if not invocation_task.done():
+                invocation_task.cancel()
+                try:
+                    await invocation_task
+                except asyncio.CancelledError:
+                    pass
+            else:
+                # Consume a simultaneous exception so the cancelled lease
+                # boundary remains the one surfaced to callers.
+                try:
+                    invocation_task.result()
+                except (asyncio.CancelledError, Exception):
+                    pass
+            raise RouteInboxLeaseLost(
+                "route inbox processing lease was lost while the runtime was live"
+            )
+        return await invocation_task
+    finally:
+        lease_wait_task.cancel()
+        try:
+            await lease_wait_task
+        except asyncio.CancelledError:
+            pass
+        if not invocation_task.done():
+            invocation_task.cancel()
+            try:
+                await invocation_task
+            except asyncio.CancelledError:
+                pass
+
+
 async def route_inbox_mark_processed(
     pool: asyncpg.Pool,
     row_id: uuid.UUID,
@@ -247,18 +304,22 @@ async def route_inbox_mark_processed(
     async with pool.acquire() as conn:
         settled = await conn.fetchval(
             """
-            UPDATE route_inbox
-            SET lifecycle_state = $1,
-                processed_at = now(),
-                session_id = $2
-            WHERE id = $3
-              AND ($4::uuid IS NULL OR processing_claim_id = $4)
-            RETURNING id
-            """,
+        UPDATE route_inbox
+        SET lifecycle_state = $1,
+            processed_at = now(),
+            session_id = $2,
+            processing_claim_id = NULL,
+            processing_claimed_at = NULL
+        WHERE id = $3
+          AND lifecycle_state = $5
+          AND ($4::uuid IS NULL OR processing_claim_id = $4)
+        RETURNING id
+        """,
             STATE_PROCESSED,
             session_id,
             row_id,
             processing_claim_id,
+            STATE_PROCESSING,
         )
     if settled is not None:
         logger.debug("route_inbox: processed id=%s session_id=%s", row_id, session_id)
@@ -280,18 +341,22 @@ async def route_inbox_mark_errored(
     async with pool.acquire() as conn:
         settled = await conn.fetchval(
             """
-            UPDATE route_inbox
-            SET lifecycle_state = $1,
-                processed_at = now(),
-                error = $2
-            WHERE id = $3
-              AND ($4::uuid IS NULL OR processing_claim_id = $4)
-            RETURNING id
-            """,
+        UPDATE route_inbox
+        SET lifecycle_state = $1,
+            processed_at = now(),
+            error = $2,
+            processing_claim_id = NULL,
+            processing_claimed_at = NULL
+        WHERE id = $3
+          AND lifecycle_state = $5
+          AND ($4::uuid IS NULL OR processing_claim_id = $4)
+        RETURNING id
+        """,
             STATE_ERRORED,
             error,
             row_id,
             processing_claim_id,
+            STATE_PROCESSING,
         )
     if settled is not None:
         logger.warning("route_inbox: errored id=%s error=%s", row_id, error[:200])
@@ -330,7 +395,7 @@ async def route_inbox_scan_unprocessed(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, received_at, route_envelope
+            SELECT id, received_at, route_envelope, lifecycle_state
             FROM route_inbox
             WHERE (
                     lifecycle_state = $1
@@ -361,6 +426,9 @@ async def route_inbox_scan_unprocessed(
                 "route_envelope": json.loads(row["route_envelope"])
                 if isinstance(row["route_envelope"], str)
                 else dict(row["route_envelope"]),
+                "lifecycle_state": row.get("lifecycle_state", STATE_ACCEPTED)
+                if hasattr(row, "get")
+                else STATE_ACCEPTED,
             }
         )
     logger.debug("route_inbox scan: found %d unprocessed row(s)", len(result))
@@ -389,9 +457,12 @@ async def route_inbox_recovery_sweep(
         Maximum rows per sweep.
     dispatch_fn:
         Async callable with signature
-        ``dispatch_fn(row_id, route_envelope, processing_claim_id) -> None``.
-        It receives an already-acquired lease and must use that id for its
-        heartbeat and terminal write.
+        ``dispatch_fn(row_id, route_envelope, processing_claim_id,
+        recovery_from_processing) -> None``.  It receives an already-acquired
+        lease and must use that id for its heartbeat and terminal write.
+        ``recovery_from_processing`` distinguishes a never-started accepted
+        row from a stale row whose predecessor may already have invoked a
+        runtime.
 
     Returns
     -------
@@ -410,6 +481,7 @@ async def route_inbox_recovery_sweep(
         route_envelope = (
             json.loads(raw_envelope) if isinstance(raw_envelope, str) else dict(raw_envelope)
         )
+        recovery_from_processing = row.get("lifecycle_state") == STATE_PROCESSING
         age_s = (now - row["received_at"].replace(tzinfo=UTC)).total_seconds()
         logger.info(
             "route_inbox recovery: re-dispatching id=%s (age=%.0fs)",
@@ -430,6 +502,7 @@ async def route_inbox_recovery_sweep(
                 row_id=row_id,
                 route_envelope=route_envelope,
                 processing_claim_id=processing_claim_id,
+                recovery_from_processing=recovery_from_processing,
             )
             recovered += 1
         except Exception:

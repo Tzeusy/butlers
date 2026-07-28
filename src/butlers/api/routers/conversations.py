@@ -600,6 +600,14 @@ async def _stream_conversation_response(
                         yield _sse_error("SESSION_CANCELLED", "This turn was stopped by its owner.")
                         yield _sse_done()
                         return
+                    if turn_status.outcome == "ambiguous":
+                        yield _sse_error(
+                            "TURN_OUTCOME_UNKNOWN",
+                            "We could not determine whether this request completed. "
+                            "It will not be automatically repeated.",
+                        )
+                        yield _sse_done()
+                        return
 
             # Keepalive check
             now = time.monotonic()
@@ -907,6 +915,17 @@ async def _dashboard_stop_status_response(
             conversation_id=status.conversation_id,
             session_id=session_id,
         )
+    if status.outcome == "ambiguous":
+        return ConversationCancelResponse(
+            cancelled=False,
+            already_finished=False,
+            conversation_id=status.conversation_id,
+            session_id=session_id,
+            message=(
+                "This turn's outcome is unknown; it cannot be confirmed stopped or repeated "
+                "automatically."
+            ),
+        )
     if status.outcome == "external_action_in_progress":
         return ConversationCancelResponse(
             cancelled=False,
@@ -964,6 +983,16 @@ async def _cancel_dashboard_message_turn(
             cancelled=False,
             already_finished=True,
             conversation_id=turn.conversation_id,
+        )
+    if turn.outcome == "ambiguous":
+        return ConversationCancelResponse(
+            cancelled=False,
+            already_finished=False,
+            conversation_id=turn.conversation_id,
+            message=(
+                "This turn's outcome is unknown; it cannot be confirmed stopped or repeated "
+                "automatically."
+            ),
         )
     if turn.outcome == "external_action_in_progress":
         return ConversationCancelResponse(
