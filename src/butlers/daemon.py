@@ -1461,9 +1461,7 @@ class ButlerDaemon:
             # Direct approval producers bypass the normal gate wrapper, so
             # validate their declared durable commands against this daemon's
             # actual registered MCP surface before it can accept new work.
-            # The isinstance guard keeps lightweight startup-wiring probes
-            # decoupled from concrete roster tool registration.
-            if isinstance(self, ButlerDaemon) and mcp is not None:
+            if mcp is not None:
                 from butlers.modules.approvals.command_contracts import (
                     validate_owner_command_registry,
                 )
