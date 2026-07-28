@@ -19,5 +19,5 @@ The QA overview SHALL distinguish an unavailable summary or case source from a s
 
 ## Source References
 
-- Doctrine rule: `about/craft-and-care/review-and-documentation.md` -- failure states must remain diagnosable.
-- RFC: `about/legends-and-lore/` source-honesty and degraded-envelope conventions.
+- Non-Negotiable Rule 4 (deterministic infrastructure must be testable, debuggable, and predictable)
+- RFC 0007 (dashboard and API surface)
