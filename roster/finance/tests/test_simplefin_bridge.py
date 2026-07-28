@@ -429,7 +429,8 @@ async def test_provider_id_preserves_aggregator_provenance_after_email_collision
     from roster.finance.jobs.finance_jobs import run_simplefin_sync
 
     account = await _insert_bound_account(pool)
-    posted_at = _NOW - timedelta(hours=3)
+    sync_now = datetime.now(UTC).replace(microsecond=0)
+    posted_at = sync_now - timedelta(hours=3)
     email_row = await pool.fetchrow(
         """
         INSERT INTO transactions (
@@ -463,7 +464,7 @@ async def test_provider_id_preserves_aggregator_provenance_after_email_collision
             pool,
             credential_store=_CredentialStore(_ACCESS_URL),
             http_client=client,
-            now=_NOW,
+            now=sync_now,
         )
 
     assert result == {"status": "ok", "recorded": 1, "skipped_pending": 0}
