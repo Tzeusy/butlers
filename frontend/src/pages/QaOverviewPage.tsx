@@ -827,7 +827,7 @@ export default function QaOverviewPage() {
           ) : cases.isError ? (
             <SourceDegradedNote
               label="Case rail"
-              detail="is unavailable"
+              detail="unavailable"
               onRetry={() => void cases.refetch()}
               testId="qa-case-rail-degraded"
             />
