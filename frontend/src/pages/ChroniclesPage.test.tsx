@@ -320,7 +320,9 @@ describe("ChroniclesPage editorial archetype", () => {
 
     const { container, unmount } = mountPage("/chronicles?date=2026-03-01");
     try {
-      const prev = container.querySelector('button[aria-label="Previous day"]') as HTMLButtonElement;
+      const prev = container.querySelector(
+        'button[aria-label="Previous day: archive boundary unavailable"]',
+      ) as HTMLButtonElement;
       expect(prev.disabled).toBe(true);
       expect(prev.title).toBe("Archive boundary unavailable");
     } finally {

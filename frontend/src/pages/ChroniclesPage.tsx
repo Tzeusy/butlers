@@ -319,7 +319,9 @@ export default function ChroniclesPage() {
               size="icon-xs"
               onClick={() => selectDate(prevIsoDay(selectedDate))}
               disabled={atEarliest}
-              aria-label="Previous day"
+              aria-label={
+                earliest === null ? "Previous day: archive boundary unavailable" : "Previous day"
+              }
               title={earliest === null ? "Archive boundary unavailable" : undefined}
             >
               <ChevronLeft aria-hidden />
