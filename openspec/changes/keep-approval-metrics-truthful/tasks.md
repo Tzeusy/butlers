@@ -14,4 +14,4 @@
 
 - [x] 3.1 Run focused backend and frontend behavior tests plus OpenSpec validation.
 - [x] 3.2 Run relevant formatting, lint, type, and diff checks.
-- [ ] 3.3 Review the scoped diff, commit, push, and open a non-draft PR.
+- [x] 3.3 Review the scoped diff, commit, push, and open a non-draft PR.
