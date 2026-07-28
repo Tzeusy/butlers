@@ -23,8 +23,10 @@ advance freshness or write any ledger rows.
 - Use `CredentialStore.resolve("SIMPLEFIN_ACCESS_URL", env_fallback=False)`
   and produce stable, sanitized status values when configuration or upstream
   data is unusable.
-- Match the remote account only by provider metadata:
-  `accounts.metadata.provider = {"name": "simplefin", "conn_id": ..., "account_id": ...}`.
+- On the first fully validated one-account response, create one Finance account
+  with exact provider metadata:
+  `accounts.metadata.provider = {"name": "simplefin", "conn_id": ..., "account_id": ...}`;
+  require that binding on later runs.
 - Pre-validate the complete response before ledger writes, ingest settled posted
   rows with provider-ID idempotency and safe provenance, then update freshness.
 - Hold a session advisory lock for the fetch/write interval so overlapping jobs
@@ -32,10 +34,11 @@ advance freshness or write any ledger rows.
 
 **Non-Goals:**
 
-- No setup-token claiming, account provisioning, secret creation, live
-  activation, migration, balance persistence, cursor/pagination, multi-account
-  support, pending lifecycle handling, remote mutation/deletion, or deeper
-  history backfill.
+- No setup-token claiming, generic account-management surface, secret creation,
+  live activation, migration, balance persistence, cursor/pagination,
+  multi-account support, pending lifecycle handling, remote mutation/deletion,
+  or deeper history backfill. The sole account-provisioning behavior is the
+  first validated SimpleFIN response described below.
 - No change to public Finance MCP signatures, existing manual/email/CSV/API
   ingestion, or reconciliation matching semantics.
 
@@ -59,13 +62,21 @@ revocation is observable only as a sanitized non-2xx response after one
 request, so it is reported as an upstream authentication failure with no raw
 provider error or URL disclosure.
 
-### One local binding before one remote response
+### First-response provisioning, then exact local binding
 
-Before the request, the job finds exactly one Finance account with the
-SimpleFIN provider metadata shape above.  The stored connection/account pair
-sets the date window and prevents name-based matching.  The response must
-contain exactly one account with the identical pair; zero, multiple, or
-mismatched accounts are validation failures and produce no writes.
+When no Finance account claims the SimpleFIN provider, the job may make the
+single bounded request and validate the required connection list, exactly one
+remote account, and every settled transaction before writing anything. It then
+creates one Finance account with type `other`, the remote connection/account
+labels and currency, and the exact `(conn_id, account_id)` provider binding.
+This is cardinality-based provisioning of a new account, not name-based
+matching to an existing account.
+
+On later runs, the job finds exactly one Finance account with that provider
+metadata. The stored connection/account pair prevents name-based matching. More
+than one claimed local binding, an invalid claimed binding, or a response with
+zero, multiple, or mismatched accounts fails closed. The only no-binding case
+allowed to fetch is the first-run provisioning path.
 
 ### Complete response validation before normal Finance recording
 
@@ -86,8 +97,9 @@ SimpleFIN v2 `start-date`, `end-date`, and `version=2` parameters, omitting the
 optional pending flag so the provider's settled-only default remains active.
 Each recorded row uses `external_id` from the provider, `source="aggregator"`,
 and metadata limited to the provider name plus non-secret remote connection and
-account IDs.  The existing dedup key makes replays converge.  Only a fully
-validated and completely recorded run updates `last_synced_at`.
+account IDs.  The existing dedup key makes replays converge, and replayed rows
+do not inflate the job's `recorded` count. Only a fully validated and completely
+recorded run updates `last_synced_at`.
 
 ### Dedicated session advisory lock
 
@@ -120,14 +132,16 @@ the HTTP/write interval cannot overlap.
 
 1. Deploy code and the disabled-by-absence schedule definition; no migration is
    required because `finance_012` is already the receiving schema.
-2. An owner can provision the claimed Access URL through the existing Finance
-   secret surface.  Until then, runs report `not_configured` and make no HTTP
-   request.
-3. Roll back by disabling/removing the TOML schedule and revoking/removing the
+2. An owner provisions the claimed Access URL in `/secrets` as a System secret
+   named `SIMPLEFIN_ACCESS_URL` with target `finance`. Until then, runs report
+   `not_configured` and make no HTTP request.
+3. The first valid one-account response creates the exact provider-bound
+   Finance account; later runs require that binding.
+4. Roll back by disabling/removing the TOML schedule and revoking/removing the
    Finance secret.  Existing aggregator ledger history remains intact.
 
 ## Open Questions
 
-None.  The v1 packet deliberately fixes one-account metadata binding,
-settled-only ingestion, and bounded windows; broader account onboarding or
-pagination belongs to a later change.
+None. The v1 packet deliberately fixes one-account first-response provisioning,
+exact metadata binding, settled-only ingestion, and bounded windows; generic
+account onboarding, multiple accounts, or pagination belong to a later change.

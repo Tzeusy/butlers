@@ -38,17 +38,30 @@ text.
 - **AND** it SHALL use finite client timeouts and omit any pending-inclusion
   parameter
 
-### Requirement: Explicit one-account provider binding
+### Requirement: Safe one-account provisioning and exact provider binding
 
-The SimpleFIN Bridge SHALL operate only when exactly one Finance account is
-configured with `metadata.provider.name="simplefin"` and the exact provider
-metadata pair `conn_id` and `account_id`.  It SHALL match the sole returned
-remote account only by that pair and SHALL never infer a local account from a
-display name, institution, currency, or transaction text.
+The SimpleFIN Bridge SHALL support one safe first-run provisioning path. When no
+Finance account is already bound to SimpleFIN, it SHALL validate exactly one
+remote v2 account and its matching connection before creating one Finance
+account with the exact non-secret `conn_id` and `account_id` provider metadata.
+After provisioning, it SHALL match the sole returned remote account only by that
+pair and SHALL never infer an existing local account from a display name,
+institution, currency, or transaction text.
 
-#### Scenario: Missing or ambiguous local binding does not fetch
-- **WHEN** zero or more than one local Finance account has a valid SimpleFIN
-  provider binding
+#### Scenario: First validated response provisions one exact account
+- **WHEN** no local Finance account has
+  `metadata.provider.name="simplefin"`
+- **AND** the complete v2 response has exactly one valid account and one matching
+  connection
+- **THEN** the sync SHALL create one Finance account with type `other`, the
+  remote connection/account labels and currency, and provider metadata
+  containing the exact `conn_id` and `account_id`
+- **AND** account creation SHALL happen only after complete response validation
+- **AND** the successful result SHALL report `account_created=true`
+
+#### Scenario: Ambiguous or invalid local binding does not fetch
+- **WHEN** more than one local Finance account claims a SimpleFIN provider
+  binding, or one claimed binding lacks a non-empty `conn_id` or `account_id`
 - **THEN** the sync SHALL return a sanitized not-configured or invalid-binding
   result
 - **AND** it SHALL make no HTTP request and write no ledger row
@@ -61,9 +74,10 @@ display name, institution, currency, or transaction text.
 
 #### Scenario: Empty, multiple, or mismatched remote accounts fail closed
 - **WHEN** the v2 response contains zero accounts, multiple accounts, or a
-  different provider metadata pair
+  different provider metadata pair for an existing binding
 - **THEN** the sync SHALL return a sanitized invalid-response result
-- **AND** it SHALL not write transactions or advance `accounts.last_synced_at`
+- **AND** it SHALL not create an account, write transactions, or advance
+  `accounts.last_synced_at`
 
 ### Requirement: Complete validated response precedes idempotent settled recording
 
@@ -95,6 +109,7 @@ non-secret provider provenance.
   window
 - **THEN** the existing `(local_account_id, external_id)` deduplication path
   SHALL return the existing ledger row without creating a duplicate
+- **AND** the sync result SHALL not count the replayed row as newly `recorded`
 
 ### Requirement: Window, freshness, and concurrency truthfulness
 
@@ -140,7 +155,10 @@ and v1 limitations without including a credential value.
 
 #### Scenario: Documentation makes the operator boundary clear
 - **WHEN** an operator reads the Finance documentation
-- **THEN** it SHALL explain how to configure the existing Finance secret surface
-  without printing an Access URL
+- **THEN** it SHALL explain how to add `SIMPLEFIN_ACCESS_URL` through the
+  existing System-secret form with target `finance`, without printing an Access
+  URL
+- **AND** it SHALL explain that the first fully validated one-account response
+  creates the exact provider-bound Finance account automatically
 - **AND** it SHALL state the one-account, settled-only, 90-day/five-day,
   no-pagination, no-balance, and no-remote-mutation v1 limits

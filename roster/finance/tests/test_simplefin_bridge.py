@@ -203,10 +203,70 @@ async def test_malformed_access_url_skips_without_http_or_writes(pool: asyncpg.P
 
 @pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.skipif(not _DOCKER_AVAILABLE, reason="Docker not available")
-async def test_missing_or_ambiguous_local_binding_skips_without_http(
+async def test_first_valid_response_creates_exact_provider_bound_account(
     pool: asyncpg.Pool,
 ) -> None:
-    """Provider metadata, rather than account labels, is the sole local binding."""
+    """The credential is enough to bootstrap one exact remote account safely."""
+    from roster.finance.jobs.finance_jobs import run_simplefin_sync
+
+    response = _account_set(
+        transactions=[
+            {
+                "id": "bootstrap-fixture-1",
+                "posted": int((_NOW - timedelta(hours=2)).timestamp()),
+                "amount": "-7.89",
+                "description": "Bootstrap Fixture",
+            }
+        ]
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=response)
+
+    async with _http_client(handler) as client:
+        result = await run_simplefin_sync(
+            pool,
+            credential_store=_CredentialStore(_ACCESS_URL),
+            http_client=client,
+            now=_NOW,
+        )
+
+    assert result == {
+        "status": "ok",
+        "recorded": 1,
+        "skipped_pending": 0,
+        "account_created": True,
+    }
+    account = await pool.fetchrow(
+        """
+        SELECT institution, type, name, currency, metadata, last_synced_at
+        FROM accounts
+        """
+    )
+    assert account is not None
+    assert account["institution"] == "Fixture Bank"
+    assert account["type"] == "other"
+    assert account["name"] == "Fixture Checking"
+    assert account["currency"] == "USD"
+    assert account["metadata"] == {
+        "provider": {
+            "name": "simplefin",
+            "conn_id": _CONN_ID,
+            "account_id": _REMOTE_ACCOUNT_ID,
+        }
+    }
+    assert account["last_synced_at"] == _NOW
+    assert await pool.fetchval(
+        "SELECT account_id FROM transactions WHERE external_id = 'bootstrap-fixture-1'"
+    ) == await pool.fetchval("SELECT id FROM accounts")
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.skipif(not _DOCKER_AVAILABLE, reason="Docker not available")
+async def test_ambiguous_local_binding_skips_without_http(
+    pool: asyncpg.Pool,
+) -> None:
+    """Multiple explicit provider bindings remain a no-request configuration error."""
     from roster.finance.jobs.finance_jobs import run_simplefin_sync
 
     requests: list[httpx.Request] = []
@@ -216,12 +276,6 @@ async def test_missing_or_ambiguous_local_binding_skips_without_http(
         raise AssertionError("an unbound or ambiguous account must not make HTTP requests")
 
     async with _http_client(handler) as client:
-        missing = await run_simplefin_sync(
-            pool,
-            credential_store=_CredentialStore(_ACCESS_URL),
-            http_client=client,
-            now=_NOW,
-        )
         await _insert_bound_account(pool)
         await _insert_bound_account(
             pool,
@@ -235,9 +289,35 @@ async def test_missing_or_ambiguous_local_binding_skips_without_http(
             now=_NOW,
         )
 
-    assert missing == {"status": "not_configured", "reason": "account_binding_missing"}
     assert ambiguous == {"status": "not_configured", "reason": "account_binding_ambiguous"}
     assert requests == []
+    assert await pool.fetchval("SELECT COUNT(*) FROM transactions") == 0
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.skipif(not _DOCKER_AVAILABLE, reason="Docker not available")
+async def test_first_response_is_fully_validated_before_account_creation(
+    pool: asyncpg.Pool,
+) -> None:
+    """Invalid discovery metadata cannot leave a partially provisioned account."""
+    from roster.finance.jobs.finance_jobs import run_simplefin_sync
+
+    response = _account_set()
+    response["connections"] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=response)
+
+    async with _http_client(handler) as client:
+        result = await run_simplefin_sync(
+            pool,
+            credential_store=_CredentialStore(_ACCESS_URL),
+            http_client=client,
+            now=_NOW,
+        )
+
+    assert result == {"status": "degraded", "reason": "invalid_response"}
+    assert await pool.fetchval("SELECT COUNT(*) FROM accounts") == 0
     assert await pool.fetchval("SELECT COUNT(*) FROM transactions") == 0
 
 
@@ -738,7 +818,7 @@ async def test_overlap_window_replays_by_external_id_without_duplicate(pool: asy
         )
 
     assert first["status"] == "ok"
-    assert second["status"] == "ok"
+    assert second == {"status": "ok", "recorded": 0, "skipped_pending": 0}
     assert requests[0].url.params["start-date"] == str(
         int((previous_sync - timedelta(days=5)).timestamp())
     )

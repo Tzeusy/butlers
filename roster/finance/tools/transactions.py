@@ -635,6 +635,7 @@ async def _record_transaction(
     *,
     source: str = "manual",
     connection: asyncpg.Connection | None = None,
+    include_insert_status: bool = False,
 ) -> dict[str, Any]:
     """Record a transaction in the finance.transactions ledger.
 
@@ -695,6 +696,11 @@ async def _record_transaction(
         Callers holding an advisory lock use this to avoid recursively leasing
         the pool; the asynchronous SPO mirror still uses ``pool`` after the
         foreground work completes.
+    include_insert_status:
+        Internal-only observability flag. When true, the result includes
+        ``_inserted`` so deterministic import jobs can distinguish a fresh
+        ledger write from an idempotent replay without changing the public
+        ``record_transaction`` contract.
 
     Returns
     -------
@@ -731,7 +737,10 @@ async def _record_transaction(
             existing_id,
         )
         if existing is not None:
-            return _row_to_dict(existing)
+            result = _row_to_dict(existing)
+            if include_insert_status:
+                result["_inserted"] = False
+            return result
 
     has_external_id = await _has_column(executor, "transactions", "external_id")
 
@@ -911,6 +920,8 @@ async def _record_transaction(
     )
 
     result = _row_to_dict(row)
+    if include_insert_status:
+        result["_inserted"] = is_fresh_insert
 
     # --- Bill reconciliation hook (Track C / bu-y6gpw) ---
     # Synchronous and in-process for fresh debit inserts only.  The try/except

@@ -67,11 +67,37 @@ is a separate deterministic ledger-sync job and does not use the broker.
 
 ## SimpleFIN Bridge v1
 
-The daily `simplefin-sync` job remains a no-op until an owner adds the claimed Access URL as the `SIMPLEFIN_ACCESS_URL` credential in the dashboard's `/secrets` Finance credential inventory. Treat that value as authentication material: do not place it in source control, configuration files, tickets, logs, or chat. The job resolves it only from the database-backed credential store, with no environment fallback.
+The daily `simplefin-sync` job remains a no-op until an owner stores the claimed
+Access URL through the dashboard:
 
-Before enabling the schedule, associate exactly one existing Finance account with provider metadata containing `name = "simplefin"` and its non-secret `conn_id` plus `account_id`. The bridge matches that exact pair; it never guesses an account from a display name. Each daily run records only settled, posted transactions, carries `source = "aggregator"` and limited provider provenance, and advances account freshness only after a complete successful run. Missing configuration makes no request; revoked, timed-out, incomplete, or malformed upstream responses make no ledger write and return only a sanitized degraded result.
+1. Open `/secrets`, choose **Add credential**, then **System secret**.
+2. Enter key `SIMPLEFIN_ACCESS_URL`, paste the claimed Access URL as the value,
+   leave category as `general`, and set target to `finance`.
+3. Save the credential. Do not place the value in source control,
+   configuration files, tickets, logs, shell commands, or chat.
 
-This v1 boundary is intentionally narrow: one account, first-run history limited to 90 days, a five-day retry overlap, no pagination/cursors, balance storage, pending lifecycle, multi-account sync, remote mutation, or deletion. To roll back, disable or remove the `simplefin-sync` schedule and remove the Finance credential; existing imported ledger rows remain available for audit.
+The job resolves that Finance-local credential from the database only, with no
+environment fallback. On the first successful request, it requires exactly one
+remote account, validates the complete response, and creates one Finance
+account using the remote connection/account labels, currency, and exact
+non-secret `conn_id` plus `account_id` provider binding. It never guesses an
+existing account from a display name. Later runs require that exact binding and
+refuse ambiguous or malformed local bindings before HTTP.
+
+Each daily run records only settled, posted transactions, carries
+`source = "aggregator"` and limited provider provenance, and advances account
+freshness only after a complete successful run. Missing credentials make no
+request; revoked, timed-out, incomplete, or malformed upstream responses make
+no transaction write and return only a sanitized degraded result. A successful
+first run returns `account_created = true`; replayed provider IDs do not increase
+the `recorded` count.
+
+This v1 boundary is intentionally narrow: one automatically registered account,
+first-run history limited to 90 days, a five-day retry overlap, no
+pagination/cursors, balance storage, pending lifecycle, multi-account sync,
+remote mutation, or deletion. To roll back, disable or remove the
+`simplefin-sync` schedule and remove the Finance credential; existing imported
+ledger rows and the provider-bound account remain available for audit.
 
 ## Persistence
 

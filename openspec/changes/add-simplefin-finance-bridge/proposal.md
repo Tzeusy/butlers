@@ -12,9 +12,10 @@ those rows or advances account freshness truthfully.
 - Resolve the claimed Access URL from Finance's DB-backed credential store only;
   treat absent, malformed, revoked, incomplete, or failed upstream state as a
   sanitized no-write result.
-- Record only settled transactions through the established Finance transaction
-  path with `source="aggregator"`, stable provider IDs, and non-secret
-  provenance.
+- Create one exact provider-bound Finance account from the first fully
+  validated one-account response, then record only settled transactions through
+  the established Finance transaction path with `source="aggregator"`, stable
+  provider IDs, and non-secret provenance.
 - Advance `accounts.last_synced_at` only after a complete response has been
   validated and replayed safely; serialize overlapping sync attempts.
 - Document owner setup, scheduled behavior, degraded mode, and the explicit v1
@@ -40,7 +41,7 @@ those rows or advances account freshness truthfully.
 - Affects Finance jobs, the internal transaction-recording seam, Finance's TOML
   scheduler configuration, the deterministic scheduler registry, focused tests,
   and `docs/butlers/finance.md`.
-- Uses existing `finance.transactions.source='aggregator'`, account
-  `last_synced_at`, and `(account_id, external_id)` deduplication support; no
-  migration, new connector process, Switchboard routing, LLM session, or new
-  dependency is introduced.
+- Uses the existing Finance account registry,
+  `finance.transactions.source='aggregator'`, account `last_synced_at`, and
+  `(account_id, external_id)` deduplication support; no migration, new connector
+  process, Switchboard routing, LLM session, or new dependency is introduced.

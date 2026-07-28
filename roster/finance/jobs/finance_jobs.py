@@ -118,7 +118,7 @@ def _simplefin_metadata(value: Any) -> dict[str, Any] | None:
 async def _resolve_simplefin_binding(
     conn: asyncpg.Connection,
 ) -> tuple[dict[str, Any] | None, str]:
-    """Return exactly one configured local provider binding, otherwise a safe reason."""
+    """Return exactly one existing local provider binding, otherwise a safe reason."""
     rows = await conn.fetch(
         """
         SELECT id, metadata, last_synced_at
@@ -176,51 +176,73 @@ def _fits_finance_transaction_amount(amount: Decimal) -> bool:
 
 def _parse_simplefin_account_set(
     payload: Any,
-    binding: dict[str, Any],
-) -> tuple[list[dict[str, Any]] | None, int, str | None]:
+    binding: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]] | None, int, str | None]:
     """Validate a complete one-account v2 response before any ledger write."""
     if not isinstance(payload, dict):
-        return None, 0, "invalid_response"
+        return None, None, 0, "invalid_response"
 
     errlist = payload.get("errlist")
     if not isinstance(errlist, list) or any(not isinstance(item, dict) for item in errlist):
-        return None, 0, "invalid_response"
+        return None, None, 0, "invalid_response"
     if errlist:
-        return None, 0, "upstream_incomplete"
+        return None, None, 0, "upstream_incomplete"
+
+    connections = payload.get("connections")
+    if not isinstance(connections, list) or any(not isinstance(item, dict) for item in connections):
+        return None, None, 0, "invalid_response"
 
     accounts = payload.get("accounts")
     if not isinstance(accounts, list) or len(accounts) != 1 or not isinstance(accounts[0], dict):
-        return None, 0, "invalid_response"
+        return None, None, 0, "invalid_response"
 
     remote_account = accounts[0]
+    conn_id = remote_account.get("conn_id")
+    remote_account_id = remote_account.get("id")
+    account_name = remote_account.get("name")
     if (
-        remote_account.get("conn_id") != binding["conn_id"]
-        or remote_account.get("id") != binding["account_id"]
+        not isinstance(conn_id, str)
+        or not conn_id
+        or not isinstance(remote_account_id, str)
+        or not remote_account_id
+        or not isinstance(account_name, str)
+        or not account_name.strip()
     ):
-        return None, 0, "invalid_response"
+        return None, None, 0, "invalid_response"
+    if binding is not None and (
+        conn_id != binding["conn_id"] or remote_account_id != binding["account_id"]
+    ):
+        return None, None, 0, "invalid_response"
+
+    matching_connections = [item for item in connections if item.get("conn_id") == conn_id]
+    if len(matching_connections) != 1:
+        return None, None, 0, "invalid_response"
+    connection_name = matching_connections[0].get("name")
+    if not isinstance(connection_name, str) or not connection_name.strip():
+        return None, None, 0, "invalid_response"
 
     currency = remote_account.get("currency")
     if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency):
-        return None, 0, "invalid_response"
+        return None, None, 0, "invalid_response"
 
     raw_transactions = remote_account.get("transactions", [])
     if raw_transactions is None:
         raw_transactions = []
     if not isinstance(raw_transactions, list):
-        return None, 0, "invalid_response"
+        return None, None, 0, "invalid_response"
 
     settled: list[dict[str, Any]] = []
     skipped_pending = 0
     for raw_transaction in raw_transactions:
         if not isinstance(raw_transaction, dict):
-            return None, 0, "invalid_response"
+            return None, None, 0, "invalid_response"
 
         # Pending and unposted rows deliberately stay out of the v1 ledger.
         if raw_transaction.get("pending") is True or raw_transaction.get("posted") is None:
             skipped_pending += 1
             continue
         if raw_transaction.get("pending", False) is not False:
-            return None, 0, "invalid_response"
+            return None, None, 0, "invalid_response"
 
         external_id = raw_transaction.get("id")
         merchant = raw_transaction.get("description")
@@ -236,15 +258,15 @@ def _parse_simplefin_account_set(
             or isinstance(raw_amount, bool)
             or raw_amount is None
         ):
-            return None, 0, "invalid_response"
+            return None, None, 0, "invalid_response"
 
         try:
             posted_at = datetime.fromtimestamp(float(posted), tz=UTC)
             amount = Decimal(str(raw_amount))
         except (InvalidOperation, OverflowError, OSError, ValueError):
-            return None, 0, "invalid_response"
+            return None, None, 0, "invalid_response"
         if not amount.is_finite() or not _fits_finance_transaction_amount(amount):
-            return None, 0, "invalid_response"
+            return None, None, 0, "invalid_response"
 
         settled.append(
             {
@@ -256,7 +278,51 @@ def _parse_simplefin_account_set(
             }
         )
 
-    return settled, skipped_pending, None
+    return (
+        {
+            "conn_id": conn_id,
+            "account_id": remote_account_id,
+            "account_name": account_name.strip(),
+            "institution": connection_name.strip(),
+            "currency": currency,
+        },
+        settled,
+        skipped_pending,
+        None,
+    )
+
+
+async def _create_simplefin_account(
+    conn: asyncpg.Connection,
+    remote: dict[str, Any],
+) -> dict[str, Any]:
+    """Create the one exact provider-bound Finance account after validation."""
+    metadata = {
+        "provider": {
+            "name": "simplefin",
+            "conn_id": remote["conn_id"],
+            "account_id": remote["account_id"],
+        }
+    }
+    row = await conn.fetchrow(
+        """
+        INSERT INTO accounts (institution, type, name, currency, metadata)
+        VALUES ($1, 'other', $2, $3, $4::jsonb)
+        RETURNING id, last_synced_at
+        """,
+        remote["institution"],
+        remote["account_name"],
+        remote["currency"],
+        metadata,
+    )
+    if row is None:
+        raise RuntimeError("SimpleFIN account creation returned no row")
+    return {
+        "local_account_id": str(row["id"]),
+        "conn_id": remote["conn_id"],
+        "account_id": remote["account_id"],
+        "last_synced_at": row["last_synced_at"],
+    }
 
 
 async def run_simplefin_sync(
@@ -266,11 +332,13 @@ async def run_simplefin_sync(
     http_client: httpx.AsyncClient | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Synchronize exactly one bound SimpleFIN account through Finance's ledger seam.
+    """Synchronize one SimpleFIN account through Finance's ledger seam.
 
-    This deterministic job intentionally has no connector, LLM, notification,
-    or Switchboard dependency.  It returns a small fixed status vocabulary so
-    secret-bearing URLs and upstream response details cannot escape operators.
+    A first fully validated one-account response creates the exact local
+    provider binding; subsequent responses must match it. This deterministic
+    job intentionally has no connector, LLM, notification, or Switchboard
+    dependency. It returns a small fixed status vocabulary so secret-bearing
+    URLs and upstream response details cannot escape operators.
     """
     resolver = credential_store or CredentialStore(db_pool)
     try:
@@ -298,10 +366,11 @@ async def run_simplefin_sync(
 
             try:
                 binding, binding_reason = await _resolve_simplefin_binding(lock_conn)
-                if binding is None:
+                account_created = False
+                if binding is None and binding_reason != "account_binding_missing":
                     return {"status": "not_configured", "reason": binding_reason}
 
-                last_synced_at = binding["last_synced_at"]
+                last_synced_at = binding["last_synced_at"] if binding is not None else None
                 if last_synced_at is None:
                     start_at = effective_now - _SIMPLEFIN_INITIAL_LOOKBACK
                 elif isinstance(last_synced_at, datetime):
@@ -339,23 +408,27 @@ async def run_simplefin_sync(
                 except ValueError:
                     return {"status": "degraded", "reason": "invalid_response"}
 
-                settled, skipped_pending, parse_reason = _parse_simplefin_account_set(
+                remote, settled, skipped_pending, parse_reason = _parse_simplefin_account_set(
                     payload,
                     binding,
                 )
-                if settled is None:
+                if remote is None or settled is None:
                     return {"status": "degraded", "reason": parse_reason or "invalid_response"}
 
+                recorded = 0
                 provenance = {
                     "provider": {
                         "name": "simplefin",
-                        "conn_id": binding["conn_id"],
-                        "account_id": binding["account_id"],
+                        "conn_id": remote["conn_id"],
+                        "account_id": remote["account_id"],
                     }
                 }
                 try:
+                    if binding is None:
+                        binding = await _create_simplefin_account(lock_conn, remote)
+                        account_created = True
                     for transaction in settled:
-                        await _record_transaction(
+                        result = await _record_transaction(
                             db_pool,
                             posted_at=transaction["posted_at"],
                             merchant=transaction["merchant"],
@@ -367,20 +440,26 @@ async def run_simplefin_sync(
                             external_id=transaction["external_id"],
                             source="aggregator",
                             connection=lock_conn,
+                            include_insert_status=True,
                         )
+                        if result.get("_inserted") is True:
+                            recorded += 1
                     await lock_conn.execute(
                         "UPDATE accounts SET last_synced_at = $2 WHERE id = $1::uuid",
                         binding["local_account_id"],
                         effective_now,
                     )
-                except (asyncpg.PostgresError, ValueError, TypeError):
+                except (asyncpg.PostgresError, RuntimeError, ValueError, TypeError):
                     return {"status": "degraded", "reason": "recording_failed"}
 
-                return {
+                result = {
                     "status": "ok",
-                    "recorded": len(settled),
+                    "recorded": recorded,
                     "skipped_pending": skipped_pending,
                 }
+                if account_created:
+                    result["account_created"] = True
+                return result
             finally:
                 try:
                     await lock_conn.execute(
