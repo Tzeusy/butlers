@@ -656,6 +656,51 @@ async def test_malformed_settled_transaction_prevents_earlier_valid_write(
 
 @pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.skipif(not _DOCKER_AVAILABLE, reason="Docker not available")
+async def test_storage_unrepresentable_settled_transaction_prevents_earlier_valid_write(
+    pool: asyncpg.Pool,
+) -> None:
+    """All settled values must fit Finance storage before the first ledger write."""
+    from roster.finance.jobs.finance_jobs import run_simplefin_sync
+
+    account = await _insert_bound_account(pool)
+    response = _account_set(
+        transactions=[
+            {
+                "id": "would-be-valid",
+                "posted": int(_NOW.timestamp()),
+                "amount": "-9.99",
+                "description": "Must not persist before validation finishes",
+            },
+            {
+                "id": "too-large-for-numeric-14-2",
+                "posted": int(_NOW.timestamp()),
+                "amount": "9999999999999.99",
+                "description": "Cannot fit the Finance amount column",
+            },
+        ]
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=response)
+
+    async with _http_client(handler) as client:
+        result = await run_simplefin_sync(
+            pool,
+            credential_store=_CredentialStore(_ACCESS_URL),
+            http_client=client,
+            now=_NOW,
+        )
+
+    assert result == {"status": "degraded", "reason": "invalid_response"}
+    assert await pool.fetchval("SELECT COUNT(*) FROM transactions") == 0
+    assert (
+        await pool.fetchval("SELECT last_synced_at FROM accounts WHERE id = $1", account["id"])
+        is None
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.skipif(not _DOCKER_AVAILABLE, reason="Docker not available")
 async def test_overlap_window_replays_by_external_id_without_duplicate(pool: asyncpg.Pool) -> None:
     """Five-day overlap retries converge on the existing provider-ID dedup key."""
     from roster.finance.jobs.finance_jobs import run_simplefin_sync

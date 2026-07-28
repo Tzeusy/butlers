@@ -15,7 +15,7 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
 
@@ -63,6 +63,8 @@ _SIMPLEFIN_ADVISORY_LOCK_NAME = "finance:simplefin-sync"
 _SIMPLEFIN_INITIAL_LOOKBACK = timedelta(days=90)
 _SIMPLEFIN_RETRY_OVERLAP = timedelta(days=5)
 _SIMPLEFIN_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
+_SIMPLEFIN_FINANCE_AMOUNT_QUANTUM = Decimal("0.01")
+_SIMPLEFIN_FINANCE_AMOUNT_MAX = Decimal("999999999999.99")
 
 
 def _simplefin_accounts_request(access_url: str) -> tuple[str, httpx.BasicAuth] | None:
@@ -160,6 +162,18 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def _fits_finance_transaction_amount(amount: Decimal) -> bool:
+    """Mirror the Finance ``NUMERIC(14,2)`` range before ledger writes begin."""
+    try:
+        stored_amount = amount.quantize(
+            _SIMPLEFIN_FINANCE_AMOUNT_QUANTUM,
+            rounding=ROUND_HALF_UP,
+        )
+    except InvalidOperation:
+        return False
+    return -_SIMPLEFIN_FINANCE_AMOUNT_MAX <= stored_amount <= _SIMPLEFIN_FINANCE_AMOUNT_MAX
+
+
 def _parse_simplefin_account_set(
     payload: Any,
     binding: dict[str, Any],
@@ -229,7 +243,7 @@ def _parse_simplefin_account_set(
             amount = Decimal(str(raw_amount))
         except (InvalidOperation, OverflowError, OSError, ValueError):
             return None, 0, "invalid_response"
-        if not amount.is_finite():
+        if not amount.is_finite() or not _fits_finance_transaction_amount(amount):
             return None, 0, "invalid_response"
 
         settled.append(
