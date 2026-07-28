@@ -143,6 +143,26 @@ describe("SettingsConsolePage", () => {
     expect(within(panel).queryByText("$0.00")).toBeNull();
   });
 
+  it("Approvals panel names a partial pending source instead of rendering a fabricated zero", async () => {
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === "/approvals/metrics") {
+        return Promise.resolve({
+          data: { total_pending: 0 },
+          meta: { pending_actions_sources_degraded: ["home"] },
+        });
+      }
+      return defaultApiFetchImpl(path);
+    });
+
+    renderPageAsync();
+
+    const panel = await screen.findByLabelText("Go to Approvals");
+    const note = await within(panel).findByTestId("settings-console-approvals-degraded");
+    expect(note.textContent).toContain("Pending approvals: home unavailable");
+    expect(within(panel).queryByText("0")).toBeNull();
+    expect(within(panel).getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
   it("expands and collapses real omitted attention items inline without an audit-log door", async () => {
     const allAttention = Array.from({ length: 6 }, (_, index) => ({
       id: `auth_renewal:provider-${index + 1}`,

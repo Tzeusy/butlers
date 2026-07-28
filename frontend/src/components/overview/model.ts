@@ -53,6 +53,12 @@ export interface OverviewDerivationInput {
   issuesError?: boolean;
   approvalMetrics?: ApprovalMetrics | null;
   /**
+   * Configured sources omitted from the pending-actions aggregate. The count
+   * can remain useful diagnostically, but it is not complete enough for an
+   * aggregate all-clear or approval-count fallback.
+   */
+  approvalMetricsPendingActionsSourcesDegraded?: string[];
+  /**
    * Individual pending approvals (top few, any order) -- when present, the
    * Needs-attention list renders one actionable row per approval (verb-
    * labeled inline approve/deny/defer, bu-86c4c.14) instead of the aggregate
@@ -235,6 +241,7 @@ export function deriveOverviewTriageModel(
   const approvalRows = approvalAttentionRows(
     input.approvals,
     input.approvalMetrics,
+    input.approvalMetricsPendingActionsSourcesDegraded,
     maxAttentionApprovalRows,
   );
   const notificationRows = notificationAttentionRows(
@@ -553,6 +560,7 @@ function byExpirySoonFirst(a: ApprovalSummary, b: ApprovalSummary): number {
 function approvalAttentionRows(
   approvals: ApprovalSummary[] | null | undefined,
   metrics: ApprovalMetrics | null | undefined,
+  pendingActionsSourcesDegraded: string[] | undefined,
   maxRows: number,
 ): OverviewAttentionRow[] {
   // Individual, actionable rows -- lets the owner approve/deny/defer inline
@@ -589,8 +597,10 @@ function approvalAttentionRows(
 
   // Fallback: only the aggregate count is available (the detail list isn't
   // wired by this caller, or came back empty/erroring while metrics still
-  // report pending > 0). Keeps the existing summary-only row so a real
-  // pending-approvals signal never silently disappears.
+  // report pending > 0). A partial pending-actions aggregate cannot truthfully
+  // create this count row; deriveNowRows emits a named unavailable state
+  // instead. Individual approval rows above remain actionable either way.
+  if ((pendingActionsSourcesDegraded?.length ?? 0) > 0) return [];
   const pending = metrics?.total_pending ?? 0;
   if (pending <= 0) return [];
   return [
@@ -839,16 +849,28 @@ function deriveNowRows(
     });
   }
 
-  const pendingApprovals = input.approvalMetrics?.total_pending ?? 0;
-  if (pendingApprovals > 0) {
+  const pendingActionsSourcesDegraded =
+    input.approvalMetricsPendingActionsSourcesDegraded ?? [];
+  if (pendingActionsSourcesDegraded.length > 0) {
     rows.push({
-      id: "now:approvals",
-      kind: "approval",
-      label: `${pendingApprovals} pending approval${pendingApprovals === 1 ? "" : "s"}`,
-      detail: "Awaiting owner decision.",
+      id: "now:approvals:unavailable",
+      kind: "error",
+      label: `Pending approvals: unavailable (${pendingActionsSourcesDegraded.join(", ")})`,
+      detail: "Pending approval metrics are incomplete.",
       href: "/approvals",
-      count: pendingApprovals,
     });
+  } else {
+    const pendingApprovals = input.approvalMetrics?.total_pending ?? 0;
+    if (pendingApprovals > 0) {
+      rows.push({
+        id: "now:approvals",
+        kind: "approval",
+        label: `${pendingApprovals} pending approval${pendingApprovals === 1 ? "" : "s"}`,
+        detail: "Awaiting owner decision.",
+        href: "/approvals",
+        count: pendingApprovals,
+      });
+    }
   }
 
   if (input.qaSummaryError) {

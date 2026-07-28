@@ -24,6 +24,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import DashboardPage from "@/pages/DashboardPage";
 import * as overviewModel from "@/components/overview/model";
 
+const { noPendingActionSources } = vi.hoisted(() => ({
+  noPendingActionSources: [] as string[],
+}));
+
 // ---------------------------------------------------------------------------
 // Mock all hooks used by DashboardPage (and RuntimeSummaryKpi)
 // ---------------------------------------------------------------------------
@@ -39,6 +43,9 @@ vi.mock("@/hooks/use-issues", () => ({ useIssues: vi.fn() }));
 vi.mock("@/hooks/use-approvals", () => ({
   useApprovalMetrics: vi.fn(),
   usePendingApprovalsFlat: vi.fn(),
+  pendingApprovalMetricSourcesDegraded: (
+    response: { meta?: { pending_actions_sources_degraded?: string[] } } | undefined,
+  ) => response?.meta?.pending_actions_sources_degraded ?? noPendingActionSources,
 }));
 vi.mock("@/hooks/use-approval-decisions.ts", () => ({
   useApprovalDecisionMutations: vi.fn(),
@@ -1012,6 +1019,33 @@ describe("DashboardPage -- OperationsNowList", () => {
     const html = renderPage();
     expect(html).toContain("2 pending approvals");
     expect(html).toContain('href="/approvals"');
+  });
+
+  it("renders a named unavailable pending-approvals KPI instead of a partial zero", () => {
+    vi.mocked(useApprovalMetrics).mockReturnValue({
+      data: {
+        data: { total_pending: 0 },
+        meta: {
+          pending_actions_sources_degraded: ["home"],
+          sources_degraded: ["home"],
+        },
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as AnyMock);
+
+    const html = renderPage();
+    const kpiStart = html.indexOf('aria-label="System runtime summary"');
+    const kpiEnd = html.indexOf('aria-label="Operations and now"');
+    const kpi = html.slice(kpiStart, kpiEnd);
+
+    expect(html).toContain('data-testid="dashboard-pending-approvals-degraded"');
+    expect(html).toContain("Pending approvals: home unavailable. Count may be incomplete.");
+    expect(kpi).toContain("Pending approvals");
+    expect(kpi).toContain("—");
+    expect(kpi).not.toContain('href="/approvals"');
   });
 
   it("renders failed notification row when notifications have failures", () => {

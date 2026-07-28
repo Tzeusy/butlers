@@ -12,6 +12,7 @@ import {
 } from "@/api/index.ts";
 import type {
   ApprovalActionParams,
+  ApprovalMetricsResponse,
   ApprovalRuleCreateRequest,
   ApprovalRuleFromActionRequest,
   ApprovalRuleParams,
@@ -19,6 +20,26 @@ import type {
   AutonomySuggestionParams,
 } from "@/api/index.ts";
 import { useBusAwarePollInterval } from "@/hooks/use-bus-aware-poll-interval";
+
+const NO_DEGRADED_SOURCES: string[] = [];
+
+/**
+ * Sources omitted from the pending-actions aggregate. A missing key means the
+ * aggregate is complete; callers must still distinguish an absent response
+ * (loading/error) from a truthful empty metric.
+ */
+export function pendingApprovalMetricSourcesDegraded(
+  response: ApprovalMetricsResponse | undefined,
+): string[] {
+  return response?.meta.pending_actions_sources_degraded ?? NO_DEGRADED_SOURCES;
+}
+
+/** Sources omitted from the independent active-rules aggregate. */
+export function approvalRuleMetricSourcesDegraded(
+  response: ApprovalMetricsResponse | undefined,
+): string[] {
+  return response?.meta.approval_rules_sources_degraded ?? NO_DEGRADED_SOURCES;
+}
 
 // Query keys
 export const approvalKeys = {

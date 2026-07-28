@@ -60,6 +60,7 @@ import {
 } from "@/hooks/use-spend";
 import { useIssues } from "@/hooks/use-issues";
 import {
+  pendingApprovalMetricSourcesDegraded,
   useApprovalMetrics,
   usePendingApprovalsFlat,
 } from "@/hooks/use-approvals";
@@ -80,6 +81,7 @@ import CostWidget from "@/components/costs/CostWidget";
 import TopSessionsTable from "@/components/costs/TopSessionsTable";
 
 import { ListTriageFooterHint } from "@/components/ui/list-triage-footer";
+import { SourceDegradedNote } from "@/components/ui/query-boundary";
 import {
   AttentionList,
   type AttentionListItem,
@@ -185,6 +187,9 @@ export default function DashboardPage() {
   const boardData = boardQuery.data?.data;
   const issuesData = issuesQuery.data?.data;
   const approvalMetrics = approvalMetricsQuery.data?.data;
+  const pendingApprovalMetricSources = pendingApprovalMetricSourcesDegraded(
+    approvalMetricsQuery.data,
+  );
   const approvals = pendingApprovalsQuery.data?.data;
   const notificationStats = notificationStatsQuery.data?.data;
   const qaSummary = qaSummaryQuery.data?.data;
@@ -208,6 +213,8 @@ export default function DashboardPage() {
           approvalMetrics: approvalMetricsQuery.isError
             ? null
             : approvalMetrics,
+          approvalMetricsPendingActionsSourcesDegraded:
+            pendingApprovalMetricSources,
           approvals: pendingApprovalsQuery.isError ? null : approvals,
           notificationStats: notificationStatsQuery.isError
             ? null
@@ -251,6 +258,7 @@ export default function DashboardPage() {
       notificationUntil,
       overviewNowMs,
       pendingApprovalsQuery.isError,
+      pendingApprovalMetricSources,
       qaSummary,
       qaSummaryQuery.isError,
       stuckDelegations.isError,
@@ -500,12 +508,23 @@ export default function DashboardPage() {
             isLoading={boardQuery.isLoading}
             isError={model.butlersError}
             pendingApprovalsAvailable={
-              !approvalMetricsQuery.isError && approvalMetricsQuery.data != null
+              !approvalMetricsQuery.isError &&
+              approvalMetricsQuery.data != null &&
+              pendingApprovalMetricSources.length === 0
             }
             sessionsAvailable={boardData?.aggregates?.sessions_source_error !== true}
             sessionsSince={sessionsSince}
             sessionsUntil={sessionsUntil}
           />
+          {pendingApprovalMetricSources.length > 0 && (
+            <SourceDegradedNote
+              label="Pending approvals"
+              detail={`${pendingApprovalMetricSources.join(", ")} unavailable. Count may be incomplete.`}
+              onRetry={() => void approvalMetricsQuery.refetch()}
+              testId="dashboard-pending-approvals-degraded"
+              className="mt-3"
+            />
+          )}
         </div>
 
         {/* Right column: index */}
