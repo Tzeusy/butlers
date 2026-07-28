@@ -424,6 +424,27 @@ describe("SettingsPermissionsPage — audit reel filters operational noise [bu-9
     expect(screen.getByText("No recent audit entries.")).toBeTruthy();
   });
 
+  it("keeps a paused initial audit query visibly pending", async () => {
+    useAuditLogMock.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isPending: true,
+      isError: false,
+      error: null,
+    } as unknown as ReturnType<typeof useAuditLogMock>);
+
+    await act(async () => {
+      renderPage();
+    });
+
+    const auditSection = screen.getByText("Audit reel").closest("section");
+    expect(auditSection).not.toBeNull();
+    expect(auditSection!.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(5);
+    expect(screen.queryByText("No recent audit entries.")).toBeNull();
+    expect(screen.queryByTestId("audit-reel-degraded")).toBeNull();
+    expect(within(auditSection!).queryByText("Full audit log")).toBeNull();
+  });
+
   it("shows a degraded note (not the empty state) when the audit log query errors [bu-ep4ks.5]", async () => {
     const refetch = vi.fn();
     useAuditLogMock.mockReturnValue({

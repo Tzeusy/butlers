@@ -87,7 +87,7 @@ export function TelegramSessionSetup({
   startImmediately?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { data: status, isLoading, isError, refetch } = useQuery({
+  const { data: status, isPending: isStatusPending, isError, refetch } = useQuery({
     queryKey: ["telegram-session-status"],
     queryFn: getTelegramSessionStatus,
     refetchInterval: TELEGRAM_SESSION_POLL_MS,
@@ -251,15 +251,6 @@ export function TelegramSessionSetup({
   const passwordInputId = `${fieldId}-password`;
   const scopeConsentInputId = `${fieldId}-account-wide-scope-consent`;
 
-  if (isLoading) {
-    return (
-      <section className="space-y-3" aria-live="polite">
-        <Eyebrow as="div">Telegram user session</Eyebrow>
-        <Skeleton className="h-8 w-48" />
-      </section>
-    );
-  }
-
   if (isError) {
     return (
       <section className="space-y-3" aria-live="polite">
@@ -268,6 +259,15 @@ export function TelegramSessionSetup({
           Session status unavailable.
         </p>
         <Button variant="outline" size="sm" onClick={() => void refetch()}>Retry status</Button>
+      </section>
+    );
+  }
+
+  if (isStatusPending || status == null) {
+    return (
+      <section className="space-y-3" aria-live="polite">
+        <Eyebrow as="div">Telegram user session</Eyebrow>
+        <Skeleton className="h-8 w-48" />
       </section>
     );
   }

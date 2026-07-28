@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { TelegramSessionStatusResponse } from "@/api/types";
 
@@ -42,6 +42,7 @@ function renderSetup({ startImmediately = false }: { startImmediately?: boolean 
 
 afterEach(() => {
   cleanup();
+  onlineManager.setOnline(true);
   vi.clearAllMocks();
 });
 
@@ -63,6 +64,22 @@ describe("TelegramSessionSetup status reader", () => {
       resolveStatus!(UNREADY_STATUS);
     });
   });
+
+  it.each([false, true])(
+    "keeps setup fail-closed while an offline initial status query is pending (startImmediately=%s)",
+    (startImmediately) => {
+      onlineManager.setOnline(false);
+
+      const { container } = renderSetup({ startImmediately });
+
+      expect(screen.getByText("Telegram user session")).toBeTruthy();
+      expect(container.querySelector('[data-slot="skeleton"]')).toBeTruthy();
+      expect(screen.queryByRole("button")).toBeNull();
+      expect(screen.queryByLabelText("Telegram API ID")).toBeNull();
+      expect(screen.queryByLabelText("Telegram API hash")).toBeNull();
+      expect(screen.queryByLabelText("Telegram phone number")).toBeNull();
+    },
+  );
 
   it("renders unavailable and retries without inferring missing credentials or setup", async () => {
     mockGetTelegramSessionStatus
