@@ -559,7 +559,40 @@ def test_dashboard_turn_stop_transitions_and_runtime_acl(postgres_container) -> 
                     p_butler_name="general",
                     p_phase="route",
                 )["outcome"]
-                == "finished"
+                == "ambiguous"
+            )
+
+            # An ambiguous predecessor remains non-replayable but Stop still
+            # persists intent and addresses its exact active session. Even a
+            # successful local cancellation cannot erase the fact that work
+            # before the lost lease remains unprovable.
+            assert (
+                _turn_call(conn, "dashboard_turn_request_cancel", p_message_id=message_id)[
+                    "outcome"
+                ]
+                == "cancelling"
+            )
+            assert (
+                _turn_call(
+                    conn,
+                    "dashboard_turn_acknowledge_cancel",
+                    role="butler_general_rw",
+                    p_message_id=message_id,
+                    p_session_id=crashed_session_id,
+                )["outcome"]
+                == "ambiguous"
+            )
+            assert (
+                _turn_call(conn, "dashboard_turn_confirm_cancel", p_message_id=message_id)[
+                    "outcome"
+                ]
+                == "ambiguous"
+            )
+            assert (
+                _turn_call(conn, "dashboard_turn_dispatch_status", p_message_id=message_id)[
+                    "outcome"
+                ]
+                == "ambiguous"
             )
 
             # A target runtime may only mutate the target assigned to its own

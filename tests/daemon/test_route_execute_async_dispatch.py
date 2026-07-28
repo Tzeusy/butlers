@@ -507,11 +507,11 @@ async def test_lease_loss_does_not_settle_a_route_inbox_row(tmp_path: Path) -> N
 
     lease_loss_observed = asyncio.Event()
 
-    async def _lose_lease(_lease_lost: asyncio.Event, invocation: Any) -> None:
-        # The patched boundary takes ownership of the created trigger
-        # coroutine just like the production helper does; close it before
-        # raising so this regression test does not hide an unawaited runtime.
-        invocation.close()
+    async def _lose_lease(_lease_lost: asyncio.Event, invocation_factory: Any) -> None:
+        # A loss known before the invocation starts must not construct a
+        # trigger coroutine. The production helper receives a factory for
+        # precisely that reason.
+        assert callable(invocation_factory)
         lease_loss_observed.set()
         raise RouteInboxLeaseLost("test lease loss")
 

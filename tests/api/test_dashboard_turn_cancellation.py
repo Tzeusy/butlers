@@ -90,6 +90,61 @@ async def test_durable_stop_reports_an_unprovable_runtime_as_unknown(monkeypatch
     mcp_mgr.get_client.assert_not_awaited()
 
 
+async def test_durable_stop_attempts_exact_session_cancellation_for_ambiguous_turn(
+    monkeypatch,
+) -> None:
+    """Ambiguity blocks replay, not a best-effort stop of the known predecessor."""
+    from butlers.api.routers import conversations as subject
+
+    message_id = uuid4()
+    session_id = uuid4()
+    session = DashboardTurnSession(
+        message_id=message_id,
+        session_id=session_id,
+        butler_name="finance",
+        phase="route",
+        registered_at=datetime.now(UTC),
+        invoke_claimed_at=datetime.now(UTC),
+        invoke_active=True,
+    )
+    monkeypatch.setattr(subject, "request_cancel", AsyncMock(return_value=_turn("cancelling")))
+    monkeypatch.setattr(subject, "live_sessions", AsyncMock(return_value=[session]))
+    monkeypatch.setattr(
+        subject,
+        "confirm_cancel",
+        AsyncMock(return_value=_turn("ambiguous", terminal_state="ambiguous")),
+    )
+    monkeypatch.setattr(
+        subject,
+        "dispatch_status",
+        AsyncMock(return_value=_turn("ambiguous", terminal_state="ambiguous")),
+    )
+
+    client = MagicMock()
+    client.call_tool = AsyncMock(
+        return_value=MagicMock(
+            is_error=False,
+            content=[MagicMock(type="text", text='{"cancelled": true}')],
+        )
+    )
+    mcp_mgr = MagicMock(spec=MCPClientManager)
+    mcp_mgr.get_client = AsyncMock(return_value=client)
+    db = MagicMock(spec=DatabaseManager)
+    db.credential_shared_pool.return_value = AsyncMock()
+
+    result = await subject._cancel_dashboard_message_turn(
+        db=db,
+        mcp_mgr=mcp_mgr,
+        message_id=message_id,
+    )
+
+    client.call_tool.assert_awaited_once_with("cancel_session", {"session_id": str(session_id)})
+    assert result.cancelled is False
+    assert result.already_finished is False
+    assert result.message is not None
+    assert "outcome is unknown" in result.message
+
+
 async def test_message_scoped_stop_endpoint_never_needs_a_live_api_process_map(
     app, monkeypatch
 ) -> None:
@@ -190,6 +245,47 @@ async def test_sse_reports_confirmed_stop_when_settling_ingress_fails(monkeypatc
     assert "SESSION_CANCELLED" in stream
     assert "SWITCHBOARD_UNAVAILABLE" not in stream
     record_failure.assert_awaited_once()
+
+
+async def test_sse_claim_ingress_surfaces_ambiguous_turn_without_retry(monkeypatch) -> None:
+    """An idempotent ingress reconnect must retain the no-replay outcome."""
+    from butlers.api.routers import conversations as subject
+
+    message_id = uuid4()
+    submit = AsyncMock()
+    monkeypatch.setattr(
+        subject,
+        "claim_ingress",
+        AsyncMock(
+            return_value=_turn("ambiguous", message_id=message_id, terminal_state="ambiguous")
+        ),
+    )
+    monkeypatch.setattr(subject, "_submit_to_switchboard", submit)
+
+    class _Request:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    db = MagicMock(spec=DatabaseManager)
+    db.credential_shared_pool.return_value = AsyncMock()
+    events = [
+        event
+        async for event in subject._stream_conversation_response(
+            request=_Request(),
+            butler_name="switchboard",
+            conversation_id=uuid4(),
+            message_created_at=datetime.now(UTC),
+            envelope={},
+            db=db,
+            mcp_mgr=MagicMock(spec=MCPClientManager),
+            message_id=message_id,
+        )
+    ]
+
+    stream = "".join(events)
+    assert "TURN_OUTCOME_UNKNOWN" in stream
+    assert "SWITCHBOARD_ERROR" not in stream
+    submit.assert_not_awaited()
 
 
 async def test_durable_stop_never_claims_success_when_an_invoked_runtime_wont_confirm(

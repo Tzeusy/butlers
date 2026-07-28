@@ -142,6 +142,9 @@ router = APIRouter(prefix="/api/butlers", tags=["conversations"])
 
 # SSE keepalive interval in seconds
 _KEEPALIVE_INTERVAL_S: float = 15.0
+_TURN_OUTCOME_UNKNOWN_MESSAGE = (
+    "We could not determine whether this request completed. It will not be automatically repeated."
+)
 
 # Polling interval for session completion (seconds)
 _POLL_INTERVAL_S: float = 0.5
@@ -406,6 +409,10 @@ async def _stream_conversation_response(
             yield _sse_error("SESSION_CANCELLED", "This turn was stopped before dispatch.")
             yield _sse_done()
             return
+        if ingress_claim.outcome == "ambiguous":
+            yield _sse_error("TURN_OUTCOME_UNKNOWN", _TURN_OUTCOME_UNKNOWN_MESSAGE)
+            yield _sse_done()
+            return
         if ingress_claim.outcome == "cancelling":
             yield _sse_error(
                 "INGEST_IN_PROGRESS",
@@ -449,6 +456,10 @@ async def _stream_conversation_response(
                 yield _sse_error("SESSION_CANCELLED", "This turn was stopped before routing.")
                 yield _sse_done()
                 return
+            if failure_turn is not None and failure_turn.outcome == "ambiguous":
+                yield _sse_error("TURN_OUTCOME_UNKNOWN", _TURN_OUTCOME_UNKNOWN_MESSAGE)
+                yield _sse_done()
+                return
             logger.warning(
                 "Switchboard rejected dashboard envelope for conversation %s: %s",
                 conversation_id,
@@ -468,6 +479,10 @@ async def _stream_conversation_response(
                 )
             if failure_turn is not None and failure_turn.outcome == "cancelled":
                 yield _sse_error("SESSION_CANCELLED", "This turn was stopped before routing.")
+                yield _sse_done()
+                return
+            if failure_turn is not None and failure_turn.outcome == "ambiguous":
+                yield _sse_error("TURN_OUTCOME_UNKNOWN", _TURN_OUTCOME_UNKNOWN_MESSAGE)
                 yield _sse_done()
                 return
             logger.exception(
@@ -492,6 +507,10 @@ async def _stream_conversation_response(
                 yield _sse_error("SESSION_CANCELLED", "This turn was stopped before routing.")
                 yield _sse_done()
                 return
+            if failure_turn is not None and failure_turn.outcome == "ambiguous":
+                yield _sse_error("TURN_OUTCOME_UNKNOWN", _TURN_OUTCOME_UNKNOWN_MESSAGE)
+                yield _sse_done()
+                return
             yield _sse_error("SWITCHBOARD_UNAVAILABLE", "Switchboard offline — retry")
             yield _sse_done()
             return
@@ -513,6 +532,10 @@ async def _stream_conversation_response(
                 return
             if bound_turn.outcome == "cancelled":
                 yield _sse_error("SESSION_CANCELLED", "This turn was stopped before routing.")
+                yield _sse_done()
+                return
+            if bound_turn.outcome == "ambiguous":
+                yield _sse_error("TURN_OUTCOME_UNKNOWN", _TURN_OUTCOME_UNKNOWN_MESSAGE)
                 yield _sse_done()
                 return
             if bound_turn.outcome == "conflict":
@@ -601,11 +624,7 @@ async def _stream_conversation_response(
                         yield _sse_done()
                         return
                     if turn_status.outcome == "ambiguous":
-                        yield _sse_error(
-                            "TURN_OUTCOME_UNKNOWN",
-                            "We could not determine whether this request completed. "
-                            "It will not be automatically repeated.",
-                        )
+                        yield _sse_error("TURN_OUTCOME_UNKNOWN", _TURN_OUTCOME_UNKNOWN_MESSAGE)
                         yield _sse_done()
                         return
 

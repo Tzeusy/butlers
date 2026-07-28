@@ -24,7 +24,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -238,7 +238,7 @@ async def route_inbox_processing_lease_heartbeat(
 
 async def route_inbox_wait_while_claimed[ResultT](
     lease_lost: asyncio.Event,
-    invocation: Awaitable[ResultT],
+    invocation_factory: Callable[[], Awaitable[ResultT]],
 ) -> ResultT:
     """Await an invocation only while its route-inbox processing lease remains owned.
 
@@ -250,7 +250,13 @@ async def route_inbox_wait_while_claimed[ResultT](
     recovery separately treats an unprovable predecessor as ambiguous rather
     than automatically replaying it.
     """
-    invocation_task = asyncio.ensure_future(invocation)
+    # Do not create the runtime coroutine until ownership is known.  Creating
+    # it first makes a pre-existing loss both observable too late and easy to
+    # leak as an un-awaited coroutine in callers/tests.
+    if lease_lost.is_set():
+        raise RouteInboxLeaseLost("route inbox processing lease was already lost")
+
+    invocation_task = asyncio.ensure_future(invocation_factory())
     lease_wait_task = asyncio.create_task(lease_lost.wait())
     try:
         done, _ = await asyncio.wait(
@@ -262,8 +268,15 @@ async def route_inbox_wait_while_claimed[ResultT](
                 invocation_task.cancel()
                 try:
                     await invocation_task
-                except asyncio.CancelledError:
-                    pass
+                except (asyncio.CancelledError, Exception):
+                    # Lease loss is the authoritative boundary.  A runtime's
+                    # cancellation cleanup may itself fail, but that must not
+                    # fall through to a generic route terminal write after a
+                    # recovery owner has taken the row.
+                    logger.debug(
+                        "route_inbox: invocation cleanup raised after lease loss",
+                        exc_info=True,
+                    )
             else:
                 # Consume a simultaneous exception so the cancelled lease
                 # boundary remains the one surfaced to callers.
@@ -285,7 +298,7 @@ async def route_inbox_wait_while_claimed[ResultT](
             invocation_task.cancel()
             try:
                 await invocation_task
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception):
                 pass
 
 

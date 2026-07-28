@@ -28,6 +28,7 @@ import pytest
 
 from butlers.config import ButlerConfig, RuntimeSeedConfig
 from butlers.core.dashboard_turns import DashboardTurnResult
+from butlers.core.route_inbox import RouteInboxLeaseLost, route_inbox_wait_while_claimed
 from butlers.core.runtimes import DEFAULT_RUNTIME_TYPE
 from butlers.core.runtimes.base import RuntimeAdapter
 from butlers.core.spawner import (
@@ -2932,6 +2933,93 @@ class TestCancelSession:
             # No leaked bookkeeping once the attempt has unwound.
             assert str(fake_session_id) not in spawner._pending_invoke_sessions
             assert str(fake_session_id) not in spawner._invoke_tasks_by_session
+
+    async def test_dashboard_route_lease_loss_cancels_runtime_without_terminal_completion(
+        self, tmp_path: Path
+    ) -> None:
+        """Lease loss stops the local runtime but leaves the dashboard turn unresolved.
+
+        A recovery owner must be able to mark this predecessor ambiguous rather
+        than reading a false ``failed`` terminal state from finalization.
+        """
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        mock_pool = AsyncMock()
+        message_id = uuid.uuid4()
+        request_id = uuid.uuid4()
+        session_id = uuid.uuid4()
+        active = _dashboard_turn_result("active", message_id=message_id, request_id=request_id)
+        lease_lost = asyncio.Event()
+        invocation_started = asyncio.Event()
+        invocation_cancelled = asyncio.Event()
+        never = asyncio.Event()
+
+        class BlockingAdapter(MockAdapter):
+            async def invoke(self, *args: Any, **kwargs: Any):
+                del args, kwargs
+                invocation_started.set()
+                try:
+                    await never.wait()
+                except asyncio.CancelledError:
+                    invocation_cancelled.set()
+                    raise
+
+        with (
+            patch("butlers.core.spawner.session_create", new_callable=AsyncMock) as create,
+            patch("butlers.core.spawner.session_complete", new_callable=AsyncMock),
+            patch(
+                "butlers.core.spawner.register_session_and_check_cancel",
+                new_callable=AsyncMock,
+                return_value=active,
+            ),
+            patch(
+                "butlers.core.spawner.claim_invoke",
+                new_callable=AsyncMock,
+                return_value=active,
+            ),
+            patch(
+                "butlers.core.spawner.release_invoke",
+                new_callable=AsyncMock,
+                return_value=active,
+            ) as release,
+            patch("butlers.core.spawner.complete_session", new_callable=AsyncMock) as complete,
+        ):
+            create.return_value = session_id
+            spawner = Spawner(
+                config=_make_config(),
+                config_dir=config_dir,
+                pool=mock_pool,
+                runtime=BlockingAdapter(),
+            )
+            waiter = asyncio.create_task(
+                route_inbox_wait_while_claimed(
+                    lease_lost,
+                    lambda: spawner.trigger(
+                        "cancel on route lease loss",
+                        "route",
+                        request_id=str(request_id),
+                        dashboard_turn_id=message_id,
+                        route_lease_lost=lease_lost,
+                    ),
+                )
+            )
+            try:
+                await asyncio.wait_for(invocation_started.wait(), timeout=5.0)
+                lease_lost.set()
+                with pytest.raises(RouteInboxLeaseLost):
+                    await asyncio.wait_for(waiter, timeout=5.0)
+            finally:
+                if not waiter.done():
+                    waiter.cancel()
+
+        assert invocation_cancelled.is_set()
+        release.assert_awaited_once_with(
+            mock_pool,
+            message_id=message_id,
+            session_id=session_id,
+        )
+        complete.assert_not_awaited()
 
     async def test_dashboard_control_gate_blocks_runtime_before_invoke(self, tmp_path: Path):
         """A durable Stop that wins before invoke means the adapter never starts."""

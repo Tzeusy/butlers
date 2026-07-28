@@ -451,7 +451,7 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
                 ) as lease_lost:
                     result = await route_inbox_wait_while_claimed(
                         lease_lost,
-                        spawner.trigger(
+                        lambda: spawner.trigger(
                             prompt=recovery_prompt,
                             context=context_text,
                             trigger_source="route",
@@ -467,6 +467,7 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
                             # turn, otherwise a Stop during a process restart could
                             # not prevent the replayed target runtime from starting.
                             dashboard_turn_id=dashboard_turn_id,
+                            route_lease_lost=lease_lost,
                         ),
                     )
                     result_error = getattr(result, "error", None)

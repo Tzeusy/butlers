@@ -986,7 +986,7 @@ def register_routing_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> 
                         ) as lease_lost:
                             result = await route_inbox_wait_while_claimed(
                                 lease_lost,
-                                _spawner.trigger(
+                                lambda: _spawner.trigger(
                                     prompt=_prompt,
                                     context=_context,
                                     trigger_source="route",
@@ -1001,6 +1001,12 @@ def register_routing_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable) -> 
                                     ingestion_event_id=_request_id,
                                     conversation_id=_conversation_id,
                                     dashboard_turn_id=_dashboard_turn_id,
+                                    # The Spawner distinguishes this local queue-lease
+                                    # cancellation from an owner Stop or daemon drain,
+                                    # so its finalizer leaves a dashboard predecessor
+                                    # unresolved for recovery rather than recording a
+                                    # false terminal failure.
+                                    route_lease_lost=lease_lost,
                                 ),
                             )
                             result_error = getattr(result, "error", None)

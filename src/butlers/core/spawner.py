@@ -82,6 +82,7 @@ from butlers.core.model_routing import (
     resolve_model_with_effective_tier,
 )
 from butlers.core.permissions import SPAWN_PERMISSION, check_permission
+from butlers.core.route_inbox import RouteInboxLeaseLost
 from butlers.core.runtimes import DEFAULT_RUNTIME_TYPE
 from butlers.core.runtimes.base import RuntimeAdapter
 from butlers.core.runtimes.codex import MCPToolDiscoveryError
@@ -615,6 +616,7 @@ class Spawner:
         ingestion_event_id: str | None = None,
         conversation_id: uuid.UUID | None = None,
         dashboard_turn_id: uuid.UUID | None = None,
+        route_lease_lost: asyncio.Event | None = None,
     ) -> SpawnerResult:
         """Spawn an ephemeral runtime instance.
 
@@ -692,6 +694,11 @@ class Spawner:
             Immutable dashboard user-message id for the durable Stop protocol.
             When present, registration and an atomic pre-invocation claim must
             both succeed before this Spawner may call ``runtime.invoke``.
+        route_lease_lost:
+            Optional route-inbox ownership signal.  A loss cancels this local
+            invocation, but for a dashboard turn it deliberately leaves the
+            durable session unresolved so recovery can surface ambiguity rather
+            than inventing a failed terminal outcome.
 
         Returns
         -------
@@ -703,6 +710,9 @@ class Spawner:
         RuntimeError
             If the spawner has been stopped and is no longer accepting triggers.
         """
+        if route_lease_lost is not None and route_lease_lost.is_set():
+            raise RouteInboxLeaseLost("route inbox processing lease was already lost")
+
         if not self._accepting:
             if dashboard_turn_id is not None:
                 return await self._dashboard_preflight_failure(
@@ -803,6 +813,7 @@ class Spawner:
                         ingestion_event_id=ingestion_event_id,
                         conversation_id=conversation_id,
                         dashboard_turn_id=dashboard_turn_id,
+                        route_lease_lost=route_lease_lost,
                     )
                 finally:
                     self._metrics.spawner_active_sessions_dec()
@@ -833,6 +844,7 @@ class Spawner:
                             ingestion_event_id=ingestion_event_id,
                             conversation_id=conversation_id,
                             dashboard_turn_id=dashboard_turn_id,
+                            route_lease_lost=route_lease_lost,
                         )
                     finally:
                         self._metrics.spawner_active_sessions_dec()
@@ -1193,6 +1205,7 @@ class Spawner:
         ingestion_event_id: str | None = None,
         conversation_id: uuid.UUID | None = None,
         dashboard_turn_id: uuid.UUID | None = None,
+        route_lease_lost: asyncio.Event | None = None,
     ) -> SpawnerResult:
         """Internal: run the runtime invocation (called under lock)."""
         session_id: uuid.UUID | None = None
@@ -1200,6 +1213,11 @@ class Spawner:
         spawner_result: SpawnerResult | None = None
         runtime_invoked = False
         dashboard_turn_session_registered = False
+        # Direct cancellation of trigger() normally means daemon drain and
+        # must propagate.  A route-inbox worker instead gives us this explicit
+        # event so the same cancellation can preserve an unprovable dashboard
+        # predecessor for recovery instead of finalizing it as failed.
+        dashboard_route_lease_lost = False
         dashboard_cancel_settled_event: asyncio.Event | None = None
         dashboard_owner_cancel_acknowledged = False
         # The durable registration gate can raise CancelledError before the
@@ -1228,6 +1246,9 @@ class Spawner:
         final_prompt = prompt
         if context:
             final_prompt = f"{context}\n\n{prompt}"
+
+        if route_lease_lost is not None and route_lease_lost.is_set():
+            raise RouteInboxLeaseLost("route inbox processing lease was already lost")
 
         if dashboard_turn_id is not None and self._pool is None:
             return await self._dashboard_preflight_failure(
@@ -2781,6 +2802,16 @@ class Spawner:
             is_owner_cancel = bool(runtime_session_id) and (
                 runtime_session_id in self._owner_cancelled_sessions
             )
+            if route_lease_lost is not None and route_lease_lost.is_set():
+                if dashboard_turn_id is not None:
+                    dashboard_route_lease_lost = True
+                logger.warning(
+                    "Route-inbox lease lost while local runtime was live; "
+                    "preserving dashboard turn for recovery (message=%s, session=%s)",
+                    dashboard_turn_id,
+                    session_id,
+                )
+                raise
             if outer_task_cancelled_directly or not is_owner_cancel:
                 raise
             if (
@@ -3135,6 +3166,12 @@ class Spawner:
             return spawner_result
 
         finally:
+            # A normal runtime return can race the heartbeat task by one event
+            # loop turn. If the lease became unprovable before this durable
+            # finalizer runs, prefer the conservative recovery disposition over
+            # a concrete route terminal write from a displaced worker.
+            if route_lease_lost is not None and route_lease_lost.is_set():
+                dashboard_route_lease_lost = dashboard_turn_id is not None
             if runtime_session_id:
                 clear_runtime_session_routing_context(runtime_session_id)
                 # Defensive: normally discarded once the invoke_task is
@@ -3151,26 +3188,34 @@ class Spawner:
                 and self._pool is not None
                 and session_id is not None
             ):
-                try:
-                    completion = await complete_session(
-                        self._pool,
-                        message_id=dashboard_turn_id,
-                        session_id=session_id,
-                        success=bool(spawner_result and spawner_result.success),
-                    )
-                    if completion.outcome == "cancelled" or (
-                        dashboard_owner_cancel_acknowledged
-                        and completion.outcome not in {"missing", "conflict"}
-                    ):
-                        if dashboard_cancel_settled_event is not None:
-                            dashboard_cancel_settled_event.set()
-                except Exception:
-                    logger.exception(
-                        "Could not complete durable dashboard turn session "
+                if dashboard_route_lease_lost:
+                    logger.warning(
+                        "Skipped dashboard terminal completion after route-inbox lease loss "
                         "(message=%s, session=%s)",
                         dashboard_turn_id,
                         session_id,
                     )
+                else:
+                    try:
+                        completion = await complete_session(
+                            self._pool,
+                            message_id=dashboard_turn_id,
+                            session_id=session_id,
+                            success=bool(spawner_result and spawner_result.success),
+                        )
+                        if completion.outcome == "cancelled" or (
+                            dashboard_owner_cancel_acknowledged
+                            and completion.outcome not in {"missing", "conflict"}
+                        ):
+                            if dashboard_cancel_settled_event is not None:
+                                dashboard_cancel_settled_event.set()
+                    except Exception:
+                        logger.exception(
+                            "Could not complete durable dashboard turn session "
+                            "(message=%s, session=%s)",
+                            dashboard_turn_id,
+                            session_id,
+                        )
             elif (
                 dashboard_turn_id is not None
                 and self._pool is not None

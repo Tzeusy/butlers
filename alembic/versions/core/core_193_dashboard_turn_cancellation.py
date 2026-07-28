@@ -369,6 +369,7 @@ def _create_functions() -> None:
             IF v_turn.terminal_at IS NOT NULL THEN
                 p_outcome := CASE
                     WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                    WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                     ELSE 'finished'
                 END;
                 {_RETURN_TURN}
@@ -427,6 +428,7 @@ def _create_functions() -> None:
             IF v_turn.terminal_at IS NOT NULL THEN
                 p_outcome := CASE
                     WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                    WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                     ELSE 'finished'
                 END;
                 {_RETURN_TURN}
@@ -465,6 +467,7 @@ def _create_functions() -> None:
             RETURNING * INTO v_turn;
             p_outcome := CASE
                 WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                 WHEN v_turn.terminal_at IS NOT NULL THEN 'finished'
                 WHEN v_turn.cancel_requested_at IS NOT NULL THEN 'cancelling'
                 ELSE 'accepted'
@@ -506,6 +509,7 @@ def _create_functions() -> None:
             IF v_turn.terminal_at IS NOT NULL THEN
                 p_outcome := CASE
                     WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                    WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                     ELSE 'finished'
                 END;
                 {_RETURN_TURN}
@@ -543,6 +547,7 @@ def _create_functions() -> None:
             RETURNING * INTO v_turn;
             p_outcome := CASE
                 WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                 WHEN v_turn.terminal_at IS NOT NULL THEN 'finished'
                 WHEN v_turn.cancel_requested_at IS NOT NULL THEN 'cancelling'
                 ELSE 'active'
@@ -743,6 +748,13 @@ def _create_functions() -> None:
                 p_outcome := 'conflict';
                 {_RETURN_TURN}
             END IF;
+            IF v_turn.terminal_state = 'ambiguous' THEN
+                -- Recovery has already established that a predecessor may
+                -- still have acted. Do not let a delayed handler register a
+                -- replacement session under that immutable message id.
+                p_outcome := 'ambiguous';
+                {_RETURN_TURN}
+            END IF;
             IF v_turn.cancel_requested_at IS NULL AND v_turn.terminal_at IS NOT NULL THEN
                 p_outcome := 'finished';
                 {_RETURN_TURN}
@@ -877,7 +889,10 @@ def _create_functions() -> None:
                 {_RETURN_TURN}
             END IF;
             IF v_turn.terminal_at IS NOT NULL THEN
-                p_outcome := 'finished';
+                p_outcome := CASE
+                    WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
+                    ELSE 'finished'
+                END;
                 {_RETURN_TURN}
             END IF;
             UPDATE public.dashboard_conversation_turn_sessions
@@ -931,6 +946,7 @@ def _create_functions() -> None:
               AND session_id = p_session_id;
             p_outcome := CASE
                 WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                 WHEN v_turn.terminal_at IS NOT NULL THEN 'finished'
                 WHEN v_turn.cancel_requested_at IS NOT NULL THEN 'cancelling'
                 ELSE 'active'
@@ -1071,6 +1087,7 @@ def _create_functions() -> None:
             END IF;
             p_outcome := CASE
                 WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                 WHEN v_turn.terminal_at IS NOT NULL THEN 'finished'
                 WHEN v_turn.cancel_requested_at IS NOT NULL THEN 'cancelling'
                 ELSE 'active'
@@ -1228,6 +1245,7 @@ def _create_functions() -> None:
             RETURNING * INTO v_turn;
             p_outcome := CASE
                 WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                 ELSE 'finished'
             END;
             {_RETURN_TURN}
@@ -1250,6 +1268,7 @@ def _create_functions() -> None:
             v_turn public.dashboard_conversation_turns%ROWTYPE;
             v_has_active_invocation boolean;
             v_has_prior_invocation boolean;
+            v_turn_is_ambiguous boolean;
             p_outcome text;
         BEGIN
             SELECT * INTO v_turn
@@ -1259,14 +1278,15 @@ def _create_functions() -> None:
             IF NOT FOUND THEN
                 {_RETURN_MISSING}
             END IF;
-            IF v_turn.terminal_at IS NOT NULL THEN
+            IF v_turn.terminal_at IS NOT NULL
+               AND v_turn.terminal_state IS DISTINCT FROM 'ambiguous' THEN
                 p_outcome := CASE
                     WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
-                    WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                     ELSE 'finished'
                 END;
                 {_RETURN_TURN}
             END IF;
+            v_turn_is_ambiguous := v_turn.terminal_state = 'ambiguous';
             IF v_turn.target_kind IN ('bug_report', 'dead_letter')
                AND v_turn.external_action_claimed_at IS NOT NULL THEN
                 -- Do not write cancellation intent over an externally-visible
@@ -1293,6 +1313,15 @@ def _create_functions() -> None:
                 WHERE message_id = p_message_id
                   AND invoke_claimed_at IS NOT NULL
             ) INTO v_has_prior_invocation;
+            IF v_turn_is_ambiguous THEN
+                -- Keep the no-replay terminal fact, but still address every
+                -- exact active predecessor through the normal Stop API.
+                p_outcome := CASE
+                    WHEN v_has_active_invocation THEN 'cancelling'
+                    ELSE 'ambiguous'
+                END;
+                {_RETURN_TURN}
+            END IF;
             IF NOT v_has_active_invocation
                 AND NOT v_has_prior_invocation
                 AND v_turn.ingress_state = 'submitting' THEN
@@ -1349,6 +1378,7 @@ def _create_functions() -> None:
             END IF;
             IF v_turn.cancel_requested_at IS NULL THEN
                 p_outcome := CASE
+                    WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                     WHEN v_turn.terminal_at IS NOT NULL THEN 'finished'
                     ELSE 'conflict'
                 END;
@@ -1365,7 +1395,8 @@ def _create_functions() -> None:
                 {_RETURN_TURN}
             END IF;
             PERFORM public.dashboard_turn_require_role('butler_' || v_butler_name || '_rw');
-            IF v_turn.terminal_at IS NOT NULL THEN
+            IF v_turn.terminal_at IS NOT NULL
+               AND v_turn.terminal_state IS DISTINCT FROM 'ambiguous' THEN
                 p_outcome := CASE
                     WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
                     ELSE 'finished'
@@ -1376,7 +1407,10 @@ def _create_functions() -> None:
             SET cancel_acknowledged_at = coalesce(cancel_acknowledged_at, now())
             WHERE message_id = p_message_id
               AND session_id = p_session_id;
-            p_outcome := 'cancelling';
+            p_outcome := CASE
+                WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
+                ELSE 'cancelling'
+            END;
             {_RETURN_TURN}
         END;
         $fn$;
@@ -1407,6 +1441,7 @@ def _create_functions() -> None:
             END IF;
             IF v_turn.cancel_requested_at IS NULL THEN
                 p_outcome := CASE
+                    WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                     WHEN v_turn.terminal_at IS NOT NULL THEN 'finished'
                     ELSE 'conflict'
                 END;
@@ -1415,6 +1450,7 @@ def _create_functions() -> None:
             IF v_turn.terminal_at IS NOT NULL THEN
                 p_outcome := CASE
                     WHEN v_turn.terminal_state = 'cancelled' THEN 'cancelled'
+                    WHEN v_turn.terminal_state = 'ambiguous' THEN 'ambiguous'
                     ELSE 'finished'
                 END;
                 {_RETURN_TURN}

@@ -165,13 +165,52 @@ async def test_lease_loss_cancels_a_live_invocation_before_recovery_can_replay()
         finally:
             stopped.set()
 
-    waiter = asyncio.create_task(route_inbox_wait_while_claimed(lease_lost, live_invocation()))
+    waiter = asyncio.create_task(route_inbox_wait_while_claimed(lease_lost, live_invocation))
     await started.wait()
     lease_lost.set()
 
     with pytest.raises(RouteInboxLeaseLost):
         await waiter
     assert stopped.is_set()
+
+
+async def test_lease_loss_before_start_does_not_construct_an_invocation() -> None:
+    """A known-lost claim must not create work that cannot be safely owned."""
+
+    lease_lost = asyncio.Event()
+    lease_lost.set()
+    invoked = False
+
+    async def invocation() -> None:
+        nonlocal invoked
+        invoked = True
+
+    with pytest.raises(RouteInboxLeaseLost):
+        await route_inbox_wait_while_claimed(lease_lost, invocation)
+
+    assert invoked is False
+
+
+async def test_lease_loss_dominates_runtime_cleanup_failure() -> None:
+    """Cancellation cleanup cannot fall through to a generic queue settlement."""
+
+    lease_lost = asyncio.Event()
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    async def invocation() -> None:
+        started.set()
+        try:
+            await never.wait()
+        except asyncio.CancelledError as exc:
+            raise RuntimeError("runtime cleanup failed") from exc
+
+    waiter = asyncio.create_task(route_inbox_wait_while_claimed(lease_lost, invocation))
+    await started.wait()
+    lease_lost.set()
+
+    with pytest.raises(RouteInboxLeaseLost):
+        await waiter
 
 
 async def test_scan_and_recovery_sweep() -> None:
