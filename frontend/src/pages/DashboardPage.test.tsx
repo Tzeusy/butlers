@@ -1048,6 +1048,56 @@ describe("DashboardPage -- OperationsNowList", () => {
     expect(kpi).not.toContain('href="/approvals"');
   });
 
+  it("renders a generic retryable pending-approvals state when metrics query fails", () => {
+    const refetch = vi.fn();
+    vi.mocked(useApprovalMetrics).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new Error("approval metrics unavailable"),
+      refetch,
+    } as AnyMock);
+
+    const html = renderPage();
+    const kpiStart = html.indexOf('aria-label="System runtime summary"');
+    const kpiEnd = html.indexOf('aria-label="Operations and now"');
+    const kpi = html.slice(kpiStart, kpiEnd);
+
+    expect(html).toContain('data-testid="dashboard-pending-approvals-degraded"');
+    expect(html).toContain("Pending approvals: unavailable");
+    expect(kpi).toContain("—");
+    expect(kpi).not.toContain('href="/approvals"');
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const queryClient = new QueryClient();
+    document.body.appendChild(container);
+    try {
+      act(() => {
+        root.render(
+          <QueryClientProvider client={queryClient}>
+            <MemoryRouter>
+              <DashboardPage />
+            </MemoryRouter>
+          </QueryClientProvider>,
+        );
+      });
+
+      const retry = Array.from(
+        container.querySelectorAll('[data-testid="dashboard-pending-approvals-degraded"] button'),
+      ).find((button) => button.textContent?.trim() === "Retry");
+      expect(retry).toBeDefined();
+
+      act(() => {
+        retry?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(refetch).toHaveBeenCalledOnce();
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
+  });
+
   it("renders failed notification row when notifications have failures", () => {
     vi.mocked(useNotificationStats).mockReturnValue({
       data: {

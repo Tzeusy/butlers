@@ -516,7 +516,14 @@ export default function DashboardPage() {
             sessionsSince={sessionsSince}
             sessionsUntil={sessionsUntil}
           />
-          {pendingApprovalMetricSources.length > 0 && (
+          {approvalMetricsQuery.isError ? (
+            <SourceDegradedNote
+              label="Pending approvals"
+              onRetry={() => void approvalMetricsQuery.refetch()}
+              testId="dashboard-pending-approvals-degraded"
+              className="mt-3"
+            />
+          ) : pendingApprovalMetricSources.length > 0 ? (
             <SourceDegradedNote
               label="Pending approvals"
               detail={`${pendingApprovalMetricSources.join(", ")} unavailable. Count may be incomplete.`}
@@ -524,7 +531,7 @@ export default function DashboardPage() {
               testId="dashboard-pending-approvals-degraded"
               className="mt-3"
             />
-          )}
+          ) : null}
         </div>
 
         {/* Right column: index */}
