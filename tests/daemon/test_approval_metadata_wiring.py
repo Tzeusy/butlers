@@ -70,7 +70,7 @@ async def test_disabled_roster_injects_metadata_for_manual_approvals(
     daemon = SimpleNamespace(
         config=config,
         _active_modules=[_MetadataModule(), approvals],
-        mcp=RuntimeFastMCP(f"test-{roster_name}"),
+        mcp=RuntimeFastMCP("test-home"),
     )
 
     result = await ButlerDaemon._apply_approval_gates(daemon)

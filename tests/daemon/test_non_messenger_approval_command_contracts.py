@@ -109,6 +109,31 @@ class _RelationshipMemoryDB(MockDB):
             return dict(row)
         return await super().fetchrow(query, *args)
 
+    async def execute(self, query: str, *args: Any) -> str:
+        """Preserve the gate's full pending-row shape for approval replay."""
+        if "INSERT INTO pending_actions" in query:
+            action_id = args[0]
+            self.pending_actions[action_id] = {
+                "id": action_id,
+                "tool_name": args[1],
+                "tool_args": args[2],
+                "status": "pending",
+                "requested_at": args[5],
+                "agent_summary": args[3],
+                "session_id": args[4],
+                "expires_at": args[6],
+                "decided_by": None,
+                "decided_at": None,
+                "execution_result": None,
+                "approval_rule_id": None,
+                "why": args[7],
+                "evidence": args[8],
+                "blast_radius": args[9],
+                "reversibility": args[10],
+            }
+            return "INSERT 0 1"
+        return await super().execute(query, *args)
+
 
 def _human_actor() -> dict[str, Any]:
     return {
@@ -244,6 +269,42 @@ async def test_memory_reclassification_broad_rule_parks_instead_of_auto_executin
 
     assert result["status"] == "pending_approval"
     assert approval_db.facts[fact_id]["permanence"] == "stable"
+
+
+async def test_direct_memory_reclassification_is_parked_then_replayed_by_the_gate() -> None:
+    """A normal Relationship call cannot mutate a fact before owner approval."""
+    fact_id = uuid.uuid4()
+    daemon, approvals, approval_db = await _relationship_approval_daemon(fact_id)
+    tool = await daemon.mcp.get_tool("memory_reclassify")
+
+    assert tool is not None
+    parked = await tool.fn(
+        memory_type="fact",
+        memory_id=str(fact_id),
+        permanence_target="volatile",
+        _why="The owner requested a reviewable memory reclassification.",
+        _evidence=[],
+        _blast_radius="self",
+        _reversibility="reversible",
+    )
+
+    assert parked["status"] == "pending_approval"
+    action_id = uuid.UUID(parked["action_id"])
+    stored = approval_db.pending_actions[action_id]
+    assert stored["status"] == "pending"
+    assert stored["tool_name"] == "memory_reclassify"
+    assert stored["tool_args"] == {
+        "memory_type": "fact",
+        "memory_id": str(fact_id),
+        "permanence_target": "volatile",
+    }
+    assert approval_db.facts[fact_id]["permanence"] == "stable"
+
+    result = await approvals._approve_action(str(action_id), actor=_human_actor())
+
+    assert result["status"] == "executed"
+    assert approval_db.pending_actions[action_id]["status"] == "executed"
+    assert approval_db.facts[fact_id]["permanence"] == "volatile"
 
 
 async def test_historic_unknown_command_stays_approved_and_truthful() -> None:

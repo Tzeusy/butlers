@@ -9,8 +9,9 @@
 
 - [x] 2.1 Add the approval-gated Switchboard connector-disconnect handler and
   prove park → approve → dispatch soft-deletes the intended registry row.
-- [x] 2.2 Add the approval-gated Relationship memory-reclassify handler and
-  prove park → approve → dispatch updates only the intended active fact.
+- [x] 2.2 Add the approval-gated Relationship memory-reclassify handler, enable
+  its native gate, and prove direct park → approve → dispatch updates only the
+  intended active fact.
 - [x] 2.3 Reject connector token-rotation requests before parking when no
   credential reference can be replayed, with a redacted error audit signal.
 
