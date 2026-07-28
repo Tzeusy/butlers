@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 import asyncpg
 import httpx
@@ -65,29 +65,39 @@ _SIMPLEFIN_RETRY_OVERLAP = timedelta(days=5)
 _SIMPLEFIN_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 
 
-def _simplefin_accounts_url(access_url: str) -> str | None:
-    """Build a non-disclosing v2 accounts endpoint from a claimed Access URL."""
+def _simplefin_accounts_request(access_url: str) -> tuple[str, httpx.BasicAuth] | None:
+    """Build a userinfo-free v2 endpoint and separate decoded Basic credentials."""
     try:
         parsed = urlsplit(access_url.strip())
+        username = parsed.username
+        password = parsed.password
         # Access URLs carry HTTP Basic credentials.  Refusing a bare public URL
         # makes an accidental, non-credential endpoint fail closed before HTTP.
         if (
             parsed.scheme.lower() != "https"
             or not parsed.hostname
-            or not parsed.username
-            or not parsed.password
+            or not username
+            or not password
             or parsed.query
             or parsed.fragment
         ):
             return None
         # Accessing ``port`` validates malformed port text without retaining it.
-        _ = parsed.port
+        port = parsed.port
     except ValueError:
         return None
 
+    hostname = parsed.hostname
+    if hostname is None:  # Defensive: the validation above already rejects this.
+        return None
+    # ``urlsplit().hostname`` removes IPv6 brackets, so put them back only when
+    # reconstructing the authority without userinfo.
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    authority = f"{host}:{port}" if port is not None else host
     path = parsed.path.rstrip("/")
     endpoint_path = f"{path}/accounts" if path else "/accounts"
-    return urlunsplit(("https", parsed.netloc, endpoint_path, "", ""))
+    endpoint = urlunsplit(("https", authority, endpoint_path, "", ""))
+    return endpoint, httpx.BasicAuth(unquote(username), unquote(password))
 
 
 def _simplefin_metadata(value: Any) -> dict[str, Any] | None:
@@ -256,8 +266,11 @@ async def run_simplefin_sync(
 
     if access_url is None or access_url == "":
         return {"status": "not_configured", "reason": "access_url_missing"}
-    if not isinstance(access_url, str) or not (accounts_url := _simplefin_accounts_url(access_url)):
+    if not isinstance(access_url, str) or not (
+        accounts_request := _simplefin_accounts_request(access_url)
+    ):
         return {"status": "not_configured", "reason": "access_url_invalid"}
+    accounts_url, accounts_auth = accounts_request
 
     effective_now = _as_utc(now or datetime.now(UTC))
     try:
@@ -287,6 +300,7 @@ async def run_simplefin_sync(
                 try:
                     response = await client.get(
                         accounts_url,
+                        auth=accounts_auth,
                         params={
                             "version": "2",
                             "start-date": str(int(start_at.timestamp())),
@@ -338,6 +352,7 @@ async def run_simplefin_sync(
                             metadata=provenance,
                             external_id=transaction["external_id"],
                             source="aggregator",
+                            connection=lock_conn,
                         )
                     await lock_conn.execute(
                         "UPDATE accounts SET last_synced_at = $2 WHERE id = $1::uuid",

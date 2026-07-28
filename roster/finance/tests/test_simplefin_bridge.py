@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
+import logging
 import shutil
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -54,6 +56,20 @@ async def pool(migrated_db_url: str):
         migrated_db_url,
         min_size=1,
         max_size=4,
+        init=register_jsonb_codec,
+    )
+    await database_pool.execute("TRUNCATE TABLE transactions, accounts CASCADE")
+    yield database_pool
+    await database_pool.close()
+
+
+@pytest.fixture
+async def single_connection_pool(migrated_db_url: str):
+    """Return a migration-faithful pool that exposes nested-acquisition deadlocks."""
+    database_pool = await asyncpg.create_pool(
+        migrated_db_url,
+        min_size=1,
+        max_size=1,
         init=register_jsonb_codec,
     )
     await database_pool.execute("TRUNCATE TABLE transactions, accounts CASCADE")
@@ -261,6 +277,49 @@ async def test_upstream_403_is_sanitized_and_does_not_advance_freshness(
 
 @pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.skipif(not _DOCKER_AVAILABLE, reason="Docker not available")
+async def test_access_url_userinfo_is_not_passed_to_httpx_or_its_info_logs(
+    pool: asyncpg.Pool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The credential-bearing Access URL becomes Basic auth, never request authority."""
+    from roster.finance.jobs.finance_jobs import run_simplefin_sync
+
+    await _insert_bound_account(pool)
+    requests: list[httpx.Request] = []
+    access_url = "https://fixture%40user:fixture%3Apassword@simplefin.invalid/simplefin"
+    decoded_credentials = "fixture@user:fixture:password"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=_account_set())
+
+    caplog.set_level(logging.INFO, logger="httpx")
+    async with _http_client(handler) as client:
+        result = await run_simplefin_sync(
+            pool,
+            credential_store=_CredentialStore(access_url),
+            http_client=client,
+            now=_NOW,
+        )
+
+    assert result == {"status": "ok", "recorded": 0, "skipped_pending": 0}
+    assert len(requests) == 1
+    assert not requests[0].url.username
+    assert not requests[0].url.password
+    assert requests[0].headers["authorization"] == (
+        "Basic " + base64.b64encode(decoded_credentials.encode()).decode()
+    )
+    httpx_log_messages = "\n".join(
+        record.getMessage() for record in caplog.records if record.name == "httpx"
+    )
+    assert "fixture%40user" not in httpx_log_messages
+    assert "fixture%3Apassword" not in httpx_log_messages
+    assert "fixture@user" not in httpx_log_messages
+    assert "fixture:password" not in httpx_log_messages
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.skipif(not _DOCKER_AVAILABLE, reason="Docker not available")
 async def test_upstream_timeout_is_sanitized_and_does_not_advance_freshness(
     pool: asyncpg.Pool,
 ) -> None:
@@ -356,6 +415,50 @@ async def test_complete_one_account_response_records_settled_transactions_with_p
     assert (
         await pool.fetchval("SELECT last_synced_at FROM accounts WHERE id = $1", account["id"])
         == _NOW
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.skipif(not _DOCKER_AVAILABLE, reason="Docker not available")
+async def test_sync_records_on_a_migrated_single_connection_pool(
+    single_connection_pool: asyncpg.Pool,
+) -> None:
+    """The held advisory-lock connection also performs the ledger write."""
+    from roster.finance.jobs.finance_jobs import run_simplefin_sync
+
+    account = await _insert_bound_account(single_connection_pool)
+    response = _account_set(
+        transactions=[
+            {
+                "id": "one-slot-fixture-1",
+                "posted": int((_NOW - timedelta(hours=1)).timestamp()),
+                "amount": "-8.76",
+                "description": "One Slot Fixture",
+            }
+        ]
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=response)
+
+    async with _http_client(handler) as client:
+        result = await asyncio.wait_for(
+            run_simplefin_sync(
+                single_connection_pool,
+                credential_store=_CredentialStore(_ACCESS_URL),
+                http_client=client,
+                now=_NOW,
+            ),
+            timeout=1,
+        )
+
+    assert result == {"status": "ok", "recorded": 1, "skipped_pending": 0}
+    assert await single_connection_pool.fetchval("SELECT COUNT(*) FROM transactions") == 1
+    assert (
+        await single_connection_pool.fetchval(
+            "SELECT account_id FROM transactions WHERE external_id = 'one-slot-fixture-1'"
+        )
+        == account["id"]
     )
 
 
