@@ -158,6 +158,35 @@ function defaultBoardRows(): BoardRow[] {
   ];
 }
 
+/**
+ * Quiet fixture for source-error regressions: every source other than the
+ * approval-metrics query stays healthy and empty, so an attention sentinel is
+ * the only thing that can prevent the false all-clear fallback.
+ */
+function setNoOtherAttentionItems() {
+  setDefaultData();
+  vi.mocked(useButlersBoard).mockReturnValue({
+    data: {
+      data: {
+        rows: [
+          boardRow({
+            name: "general",
+            activity: "running",
+            active_session_count: 1,
+          }),
+          boardRow({ name: "health", activity: "idle" }),
+        ],
+        aggregates: {},
+        generated_at: "2026-05-14T12:00:00.000Z",
+      },
+      meta: {},
+    },
+    isLoading: false,
+    isError: false,
+    error: null,
+  } as AnyMock);
+}
+
 /** A briefing for a given state_class. */
 function makeBriefing(
   stateClass: string,
@@ -1094,6 +1123,41 @@ describe("DashboardPage -- OperationsNowList", () => {
       container.remove();
     }
   });
+
+  it.each([
+    [
+      "a query failure",
+      {
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        error: new Error("approval metrics unavailable"),
+        refetch: vi.fn(),
+      },
+    ],
+    [
+      "a malformed 200 response",
+      {
+        data: { data: { total_pending: "0" }, meta: {} },
+        isLoading: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn(),
+      },
+    ],
+  ])(
+    "does not render a false all-clear with no other attention items after %s",
+    (_caseName, approvalMetricsResult) => {
+      setNoOtherAttentionItems();
+      vi.mocked(useApprovalMetrics).mockReturnValue(approvalMetricsResult as AnyMock);
+
+      const html = renderPage();
+
+      expect(html).toContain("Pending approvals unavailable");
+      expect(html).toContain('role="alert"');
+      expect(html).not.toContain("Nothing waiting.");
+    },
+  );
 
   it.each([
     ["missing meta", { data: { total_pending: 0 } }],

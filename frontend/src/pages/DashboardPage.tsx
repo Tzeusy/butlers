@@ -220,6 +220,7 @@ export default function DashboardPage() {
           issues: issuesQuery.isError ? [] : (issuesData ?? []),
           issuesError: issuesQuery.isError,
           approvalMetrics: approvalMetricsUnavailable ? null : approvalMetrics,
+          approvalMetricsUnavailable,
           approvalMetricsPendingActionsSourcesDegraded:
             pendingApprovalMetricSources,
           approvals: pendingApprovalsQuery.isError ? null : approvals,

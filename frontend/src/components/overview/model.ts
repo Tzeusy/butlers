@@ -53,6 +53,12 @@ export interface OverviewDerivationInput {
   issuesError?: boolean;
   approvalMetrics?: ApprovalMetrics | null;
   /**
+   * True when the approval-metrics query itself failed or returned a malformed
+   * response. Unlike a named partial aggregate, no source name is available,
+   * but the Overview must still avoid a false approval all-clear.
+   */
+  approvalMetricsUnavailable?: boolean;
+  /**
    * Configured sources omitted from the pending-actions aggregate. The count
    * can remain useful diagnostically, but it is not complete enough for an
    * aggregate all-clear or approval-count fallback.
@@ -241,6 +247,7 @@ export function deriveOverviewTriageModel(
   const approvalRows = approvalAttentionRows(
     input.approvals,
     input.approvalMetrics,
+    input.approvalMetricsUnavailable ?? false,
     input.approvalMetricsPendingActionsSourcesDegraded,
     maxAttentionApprovalRows,
   );
@@ -560,9 +567,24 @@ function byExpirySoonFirst(a: ApprovalSummary, b: ApprovalSummary): number {
 function approvalAttentionRows(
   approvals: ApprovalSummary[] | null | undefined,
   metrics: ApprovalMetrics | null | undefined,
+  metricsUnavailable: boolean,
   pendingActionsSourcesDegraded: string[] | undefined,
   maxRows: number,
 ): OverviewAttentionRow[] {
+  const unavailableRows: OverviewAttentionRow[] = metricsUnavailable
+    ? [
+        {
+          id: "approvals:metrics-unavailable",
+          kind: "approval",
+          severity: "high",
+          title: "Pending approvals unavailable",
+          detail: "Could not load pending approval metrics.",
+          href: "/approvals",
+          isSourceError: true,
+        },
+      ]
+    : [];
+
   // Individual, actionable rows -- lets the owner approve/deny/defer inline
   // from the attention list (bu-86c4c.14) instead of only linking out.
   // Intentionally a simpler ranking than ApprovalsPage's full expiry +
@@ -592,15 +614,17 @@ function approvalAttentionRows(
         count: remaining,
       });
     }
-    return rows;
+    return [...unavailableRows, ...rows];
   }
 
   // Fallback: only the aggregate count is available (the detail list isn't
   // wired by this caller, or came back empty/erroring while metrics still
-  // report pending > 0). A partial pending-actions aggregate cannot truthfully
-  // create this count row; deriveNowRows emits a named unavailable state
-  // instead. Individual approval rows above remain actionable either way.
-  if ((pendingActionsSourcesDegraded?.length ?? 0) > 0) return [];
+  // report pending > 0). An unavailable or partial pending-actions aggregate
+  // cannot truthfully create this count row; individual approval rows above
+  // remain actionable either way.
+  if (metricsUnavailable || (pendingActionsSourcesDegraded?.length ?? 0) > 0) {
+    return unavailableRows;
+  }
   const pending = metrics?.total_pending ?? 0;
   if (pending <= 0) return [];
   return [

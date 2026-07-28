@@ -630,6 +630,24 @@ describe("deriveOverviewTriageModel", () => {
     expect(model.nowRows.some((row) => row.id === "now:approvals")).toBe(false);
   });
 
+  it("emits a source-error attention row when approval metrics are unavailable", () => {
+    const model = deriveOverviewTriageModel({
+      approvalMetrics: null,
+      approvalMetricsUnavailable: true,
+    });
+
+    expect(model.attentionRows).toContainEqual(
+      expect.objectContaining({
+        id: "approvals:metrics-unavailable",
+        kind: "approval",
+        severity: "high",
+        title: "Pending approvals unavailable",
+        href: "/approvals",
+        isSourceError: true,
+      }),
+    );
+  });
+
   it("keeps healthy individual approval rows usable beside a partial aggregate warning", () => {
     const partialMetricsInput = {
       approvals: [approvalSummary("approval-1")],
