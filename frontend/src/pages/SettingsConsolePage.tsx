@@ -27,6 +27,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/api/client";
+import type { ApprovalMetricsResponse } from "@/api/types";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SourceDegradedNote } from "@/components/ui/query-boundary";
 import { Eyebrow } from "@/components/ui/Eyebrow";
@@ -39,6 +40,10 @@ import {
   type ConsoleData,
   type HeaderCounts,
 } from "@/hooks/use-settings-console-live";
+import {
+  isCompleteApprovalMetricsResponse,
+  pendingApprovalMetricSourcesDegraded,
+} from "@/hooks/use-approvals";
 import {
   useRegisterCommands,
   type PaletteCommand,
@@ -97,16 +102,16 @@ function fetchModelStats(): Promise<ModelStats> {
 }
 
 function fetchApprovalMetrics(): Promise<ApprovalMetricsSummary> {
-  return apiFetch<{
-    data: { total_pending?: number };
-    meta?: { pending_actions_sources_degraded?: string[] };
-  }>(
-    "/approvals/metrics",
-  ).then((res) => ({
-    pending: res.data?.total_pending ?? 0,
-    pendingActionsSourcesDegraded:
-      res.meta?.pending_actions_sources_degraded ?? [],
-  }));
+  return apiFetch<ApprovalMetricsResponse>("/approvals/metrics").then((response) => {
+    if (!isCompleteApprovalMetricsResponse(response)) {
+      throw new Error("Approval metrics response is incomplete");
+    }
+
+    return {
+      pending: response.data.total_pending,
+      pendingActionsSourcesDegraded: pendingApprovalMetricSourcesDegraded(response),
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
