@@ -357,8 +357,8 @@ async def test_console_endpoint_ceiling_alarm_fires_only_on_true_mtd_breach():
 
 
 @pytest.mark.asyncio
-async def test_console_no_db_returns_zeros():
-    """With no DB, all counts should be zero and no crash."""
+async def test_console_healthy_zero_results_serialize_without_attention():
+    """Healthy subsystem zeros remain truthful and produce no attention."""
     app = _make_app(db=None)
 
     with (
@@ -1163,19 +1163,16 @@ async def test_console_endpoint_sums_two_healthy_approval_pools(
 
 
 @pytest.mark.asyncio
-async def test_console_endpoint_degraded_approval_discovery_never_returns_partial_total():
-    approval_pool = MagicMock()
-    approval_pool.fetchval = AsyncMock(return_value=2)
-    db = MagicMock(spec=DatabaseManager)
-
-    async def degraded_discovery(_db, *, tracker=None):
-        assert tracker is not None
-        tracker.mark("broken")
-        return [approval_pool]
-
+async def test_console_endpoint_degraded_approval_discovery_never_returns_partial_total(
+    clear_approval_table_cache,
+):
+    db, pools, probe_connections = _mock_approval_db(2, 3)
+    failing_name = "settings-console-approval-1"
+    probe_connections[failing_name].fetchval = AsyncMock(
+        side_effect=RuntimeError("catalog unavailable")
+    )
     app = _make_app(db=db)
     with (
-        patch("butlers.api.routers.approvals._find_all_approvals_pools", new=degraded_discovery),
         patch.object(console_mod, "_count_active_butlers", new=AsyncMock(return_value=(1, None))),
         patch.object(console_mod, "_get_spend_mtd", new=AsyncMock(return_value=(0.0, None, None))),
         patch.object(console_mod, "_count_models", new=AsyncMock(return_value=(0, 0, None))),
@@ -1184,6 +1181,27 @@ async def test_console_endpoint_degraded_approval_discovery_never_returns_partia
         patch.object(console_mod, "_check_failed_webhooks", new=AsyncMock(return_value=[])),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            body = (await client.get("/api/settings/console")).json()["data"]
+            response = await client.get("/api/settings/console")
+
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    approval_items = [
+        item for item in body["attention"] if item["id"] == "subsystem_error:approvals"
+    ]
     assert body["header_counts"]["open_approvals"] is None
-    assert "subsystem_error:approvals" in {item["id"] for item in body["attention"]}
+    assert approval_items == [
+        {
+            "id": "subsystem_error:approvals",
+            "tone": "amber",
+            "kind": "subsystem_error",
+            "text": "Could not reach the approvals subsystem.",
+            "action_route": "/approvals",
+        }
+    ]
+    assert "open_approvals" not in {item["id"] for item in body["attention"]}
+    for probe_connection in probe_connections.values():
+        probe_connection.fetchval.assert_awaited_once_with(
+            "SELECT to_regclass($1) IS NOT NULL", "pending_actions"
+        )
+    for pool in pools.values():
+        pool.fetchval.assert_not_awaited()
