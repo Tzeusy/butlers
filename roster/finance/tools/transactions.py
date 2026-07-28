@@ -584,6 +584,50 @@ async def record_transaction(
     metadata: dict[str, Any] | None = None,
     external_id: str | None = None,
 ) -> dict[str, Any]:
+    """Record a transaction through the public Finance tool surface.
+
+    Provenance remains an internal concern so existing MCP callers retain the
+    established signature and manual-source behavior.
+    """
+    return await _record_transaction(
+        pool,
+        posted_at,
+        merchant,
+        amount,
+        currency,
+        category,
+        direction,
+        description,
+        payment_method,
+        account_id,
+        receipt_url,
+        external_ref,
+        source_message_id,
+        metadata,
+        external_id,
+        source="manual",
+    )
+
+
+async def _record_transaction(
+    pool: asyncpg.Pool,
+    posted_at: datetime,
+    merchant: str,
+    amount: Decimal | float | int,
+    currency: str,
+    category: str,
+    direction: str | None = None,
+    description: str | None = None,
+    payment_method: str | None = None,
+    account_id: str | None = None,
+    receipt_url: str | None = None,
+    external_ref: str | None = None,
+    source_message_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    external_id: str | None = None,
+    *,
+    source: str = "manual",
+) -> dict[str, Any]:
     """Record a transaction in the finance.transactions ledger.
 
     Direction is inferred from the amount sign when not provided:
@@ -694,8 +738,9 @@ async def record_transaction(
     if used_category_fallback:
         category_source = "manual"
 
-    # Check for optional new columns from finance_002 migration.
+    # Check for optional new columns from finance_002 / finance_006 migrations.
     has_category_source = await _has_column(pool, "transactions", "category_source")
+    has_source = await _has_column(pool, "transactions", "source")
 
     # Build the INSERT with explicit casts to avoid IndeterminateDatatypeError.
     # We always include the 13 base columns; optional columns are appended.
@@ -714,6 +759,12 @@ async def record_transaction(
         extra_cols.append("category_source")
         extra_vals.append(f"${param_idx}::text")
         extra_params.append(category_source)
+        param_idx += 1
+
+    if has_source:
+        extra_cols.append("source")
+        extra_vals.append(f"${param_idx}::text")
+        extra_params.append(source)
         param_idx += 1
 
     cols_clause = ", ".join(extra_cols)
