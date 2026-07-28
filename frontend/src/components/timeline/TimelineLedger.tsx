@@ -51,6 +51,10 @@ export interface TimelineLedgerProps {
   onRetry?: () => void;
   hasMore?: boolean;
   onLoadMore?: () => void;
+  /** An older-page request failed after the ledger had already rendered rows. */
+  loadMoreError?: boolean;
+  /** Retries the retained older-page cursor after a pagination failure. */
+  onRetryLoadMore?: () => void;
   isLoadingMore?: boolean;
 }
 
@@ -570,6 +574,8 @@ export function TimelineLedger({
   onRetry,
   hasMore,
   onLoadMore,
+  loadMoreError = false,
+  onRetryLoadMore,
   isLoadingMore,
 }: TimelineLedgerProps) {
   const { eventId: drawerEventId, openDrawer, closeDrawer } = useEventDrawerState();
@@ -618,12 +624,29 @@ export function TimelineLedger({
           />
         ))
       )}
-      {onLoadMore && (hasMore || isLoadingMore) && (
-        <div className="flex justify-center pt-4">
-          <Button variant="outline" size="sm" onClick={onLoadMore} disabled={isLoadingMore}>
-            {isLoadingMore ? "Loading…" : "Load older"}
-          </Button>
+      {loadMoreError ? (
+        <div
+          className="mt-4 flex flex-wrap items-center justify-center gap-2 rounded border border-[var(--amber)]/30 bg-[var(--amber)]/5 px-3 py-2 font-mono text-[11px] text-[var(--amber-text)]"
+          data-testid="timeline-load-more-error"
+        >
+          <span role="status" aria-live="polite">
+            Older timeline events are temporarily unavailable.
+          </span>
+          {onRetryLoadMore && (
+            <Button type="button" variant="outline" size="xs" onClick={onRetryLoadMore}>
+              Retry older events
+            </Button>
+          )}
         </div>
+      ) : (
+        onLoadMore &&
+        (hasMore || isLoadingMore) && (
+          <div className="flex justify-center pt-4">
+            <Button variant="outline" size="sm" onClick={onLoadMore} disabled={isLoadingMore}>
+              {isLoadingMore ? "Loading…" : "Load older"}
+            </Button>
+          </div>
+        )
       )}
     </div>
   );

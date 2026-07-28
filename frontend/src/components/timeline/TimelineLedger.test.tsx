@@ -435,4 +435,25 @@ describe("TimelineLedger — pagination", () => {
     });
     expect(onLoadMore).toHaveBeenCalledTimes(1);
   });
+
+  it("names an unavailable older page and exposes its retry without hiding the retained rows", () => {
+    const retryLoadMore = vi.fn();
+    renderLedger({
+      events: [makeEvent("e1", "2026-07-04T15:10:00Z")],
+      hasMore: true,
+      loadMoreError: true,
+      onRetryLoadMore: retryLoadMore,
+    } as unknown as Partial<React.ComponentProps<typeof TimelineLedger>>);
+
+    expect(container.textContent).toContain("Older timeline events are temporarily unavailable.");
+    expect(container.querySelector('[data-testid="timeline-row"]')).not.toBeNull();
+    const retry = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Retry older events"),
+    );
+    expect(retry).toBeTruthy();
+    act(() => {
+      retry?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(retryLoadMore).toHaveBeenCalledOnce();
+  });
 });

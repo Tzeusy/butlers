@@ -38,11 +38,14 @@ function setLedger(partial: Partial<UseTimelineLedgerResult>): void {
     refetch: vi.fn(),
     hasMore: false,
     loadMore: vi.fn(),
+    loadMoreError: false,
+    retryLoadMore: vi.fn(),
     isLoadingMore: false,
     pinned: true,
     newCount: 0,
     showNewEvents: vi.fn(),
     degradedSources: [],
+    degradedButlers: [],
     heartbeatRollup: { ticks: 0, butlers: 0, failed: 0 },
     isLiveFeedDown: false,
     ...partial,
@@ -105,6 +108,18 @@ describe("TimelinePage — error vs empty state", () => {
     expect(html).toContain("notifications");
   });
 
+  it("names the failed butler pools alongside generic partial Timeline metadata", () => {
+    setLedger({
+      degradedSources: ["sessions"],
+      degradedButlers: ["atlas", "home"],
+    } as unknown as Partial<UseTimelineLedgerResult>);
+    const html = render();
+
+    expect(html).toContain("atlas");
+    expect(html).toContain("home");
+    expect(html).toContain("Partial data");
+  });
+
   it("does not render the degraded banner when all sources are healthy", () => {
     setLedger({ degradedSources: [] });
     const html = render();
@@ -125,6 +140,71 @@ describe("TimelinePage — error vs empty state", () => {
     expect(html).toContain('data-testid="facet-session"');
     expect(html).toContain('data-testid="facet-error"');
     expect(html).toContain('data-testid="facet-notification"');
+  });
+
+  it("names unavailable butler facets and retries that reader without hiding Timeline evidence", () => {
+    const retryButlerFacets = vi.fn();
+    vi.mocked(useButlers).mockReturnValue({
+      data: { data: [{ name: "atlas" }] },
+      isError: true,
+      refetch: retryButlerFacets,
+    } as unknown as ReturnType<typeof useButlers>);
+    setLedger({
+      events: [
+        {
+          id: "e1",
+          type: "session",
+          butler: "home",
+          timestamp: "2026-07-04T14:32:00Z",
+          summary: "reachable event",
+          is_heartbeat: false,
+          data: {},
+        },
+      ],
+    });
+
+    renderDom(
+      <MemoryRouter initialEntries={["/timeline"]}>
+        <TimelinePage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Butler filters are temporarily unavailable.")).toBeTruthy();
+    expect(screen.queryByText("No butlers available")).toBeNull();
+    expect(screen.getByText("atlas")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry butler filters" }));
+    expect(retryButlerFacets).toHaveBeenCalledOnce();
+    expect(screen.getByText("reachable event")).toBeTruthy();
+  });
+
+  it("names unavailable saved views and retries that reader while built-in views remain usable", () => {
+    const retrySavedViews = vi.fn();
+    vi.mocked(useTimelineSavedViews).mockReturnValue({
+      data: {
+        data: [
+          {
+            id: "saved-house",
+            name: "House events",
+            filter_spec: { event_type: ["session"], butler: ["home"] },
+          },
+        ],
+      },
+      isError: true,
+      refetch: retrySavedViews,
+    } as unknown as ReturnType<typeof useTimelineSavedViews>);
+    setLedger({});
+
+    renderDom(
+      <MemoryRouter initialEntries={["/timeline"]}>
+        <TimelinePage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Saved views are temporarily unavailable.")).toBeTruthy();
+    expect(screen.getByTestId("saved-view-all")).toBeTruthy();
+    expect(screen.getByText("House events")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Retry saved views" }));
+    expect(retrySavedViews).toHaveBeenCalledOnce();
   });
 
   it("uses an accessible URL-backed Internal lens without replacing existing filters", () => {
