@@ -434,8 +434,7 @@ async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
                             await route_inbox_mark_errored(
                                 pool,
                                 row_id,
-                                "Could not reconcile the prior dashboard runtime before "
-                                "recovery.",
+                                "Could not reconcile the prior dashboard runtime before recovery.",
                                 processing_claim_id=processing_claim_id,
                             )
                             return

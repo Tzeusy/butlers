@@ -727,7 +727,9 @@ async def test_lease_loss_after_runtime_result_does_not_settle_a_route_inbox_row
             "butlers.core_tools._routing.route_inbox_processing_lease_heartbeat",
             return_value=heartbeat,
         ),
-        patch("butlers.core_tools._routing.route_inbox_wait_while_claimed", complete_then_lose_lease),
+        patch(
+            "butlers.core_tools._routing.route_inbox_wait_while_claimed", complete_then_lose_lease
+        ),
         patch("butlers.core_tools._routing.route_inbox_mark_processed", mark_processed),
         patch("butlers.core_tools._routing.route_inbox_mark_errored", mark_errored),
     ):
