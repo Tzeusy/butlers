@@ -335,8 +335,8 @@ def wire_pipelines(daemon: Any, pool: Any) -> None:
 async def recover_route_inbox(daemon: Any, pool: asyncpg.Pool) -> None:
     """Recover eligible route-inbox rows under a fenced processing lease.
 
-    Called on startup to recover from crashes or restarts.  Accepted rows and
-    stale processing leases are eligible for recovery through the normal
+    Called on startup to recover from crashes or restarts.  Rows in ``accepted``
+    state and stale ``processing`` leases are eligible for recovery through the normal
     dispatch path, except that a reclaimed dashboard processing row first
     reconciles its durable predecessor and never replays it when unprovable.
 
