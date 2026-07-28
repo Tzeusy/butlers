@@ -24,10 +24,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import DashboardPage from "@/pages/DashboardPage";
 import * as overviewModel from "@/components/overview/model";
 
-const { noPendingActionSources } = vi.hoisted(() => ({
-  noPendingActionSources: [] as string[],
-}));
-
 // ---------------------------------------------------------------------------
 // Mock all hooks used by DashboardPage (and RuntimeSummaryKpi)
 // ---------------------------------------------------------------------------
@@ -40,13 +36,14 @@ vi.mock("@/hooks/use-spend", () => ({
   useDailySpend: vi.fn(),
 }));
 vi.mock("@/hooks/use-issues", () => ({ useIssues: vi.fn() }));
-vi.mock("@/hooks/use-approvals", () => ({
-  useApprovalMetrics: vi.fn(),
-  usePendingApprovalsFlat: vi.fn(),
-  pendingApprovalMetricSourcesDegraded: (
-    response: { meta?: { pending_actions_sources_degraded?: string[] } } | undefined,
-  ) => response?.meta?.pending_actions_sources_degraded ?? noPendingActionSources,
-}));
+vi.mock("@/hooks/use-approvals", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/use-approvals")>();
+  return {
+    ...actual,
+    useApprovalMetrics: vi.fn(),
+    usePendingApprovalsFlat: vi.fn(),
+  };
+});
 vi.mock("@/hooks/use-approval-decisions.ts", () => ({
   useApprovalDecisionMutations: vi.fn(),
   UNDO_WINDOW_MS: 5_000,
@@ -1097,6 +1094,36 @@ describe("DashboardPage -- OperationsNowList", () => {
       container.remove();
     }
   });
+
+  it.each([
+    ["missing meta", { data: { total_pending: 0 } }],
+    ["missing data", { meta: {} }],
+    ["missing total_pending", { data: {}, meta: {} }],
+    ["a non-numeric total_pending", { data: { total_pending: "0" }, meta: {} }],
+    ["a negative total_pending", { data: { total_pending: -1 }, meta: {} }],
+  ])(
+    "renders %s approval metrics as a generic retryable unavailable state",
+    (_caseName, response) => {
+      vi.mocked(useApprovalMetrics).mockReturnValue({
+        data: response,
+        isLoading: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn(),
+      } as AnyMock);
+
+      const html = renderPage();
+      const kpiStart = html.indexOf('aria-label="System runtime summary"');
+      const kpiEnd = html.indexOf('aria-label="Operations and now"');
+      const kpi = html.slice(kpiStart, kpiEnd);
+
+      expect(html).toContain('data-testid="dashboard-pending-approvals-degraded"');
+      expect(html).toContain("Pending approvals: unavailable");
+      expect(html).toContain(">Retry<");
+      expect(kpi).toContain("—");
+      expect(kpi).not.toContain('href="/approvals"');
+    },
+  );
 
   it("renders failed notification row when notifications have failures", () => {
     vi.mocked(useNotificationStats).mockReturnValue({
