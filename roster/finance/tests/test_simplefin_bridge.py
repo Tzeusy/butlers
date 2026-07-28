@@ -9,6 +9,7 @@ import logging
 import shutil
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import asyncpg
@@ -416,6 +417,83 @@ async def test_complete_one_account_response_records_settled_transactions_with_p
         await pool.fetchval("SELECT last_synced_at FROM accounts WHERE id = $1", account["id"])
         == _NOW
     )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+@pytest.mark.skipif(not _DOCKER_AVAILABLE, reason="Docker not available")
+async def test_provider_id_preserves_aggregator_provenance_after_email_collision(
+    pool: asyncpg.Pool,
+) -> None:
+    """A new provider ID must not collapse into an equal email-ledger row."""
+    from butlers.tools.finance.feed_reconciliation import reconcile_feed_vs_email
+    from roster.finance.jobs.finance_jobs import run_simplefin_sync
+
+    account = await _insert_bound_account(pool)
+    posted_at = _NOW - timedelta(hours=3)
+    email_row = await pool.fetchrow(
+        """
+        INSERT INTO transactions (
+            account_id, merchant, amount, currency, direction, category,
+            posted_at, source, source_message_id
+        ) VALUES ($1, 'Fixture Grocer', $2, 'USD', 'debit', 'uncategorized', $3, 'manual', $4)
+        RETURNING id
+        """,
+        account["id"],
+        Decimal("12.34"),
+        posted_at,
+        "fixture-email-receipt",
+    )
+    assert email_row is not None
+    response = _account_set(
+        transactions=[
+            {
+                "id": "provider-fixture-1",
+                "posted": int(posted_at.timestamp()),
+                "amount": "-12.34",
+                "description": "Fixture Grocer",
+            }
+        ]
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=response)
+
+    async with _http_client(handler) as client:
+        result = await run_simplefin_sync(
+            pool,
+            credential_store=_CredentialStore(_ACCESS_URL),
+            http_client=client,
+            now=_NOW,
+        )
+
+    assert result == {"status": "ok", "recorded": 1, "skipped_pending": 0}
+    rows = await pool.fetch(
+        """
+        SELECT source, source_message_id, external_id
+        FROM transactions
+        ORDER BY source, source_message_id NULLS FIRST
+        """
+    )
+    assert len(rows) == 2
+    assert [dict(row) for row in rows] == [
+        {
+            "source": "aggregator",
+            "source_message_id": None,
+            "external_id": "provider-fixture-1",
+        },
+        {
+            "source": "manual",
+            "source_message_id": "fixture-email-receipt",
+            "external_id": None,
+        },
+    ]
+
+    reconciliation = await reconcile_feed_vs_email(pool)
+    assert reconciliation["configured"] is True
+    assert reconciliation["feed_transactions_checked"] == 1
+    assert len(reconciliation["matched"]) == 1
+    assert reconciliation["unmatched_feed"] == []
+    assert reconciliation["unmatched_email_count"] == 0
 
 
 @pytest.mark.asyncio(loop_scope="session")

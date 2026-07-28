@@ -398,17 +398,21 @@ def register_tools(mcp: Any, module: Any, config: Any = None) -> None:
         Matches ``transactions.source = 'aggregator'`` rows against
         ``source_message_id IS NOT NULL`` (email-parsed) rows on (amount ±$0.01,
         date ±3 days, merchant-fuzzy). SimpleFIN is an optional bridge: a
-        successful aggregator sync makes feed rows available for matching. If
-        there is no credential or configuration, or no account has completed a
-        successful aggregator sync, this returns `configured=false` with empty
-        feed match lists. That is the honest no-feed state, not an all-clear.
+        successful aggregator sync creates persisted completed feed-sync evidence
+        and makes feed rows available for matching. `configured` reports that
+        evidence, not whether there is a current credential or configuration. If
+        no account has completed a successful aggregator sync, this returns
+        `configured=false` with empty feed match lists. That is the honest
+        no-feed state, not an all-clear.
 
         lookback_days: Outer scan horizon for both transaction sets (default 30).
 
         Returns:
-          configured: whether any account has completed a successful aggregator
-            sync, including through the optional SimpleFIN bridge. False means
-            the empty lists reflect missing feed data, not "all reconciled".
+          configured: whether any account has persisted completed feed-sync
+            evidence through a successful aggregator sync, including the
+            optional SimpleFIN bridge. It does not report a current credential
+            or configuration. False means the empty lists reflect missing feed
+            data, not "all reconciled".
           matched: [{feed, email}, ...] — paired transactions.
           unmatched_feed: aggregator transactions with no matching email receipt
             (e.g. a merchant that never emails receipts).
@@ -424,12 +428,13 @@ def register_tools(mcp: Any, module: Any, config: Any = None) -> None:
     async def account_feed_freshness(staleness_threshold_hours: int = 24) -> dict[str, Any]:
         """Report per-account optional SimpleFIN aggregator-feed freshness.
 
-        Accounts with no successful aggregator sync — including when optional
-        SimpleFIN has no credential or configuration — are
-        `degraded=true, reason="never_synced"`. A completed sync older than
-        `staleness_threshold_hours` is `degraded=true, reason="stale"`; a
-        recent completed sync is healthy. This preserves the honest degraded
-        state for absent feed data rather than fabricating "all healthy".
+        Accounts with no successful aggregator sync are
+        `degraded=true, reason="never_synced"`. This reports persisted completed
+        feed-sync evidence, not a current credential or configuration. A
+        completed sync older than `staleness_threshold_hours` is
+        `degraded=true, reason="stale"`; a recent completed sync is healthy.
+        This preserves the honest degraded state for absent feed data rather
+        than fabricating "all healthy".
 
         Returns:
           accounts: [{account_id, institution, type, name, last_synced_at,
