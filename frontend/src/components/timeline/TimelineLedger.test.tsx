@@ -278,6 +278,16 @@ describe("TimelineLedger — Internal maintenance lens", () => {
     expect(container.textContent).toContain("No owner activity in this window.");
     expect(container.textContent).toContain("Load older");
   });
+
+  it("renders a partial-unavailable state when degraded evidence contains only hidden maintenance", () => {
+    const maintenance = makeMaintenanceEvent("maintenance-partial", "2026-07-04T15:03:00Z");
+
+    renderLedger({ events: [maintenance], hasPartialData: true });
+
+    expect(container.querySelector('[data-testid="timeline-partial-empty"]')).not.toBeNull();
+    expect(container.textContent).toContain("Owner activity is partially unavailable.");
+    expect(container.textContent).not.toContain("No owner activity in this window.");
+  });
 });
 
 describe("TimelineLedger — failed delivery honesty", () => {

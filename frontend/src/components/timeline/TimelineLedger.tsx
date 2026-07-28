@@ -505,13 +505,19 @@ function EmptyState() {
   );
 }
 
-function PartialEmptyState() {
+function PartialEmptyState({
+  title = "Timeline data is partially unavailable.",
+  description = "No events were returned by reachable sources, so this is not a complete empty result.",
+}: {
+  title?: string;
+  description?: string;
+}) {
   return (
     <div role="status" aria-live="polite" data-testid="timeline-partial-empty">
       <EmptyStateUI
         variant="page"
-        title="Timeline data is partially unavailable."
-        description="No events were returned by reachable sources, so this is not a complete empty result."
+        title={title}
+        description={description}
       />
     </div>
   );
@@ -627,7 +633,14 @@ export function TimelineLedger({
         <EventNotFoundNotice eventId={drawerEventId} onClose={closeDrawer} />
       )}
       {hourGroups.length === 0 ? (
-        <InternalMaintenanceEmptyState />
+        hasPartialData ? (
+          <PartialEmptyState
+            title="Owner activity is partially unavailable."
+            description="Only scheduled maintenance runs were returned by reachable sources. One or more Timeline sources are unavailable, so this is not a complete owner-activity result. Enable Internal activity to inspect the maintenance runs."
+          />
+        ) : (
+          <InternalMaintenanceEmptyState />
+        )
       ) : (
         hourGroups.map((group) => (
           <HourGroupSection
