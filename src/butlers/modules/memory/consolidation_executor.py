@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from butlers.modules.memory.consolidation_parser import ConsolidationResult
 from butlers.modules.memory.storage import (
+    StaleSupersessionTargetError,
     _lookup_episode_ttl_days,
     confirm_memory,
     create_link,
@@ -251,22 +252,32 @@ async def execute_consolidation(
                     "facts should always be anchored to an entity",
                     fact.target_id,
                 )
-            store_result = await store_fact(
-                pool,
-                target["subject"],
-                target["predicate"],
-                fact.content,
-                embedding_engine,
-                permanence=fact.permanence,
-                scope=target["scope"],
-                source_butler=butler_name,
-                entity_id=fact_entity_id,
-                tenant_id=tenant_id,
-                request_id=request_id,
-                expected_supersedes_id=target_id,
-                enable_shared_catalog=enable_shared_catalog,
-                source_schema=source_schema,
-            )
+            try:
+                store_result = await store_fact(
+                    pool,
+                    target["subject"],
+                    target["predicate"],
+                    fact.content,
+                    embedding_engine,
+                    permanence=fact.permanence,
+                    scope=target["scope"],
+                    source_butler=butler_name,
+                    entity_id=fact_entity_id,
+                    tenant_id=tenant_id,
+                    request_id=request_id,
+                    expected_supersedes_id=target_id,
+                    enable_shared_catalog=enable_shared_catalog,
+                    source_schema=source_schema,
+                )
+            except StaleSupersessionTargetError:
+                logger.warning(
+                    "Skipping stale property fact update %s for tenant %s and butler %s",
+                    target_id,
+                    tenant_id,
+                    butler_name,
+                )
+                errors.append(f"Failed to update fact ({fact.target_id})")
+                continue
             # store_fact returns a dict ({"id": ..., "supersedes_id": ...}), not a
             # bare UUID. Extract the id before passing it to create_link's
             # UUID-typed source_id, or asyncpg raises an encoding error that
