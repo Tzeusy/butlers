@@ -208,10 +208,19 @@ async def execute_consolidation(
                 butler_name,
             )
             if target is None:
-                raise ValueError(
-                    f"target fact {target_id!r} is not a live property fact "
-                    f"for tenant {tenant_id!r} and butler {butler_name!r}"
+                # This is an expected optimistic-concurrency outcome: the
+                # model may reference a fact that was superseded after prompt
+                # construction, or one outside this executor's update
+                # boundary. Preserve the rejected action in the result without
+                # reporting a runtime exception to operational error scanners.
+                logger.warning(
+                    "Skipping non-live property fact update %s for tenant %s and butler %s",
+                    target_id,
+                    tenant_id,
+                    butler_name,
                 )
+                errors.append(f"Failed to update fact ({fact.target_id})")
+                continue
 
             predicate_is_temporal = await pool.fetchval(
                 "SELECT is_temporal FROM predicate_registry "

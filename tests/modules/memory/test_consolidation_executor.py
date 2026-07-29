@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
@@ -324,7 +325,10 @@ async def test_updated_fact_uses_persisted_target_identity(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_target_is_sanitized_and_later_updates_continue(monkeypatch) -> None:
+async def test_missing_target_is_sanitized_and_later_updates_continue(
+    monkeypatch,
+    caplog,
+) -> None:
     missing_id = uuid.uuid4()
     valid_id = uuid.uuid4()
     entity_id = uuid.uuid4()
@@ -363,16 +367,19 @@ async def test_missing_target_is_sanitized_and_later_updates_continue(monkeypatc
         ],
     )
 
-    result = await consolidation_executor.execute_consolidation(
-        pool=pool,
-        embedding_engine=object(),
-        parsed=parsed,
-        source_episode_ids=[],
-        butler_name="travel",
-        tenant_id="shared",
-    )
+    with caplog.at_level(logging.WARNING, logger=consolidation_executor.__name__):
+        result = await consolidation_executor.execute_consolidation(
+            pool=pool,
+            embedding_engine=object(),
+            parsed=parsed,
+            source_episode_ids=[],
+            butler_name="travel",
+            tenant_id="shared",
+        )
 
     assert result["facts_updated"] == 1
     assert result["errors"] == [f"Failed to update fact ({missing_id})"]
     store_fact_mock.assert_awaited_once()
     assert store_fact_mock.await_args.kwargs["expected_supersedes_id"] == valid_id
+    assert [record.levelno for record in caplog.records] == [logging.WARNING]
+    assert "Skipping non-live property fact update" in caplog.text
