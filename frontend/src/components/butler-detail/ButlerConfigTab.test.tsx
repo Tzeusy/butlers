@@ -181,7 +181,7 @@ function setupModulesError() {
   } as unknown as ReturnType<typeof useButler>);
 
   vi.mocked(useButlerModules).mockReturnValue({
-    data: undefined,
+    data: { data: [], meta: {} },
     isLoading: false,
     isError: true,
   } as unknown as ReturnType<typeof useButlerModules>);
