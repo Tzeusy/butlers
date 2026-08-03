@@ -393,6 +393,8 @@ describe("ButlerConfigTab", () => {
       setupModulesError();
       renderTab();
       const panel = screen.getByTestId("panel-scopes");
+      expect(screen.queryByTestId("panel-scopes-empty")).toBeNull();
+      expect(screen.queryByTestId("panel-integrations-empty")).toBeNull();
       const errorLines = panel.querySelectorAll("[data-testid='error-state-line']");
       expect(errorLines.length).toBeGreaterThanOrEqual(1);
     });
