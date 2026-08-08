@@ -65,7 +65,7 @@ Valid statuses: `unread`, `read`, `actioned`, `archived`.
 
 - Messages are created as `unread`.
 - Reading a message via `mailbox_read` auto-transitions `unread` -> `read`.
-- `mailbox_update_status` accepts any valid status directly; it does not enforce an ordered transition graph. It sets the appropriate timestamp columns when they exist (`read_at`, `actioned_at`, `archived_at`).
+- `mailbox_update_status` accepts any valid status directly; it does not enforce an ordered transition graph. For `read` and `archived`, it updates `read_at` and `archived_at` only when those columns exist; for `actioned`, it unconditionally updates `actioned_at`, which `mailbox_001` and `mailbox_002` guarantee.
 
 ## Database Tables
 
