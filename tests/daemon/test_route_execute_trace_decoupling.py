@@ -362,11 +362,17 @@ class TestSpanLink:
         )
         assert result["status"] == "accepted"
         route_tasks = tuple(daemon._route_inbox_tasks)
-        assert len(route_tasks) == 1
-        # route.execute returns only after it registers the background task;
-        # release the mock after observing that boundary, not a wall-clock delay.
-        allow_trigger.set()
-        await asyncio.gather(*route_tasks)
+        try:
+            assert len(route_tasks) == 1
+            # route.execute returns only after it registers the background task;
+            # release the mock after observing that boundary, not a wall-clock delay.
+            allow_trigger.set()
+            await asyncio.gather(*route_tasks)
+        finally:
+            # A failed cardinality assertion must not leak the deliberately
+            # blocked task used to exercise the scheduling boundary.
+            allow_trigger.set()
+            await asyncio.gather(*route_tasks, return_exceptions=True)
         assert trigger_started.is_set()
         daemon.spawner.trigger.assert_awaited_once()
 
