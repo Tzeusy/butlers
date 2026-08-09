@@ -6,11 +6,37 @@ Provides cron-driven task dispatch for butlers, supporting TOML-configured and r
 ## Requirements
 
 ### Requirement: Cron Evaluation and next_run_at Computation
-All cron expressions SHALL use 5-field format (minute hour day month day-of-week) evaluated in UTC. The `croniter` library validates and computes next occurrences. The `timezone` field is informational for projection/display only and MUST NOT affect cron evaluation.
+
+All cron expressions SHALL use 5-field format (minute hour day month day-of-week).
+During daemon startup synchronization and scheduler tick evaluation, cron fields
+SHALL be evaluated in an effective timezone: the owner's configured general
+timezone is the default; a stored `timezone` of `UTC`, `NULL`, or empty is a
+default sentinel that follows the owner timezone; and a non-UTC `timezone` is
+an explicit per-schedule override.
+If the owner timezone cannot be resolved or the effective timezone is invalid,
+the scheduler SHALL fall back to UTC. The `croniter` library validates and
+computes the next occurrence in that effective timezone; the scheduler SHALL
+convert the occurrence to UTC for `next_run_at` and then apply deterministic
+staggering as specified below.
 
 #### Scenario: Valid cron expression
-- **WHEN** a schedule is created with a valid 5-field cron expression
-- **THEN** `croniter.is_valid(cron)` passes and `next_run_at` is computed as the next UTC occurrence
+- **WHEN** `sync_schedules()` or `tick()` computes `next_run_at` for a valid
+  5-field cron expression
+- **THEN** `croniter.is_valid(cron)` passes and `next_run_at` is computed from
+  the next occurrence in its effective timezone, converted to UTC, and subject
+  to deterministic staggering
+
+#### Scenario: Default schedule timezone follows the owner
+- **WHEN** a daemon synchronizes a TOML schedule or evaluates a schedule whose
+  stored `timezone` is `UTC`, `NULL`, or empty
+- **THEN** the cron fields SHALL be interpreted in the owner's configured
+  general timezone
+- **AND** if that timezone cannot be resolved, they SHALL be interpreted in UTC
+
+#### Scenario: Explicit schedule timezone overrides the owner default
+- **WHEN** `tick()` evaluates a schedule with a non-UTC stored `timezone`
+- **THEN** the cron fields SHALL be interpreted in that timezone rather than the
+  owner's configured general timezone
 
 #### Scenario: Invalid cron expression
 - **WHEN** a schedule is created or updated with an invalid cron expression
