@@ -98,6 +98,49 @@ async def test_dm_participant_count_never_bypasses() -> None:
     dispatcher.call.assert_awaited_once()
 
 
+async def test_small_broadcast_channel_never_bypasses() -> None:
+    """A broadcast/newsletter channel (chat_type='channel') must NOT bypass via
+    group-size, even at a participant_count within the threshold.
+
+    A small niche channel can genuinely have a low subscriber count, but it's
+    one-to-many announcement content, not organic group chatter — the same
+    class of mismatch as the DM case (small participant_count that doesn't
+    mean "small group banter"). This is an allow-list guard
+    (chat_type in {"group", "supergroup"}), not a "!= private" deny-list —
+    that distinction matters because Telegram's participant-count resolution
+    genuinely queries channels too.
+    """
+    dispatcher = _make_dispatcher(response="IGNORE")
+    evaluator = DiscretionEvaluator(
+        source_name="tg:channel", dispatcher=dispatcher, group_size_bypass_max=20
+    )
+
+    result = await evaluator.evaluate(
+        text="announcement", weight=0.7, participant_count=5, chat_type="channel"
+    )
+
+    assert result.verdict == "IGNORE"
+    dispatcher.call.assert_awaited_once()
+
+
+async def test_supergroup_is_eligible_for_bypass() -> None:
+    """chat_type='supergroup' (Telegram's large-group type) IS eligible —
+    confirms the allow-list isn't accidentally narrower than the deny-list
+    it replaced."""
+    dispatcher = _make_dispatcher(response="IGNORE")
+    evaluator = DiscretionEvaluator(
+        source_name="tg:supergroup", dispatcher=dispatcher, group_size_bypass_max=20
+    )
+
+    result = await evaluator.evaluate(
+        text="lol nice", weight=0.1, participant_count=8, chat_type="supergroup"
+    )
+
+    assert result.verdict == "FORWARD"
+    assert result.reason == "group-size-bypass"
+    dispatcher.call.assert_not_called()
+
+
 async def test_omitted_chat_type_never_bypasses() -> None:
     """chat_type omitted (None) must NOT bypass, even at a small participant_count.
 

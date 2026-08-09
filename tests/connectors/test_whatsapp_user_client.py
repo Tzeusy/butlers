@@ -469,6 +469,50 @@ async def test_flush_chat_buffer_unknown_participant_count_still_runs_discretion
     connector._record_batch_filtered_event.assert_called_once()
 
 
+async def test_flush_chat_buffer_dm_never_bypasses_discretion(
+    connector: WhatsAppUserClientConnector,
+) -> None:
+    """A DM flush must NOT bypass via group-size, even though DMs fall back to
+    participant_count=2 (within the default threshold of 20) — a 1:1 chat is
+    not "small group banter" and sender trust must still gate discretion.
+    """
+    connector._ingestion_policy.evaluate = MagicMock(return_value=_allow_decision())  # type: ignore[method-assign]
+    connector._global_ingestion_policy.evaluate = MagicMock(return_value=_allow_decision())  # type: ignore[method-assign]
+
+    dispatcher = AsyncMock()
+    dispatcher.call = AsyncMock(return_value="IGNORE")
+    connector._discretion_dispatcher = dispatcher
+    connector._weight_resolver = AsyncMock()
+    connector._weight_resolver.resolve = AsyncMock(return_value=0.7)
+
+    chat_jid = "15551234@s.whatsapp.net"
+    connector._chat_buffers[chat_jid] = _wa_chat_buffer(
+        chat_jid,
+        [
+            {
+                "message_id": "m4",
+                "chat_jid": chat_jid,
+                "sender_jid": "15559876@s.whatsapp.net",
+                "timestamp": 1711447200,
+                "type": "text",
+                "text": "ambient chatter",
+                # no participant_count key — DMs fall back to 2 via chat_type
+            }
+        ],
+    )
+
+    connector._refresh_lid_map = AsyncMock()  # type: ignore[method-assign]
+    connector._submit_to_ingest = AsyncMock()  # type: ignore[method-assign]
+    connector._record_batch_filtered_event = MagicMock()  # type: ignore[method-assign]
+    connector._flush_and_drain = AsyncMock()  # type: ignore[method-assign]
+
+    await connector._flush_chat_buffer(chat_jid)
+
+    dispatcher.call.assert_awaited_once()
+    connector._submit_to_ingest.assert_not_called()
+    connector._record_batch_filtered_event.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # Stale-link watchdog
 # ---------------------------------------------------------------------------
