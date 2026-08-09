@@ -740,3 +740,76 @@ async def test_error_status_retains_full_raw_payload(
     kwargs = connector._filtered_event_buffer.record.call_args.kwargs
     assert kwargs["status"] == "error"
     assert kwargs["full_payload"]["payload"]["raw"] == {"id": 9, "message": "hi"}
+
+
+# ---------------------------------------------------------------------------
+# Group-size discretion bypass wiring (live single-message path)
+#
+# Small/family-sized groups must skip the discretion LLM entirely and always
+# submit, independent of content — the discretion system prompt otherwise
+# instructs the LLM to IGNORE "group banter", which starves passive
+# interaction sync of exactly the low-content chatter Dunbar scoring needs
+# for small groups. Large groups must keep full LLM-gated filtering so token
+# cost stays bounded on high-volume/mass-membership chats.
+# ---------------------------------------------------------------------------
+
+
+async def test_live_path_small_group_bypasses_discretion(
+    connector: TelegramUserClientConnector,
+) -> None:
+    """A message in a group at/under the threshold FORWARDs without an LLM call."""
+    connector._ingestion_policy.evaluate = MagicMock(return_value=_allow_decision())  # type: ignore[method-assign]
+    connector._global_ingestion_policy.evaluate = MagicMock(return_value=_allow_decision())  # type: ignore[method-assign]
+
+    dispatcher = AsyncMock()
+    dispatcher.call = AsyncMock(return_value="IGNORE")
+    connector._discretion_dispatcher = dispatcher
+    # Force sender weight below weight_bypass (1.0) so only the group-size
+    # bypass (not the pre-existing weight bypass) can explain a skipped LLM call.
+    connector._weight_resolver = AsyncMock()
+    connector._weight_resolver.resolve = AsyncMock(return_value=0.7)
+
+    chat_id = "700"
+    connector._participant_count_cache[chat_id] = (8, time.monotonic())
+
+    connector._normalize_to_ingest_v1 = AsyncMock(  # type: ignore[method-assign]
+        return_value={"schema_version": "ingest.v1"}
+    )
+    connector._submit_to_ingest = AsyncMock()  # type: ignore[method-assign]
+    connector._filtered_event_buffer.record = MagicMock()  # type: ignore[method-assign]
+    connector._flush_and_drain = AsyncMock()  # type: ignore[method-assign]
+
+    msg = _make_message(msg_id=10, chat_id=int(chat_id), sender_id=999, text="lol nice")
+    await connector._process_message(msg)
+
+    dispatcher.call.assert_not_called()
+    connector._submit_to_ingest.assert_awaited_once()
+    connector._filtered_event_buffer.record.assert_not_called()
+
+
+async def test_live_path_large_group_still_runs_discretion(
+    connector: TelegramUserClientConnector,
+) -> None:
+    """A message in a group over the threshold still calls the LLM and honours IGNORE."""
+    connector._ingestion_policy.evaluate = MagicMock(return_value=_allow_decision())  # type: ignore[method-assign]
+    connector._global_ingestion_policy.evaluate = MagicMock(return_value=_allow_decision())  # type: ignore[method-assign]
+
+    dispatcher = AsyncMock()
+    dispatcher.call = AsyncMock(return_value="IGNORE")
+    connector._discretion_dispatcher = dispatcher
+    connector._weight_resolver = AsyncMock()
+    connector._weight_resolver.resolve = AsyncMock(return_value=0.7)
+
+    chat_id = "701"
+    connector._participant_count_cache[chat_id] = (300, time.monotonic())
+
+    connector._submit_to_ingest = AsyncMock()  # type: ignore[method-assign]
+    connector._filtered_event_buffer.record = MagicMock()  # type: ignore[method-assign]
+    connector._flush_and_drain = AsyncMock()  # type: ignore[method-assign]
+
+    msg = _make_message(msg_id=11, chat_id=int(chat_id), sender_id=999, text="ambient chatter")
+    await connector._process_message(msg)
+
+    dispatcher.call.assert_awaited_once()
+    connector._submit_to_ingest.assert_not_called()
+    connector._filtered_event_buffer.record.assert_called_once()

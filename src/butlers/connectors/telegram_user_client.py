@@ -37,6 +37,8 @@ Environment variables (see `docs/connectors/telegram_user_client.md` section 4):
 - TELEGRAM_USER_DISCRETION_WINDOW_SECONDS (optional, default 300): discretion context window age cap
 - TELEGRAM_USER_DISCRETION_WEIGHT_BYPASS (optional, default 1.0): weight threshold to skip LLM
 - TELEGRAM_USER_DISCRETION_WEIGHT_FAIL_OPEN (optional, default 0.5): weight threshold for fail-open
+- TELEGRAM_USER_DISCRETION_GROUP_SIZE_BYPASS_MAX (optional, default 20): groups at or under this
+  participant count skip the discretion LLM entirely and always FORWARD
 
 Security requirements:
 - Never commit credentials or session artifacts to version control
@@ -205,6 +207,7 @@ class TelegramUserClientConnectorConfig:
     discretion_window_seconds: float = 300.0
     discretion_weight_bypass: float = 1.0
     discretion_weight_fail_open: float = 0.5
+    discretion_group_size_bypass_max: int = 20
 
     # Address-mention keywords for passive→interactive promotion
     address_keywords: frozenset[str] = field(default_factory=lambda: _DEFAULT_ADDRESS_KEYWORDS)
@@ -254,6 +257,9 @@ class TelegramUserClientConnectorConfig:
         discretion_window_seconds = _float("TELEGRAM_USER_DISCRETION_WINDOW_SECONDS", 300.0)
         discretion_weight_bypass = _float("TELEGRAM_USER_DISCRETION_WEIGHT_BYPASS", 1.0)
         discretion_weight_fail_open = _float("TELEGRAM_USER_DISCRETION_WEIGHT_FAIL_OPEN", 0.5)
+        discretion_group_size_bypass_max = _int(
+            "TELEGRAM_USER_DISCRETION_GROUP_SIZE_BYPASS_MAX", 20
+        )
         health_port = _int("CONNECTOR_HEALTH_PORT", _DEFAULT_HEALTH_PORT)
         # Address keywords (comma-separated, case-insensitive)
         _raw_keywords = os.environ.get("CONNECTOR_ADDRESS_KEYWORDS", "").strip()
@@ -284,6 +290,7 @@ class TelegramUserClientConnectorConfig:
             discretion_window_seconds=discretion_window_seconds,
             discretion_weight_bypass=discretion_weight_bypass,
             discretion_weight_fail_open=discretion_weight_fail_open,
+            discretion_group_size_bypass_max=discretion_group_size_bypass_max,
             address_keywords=address_keywords,
             max_interaction_group_size=max_interaction_group_size,
         )
@@ -972,9 +979,12 @@ class TelegramUserClientConnector:
                         window_seconds=self._config.discretion_window_seconds,
                         weight_bypass=self._config.discretion_weight_bypass,
                         weight_fail_open=self._config.discretion_weight_fail_open,
+                        group_size_bypass_max=self._config.discretion_group_size_bypass_max,
                     )
                 d_result = await self._discretion_evaluators[chat_id].evaluate(
-                    normalized_text, weight=1.0
+                    normalized_text,
+                    weight=1.0,
+                    participant_count=_participant_count if _participant_count > 0 else None,
                 )
                 if d_result.verdict == "IGNORE":
                     logger.debug(
@@ -1331,14 +1341,26 @@ class TelegramUserClientConnector:
                             window_seconds=self._config.discretion_window_seconds,
                             weight_bypass=self._config.discretion_weight_bypass,
                             weight_fail_open=self._config.discretion_weight_fail_open,
+                            group_size_bypass_max=self._config.discretion_group_size_bypass_max,
                         )
                     # Resolve sender weight from contact roles.
                     sender_id = self._extract_sender_identity(message)
                     sender_weight = 1.0
                     if self._weight_resolver and sender_id != "unknown":
                         sender_weight = await self._weight_resolver.resolve("telegram", sender_id)
+                    # Participant count for the group-size bypass (RFC 0013 gating
+                    # already resolves+caches this downstream in
+                    # _normalize_to_ingest_v1; fetching it here too is a cache hit
+                    # after the first message in a chat, not a second network call).
+                    _live_participant_count = await self._get_participant_count(
+                        chat_id_str, message
+                    )
                     d_result = await self._discretion_evaluators[chat_id_str].evaluate(
-                        msg_text, weight=sender_weight
+                        msg_text,
+                        weight=sender_weight,
+                        participant_count=(
+                            _live_participant_count if _live_participant_count > 0 else None
+                        ),
                     )
                     if d_result.verdict == "IGNORE":
                         logger.debug(

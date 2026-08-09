@@ -190,7 +190,13 @@ The Telegram user client connector SHALL use the shared discretion layer (`butle
 #### Scenario: Discretion model selection
 - **WHEN** the connector starts
 - **THEN** the discretion model is resolved from the shared model catalog at the `discretion` complexity tier (managed via the Settings UI at `/butlers/settings`)
-- **AND** window/weight configuration (`window_size`, `window_seconds`, `weight_bypass`, `weight_fail_open`) is passed directly to the `DiscretionEvaluator` constructor
+- **AND** window/weight configuration (`window_size`, `window_seconds`, `weight_bypass`, `weight_fail_open`, `discretion_group_size_bypass_max`) is passed directly to the `DiscretionEvaluator` constructor
+
+#### Scenario: Group-size discretion bypass
+- **WHEN** a chat's participant count (resolved via `_get_participant_count`, cached with a 1-hour TTL) is known and `<= discretion_group_size_bypass_max` (env `TELEGRAM_USER_DISCRETION_GROUP_SIZE_BYPASS_MAX`, default 20)
+- **THEN** the discretion LLM is skipped entirely for that message/batch and it always FORWARDs, independent of sender weight
+- **AND** this applies on both the batch-flush path (`_flush_chat_buffer`) and the live single-message path (`_process_message`)
+- **AND** an unknown participant count (0, normalized to `None`) never triggers the bypass — chats over the threshold, or whose size cannot yet be resolved, keep full LLM-gated filtering
 
 ### Requirement: Loopback Health Endpoint
 The Telegram user client connector SHALL expose its operational health without
