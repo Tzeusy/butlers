@@ -19,4 +19,4 @@
 
 - [x] 4.1 Run focused backend and frontend suites, then fix regressions.
 - [x] 4.2 Validate OpenSpec, lint, typecheck, build, and right-sized broader quality gates from the exact branch head.
-- [ ] 4.3 Commit scoped changes, push the branch, and open a pull request with current verification evidence.
+- [x] 4.3 Commit scoped changes, push the branch, and open a pull request with current verification evidence.
