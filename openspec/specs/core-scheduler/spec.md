@@ -8,30 +8,60 @@ Provides cron-driven task dispatch for butlers, supporting TOML-configured and r
 ### Requirement: Cron Evaluation and next_run_at Computation
 
 All cron expressions SHALL use 5-field format (minute hour day month day-of-week).
-During daemon startup synchronization and scheduler tick evaluation, cron fields
-SHALL be evaluated in an effective timezone: the owner's configured general
-timezone is the default; a stored `timezone` of `UTC`, `NULL`, or empty is a
-default sentinel that follows the owner timezone; and a non-UTC `timezone` is
-an explicit per-schedule override.
-If the owner timezone cannot be resolved or the effective timezone is invalid,
-the scheduler SHALL fall back to UTC. The `croniter` library validates and
-computes the next occurrence in that effective timezone; the scheduler SHALL
-convert the occurrence to UTC for `next_run_at` and then apply deterministic
-staggering as specified below.
+During daemon startup synchronization, `sync_schedules()` SHALL calculate
+`next_run_at` for a new or changed TOML schedule using the startup-resolved
+owner general timezone. Startup synchronization does not read the stored per-row
+`timezone` value, and an otherwise unchanged TOML row retains its existing
+`next_run_at` even if the owner timezone has changed.
+
+During `tick()` evaluation, cron fields SHALL use an effective timezone: the
+scheduler loop's resolved owner general timezone is the default; a stored
+`timezone` of `UTC`, `NULL`, or empty is a default sentinel that follows that
+default; and a non-UTC `timezone` is an explicit per-schedule override.
+If the owner default or effective timezone is invalid, the scheduler SHALL fall
+back to UTC. The `croniter` library validates and computes the next occurrence
+in the applicable timezone; the scheduler SHALL convert the occurrence to UTC
+for `next_run_at` and then apply deterministic staggering as specified below.
 
 #### Scenario: Valid cron expression
-- **WHEN** `sync_schedules()` or `tick()` computes `next_run_at` for a valid
+- **WHEN** `sync_schedules()` creates or updates a TOML schedule with a valid
   5-field cron expression
 - **THEN** `croniter.is_valid(cron)` passes and `next_run_at` is computed from
-  the next occurrence in its effective timezone, converted to UTC, and subject
-  to deterministic staggering
+  the next occurrence in the startup-resolved owner-general timezone, converted to UTC,
+  and subject to deterministic staggering
+- **AND WHEN** `tick()` computes a subsequent `next_run_at`
+- **THEN** it uses that stored row's effective timezone, converted to UTC and
+  subject to deterministic staggering
 
-#### Scenario: Default schedule timezone follows the owner
-- **WHEN** a daemon synchronizes a TOML schedule or evaluates a schedule whose
-  stored `timezone` is `UTC`, `NULL`, or empty
-- **THEN** the cron fields SHALL be interpreted in the owner's configured
-  general timezone
+#### Scenario: Startup synchronization uses the owner default
+- **WHEN** a daemon creates or updates a TOML schedule during
+  `sync_schedules()`
+- **THEN** the cron fields SHALL be interpreted in the startup-resolved
+  owner-general timezone
+- **AND** startup synchronization SHALL NOT inspect a retained per-row
+  `timezone` override when computing that row's replacement `next_run_at`
+- **AND** if the owner timezone cannot be resolved, the cron fields SHALL be
+  interpreted in UTC
+
+#### Scenario: Unchanged TOML rows retain their prior startup computation
+- **WHEN** a TOML schedule's synced fields are unchanged on a later daemon
+  startup, including after an owner timezone change
+- **THEN** `sync_schedules()` SHALL leave that row's existing `next_run_at`
+  unchanged
+
+#### Scenario: Tick-time default schedule timezone follows the owner
+- **WHEN** `tick()` evaluates a schedule whose stored `timezone` is `UTC`,
+  `NULL`, or empty
+- **THEN** the cron fields SHALL be interpreted in the scheduler loop's
+  resolved owner-general timezone
 - **AND** if that timezone cannot be resolved, they SHALL be interpreted in UTC
+
+#### Scenario: A running scheduler loop retains its resolved owner default
+- **WHEN** the owner general timezone changes while a scheduler loop is running
+- **THEN** subsequent `tick()` calls in that loop SHALL continue using the
+  owner-general default resolved when the loop started
+- **AND** the changed owner timezone SHALL take effect after the next daemon
+  restart starts a new scheduler loop
 
 #### Scenario: Explicit schedule timezone overrides the owner default
 - **WHEN** `tick()` evaluates a schedule with a non-UTC stored `timezone`
