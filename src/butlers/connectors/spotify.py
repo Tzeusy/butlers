@@ -558,6 +558,18 @@ class SpokenSessionTracker:
         self._state = "idle"
         return [closed]
 
+    def close_for_item_switch(self, *, now: datetime | None = None) -> list[SpokenSession]:
+        """Close immediately when Spotify reports a different active item type."""
+        now = now or datetime.now(UTC)
+        if self._state == "idle":
+            return []
+        assert self._session is not None
+        self._session.ended_at = now
+        closed = self._session
+        self._session = None
+        self._state = "idle"
+        return [closed]
+
 
 # ---------------------------------------------------------------------------
 # Spotify API client helpers
@@ -1860,7 +1872,7 @@ class SpotifyConnector:
             if item and is_playing_flag and item_type == "track":
                 is_playing = True
                 await self._handle_active_playback(currently_playing, item, now, observed_at)
-                await self._close_spoken_for_no_playback(now)
+                await self._close_spoken_for_active_track(now)
             elif item and is_playing_flag and item_type == "episode":
                 spoken_item = normalize_spoken_item(item)
                 if spoken_item is not None:
@@ -1996,8 +2008,13 @@ class SpotifyConnector:
             await self._emit_session_summary(closed, observed_at)
 
     async def _close_spoken_for_no_playback(self, now: datetime) -> None:
-        """Advance spoken state while a track or idle response is active."""
+        """Advance spoken state only while Spotify reports no active playback."""
         for session in self._spoken_session_tracker.process_no_playback(now=now):
+            await self._persist_spoken_session(session)
+
+    async def _close_spoken_for_active_track(self, now: datetime) -> None:
+        """Persist and close spoken state at the explicit episode-to-track boundary."""
+        for session in self._spoken_session_tracker.close_for_item_switch(now=now):
             await self._persist_spoken_session(session)
 
     async def _handle_spoken_playback(

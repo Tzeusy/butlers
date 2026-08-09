@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -831,6 +831,88 @@ async def test_active_spoken_playback_keeps_active_poll_cadence() -> None:
     await connector._handle_spoken_playback({"item": item}, item, _NOW, _OBSERVED)
 
     assert connector._current_poll_interval_s == 60
+
+
+@pytest.mark.asyncio
+async def test_poll_cycle_track_after_spoken_closes_then_resumed_episode_opens_new_session() -> (
+    None
+):
+    """A track is an item switch, never the temporary no-playback drain boundary."""
+    connector = SpotifyConnector(
+        SpotifyConnectorConfig(switchboard_mcp_url="http://switchboard.test/mcp")
+    )
+    connector._endpoint_identity = _ENDPOINT
+    connector._spotify_user_id = _SPOTIFY_USER_ID
+    connector._cursor_pool = AsyncMock()
+    connector._submit_envelope = AsyncMock()
+    connector._poll_recently_played = AsyncMock()
+    connector._last_gap_fill_poll_at = float("inf")
+
+    episode = {
+        "type": "episode",
+        "id": "episode-1",
+        "name": "Chapter 1",
+        "uri": "spotify:episode:episode-1",
+        "duration_ms": 600_000,
+        "show": {"id": "show-1", "name": "The Daily", "uri": "spotify:show:show-1"},
+    }
+    track = {
+        "type": "track",
+        "id": "track-1",
+        "name": "Song 1",
+        "duration_ms": 180_000,
+        "album": {"name": "Album 1"},
+        "artists": [{"name": "Artist 1"}],
+    }
+    connector._get_currently_playing = AsyncMock(
+        side_effect=[
+            {"is_playing": True, "item": episode, "timestamp": int(_NOW.timestamp() * 1000)},
+            {
+                "is_playing": True,
+                "item": track,
+                "timestamp": int((_NOW + timedelta(minutes=1)).timestamp() * 1000),
+            },
+            {
+                "is_playing": True,
+                "item": episode,
+                "timestamp": int((_NOW + timedelta(minutes=2)).timestamp() * 1000),
+            },
+        ]
+    )
+
+    with (
+        patch("butlers.connectors.spotify.datetime") as mocked_datetime,
+        patch(
+            "butlers.connectors.spotify.persist_spoken_session", new_callable=AsyncMock
+        ) as persist_spoken,
+    ):
+        mocked_datetime.now.side_effect = [
+            _NOW,
+            _NOW + timedelta(minutes=1),
+            _NOW + timedelta(minutes=2),
+        ]
+        await connector._execute_poll_cycle()
+        await connector._execute_poll_cycle()
+        await connector._execute_poll_cycle()
+
+    persisted_sessions = [call.kwargs["session"] for call in persist_spoken.await_args_list]
+    assert [session.started_at for session in persisted_sessions] == [
+        _NOW,
+        _NOW,
+        _NOW + timedelta(minutes=2),
+    ]
+    assert persisted_sessions[1].ended_at == _NOW + timedelta(minutes=1)
+    assert persisted_sessions[2].ended_at is None
+
+    spoken_envelopes = [
+        call.args[0]
+        for call in connector._submit_envelope.await_args_list
+        if call.args[0]["event"]["external_event_id"].startswith("spotify:spoken:")
+    ]
+    assert [envelope["event"]["external_event_id"] for envelope in spoken_envelopes] == [
+        f"spotify:spoken:{int(_NOW.timestamp() * 1000)}:episode-1",
+        f"spotify:spoken:{int((_NOW + timedelta(minutes=2)).timestamp() * 1000)}:episode-1",
+    ]
 
 
 @pytest.mark.asyncio
