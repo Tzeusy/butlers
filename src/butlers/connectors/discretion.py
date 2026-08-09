@@ -535,6 +535,7 @@ class DiscretionEvaluator:
         weight: float = 1.0,
         channel: str | None = None,
         participant_count: int | None = None,
+        chat_type: str | None = None,
     ) -> DiscretionResult:
         """Evaluate a new message against the sliding context window.
 
@@ -562,7 +563,8 @@ class DiscretionEvaluator:
                 not supply a channel.
             participant_count: Number of participants in the originating
                 chat, when known.  When ``<= group_size_bypass_max`` (set at
-                construction; ``None`` means disabled), the LLM is skipped
+                construction; ``None`` means disabled) AND ``chat_type``
+                indicates an actual group (see below), the LLM is skipped
                 entirely and the message always FORWARDs — small/family-sized
                 groups should not have their content filtered by the
                 system prompt's "IGNORE ... group banter" instruction, since
@@ -572,6 +574,14 @@ class DiscretionEvaluator:
                 configured — large groups routinely report an unknown count,
                 and treating "unknown" as "small" would defeat the token-cost
                 control the threshold exists for.
+            chat_type: The originating chat's type (e.g. ``"private"``,
+                ``"group"``, ``"supergroup"``, ``"channel"``), when known.
+                The group-size bypass requires ``chat_type not in (None,
+                "private")`` — a 1:1 DM conventionally reports
+                ``participant_count=2`` for unrelated Dunbar-eligibility
+                bookkeeping, and without this guard every DM would silently
+                bypass discretion regardless of sender trust, which is not
+                "small group banter" and was never the intent.
 
         Returns:
             :class:`DiscretionResult` — always succeeds.
@@ -618,11 +628,13 @@ class DiscretionEvaluator:
 
         # Group-size bypass: small/family-sized groups skip the LLM entirely,
         # independent of sender weight. Deliberately fails safe on unknown
-        # counts — see the `participant_count` docstring above.
+        # counts, and on anything that isn't actually a group (chat_type
+        # guard) — see the `participant_count`/`chat_type` docstrings above.
         if (
             participant_count is not None
             and self._group_size_bypass_max is not None
             and participant_count <= self._group_size_bypass_max
+            and chat_type not in (None, "private")
         ):
             discretion_evaluations_total.labels(
                 source=self._source,
