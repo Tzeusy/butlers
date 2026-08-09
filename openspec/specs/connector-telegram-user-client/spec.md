@@ -182,6 +182,13 @@ The Telegram user client connector SHALL use the shared discretion layer (`butle
 - **AND** the weight maps sender roles to tiers: owner=1.0 (bypass LLM), family/close-friends=0.9, known contact=0.7, unknown sender=0.3
 - **AND** if the weight resolver has no DB access or the sender ID is unknown, weight defaults to 1.0
 
+#### Scenario: Batch-flush weight resolution
+- **WHEN** a batch is flushed (`_flush_chat_buffer`)
+- **THEN** the connector resolves a single representative weight via `_resolve_batch_weight`, taking the **highest** weight among the batch's actual new-message senders (`_extract_sender_identity` per buffered message), excluding the owner
+- **AND** the owner is excluded so that a thread the owner has ever spoken in does not unconditionally weight-bypass every batch regardless of who else is present
+- **AND** when there is nobody to weigh (no resolver, no non-owner senders, or an owner-only batch), the weight defaults to 1.0, biasing toward forwarding rather than silent suppression
+- **AND** this mirrors `WhatsAppUserClientConnector._resolve_batch_weight` — a fixed weight on this path would make every batch always satisfy `weight_bypass` regardless of content, silently disabling both LLM filtering and the group-size bypass below for every flush
+
 #### Scenario: Discretion IGNORE handling
 - **WHEN** the discretion layer returns `IGNORE`
 - **THEN** the message is recorded in `FilteredEventBuffer` with `filter_reason="discretion:IGNORE"` and not submitted to Switchboard
