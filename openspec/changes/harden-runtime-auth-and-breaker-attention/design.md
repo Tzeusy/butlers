@@ -214,12 +214,15 @@ Once external transport may have begun, a network timeout, process death, or
 any other ambiguous outcome is terminal `uncertain` and is never replayed
 automatically. A worker may return a claimed row to `pending` with bounded
 backoff only when it can prove that it did not begin external transport. A
-fenced stale worker must not invoke transport or mutate state. An operator may
-explicitly create one fresh, auditable child episode after viewing the uncertain
-state; it does not mutate the original record or reset the breaker. Such a
-manual child is deliberately a new owner-visible attempt: `uncertain` remains
-honest that the original may have been delivered or may still have been in
-flight when its claimant died.
+fenced stale worker must not invoke transport or mutate state. The live
+claimant's external call has a bounded deadline and it conditionally marks its
+own claim `uncertain` on expiry; row age alone never authorizes another worker
+to replay or reissue a live `sending` claim. An operator may explicitly create
+one fresh, auditable child episode after viewing the uncertain state; it does
+not mutate the original record or reset the breaker. Such a manual child is
+deliberately a new owner-visible attempt: `uncertain` remains honest that the
+original may have been delivered or may still have been in flight when its
+claimant died.
 
 This is at-most-once **per episode**, not impossible exactly-once semantics
 across Telegram and PostgreSQL. The owner accepted the intentional trade-off:

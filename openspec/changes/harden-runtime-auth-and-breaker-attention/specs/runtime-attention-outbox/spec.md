@@ -104,6 +104,15 @@ Scope: v1-mandatory
 - **THEN** the episode becomes terminal `uncertain`
 - **AND** no worker, recovery loop, or dashboard refresh sends it again
 
+#### Scenario: A live claimant times out its own bounded transport attempt
+
+- **WHEN** the current fenced claimant reaches the bounded external transport
+  deadline without a confirmed send or proven pre-send failure
+- **THEN** that claimant conditionally transitions its own episode to
+  `uncertain` and releases the delivery-service lease
+- **AND** no other worker treats row age alone as proof that it may replay or
+  reissue the episode
+
 #### Scenario: Recovery fences a dead claim but never reclaims it for send
 
 - **WHEN** a persisted `sending` episode's claimant is no longer able to hold
@@ -111,7 +120,8 @@ Scope: v1-mandatory
 - **THEN** the recovering worker first takes that lease and atomically fences
   the old claim token before it can transition the episode to `uncertain`
 - **AND** it does not return that episode to `pending`, invoke transport, or
-  expose manual reissue while a live claimant still owns the lease
+  expose manual reissue while a live claimant still owns the lease; a stuck
+  live claimant instead remains observable as `sending`
 - **AND** a stale claimant whose token was fenced cannot invoke transport or
   change the terminal state
 

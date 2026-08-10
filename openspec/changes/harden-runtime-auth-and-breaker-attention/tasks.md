@@ -19,7 +19,7 @@
 
 ## 4. Switchboard-owned operational attention delivery
 
-- [ ] 4.1 Implement the outbox repository and Switchboard worker with a single delivery-service lease, fenced `pending` claim, `sending` pre-transport commit, pre-transport token check, bounded proven-pre-send retry, conditional `sent`/`failed`/`uncertain` transitions, dead-claim recovery that never replays, and safe structured observability.
+- [ ] 4.1 Implement the outbox repository and Switchboard worker with a single delivery-service lease, fenced `pending` claim, `sending` pre-transport commit, pre-transport token check, bounded external transport deadline, bounded proven-pre-send retry, conditional `sent`/`failed`/`uncertain` transitions, dead-claim recovery that never replays, and safe structured observability.
 - [ ] 4.2 Refactor Switchboard notification routing so a confirmed Messenger send remains confirmed when routing-log, registry, notification-log, audit, or attention-ledger bookkeeping fails; preserve clear not-attempted versus uncertain outcomes.
 - [ ] 4.3 Add real-Postgres role-isolation and concurrency integration tests proving the authorized producer operation rejects forged source/payload data, producers have no raw outbox access, and Switchboard alone claims/delivers.
 - [ ] 4.4 Add real-Postgres lifecycle tests that seed an open/cooldown-expired breaker, race distinct failed half-open attempts, and assert one new episode and one delivery claim; race two workers and assert one transport invocation; persist `sending`, restart, assert zero replay transport calls and terminal `uncertain`; and simulate slow live claimant versus recovery versus reissue to prove fencing and one successor.
