@@ -216,3 +216,55 @@ Run: `uv run pytest tests/integration/test_ingestion_replay_policy_db.py -q && u
 
 Expected: PASS; public and filtered behavior is unchanged while no SQL fragment
 relies on unqualified `source_channel` resolution.
+
+### Task 5: Prove filtered replay fails closed across a policy-flip race
+
+**Files:**
+- Modify: `tests/integration/test_ingestion_replay_policy_db.py`
+
+**Interfaces:**
+- Consumes: `_seed_filtered_event`, `_seed_registry`, `_locked_registry_row`,
+  and `ingestion_event_replay_request()`.
+- Produces: a real PostgreSQL lock-race regression for the distinct
+  `UPDATE connectors.filtered_events AS fe` mutation path.
+
+- [x] **Step 1: Add the filtered policy-flip test before altering test helpers**
+
+```python
+async def test_filtered_replay_fails_closed_when_policy_flips_while_locked(pool):
+    event_id = await _seed_filtered_event(
+        pool, connector_type="telegram", source_channel="telegram_user_client"
+    )
+    await _seed_registry(
+        pool,
+        connector_type="telegram_user_client",
+        endpoint_identity=_FILTERED_ENDPOINT,
+        replay_safe=True,
+    )
+    async with _locked_registry_row(
+        pool,
+        connector_type="telegram_user_client",
+        endpoint_identity=_FILTERED_ENDPOINT,
+    ) as locked_policy:
+        replay = asyncio.create_task(ingestion_event_replay_request(pool, event_id))
+        await _wait_until_replay_waits_on_registry_lock(
+            pool, update_relation="connectors.filtered_events"
+        )
+        await locked_policy.execute("UPDATE ... SET replay_safe = FALSE ...")
+    assert (await replay)["outcome"] == "unsafe"
+    assert await _filtered_status(pool, event_id) == "filtered"
+```
+
+- [x] **Step 2: Run the new filtered-race test and make its lock observer target-aware**
+
+Run: `uv run pytest -n 0 tests/integration/test_ingestion_replay_policy_db.py::test_filtered_replay_fails_closed_when_policy_flips_while_locked -q -rA`
+
+Expected: the test must prove the replay task waits on PostgreSQL's registry
+lock before flipping policy, then passes only when the persisted filtered row
+remains `filtered`.
+
+- [x] **Step 3: Run the full migrated replay-policy file**
+
+Run: `uv run pytest tests/integration/test_ingestion_replay_policy_db.py -q -rA && uv run ruff check tests/integration/test_ingestion_replay_policy_db.py && uv run ruff format --check tests/integration/test_ingestion_replay_policy_db.py && git diff --check`
+
+Expected: PASS with real public and filtered atomic-race coverage.
