@@ -165,12 +165,21 @@ concurrent requests.
 Producers receive no raw outbox `INSERT` privilege. A narrow fixed-search-path
 `SECURITY DEFINER` core producer operation is the only append path: it derives
 the deduplication key and safe payload from the just-recorded dispatch attempt
-or verified fleet-halt evidence, checks the calling runtime role against that
-evidence, and establishes the state edge and episode in one transaction. It
-accepts no caller-controlled delivery state, recipient, payload, or arbitrary
-deduplication key. The migration revokes each operation from `PUBLIC` before
-granting execution only to its designated producer roles. Switchboard alone
-receives row read/update authority.
+or verified fleet-halt evidence, and establishes the state edge and episode in
+one transaction. It accepts no caller-controlled delivery state, recipient,
+payload, source key, or arbitrary deduplication key. The migration revokes each
+operation from `PUBLIC` before granting execution only to its designated
+effective runtime roles. Switchboard alone receives row read/update authority.
+
+This is an operational least-privilege boundary, not a claim of unforgeable
+per-butler database identity: the current topology authenticates pools as one
+shared login that can `SET ROLE` to runtime roles. The function therefore
+enforces server-derived edge/payload integrity and role-grant hygiene, while
+the trusted runtime application is responsible for associating normalized
+outcomes with its session/butler. A future hostile-component boundary requires
+separate database login principals without peer `SET ROLE` membership (or an
+equivalent isolated capability issuer); that architectural hardening is
+explicitly outside this incident remediation.
 
 The outbox retains an immutable source snapshot and is deliberately not deleted
 through `model_catalog` or `model_dispatch_attempts` cascades. A catalog entry
@@ -262,9 +271,13 @@ attention-delivery state visually and semantically distinct:
 - only an `uncertain` episode offers one explicit, confirmation-gated **Send a
   new alert** commit action for the authenticated dashboard owner. It is
   disabled while its request is in flight and reports the new episode ID/result
-  immediately; the server independently rejects any unauthenticated or
-  non-owner observation/reissue request before it can expose data or enqueue a
-  send.
+  immediately. The Models attention observation and reissue endpoints use a
+  fail-closed `require_dashboard_owner_control` boundary: a configured
+  `DASHBOARD_API_KEY` is the single-owner credential, a missing or wrong key is
+  rejected, and an absent key configuration reports the sensitive control as
+  unavailable rather than inheriting the dashboard's opt-in general API auth.
+  The server applies that check before it exposes episode data or enqueues a
+  send; the UI is never the authorization boundary.
 
 The existing Dispatch language applies: canonical status indicators, no
 invented severity colors, concise operator copy, visible keyboard focus, and

@@ -49,7 +49,7 @@ all implementation leaves ──────────────────
 | Breaker episode edge | real-Postgres concurrent writer tests with equal timestamps and distinct attempt IDs, including failed half-open races | induce one safe controlled breaker edge only after deployment authorization; observe one durable episode |
 | Delivery semantics | producer ACL/forgery tests, two-worker claim, fenced recovery/uncertainty, and post-send ACL route tests | verify sent/uncertain episode state and no automatic duplicate delivery |
 | OpenCode and probe | adapter/API tests for canonical Go identities with native execution arguments, private control authorization, and probe-no-reset behavior | use an actual runtime probe plus a separate routed session; compare their independent evidence |
-| UI | API contract and frontend interaction tests for state separation, degraded observation, confirmation, owner-only observation/reissue, and idempotent reissue | confirm Models/Spend surfaces reflect actual API state without a false success toast |
+| UI | API contract and frontend interaction tests for state separation, degraded observation, confirmation, fail-closed owner-control key states, and idempotent reissue | confirm Models/Spend surfaces reflect actual API state without a false success toast |
 
 ## Validation Record
 

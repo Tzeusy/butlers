@@ -36,8 +36,9 @@ not change that answer.
   invoke `switchboard.*` delivery SQL directly.
 - Apply the shared outbox to the fleet-halt owner page, and make the Models
   page distinguish a catalog probe from a routed-success breaker recovery.
-  The operator can inspect an uncertain alert and explicitly request a new
-  alert episode; no automatic replay can create a duplicate page.
+  A fail-closed dashboard-owner control can inspect an uncertain alert and
+  explicitly request a new alert episode; no automatic replay can create a
+  duplicate page.
 - Add migration-safe targeted grants, operator-facing diagnostics, traceable
   lifecycle state, and regression coverage for credential scope, concurrent
   breaker openings, worker restart, ACL isolation, post-send failure, and

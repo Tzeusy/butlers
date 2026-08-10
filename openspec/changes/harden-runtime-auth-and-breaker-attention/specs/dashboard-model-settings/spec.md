@@ -64,8 +64,12 @@ safe reason independently from verification and breaker facts. The Models page
 SHALL make an `uncertain` episode's one permitted manual reissue deliberate:
 it presents a confirmation-gated `Send a new alert` control, disables it while
 the request is pending or a successor exists, and immediately reports the new
-episode result. The episode read and reissue endpoints SHALL require
-server-enforced dashboard owner authorization; no UI visibility rule is an
+episode result. Every Models endpoint that exposes attention episode data or
+permits reissue SHALL use a fail-closed `require_dashboard_owner_control`
+server dependency. That dependency SHALL require a configured non-empty
+`DASHBOARD_API_KEY` and a constant-time matching `X-API-Key` header, treating a
+valid key as the single dashboard-owner principal; it SHALL not inherit the
+dashboard's optional general API-auth behavior. No UI visibility rule is an
 authorization substitute. No other attention state offers an automatic resend
 control.
 
@@ -90,12 +94,19 @@ Scope: v1-mandatory
 - **AND** concurrent or retried submissions cannot create additional
   successors for the same original episode
 
-#### Scenario: Unauthorized reissue is rejected before observation or delivery
+#### Scenario: Owner-control configuration and credentials are required before observation or delivery
 
-- **WHEN** an unauthenticated or non-owner caller requests attention detail or
-  `Send a new alert`
-- **THEN** the API returns `401` or `403` without exposing the episode
-- **AND** it creates no successor and invokes no delivery path
+- **WHEN** the owner-control key is absent from server configuration and a
+  caller requests attention detail or `Send a new alert`
+- **THEN** the API returns a safe `503` owner-control-unavailable response
+  without exposing the episode, creating a successor, or invoking delivery
+- **WHEN** the configured key is present but a caller omits or supplies a wrong
+  `X-API-Key`
+- **THEN** the API returns `401` without exposing the episode, creating a
+  successor, or invoking delivery
+- **WHEN** a caller supplies the matching configured `X-API-Key`
+- **THEN** it is the authenticated dashboard-owner principal eligible for the
+  existing observation/reissue state checks
 
 #### Scenario: Non-uncertain episode cannot be resent from the Models page
 

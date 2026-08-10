@@ -8,16 +8,23 @@ produce breaker or fleet-halt edges SHALL have no raw `INSERT`, `SELECT`,
 `UPDATE`, or `DELETE` permission on outbox rows. They may only `EXECUTE` a
 narrow fixed-search-path `SECURITY DEFINER` producer operation that derives the
 safe payload, immutable source key, and deduplication key from a validated
-qualifying dispatch attempt or fleet-halt evidence, and verifies the current
-runtime role owns that evidence. The operation SHALL reject caller-controlled
-recipient, payload, delivery state, source key, and arbitrary deduplication
-data. The migration SHALL `REVOKE EXECUTE` on every such function from `PUBLIC`
-before it grants `EXECUTE` only to the designated model-breaker and fleet-halt
-producer runtime roles. Switchboard alone receives the required select/update
-authority to claim and transition episodes through the external delivery
-boundary. The dashboard operator surface SHALL receive sanitized read data
-through its API without granting ordinary runtime roles access to other
+qualifying dispatch attempt or fleet-halt evidence. The operation SHALL reject
+caller-controlled recipient, payload, delivery state, source key, and arbitrary
+deduplication data. The migration SHALL `REVOKE EXECUTE` on every such function
+from `PUBLIC` before it grants `EXECUTE` only to the designated model-breaker
+and fleet-halt producer runtime roles. Switchboard alone receives the required
+select/update authority to claim and transition episodes through the external
+delivery boundary. The dashboard operator surface SHALL receive sanitized read
+data through its API without granting ordinary runtime roles access to other
 producers' episode payloads.
+
+The current shared-login plus `SET ROLE` database topology does not provide an
+unforgeable per-runtime principal, so this requirement SHALL NOT claim database
+enforcement that a caller belongs to a particular butler. Its database boundary
+enforces server-derived attention integrity and effective-role grants; trusted
+runtime application code remains responsible for binding a normalized dispatch
+outcome to its butler/session. A future adversarial-component boundary requires
+independently authenticated runtime principals without peer `SET ROLE` ability.
 
 ID: REQ-database-security-007
 Source: heart-and-soul/security-and-secrets.md; RFC 0003; RFC 0006; database-security Public Schema Write Authorization Matrix; design.md Decision 4
@@ -33,15 +40,15 @@ Scope: v1-mandatory
 - **AND** direct `INSERT`, `SELECT`, `UPDATE`, and `DELETE` attempts against
   the outbox are rejected for that role
 
-#### Scenario: Producer cannot forge another runtime's attention episode
+#### Scenario: Producer cannot forge arbitrary attention content or a non-edge source
 
-- **WHEN** a runtime role supplies an attempt, fleet window, recipient,
-  lifecycle state, or payload that is not server-derived from its authorized
-  source evidence
+- **WHEN** a runtime caller supplies a recipient, lifecycle state, payload,
+  triggering key, or fleet window that is not server-derived from a qualifying
+  dispatch attempt or fleet-halt edge
 - **THEN** the producer operation rejects the call without appending an
   episode
-- **AND** no arbitrary role with `EXECUTE` can create a Switchboard-pageable
-  attention record for another runtime
+- **AND** it cannot create a Switchboard-pageable attention record with
+  arbitrary content or a fabricated edge
 
 #### Scenario: Public and non-producer roles cannot execute producer operations
 
@@ -51,6 +58,9 @@ Scope: v1-mandatory
 - **THEN** PostgreSQL rejects the call before it can inspect source evidence or
   append an episode
 - **AND** only the explicitly granted designated producer roles can execute it
+- **AND** the test asserts the effective `SET ROLE` grant boundary rather than
+  falsely treating the shared-login topology as independently authenticated
+  per-runtime identity
 
 #### Scenario: Switchboard can claim without peer-schema access
 
