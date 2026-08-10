@@ -239,8 +239,12 @@ async def _locked_registry_row(
             await transaction.commit()
 
 
-async def _wait_until_replay_waits_on_registry_lock(pool: asyncpg.Pool) -> None:
-    """Prove the replay task is blocked on the live policy row lock."""
+async def _wait_until_replay_waits_on_registry_lock(
+    pool: asyncpg.Pool,
+    *,
+    update_relation: str = "public.ingestion_events",
+) -> None:
+    """Prove the replay task is blocked on the live policy row lock for one mutation."""
     async with pool.acquire() as observer:
         async with asyncio.timeout(5):
             while not await observer.fetchval(
@@ -251,9 +255,10 @@ async def _wait_until_replay_waits_on_registry_lock(pool: asyncpg.Pool) -> None:
                     WHERE datname = current_database()
                       AND wait_event_type = 'Lock'
                       AND wait_event = 'transactionid'
-                      AND query LIKE '%UPDATE public.ingestion_events%'
+                      AND query LIKE $1
                 )
-                """
+                """,
+                f"%UPDATE {update_relation}%",
             ):
                 await asyncio.sleep(0.01)
 
@@ -417,6 +422,53 @@ async def test_public_replay_fails_closed_when_policy_flips_while_locked(
         assert replay is not None
         assert (await replay)["outcome"] == "unsafe"
         assert await _public_status(migrated_pool, event_id) == "failed"
+    finally:
+        if replay is not None and not replay.done():
+            replay.cancel()
+            await asyncio.gather(replay, return_exceptions=True)
+
+
+async def test_filtered_replay_fails_closed_when_policy_flips_while_locked(
+    migrated_pool: asyncpg.Pool,
+) -> None:
+    """A concurrent safe-to-unsafe flip cannot permit the filtered transition."""
+    event_id = await _seed_filtered_event(
+        migrated_pool,
+        connector_type="telegram",
+        source_channel="telegram_user_client",
+    )
+    await _seed_registry(
+        migrated_pool,
+        connector_type="telegram_user_client",
+        endpoint_identity=_FILTERED_ENDPOINT,
+        replay_safe=True,
+    )
+    replay: asyncio.Task[dict] | None = None
+
+    try:
+        async with _locked_registry_row(
+            migrated_pool,
+            connector_type="telegram_user_client",
+            endpoint_identity=_FILTERED_ENDPOINT,
+        ) as locked_policy:
+            replay = asyncio.create_task(ingestion_event_replay_request(migrated_pool, event_id))
+            await _wait_until_replay_waits_on_registry_lock(
+                migrated_pool,
+                update_relation="connectors.filtered_events",
+            )
+            assert not replay.done()
+            await locked_policy.execute(
+                """
+                UPDATE switchboard.connector_registry
+                SET replay_safe = FALSE
+                WHERE connector_type = 'telegram_user_client' AND endpoint_identity = $1
+                """,
+                _FILTERED_ENDPOINT,
+            )
+
+        assert replay is not None
+        assert (await replay)["outcome"] == "unsafe"
+        assert await _filtered_status(migrated_pool, event_id) == "filtered"
     finally:
         if replay is not None and not replay.done():
             replay.cancel()
