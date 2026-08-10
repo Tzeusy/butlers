@@ -36,8 +36,18 @@ bounded global concurrency cap, and accepts no credential material, prompt,
 model override, or runtime arguments from the dashboard. A successful probe
 updates verification evidence only; it does not close an open breaker.
 
+The dedicated client SHALL use `POST /_control/runtime-probe/v1` with the
+compact capability only in `Authorization: Bearer`. Its exact protected header,
+claim names/types, nonce encoding, time validation, and key-selection rules are
+those in core-credentials REQ-core-credentials-002. The control response SHALL
+preserve safe typed HTTP/status pairs `200/completed`, `401/unauthorized`,
+`409/replay`, `429/busy`, `503/unavailable`, and `504/timeout`. Runtime execution SHALL
+have a 30-second deadline, global concurrency eight, and per-catalog-entry
+concurrency one. Dashboard API mapping SHALL preserve these distinctions rather
+than reporting a provider failure or successful test.
+
 ID: REQ-dashboard-model-settings-001
-Source: dashboard-model-settings Catalog Verify-All API and Hourly Automated Verification Sweep; model-catalog REQ-model-catalog-001; design.md Decisions 2 and 6
+Source: heart-and-soul/security.md; craft-and-care/security-and-secrets.md; core-credentials REQ-core-credentials-002; dashboard-model-settings Catalog Verify-All API and Hourly Automated Verification Sweep; model-catalog REQ-model-catalog-001; design.md Decisions 2 and 6
 Scope: v1-mandatory
 
 #### Scenario: Test checks the routed runtime environment

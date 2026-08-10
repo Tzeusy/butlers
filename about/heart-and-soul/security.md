@@ -121,8 +121,10 @@ explicit owner confirmation before proceeding.
 
 ## Credential Management
 
-Credentials follow a **three-tier authority model**. Each credential has exactly
-one authoritative storage location:
+Runtime and user credentials follow a **three-tier authority model**. Except
+for a process-bound deployment control key explicitly enumerated in the narrow
+exception below, every credential has exactly one authoritative storage
+location in one of these tiers:
 
 ### Tier 0: Bootstrap (Environment Variables)
 
@@ -156,13 +158,44 @@ refresh tokens, Steam API keys) live on companion entities.
 Accessed at runtime via `resolve_owner_entity_info(pool, info_type)` for owner
 credentials, or direct SQL on companion entity UUIDs for per-account tokens.
 
+### Narrow exception: process-bound deployment control keys
+
+An asymmetric key used only to authenticate one trusted deployment process to
+another MAY live outside the three credential tiers when all of the following
+hold:
+
+- it is control-plane material, not a provider, connector, or owner-account
+  credential;
+- the private key is provisioned through a dedicated file-backed deployment
+  secret mounted only into the process that signs, never through an environment
+  value, `CredentialStore`, `butler_secrets`, `entity_info`, or git-tracked
+  configuration;
+- recipients receive only the non-secret public verification key;
+- its protocol, process boundary, provisioning, rotation, restart, and
+  fail-closed behavior are specified before implementation; and
+- generic Secrets APIs, model/runtime children, logs, telemetry, browser
+  payloads, and environment diagnostics cannot expose, create, or shadow it.
+
+This amendment proposes `RUNTIME_PROBE_CONTROL_SIGNING_KEY` as the sole use of
+this exception. It becomes approved only when the owner explicitly adopts this
+amendment. It authenticates the private Dashboard API/scheduler control client
+to Switchboard. The Dashboard API process is the only private-key reader;
+Switchboard and the all-butlers runtime receive verification material only.
+Missing or mismatched key material makes the control plane unavailable and
+never falls back to a credential tier, unsigned request, or shared bearer
+secret. Adding another process-bound deployment control key requires an
+explicit doctrine and capability-spec amendment; this exception is not a
+general file-secret escape hatch.
+
 ### Resolution Rules
 
 - Env vars are NOT automatic overrides. For Tier 1, `CredentialStore.resolve()` only
   reads `os.environ` when `env_fallback=True` is explicitly passed (disabled by default).
   Tier 0 is the only tier where `os.environ` is the authoritative source.
 - When a connector needs a credential, it MUST read from the authoritative tier.
-- New credentials MUST be classified into a tier when added.
+- New runtime or user credentials MUST be classified into a tier when added.
+  A process-bound deployment control key MUST instead satisfy and be named by
+  the narrow exception above before implementation.
 
 ### Constraints
 
@@ -321,8 +354,11 @@ config is always ephemeral and written to the temp directory.
    `egress` network unless it calls external APIs.
 3. **Allowlist, not blocklist, for private network access.** The firewall blocks
    all private subnets then punches holes for specific tailnet hosts.
-4. **No secrets in compose files.** Infrastructure bootstrap vars only. All
-   runtime secrets are DB-first via `CredentialStore`.
+4. **No secret values in compose files.** Infrastructure bootstrap vars only.
+   Runtime and user credentials are DB-first through their authoritative tier.
+   The sole process-bound deployment control key named above is file-mounted
+   only into its signing process and never supplied as a Compose environment
+   value or `CredentialStore` fallback.
 5. **No `privileged: true`, no Docker socket mounts, no `cap_add`.** Containers
    run with default Docker capabilities.
 

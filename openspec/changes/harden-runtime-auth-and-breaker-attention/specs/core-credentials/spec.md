@@ -22,7 +22,7 @@ credentials and existing other-provider CLI-auth authority behavior retain
 their existing resolution behavior.
 
 ID: REQ-core-credentials-001
-Source: heart-and-soul/security-and-secrets.md; RFC 0006; core-credentials Live Codex Device-Auth Reconciliation; design.md Decision 1
+Source: heart-and-soul/security.md; craft-and-care/security-and-secrets.md; RFC 0006; core-credentials Live Codex Device-Auth Reconciliation; design.md Decision 1
 Scope: v1-mandatory
 
 #### Scenario: Dashboard refresh takes effect on the next invocation
@@ -141,17 +141,30 @@ Scope: v1-mandatory
 
 The system SHALL authenticate the private Dashboard/Scheduler to Switchboard
 runtime-probe control plane with a short-lived asymmetric signed capability,
-not a shared bearer token. The only accepted capability format SHALL be an
-Ed25519 JWS with protected `alg=EdDSA` and protected key ID; the verifier SHALL
-resolve that key ID only from its deployment-configured keyring, SHALL NOT
-perform remote/dynamic key lookup, and SHALL reject `jku`/`x5u` headers. It
-SHALL NOT select an algorithm from an untrusted capability and SHALL reject
-`none`, symmetric, and other asymmetric algorithms. The signed capability
-SHALL bind a fixed `switchboard.runtime_probe_control.v1` audience, catalog entry ID,
-registered caller class, issue/expiry times, 256-bit cryptographically random
-single-use nonce, and key ID. The verifier SHALL allow at most five seconds of
-clock skew and accept only `iat <= now + 5s`, `exp >= now - 5s`, and
-`0 < exp - iat <= 60s`. A private `RUNTIME_PROBE_CONTROL_SIGNING_KEY` SHALL
+not a shared bearer token. The dedicated client SHALL call
+`POST /_control/runtime-probe/v1` and SHALL place one compact JWS only in
+`Authorization: Bearer <compact-jws>`; the endpoint SHALL reject capability
+copies in cookies, query parameters, or the request body. The protected header
+SHALL contain exactly string `alg: "EdDSA"` and string `kid`. The payload SHALL
+contain exactly string `aud: "switchboard.runtime_probe_control.v1"`, enum
+string `caller: "dashboard" | "scheduler"`, canonical lowercase UUID string
+`catalog_entry_id`, integer NumericDate-second `iat` and `exp`, and `nonce` as
+unpadded base64url encoding of 32 cryptographically random bytes. Extra header
+or payload fields SHALL be rejected. The verifier SHALL resolve `kid` only from
+its deployment keyring, SHALL NOT perform remote/dynamic lookup, SHALL reject
+`jku`/`x5u`, and SHALL reject `none`, symmetric, and other asymmetric
+algorithms. It SHALL allow at most five seconds of clock skew and accept only
+`iat <= now + 5s`, `exp >= now - 5s`, and `0 < exp - iat <= 60s`.
+
+The endpoint SHALL return safe typed JSON with HTTP `200`/status `completed`,
+`401`/status `unauthorized` for missing/invalid/expired capability,
+`409`/status `replay`, `429`/status `busy` for an occupied per-entry or global
+bound, `503`/status `unavailable` for coordinator/catalog/authority/
+configuration/runtime setup, and `504`/status `timeout` for the runtime
+deadline. The deadline SHALL be 30 seconds, global concurrency SHALL
+be eight, and per-catalog-entry concurrency SHALL be one. Error bodies SHALL
+contain no raw provider error, credential, key material, capability, signature,
+or nonce. A private `RUNTIME_PROBE_CONTROL_SIGNING_KEY` SHALL
 be delivered through a dedicated deployment-secret mount only to the Dashboard
 API process, including its registered verification scheduler. The all-butlers
 daemon, Switchboard, unrelated butlers, and model-runtime child processes SHALL
@@ -168,13 +181,52 @@ fall back to an unauthenticated command.
 
 The verifier SHALL accept only configured current and retiring verification
 keys identified by protected key ID. Rotation SHALL install the new verifier
-before the Dashboard signer uses its key ID and retain the retiring verifier
-for at least 70 seconds after its signer stops (60-second maximum capability
-lifetime plus two five-second skew allowances), but no longer than five
-minutes. An unknown key ID SHALL fail closed.
+before the Dashboard signer uses its key ID. The retiring signer SHALL stop at
+its configured `sign_until`, and the verifier SHALL retain that key through an
+`accept_until` at least 70 seconds later (60-second maximum capability lifetime
+plus two five-second skew allowances), but no more than five minutes later. An
+unknown key ID SHALL fail closed.
+
+The deployment SHALL use two strict UTF-8 JSON documents with unknown or
+duplicate fields rejected. Key IDs SHALL match `[A-Za-z0-9._-]{1,64}`;
+Ed25519 material SHALL be unpadded base64url-encoded raw 32-byte seed/public
+values; timestamps SHALL be UTC RFC 3339 seconds. The Dashboard-only signer at
+`/run/secrets/runtime_probe_control_signing_key` SHALL contain exactly
+`version: 1`, `alg: "EdDSA"`, `kid`, `private_key_b64u`, `sign_from`, and
+nullable `sign_until`. It SHALL be a regular non-symlink file owned by the
+Dashboard process identity, mode `0400`, on a read-only mount. The shared
+non-secret keyring at
+`/run/secrets/runtime_probe_control_verifiers` SHALL contain exactly
+`version: 1`, one current object with `alg: "EdDSA"`, `kid`,
+`public_key_b64u`, and `sign_from`, and zero or one retiring object with
+`alg: "EdDSA"`, `kid`, `public_key_b64u`, `sign_from`, `sign_until`, and
+`accept_until`. Current/retiring IDs and public keys SHALL be distinct. When a
+retiring key exists, `current.sign_from == retiring.sign_until == T`,
+`retiring.sign_from < retiring.sign_until`, and
+`retiring.accept_until - retiring.sign_until` SHALL be in
+`[70 seconds, 5 minutes]`.
+Dashboard and all-butlers SHALL mount the same keyring source read-only;
+all-butlers SHALL receive no private signer material.
+
+Dashboard SHALL derive the public key from the private seed. A current signer
+SHALL match the current algorithm, ID, derived public key, and `sign_from`,
+SHALL have `sign_until=null`, and SHALL sign only at/after `sign_from`. A
+retiring signer SHALL match every retiring field through `sign_until`, SHALL
+have local `sign_from < sign_until`, and SHALL sign at or before that integer
+second. `iat == sign_until` is permitted without any cutover-skew extension.
+Switchboard SHALL reject current-key capabilities issued before
+`sign_from`, retiring-key capabilities whose integer `iat` is greater than
+`sign_until` with no cutover-skew exception, and a retiring key after
+`accept_until`. The ordinary request `iat`/`exp` skew checks remain separate. Each process
+SHALL validate and snapshot its files at startup and SHALL reload them only on
+process restart. A missing, unreadable, malformed, duplicate-key-ID,
+algorithm-mismatched, permission-unsafe, or signer/keyring-mismatched snapshot
+SHALL disable probe control without taking unrelated Dashboard or daemon
+functions down. The application SHALL NOT generate, reconstruct, or persist
+deployment key material.
 
 ID: REQ-core-credentials-002
-Source: heart-and-soul/security-and-secrets.md; RFC 0003; dashboard-model-settings REQ-dashboard-model-settings-001; design.md Decision 2
+Source: heart-and-soul/security.md; craft-and-care/security-and-secrets.md; RFC 0003; dashboard-model-settings REQ-dashboard-model-settings-001; design.md Decision 2
 Scope: v1-mandatory
 
 #### Scenario: Missing signing or verification material fails closed before runtime work
@@ -247,9 +299,40 @@ Scope: v1-mandatory
 - **WHEN** the deployment rotates the runtime-probe signing key
 - **THEN** it installs the new public verification key before the Dashboard
   starts signing with its new key ID
-- **AND** Switchboard accepts the retiring verification key for at least 70
-  seconds after its signer stops and no longer than five minutes, so a valid
-  pre-cutover capability remains valid for its normal accepted lifetime
+- **AND** Switchboard enforces the retiring key's `sign_until` and accepts that
+  key only through an `accept_until` 70 seconds to five minutes later, so every
+  valid capability issued before cutover can finish its at-most-60-second
+  lifetime plus allowed clock skew
 - **AND** it rejects unknown key IDs
 - **AND** removal of the retiring key does not fall back to a bearer token,
   credential-store value, or unsigned request
+
+#### Scenario: Startup snapshots deployment keys and isolates failure
+
+- **WHEN** Dashboard or all-butlers starts or restarts with its configured
+  runtime-probe key file missing, unreadable, malformed, duplicated, using the
+  wrong algorithm, or inconsistent with the peer's configured key ID
+- **THEN** the affected signed client or coordinator remains unavailable and
+  Test/Verify returns typed unavailability while scheduled verification emits
+  safe operational telemetry for a degraded skip
+- **AND** model verification history remains unchanged
+- **AND** unrelated Dashboard and daemon behavior remains available
+- **AND** no environment-value, credential-store, database, generic-Secrets,
+  generated-key, or unsigned fallback is attempted
+
+#### Scenario: Rotation restarts verifier before signer
+
+- **WHEN** the operator rotates the process-bound deployment key
+- **THEN** it chooses cutover `T`, installs a shared keyring whose old key has
+  `sign_until=T`, whose new key has `sign_from=T`, and whose old-key
+  `accept_until` is within `[T+70s, T+5m]`, then restarts all-butlers before `T`
+- **AND** Dashboard loads a matching old signer bounded by `sign_until=T`
+  before cutover and loads the matching new signer at or after `T`
+- **AND** the old signer cannot issue after `T`, the new signer cannot issue
+  before `T`, and a late Dashboard restart creates safe probe unavailability
+- **AND** Switchboard rejects old-key capabilities issued after `T` and rejects
+  the old key completely after `accept_until`, even if its immutable keyring
+  file has not yet been removed
+- **AND** a later all-butlers restart removes the expired old entry
+- **AND** durable receipts continue to reject a capability consumed before any
+  of those restarts

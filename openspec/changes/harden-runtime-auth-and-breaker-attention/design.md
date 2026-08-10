@@ -126,14 +126,28 @@ corresponding non-secret verification key. This preserves the actual
 Switchboard runtime boundary without pretending a file mount can isolate one
 module inside the shared all-butlers process.
 
-Each signed request carries only the fixed
-`switchboard.runtime_probe_control.v1` audience, a catalog entry ID, registered
-caller class (`dashboard` or `scheduler`), issue/expiry times, a 256-bit
-cryptographically random nonce, and key ID. The only accepted signature is an
-Ed25519 JWS with protected `alg=EdDSA` and protected key ID; no token-selected
-algorithm is trusted, so `none`, symmetric, and other asymmetric algorithms
-are rejected. The verifier permits at most five seconds of clock skew, requires
+The dedicated client calls `POST /_control/runtime-probe/v1`. It places one
+compact JWS only in `Authorization: Bearer <compact-jws>`; cookies, query
+parameters, and request-body capability copies are rejected. The protected JWS
+header contains exactly string `alg: "EdDSA"` and string `kid`. The payload
+contains exactly string `aud: "switchboard.runtime_probe_control.v1"`, enum
+string `caller: "dashboard" | "scheduler"`, canonical lowercase UUID string
+`catalog_entry_id`, integer NumericDate-second `iat` and `exp`, and `nonce` as
+unpadded base64url encoding of 32 cryptographically random bytes. No extra
+header or payload claim is accepted. No token-selected algorithm is trusted,
+so `none`, symmetric, and other asymmetric algorithms are rejected. The
+verifier permits at most five seconds of clock skew, requires
 `iat <= now + 5s`, `exp >= now - 5s`, and `0 < exp - iat <= 60s`.
+
+The private endpoint returns only safe JSON with a typed `status`: HTTP `200`
+uses `completed`; `401` uses `unauthorized` for missing/invalid/expired
+capability; `409` uses `replay`; `429` uses `busy` when the per-entry or global
+bound is occupied; `503` uses `unavailable` for coordinator, catalog, authority,
+configuration, or runtime setup; and `504` uses `timeout`. Probe execution
+has a 30-second deadline, global concurrency eight, and per-catalog-entry
+concurrency one. These observable bounds are protocol, not implementation-only
+policy. Error bodies contain no raw provider error, credential, key material,
+capability, signature, or nonce.
 
 Switchboard accepts only configured current or retiring verification keys for
 the protected key ID, then verifies the signature and every claim, atomically
@@ -146,19 +160,77 @@ replay fail even across a Switchboard restart; an unknown key ID, invalid
 algorithm/signature, invalid time bounds, or duplicate nonce fails closed.
 
 Key rotation installs the new verifier before the Dashboard signer changes key
-ID. The retiring verifier stays available for at least 70 seconds after the old
-signer stops (the 60-second maximum lifetime plus two five-second skew
-allowances) and is removed within five minutes. The private key is not a
+ID. The retiring signer stops at its configured `sign_until`; the verifier
+accepts that key through an `accept_until` at least 70 seconds later (the
+60-second maximum lifetime plus two five-second skew allowances) and no more
+than five minutes later. The private key is not a
 `CredentialStore`/`public.butler_secrets` value or environment-value fallback;
 the browser-facing Secrets API rejects the reserved key rather than storing a
 shadow credential. Neither private key nor signatures reach browser payloads,
 generic MCP clients, model sessions, logs, or the normal MCP client manager.
 The scheduled sweep is an explicitly registered trusted caller, not a
-generic-MCP exemption. The command enforces a bounded timeout, per-entry
-de-duplication, and a small global concurrency cap. A success is labelled
+generic-MCP exemption. A success is labelled
 **runtime probe**, updates verification evidence only, and cannot close a
 breaker. A failed, rate-limited, unauthorized, replayed, or absent coordinator
 is shown as unavailable/degraded, not as a failed model or a successful probe.
+
+The deployment representation and restart contract are fixed before
+implementation. The operator provisions key material outside the application;
+the application never generates or persists it. Both files are UTF-8 JSON with
+unknown or duplicate fields rejected. Key IDs match `[A-Za-z0-9._-]{1,64}`;
+Ed25519 keys are unpadded base64url-encoded raw 32-byte seed/public values; and
+times use UTC RFC 3339 seconds (`YYYY-MM-DDTHH:MM:SSZ`). The private signer file
+at `/run/secrets/runtime_probe_control_signing_key` has exactly
+`version: 1`, `alg: "EdDSA"`, `kid`, `private_key_b64u`, `sign_from`, and
+nullable `sign_until`. The public keyring at
+`/run/secrets/runtime_probe_control_verifiers` has exactly `version: 1`, one
+`current` object (`alg: "EdDSA"`, `kid`, `public_key_b64u`, `sign_from`), and a
+`retiring` array of zero or one object (`alg: "EdDSA"`, `kid`,
+`public_key_b64u`, `sign_from`, `sign_until`, `accept_until`). Current and
+retiring key IDs and public keys are distinct. When retiring exists,
+`current.sign_from == retiring.sign_until == T`,
+`retiring.sign_from < retiring.sign_until`, and
+`accept_until - sign_until` is at least 70 seconds and at most five minutes.
+
+Dashboard alone mounts the signer file as a regular, non-symlink file owned by
+its process identity, mode `0400`, on a read-only mount. Dashboard and all-butlers
+mount the same public keyring source read-only; all-butlers receives no private
+file. Dashboard derives the public key from its seed and requires an exact
+matching keyring entry and time bounds before signing. A current signer matches
+the current `kid`, algorithm, derived public key, and `sign_from`, and has
+`sign_until=null`. A retiring signer matches every retiring field through
+`sign_until`, has local `sign_from < sign_until`, and may sign at or before that
+integer-second bound. A current signer may sign only at or after its matching `sign_from`.
+Switchboard rejects current-key capabilities issued before `sign_from` and
+retiring-key capabilities whose integer `iat` is greater than `sign_until`;
+`iat == sign_until` is permitted, with no cutover-skew extension. The normal
+request `iat`/`exp` skew checks remain separate. Switchboard rejects the
+retiring key completely after `accept_until`. Neither file is accepted
+through an environment-value, credential-store, database, or generic-Secrets
+fallback.
+
+Startup validation is fail-closed for probe control but does not take unrelated
+Dashboard or daemon functions down. A missing, unreadable, malformed,
+duplicate-key-ID, algorithm-mismatched, or signer/verifier-mismatched file
+marks the Dashboard client or Switchboard coordinator unavailable. Test and
+Verify return the typed unavailable response, and the scheduler emits safe
+operational telemetry for a degraded skip while leaving model verification
+history unchanged; no catalog lookup, receipt, runtime launch, or verification
+persistence occurs. Key files are immutable process snapshots and are reloaded
+only by restarting their owning process. Rotation chooses a UTC cutover `T`,
+sets the old key's `sign_until=T`, the new key's `sign_from=T`, and the old
+retiring key's `accept_until` in `[T+70s, T+5m]`. The operator installs that shared keyring and
+restarts all-butlers first. Before `T`, it installs the matching old signer with
+`sign_until=T` and restarts Dashboard. At or after `T`, it installs the matching
+new signer and restarts Dashboard again. V1 rotation is restart-driven: the old
+process cannot switch keys at `T`, and the new key is not used until that second
+Dashboard restart. A late restart creates safe probe unavailability, not an
+extended old-signing window. Switchboard enforces both
+`sign_until` and `accept_until` from its immutable snapshot, so an operator who
+misses the later removal restart cannot extend retiring-key acceptance beyond
+five minutes. A later all-butlers restart removes the expired entry. Restart
+never reconstructs a missing key from another tier and durable replay receipts
+continue to deny an already-consumed capability across the restart.
 
 ### 3. Record qualifying dispatch outcomes and breaker openings atomically
 
@@ -354,23 +426,37 @@ it does not grow a generic alert administration surface.
 
 ## Migration Plan
 
-1. Add the core outbox table, claim/reissue constraints, indexes, and targeted
-   grants. Do not delete local CLI-auth rows, historical dispatch attempts,
-   notifications, audit markers, or ledger rows; do not rewrite catalog model
-   identifiers or pricing/history identity.
-2. Deploy authority-aware Codex credential code. Every Codex daemon and
-   connector restores only from the public/shared Codex authority; repeated
-   writers to a shared volume now write the same canonical document atomically.
-3. Deploy the atomic outcome recorder and Switchboard worker. New breaker
-   episodes use the outbox immediately; existing open breaker history is not
-   backfilled or re-paged.
-4. Move fleet halt to the outbox and split post-send delivery success from
-   bookkeeping failures. Add safe transition logs, metrics, and Models API/UI
-   state before enabling manual reissue.
-5. Replace dashboard-local model verification with the Switchboard runtime
-   probe, using the same canonical-to-execution OpenCode mapping as daemon
-   dispatch, then validate recovery with a real routed session rather than
-   treating the probe as a reset.
+1. Merge and adopt the process-bound deployment-control doctrine/source
+   correction; keep every implementation lane held until fresh graph GO.
+2. Add the inert attention representation: outbox, claim/reissue constraints,
+   deterministic attempt ordering, validated producer functions, and targeted
+   grants. Do not activate a producer or worker and do not backfill history.
+3. In parallel after the gate, deploy explicit Codex authority and the pure
+   canonical-to-execution OpenCode mapper. Do not rewrite catalog, pricing, or
+   historical identities.
+4. Activate the serialized breaker and fleet-halt producers together, removing
+   both legacy direct-delivery paths while leaving the worker disabled until
+   the producer transaction contract is proven.
+5. Activate the Switchboard worker and typed terminal route semantics. Preserve
+   confirmed transport despite bookkeeping failure; fence recovery and never
+   replay an ambiguous send.
+6. In parallel with stages 4-5 once stage 2 establishes the core migration
+   convention, add the inert runtime-probe trust representation: exact signer/verifier
+   mounts, replay receipts, narrow grants, Secrets reservation, and redaction.
+   No endpoint or dashboard caller changes in this step.
+7. Deploy the signed private coordinator and dedicated client dark. It uses the
+   exact Codex authority, OpenCode mapper, runtime home/configuration, receipt,
+   and verification persistence while existing Test/verify/scheduler callers
+   remain unchanged.
+8. Cut Test, verify-all, and scheduled verification over together and remove or
+   reject every dashboard-local adapter-probe fallback. Typed control failures
+   preserve prior verification evidence and probe success never resets a
+   breaker.
+9. Add the sanitized Models/Spend attention truth and owner-controlled reissue
+   only after worker fencing and probe cutover are stable. Gen-1 reconciliation
+   MAY prepare static/test evidence before deployment, but cannot complete until
+   separately authorized exact-runtime evidence is obtained. Execute the epic
+   report only after that completed reconciliation.
 
 Rollback stops new producers/workers before removing consumers and leaves
 outbox rows readable for operator diagnosis. It never deletes evidence or
