@@ -55,8 +55,7 @@ all implementation leaves ──────────────────
 
 - Baseline focused regression suite passed before design work: **95 passed**.
 - `openspec validate harden-runtime-auth-and-breaker-attention --strict` passes.
-- `git diff --check` passes for tracked content; the change package is currently
-  untracked pending review/commit.
+- `git diff --check` passes for the tracked change package.
 - Repository-wide `spec-trace-check.py --authoring` is not a usable clean gate:
   it reported **2,608 existing errors** across main specifications and unrelated
   active changes, and the tool has no scoped-change mode. This package uses
