@@ -242,7 +242,8 @@ Dashboard, with no `privileged`, `cap_add`, host PID, or Docker socket. Exact-
 image namespace/pidfd preflight failure SHALL disable CLI-auth launch and
 signer activation without a direct-subprocess fallback. The signer
 SHALL be owned by the Dashboard process identity with mode `0400`; tests SHALL
-prove every unprivileged child receives `EACCES` when opening it.
+prove the exact signer path is absent from the child mount view and opening it
+returns `ENOENT` without reading bytes or disclosing a mounted file.
 Dashboard-local model-verification adapter paths SHALL be removed rather than
 sandboxed. Provider health, device-auth, API-key-test, Settings Console, and
 Secrets aliases SHALL use the sandboxed launcher, and Dashboard Codex prewarm
@@ -345,8 +346,8 @@ Scope: v1-mandatory
   exclusive-invocation-identity, cleared-group, `no_new_privs`, child-HOME,
   allowlisted-environment, kernel-containment launcher
 - **AND** a behavior-executing container test proves such a child receives
-  `EACCES` when opening the signer and cannot read protected parent environment
-  values
+  `ENOENT` when opening the absent signer path and cannot read protected parent
+  environment values
 - **AND** concurrent adversarial children cannot read or modify a peer staging
   tree or inspect peer process state, and no identity is reused while a process
   remains in its domain
