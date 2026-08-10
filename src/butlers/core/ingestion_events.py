@@ -204,12 +204,21 @@ WITH replay_policy AS MATERIALIZED (
 )
 """
 
-_REPLAY_POLICY_PREDICATE = """
-AND LOWER(COALESCE(source_channel, '')) <> 'email'
+_REPLAY_POLICY_SAFE_GUARD = """
 AND COALESCE(
     (SELECT COUNT(*) = 1 AND BOOL_AND(replay_safe IS TRUE) FROM replay_policy),
     FALSE
 )
+"""
+
+_INGESTED_REPLAY_POLICY_PREDICATE = f"""
+AND LOWER(COALESCE(ie.source_channel, '')) <> 'email'
+{_REPLAY_POLICY_SAFE_GUARD}
+"""
+
+_FILTERED_REPLAY_POLICY_PREDICATE = f"""
+AND LOWER(COALESCE(fe.source_channel, '')) <> 'email'
+{_REPLAY_POLICY_SAFE_GUARD}
 """
 
 
@@ -1158,7 +1167,7 @@ async def ingestion_event_replay_request(
         UPDATE public.ingestion_events AS ie
         SET status = 'ingested', error_detail = NULL
         WHERE ie.id = $1 AND ie.status = 'failed'
-        {_REPLAY_POLICY_PREDICATE}
+        {_INGESTED_REPLAY_POLICY_PREDICATE}
         RETURNING ie.id
         """,
         event_id,
@@ -1177,7 +1186,7 @@ async def ingestion_event_replay_request(
         UPDATE public.ingestion_events AS ie
         SET status = 'replay_pending'
         WHERE ie.id = $1 AND ie.status = ANY($2)
-        {_REPLAY_POLICY_PREDICATE}
+        {_INGESTED_REPLAY_POLICY_PREDICATE}
         RETURNING ie.id
         """,
         event_id,
@@ -1223,7 +1232,7 @@ async def ingestion_event_replay_request(
         UPDATE connectors.filtered_events AS fe
         SET status = 'replay_pending', replay_requested_at = now(), error_detail = NULL
         WHERE fe.id = $1 AND fe.status = ANY($2)
-        {_REPLAY_POLICY_PREDICATE}
+        {_FILTERED_REPLAY_POLICY_PREDICATE}
         RETURNING fe.id
         """,
         event_id,
