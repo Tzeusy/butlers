@@ -64,7 +64,10 @@ safe reason independently from verification and breaker facts. The Models page
 SHALL make an `uncertain` episode's one permitted manual reissue deliberate:
 it presents a confirmation-gated `Send a new alert` control, disables it while
 the request is pending or a successor exists, and immediately reports the new
-episode result. No other attention state offers an automatic resend control.
+episode result. The episode read and reissue endpoints SHALL require
+server-enforced dashboard owner authorization; no UI visibility rule is an
+authorization substitute. No other attention state offers an automatic resend
+control.
 
 ID: REQ-dashboard-model-settings-002
 Source: heart-and-soul/vision.md Rule 1; RFC 0005; runtime-attention-outbox REQ-runtime-attention-outbox-003; design.md Decision 6
@@ -86,6 +89,13 @@ Scope: v1-mandatory
   original episode and returns both safe episode identities and states
 - **AND** concurrent or retried submissions cannot create additional
   successors for the same original episode
+
+#### Scenario: Unauthorized reissue is rejected before observation or delivery
+
+- **WHEN** an unauthenticated or non-owner caller requests attention detail or
+  `Send a new alert`
+- **THEN** the API returns `401` or `403` without exposing the episode
+- **AND** it creates no successor and invokes no delivery path
 
 #### Scenario: Non-uncertain episode cannot be resent from the Models page
 

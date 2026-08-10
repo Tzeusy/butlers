@@ -258,8 +258,11 @@ attention-delivery state visually and semantically distinct:
 - a pending/sent/failed/uncertain alert episode is visible with timestamp and
   safe reason;
 - only an `uncertain` episode offers one explicit, confirmation-gated **Send a
-  new alert** commit action. It is disabled while its request is in flight and
-  reports the new episode ID/result immediately.
+  new alert** commit action for the authenticated dashboard owner. It is
+  disabled while its request is in flight and reports the new episode ID/result
+  immediately; the server independently rejects any unauthenticated or
+  non-owner observation/reissue request before it can expose data or enqueue a
+  send.
 
 The existing Dispatch language applies: canonical status indicators, no
 invented severity colors, concise operator copy, visible keyboard focus, and

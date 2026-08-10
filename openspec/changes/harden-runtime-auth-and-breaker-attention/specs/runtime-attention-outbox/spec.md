@@ -135,13 +135,15 @@ Scope: v1-mandatory
 
 ### Requirement: Explicit Uncertain-Episode Reissue
 
-The system SHALL permit an operator to explicitly reissue an `uncertain`
-runtime-attention episode only after a confirmation-gated action. The action
-SHALL create a new pending episode with immutable lineage to the original; it
-SHALL never overwrite the original state, reset a breaker, or cause an
-automatic replay. A partial unique direct-parent lineage constraint and atomic
-state-checked `INSERT ... ON CONFLICT` operation SHALL create or return at most
-one direct successor for an original episode.
+The system SHALL permit only an authenticated dashboard owner to explicitly
+reissue an `uncertain` runtime-attention episode after a confirmation-gated
+action. The server SHALL enforce that authorization before it reads the
+protected episode or creates a successor. The action SHALL create a new pending
+episode with immutable lineage to the original; it SHALL never overwrite the
+original state, reset a breaker, or cause an automatic replay. A partial unique
+direct-parent lineage constraint and atomic state-checked `INSERT ... ON
+CONFLICT` operation SHALL create or return at most one direct successor for an
+original episode.
 
 ID: REQ-runtime-attention-outbox-003
 Source: heart-and-soul/vision.md Rule 1 and Rule 4; RFC 0005; design.md Decisions 4 and 6
@@ -162,6 +164,14 @@ Scope: v1-mandatory
 - **THEN** both callers receive the same one successor episode
 - **AND** the database retains one direct successor lineage row and schedules
   only that successor for delivery
+
+#### Scenario: Unauthorized callers cannot inspect or reissue an episode
+
+- **WHEN** an unauthenticated or non-owner caller requests protected attention
+  episode detail or a manual reissue
+- **THEN** the API returns its appropriate `401` or `403` response before
+  exposing episode data
+- **AND** it creates no successor and triggers no transport attempt
 
 #### Scenario: Reissue does not alter routing eligibility
 

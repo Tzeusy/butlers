@@ -27,8 +27,8 @@
 
 ## 5. Operator-facing truth and deliberate recovery
 
-- [ ] 5.1 Extend the Models API with safe latest-attention-episode observation, explicit runtime-probe semantics, and an atomic state-checked idempotent endpoint that creates or returns at most one successor for a confirmed uncertain episode.
-- [ ] 5.2 Update `SettingsModelsPage` and its tests to render verification, routing eligibility, breaker state, and attention state independently; add an accessible confirmation-gated `Send a new alert` action only for eligible uncertain episodes.
+- [ ] 5.1 Extend the Models API with owner-authorized safe latest-attention-episode observation, explicit runtime-probe semantics, and an atomic state-checked idempotent endpoint that creates or returns at most one successor for a confirmed uncertain episode; add unauthenticated/non-owner `401`/`403`, no-observation, no-successor, and no-transport regression coverage.
+- [ ] 5.2 Update `SettingsModelsPage` and its tests to render verification, routing eligibility, breaker state, and attention state independently; add an accessible confirmation-gated `Send a new alert` action only for eligible uncertain episodes, while treating server-enforced owner authorization as the security boundary.
 - [ ] 5.3 Keep Spend fleet-halt visibility intact while reflecting the new durable attention evidence where available; ensure degraded outbox/attempt sources are shown as unavailable rather than no-alert/no-denial states.
 - [ ] 5.4 Add safe logs, counters, and operator diagnostics for authority selection, ignored local CLI-auth scope, breaker-edge episodes, delivery outcomes, and coordinator availability without secret or raw provider-error disclosure.
 
