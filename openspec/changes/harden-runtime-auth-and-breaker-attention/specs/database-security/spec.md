@@ -11,10 +11,13 @@ safe payload, immutable source key, and deduplication key from a validated
 qualifying dispatch attempt or fleet-halt evidence, and verifies the current
 runtime role owns that evidence. The operation SHALL reject caller-controlled
 recipient, payload, delivery state, source key, and arbitrary deduplication
-data. Switchboard alone receives the required select/update authority to claim
-and transition episodes through the external delivery boundary. The dashboard
-operator surface SHALL receive sanitized read data through its API without
-granting ordinary runtime roles access to other producers' episode payloads.
+data. The migration SHALL `REVOKE EXECUTE` on every such function from `PUBLIC`
+before it grants `EXECUTE` only to the designated model-breaker and fleet-halt
+producer runtime roles. Switchboard alone receives the required select/update
+authority to claim and transition episodes through the external delivery
+boundary. The dashboard operator surface SHALL receive sanitized read data
+through its API without granting ordinary runtime roles access to other
+producers' episode payloads.
 
 ID: REQ-database-security-007
 Source: heart-and-soul/security-and-secrets.md; RFC 0003; RFC 0006; database-security Public Schema Write Authorization Matrix; design.md Decision 4
@@ -39,6 +42,15 @@ Scope: v1-mandatory
   episode
 - **AND** no arbitrary role with `EXECUTE` can create a Switchboard-pageable
   attention record for another runtime
+
+#### Scenario: Public and non-producer roles cannot execute producer operations
+
+- **WHEN** `PUBLIC`, `connector_writer`, or a runtime role not designated for
+  the relevant model-breaker or fleet-halt producer calls the
+  `SECURITY DEFINER` producer operation
+- **THEN** PostgreSQL rejects the call before it can inspect source evidence or
+  append an episode
+- **AND** only the explicitly granted designated producer roles can execute it
 
 #### Scenario: Switchboard can claim without peer-schema access
 

@@ -168,7 +168,9 @@ the deduplication key and safe payload from the just-recorded dispatch attempt
 or verified fleet-halt evidence, checks the calling runtime role against that
 evidence, and establishes the state edge and episode in one transaction. It
 accepts no caller-controlled delivery state, recipient, payload, or arbitrary
-deduplication key. Switchboard alone receives row read/update authority.
+deduplication key. The migration revokes each operation from `PUBLIC` before
+granting execution only to its designated producer roles. Switchboard alone
+receives row read/update authority.
 
 The outbox retains an immutable source snapshot and is deliberately not deleted
 through `model_catalog` or `model_dispatch_attempts` cascades. A catalog entry
