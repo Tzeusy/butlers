@@ -747,14 +747,24 @@ async def test_replay_request_and_inbox_lifecycle() -> None:
     public_transition_sql = safe_transition_pool.calls[0][1]
     assert "FOR SHARE OF cr" in public_transition_sql
     assert "BOOL_AND(replay_safe IS TRUE)" in public_transition_sql
-    assert "ARRAY_REMOVE(ARRAY[candidate.source_channel, candidate.source_provider], NULL)" in public_transition_sql
-    assert "NULLIF(BTRIM(candidate.source_endpoint_identity), '') IS NOT NULL" in public_transition_sql
+    assert (
+        "ARRAY_REMOVE(ARRAY[candidate.source_channel, candidate.source_provider], NULL)"
+        in public_transition_sql
+    )
+    assert (
+        "NULLIF(BTRIM(candidate.source_endpoint_identity), '') IS NOT NULL" in public_transition_sql
+    )
 
     filtered_transition_pool = _FakePool(fetchrow_results=[None, None, ok_row])
     filtered_result = await ingestion_event_replay_request(filtered_transition_pool, event_id)
     assert filtered_result["outcome"] == "ok"
-    filtered_transition_sql = [call[1] for call in filtered_transition_pool.calls if call[0] == "fetchrow"][2]
-    assert "ARRAY_REMOVE(ARRAY[candidate.connector_type, candidate.source_channel], NULL)" in filtered_transition_sql
+    filtered_transition_sql = [
+        call[1] for call in filtered_transition_pool.calls if call[0] == "fetchrow"
+    ][2]
+    assert (
+        "ARRAY_REMOVE(ARRAY[candidate.connector_type, candidate.source_channel], NULL)"
+        in filtered_transition_sql
+    )
     assert "NULLIF(BTRIM(candidate.endpoint_identity), '') IS NOT NULL" in filtered_transition_sql
 
     # String UUID accepted
