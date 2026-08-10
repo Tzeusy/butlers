@@ -137,48 +137,87 @@ Scope: v1-mandatory
 
 ## ADDED Requirements
 
-### Requirement: Non-Enumerable Runtime-Probe Control Capability
+### Requirement: Asymmetric Runtime-Probe Control Capability
 
-The system SHALL use a distinct infrastructure control secret named
-`RUNTIME_PROBE_CONTROL_TOKEN` to authenticate the private Dashboard/Scheduler
-to Switchboard runtime-probe control plane. It SHALL be delivered through a
-dedicated deployment-secret mount readable only by the dashboard control
-client, registered verification scheduler, and Switchboard. It SHALL NOT be
-stored in a schema-local or `public.butler_secrets` credential row, resolved by
-`CredentialStore`, or supplied through an environment-value fallback. It SHALL
-not be exposed to a browser, generic MCP client, model session, normal MCP
-client manager, telemetry, audit note, log, or generic Secrets API inventory,
-detail, mutation, or fingerprint response. The generic Secrets API SHALL reject
-this reserved control-secret key rather than creating a shadow DB credential.
-Missing, malformed, or unavailable mounted secret state SHALL make the control
-plane unavailable; it SHALL not fall back to an unauthenticated command.
+The system SHALL authenticate the private Dashboard/Scheduler to Switchboard
+runtime-probe control plane with a short-lived asymmetric signed capability,
+not a shared bearer token. The capability SHALL sign a fixed
+`switchboard.runtime_probe_control.v1` audience, catalog entry ID, registered
+caller class, issue/expiry times, single-use nonce, and key ID; its lifetime
+SHALL NOT exceed one minute. A private `RUNTIME_PROBE_CONTROL_SIGNING_KEY` SHALL
+be delivered through a dedicated deployment-secret mount only to the Dashboard
+API process, including its registered verification scheduler. The all-butlers
+daemon, Switchboard, unrelated butlers, and model-runtime child processes SHALL
+receive only the corresponding non-secret verification key. The private key
+SHALL NOT be stored in a schema-local or `public.butler_secrets` credential row,
+resolved by `CredentialStore`, or supplied through an environment-value
+fallback. It SHALL not be exposed to a browser, generic MCP client, model
+session, normal MCP client manager, telemetry, audit note, log, or generic
+Secrets API inventory, detail, mutation, or fingerprint response. The generic
+Secrets API SHALL reject the reserved private-key name rather than creating a
+shadow DB credential. Missing, malformed, unavailable, or mismatched signing /
+verification key state SHALL make the control plane unavailable; it SHALL not
+fall back to an unauthenticated command.
+
+The verifier SHALL accept only configured current and bounded-overlap retiring
+verification keys identified by key ID. Rotation SHALL install the new verifier
+before the Dashboard signer uses its key ID and remove the retiring verifier
+after its bounded overlap; an unknown key ID SHALL fail closed.
 
 ID: REQ-core-credentials-002
 Source: heart-and-soul/security-and-secrets.md; RFC 0003; dashboard-model-settings REQ-dashboard-model-settings-001; design.md Decision 2
 Scope: v1-mandatory
 
-#### Scenario: Missing mounted control secret fails closed before runtime work
+#### Scenario: Missing signing or verification material fails closed before runtime work
 
-- **WHEN** the dashboard control client, scheduler, or Switchboard cannot
-  read `RUNTIME_PROBE_CONTROL_TOKEN` from its dedicated deployment-secret mount
+- **WHEN** the Dashboard API cannot read `RUNTIME_PROBE_CONTROL_SIGNING_KEY`
+  from its dedicated deployment-secret mount, or Switchboard cannot load the
+  corresponding verification key
 - **THEN** the requested runtime probe reports the control plane unavailable
   without catalog lookup, runtime launch, or verification persistence
 - **AND** it does not use a credential-store value, local value, environment
-  fallback, or generic MCP route as a substitute
+  fallback, generic MCP route, or unsigned request as a substitute
 
-#### Scenario: Private control token remains outside browser, MCP, and generic Secrets surfaces
+#### Scenario: Private signing material remains outside runtime, browser, MCP, and generic Secrets surfaces
 
 - **WHEN** the dashboard requests a runtime probe or the scheduler runs one
-- **THEN** the server-side dedicated control client supplies the token only on
-  the internal control-plane request
+- **THEN** the server-side dedicated control client signs its short-lived
+  capability without sending the private key
+- **AND** the all-butlers container, non-Switchboard daemon code, and runtime
+  child process cannot read the signing-key mount
 - **AND** the browser payload, generic MCP tool list/call, runtime prompt,
   telemetry, logs, and generic Secrets API inventory/detail/mutation/audit
-  responses contain no token value or token-derived fingerprint
+  responses contain no private key or private-key-derived fingerprint
 
-#### Scenario: Generic Secrets API cannot create a shadow control token
+#### Scenario: Generic Secrets API cannot create a shadow signing key
 
 - **WHEN** a browser-facing generic Secrets API caller inventories, fetches,
-  mutates, or attempts to create `RUNTIME_PROBE_CONTROL_TOKEN`
+  mutates, or attempts to create `RUNTIME_PROBE_CONTROL_SIGNING_KEY`
 - **THEN** the key is absent from inventory/detail responses and mutation is
   rejected as reserved for deployment-secret control use
-- **AND** no token value or fingerprint is added to an API or audit response
+- **AND** no private-key value or fingerprint is added to an API or audit response
+
+#### Scenario: Signed capability is scoped, short-lived, and single use
+
+- **WHEN** the dashboard control client or registered scheduler sends a probe
+  request to Switchboard
+- **THEN** its signed capability binds the fixed control-plane audience, catalog
+  entry ID, caller class, issue/expiry time of at most one minute, nonce, and
+  key ID
+- **AND** Switchboard accepts only the configured current or bounded-overlap
+  retiring key for that key ID, verifies signature, audience, caller class, and
+  expiry, then atomically records the nonce in a durable unique receipt with
+  bounded expiry
+  before catalog lookup, runtime launch, or verification persistence
+- **AND** an invalid, expired, audience-mismatched, or replayed capability is
+  rejected without a probe
+
+#### Scenario: Key rotation preserves the fail-closed boundary
+
+- **WHEN** the deployment rotates the runtime-probe signing key
+- **THEN** it installs the new public verification key before the Dashboard
+  starts signing with its new key ID
+- **AND** Switchboard accepts the retiring verification key only for its
+  bounded overlap and rejects unknown key IDs
+- **AND** removal of the retiring key does not fall back to a bearer token,
+  credential-store value, or unsigned request

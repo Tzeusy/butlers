@@ -16,19 +16,22 @@ a configured non-empty `DASHBOARD_API_KEY` and constant-time matching
 `X-API-Key` header are required, with absent configuration reported as safe
 unavailability. The dashboard server SHALL then call Switchboard through a
 dedicated `runtime_probe_control` client using a separately scoped system
-`RUNTIME_PROBE_CONTROL_TOKEN` capability from a dedicated deployment-secret
-mount, never from `CredentialStore` or the generic Secrets API. Switchboard
-SHALL use constant-time comparison and require that token on its dedicated
-internal-control endpoint before catalog resolution, runtime launch, or
-verification persistence. It SHALL be available only to the dashboard control
-client and the explicitly registered trusted verification scheduler; it SHALL
-not be carried by browser requests, model sessions, generic MCP clients, the
-normal MCP client manager, logs, or any generic Secrets API response. The
-command accepts only a catalog entry ID, enforces bounded timeout, per-entry
-de-duplication, and a bounded global concurrency cap, and accepts no credential
-material, prompt, model override, or runtime arguments from the dashboard. A
-successful probe updates verification evidence only; it does not close an open
-breaker.
+signed capability produced by `RUNTIME_PROBE_CONTROL_SIGNING_KEY` from a
+dedicated Dashboard-only deployment-secret mount, never from `CredentialStore`
+or the generic Secrets API. Switchboard SHALL verify that signature with its
+non-secret verification key and require the fixed
+`switchboard.runtime_probe_control.v1` audience, matching catalog entry ID,
+registered caller class, expiry of at most one minute, configured key ID, and
+unused nonce on its dedicated
+internal-control endpoint. It SHALL atomically persist a bounded-expiry unique
+nonce receipt before catalog resolution, runtime launch, or verification
+persistence. The private signing key SHALL not be available to the
+all-butlers daemon, model sessions, generic MCP clients, the normal MCP client
+manager, logs, or any generic Secrets API response. The command accepts only a
+catalog entry ID, enforces bounded timeout, per-entry de-duplication, and a
+bounded global concurrency cap, and accepts no credential material, prompt,
+model override, or runtime arguments from the dashboard. A successful probe
+updates verification evidence only; it does not close an open breaker.
 
 ID: REQ-dashboard-model-settings-001
 Source: dashboard-model-settings Catalog Verify-All API and Hourly Automated Verification Sweep; model-catalog REQ-model-catalog-001; design.md Decisions 2 and 6
@@ -49,8 +52,8 @@ Scope: v1-mandatory
 - **WHEN** a model session, ordinary MCP client, or unauthenticated caller
   enumerates or invokes Switchboard tools
 - **THEN** it cannot discover or invoke the runtime-probe control command
-- **AND** only the control client with the scoped `RUNTIME_PROBE_CONTROL_TOKEN`
-  capability can request a bounded probe by catalog entry ID
+- **AND** only the Dashboard/Scheduler control client with a valid scoped,
+  unexpired signed capability can request a bounded probe by catalog entry ID
 
 #### Scenario: Dashboard-triggered probe requires owner control before Switchboard work
 
@@ -60,14 +63,15 @@ Scope: v1-mandatory
   contacts Switchboard
 - **AND** it launches no runtime and writes no verification evidence
 
-#### Scenario: Direct control-plane callers require the scoped capability
+#### Scenario: Direct control-plane callers require the scoped signed capability
 
 - **WHEN** a caller reaches the private runtime-probe command without the
-  valid scoped `RUNTIME_PROBE_CONTROL_TOKEN` capability
+  valid scoped signature, fixed audience, matching caller class/catalog ID,
+  unexpired nonce, and configured verification key
 - **THEN** Switchboard rejects it before catalog lookup, runtime launch, or
   verification persistence
 - **AND** a generic MCP client cannot substitute its normal connection for
-  that capability
+  that capability or replay a previously accepted request
 
 #### Scenario: Scheduled verification is a registered trusted control caller
 

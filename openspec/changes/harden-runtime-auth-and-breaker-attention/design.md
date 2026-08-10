@@ -117,25 +117,37 @@ dashboard-triggered Test or Verify requires the same fail-closed
 contacts Switchboard.
 
 The dashboard server and the trusted verification scheduler call Switchboard
-through a dedicated `runtime_probe_control` client, authenticated with a
-separately scoped system credential `RUNTIME_PROBE_CONTROL_TOKEN`. That token
-is delivered via a deployment-secret mount into only the dashboard control
-client, trusted scheduler, and Switchboard—not via `CredentialStore`,
-`public.butler_secrets`, or an environment-value fallback—and uses a dedicated
-internal-control header/endpoint; it is not an MCP argument. It is
-non-enumerable by the browser-facing Secrets API, which rejects the reserved key
-instead of storing a shadow credential, so neither its value nor fingerprint can
-reach the browser. It never reaches generic MCP clients, model sessions, logs,
-or the normal MCP client manager.
-Switchboard uses constant-time comparison and rejects a missing or invalid token
-before it resolves a catalog entry, launches a runtime, or writes verification
-evidence. The scheduled sweep is an explicitly registered trusted internal
-caller using that credential, not a generic-MCP exemption. The command enforces
-a bounded timeout, per-entry de-duplication, and a small global concurrency cap.
-A success is labelled **runtime probe**, updates verification evidence only, and
-cannot close a breaker. A failed, rate-limited, unauthorized, or absent
-coordinator is shown as unavailable/degraded, not as a failed model or a
-successful probe.
+through a dedicated `runtime_probe_control` client using a short-lived signed
+control capability, not a shared bearer token. A private
+`RUNTIME_PROBE_CONTROL_SIGNING_KEY` is delivered via a deployment-secret mount
+only to the Dashboard API process, where its scheduler already runs. The
+co-resident all-butlers daemon and its model-runtime children receive only the
+corresponding non-secret verification key. This preserves the actual
+Switchboard runtime boundary without pretending a file mount can isolate one
+module inside the shared all-butlers process.
+
+Each signed request carries only the fixed
+`switchboard.runtime_probe_control.v1` audience, a catalog entry ID, registered
+caller class (`dashboard` or `scheduler`), issue/expiry times, a one-time nonce,
+and key ID. Its lifetime is bounded to one minute. Switchboard accepts only
+configured current or bounded-overlap retiring verification keys for that key
+ID, then verifies the signature and audience, atomically records the nonce in a
+durable unique receipt with bounded expiry, and only then performs catalog
+resolution, launch, or verification persistence. This makes a replay fail even
+across a Switchboard restart; an unknown key ID, expired capability, or failed
+signature fails closed. Key rotation installs the new verifier before the
+Dashboard signer changes key ID, and removes the retiring verifier after its
+bounded overlap. The private key is not a
+`CredentialStore`/`public.butler_secrets` value or environment-value fallback;
+the browser-facing Secrets API rejects the reserved key rather than storing a
+shadow credential. Neither private key nor signatures reach browser payloads,
+generic MCP clients, model sessions, logs, or the normal MCP client manager.
+The scheduled sweep is an explicitly registered trusted caller, not a
+generic-MCP exemption. The command enforces a bounded timeout, per-entry
+de-duplication, and a small global concurrency cap. A success is labelled
+**runtime probe**, updates verification evidence only, and cannot close a
+breaker. A failed, rate-limited, unauthorized, replayed, or absent coordinator
+is shown as unavailable/degraded, not as a failed model or a successful probe.
 
 ### 3. Record qualifying dispatch outcomes and breaker openings atomically
 
