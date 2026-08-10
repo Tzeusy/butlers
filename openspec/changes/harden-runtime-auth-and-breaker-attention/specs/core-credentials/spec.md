@@ -155,7 +155,6 @@ its deployment keyring, SHALL NOT perform remote/dynamic lookup, SHALL reject
 `jku`/`x5u`, and SHALL reject `none`, symmetric, and other asymmetric
 algorithms. It SHALL allow at most five seconds of clock skew and accept only
 `iat <= now + 5s`, `exp >= now - 5s`, and `0 < exp - iat <= 60s`.
-
 The endpoint SHALL return safe typed JSON with HTTP `200`/status `completed`,
 `401`/status `unauthorized` for missing/invalid/expired capability,
 `409`/status `replay`, `429`/status `busy` for an occupied per-entry or global
@@ -178,7 +177,6 @@ Secrets API SHALL reject the reserved private-key name rather than creating a
 shadow DB credential. Missing, malformed, unavailable, or mismatched signing /
 verification key state SHALL make the control plane unavailable; it SHALL not
 fall back to an unauthenticated command.
-
 The verifier SHALL accept only configured current and retiring verification
 keys identified by protected key ID. Rotation SHALL install the new verifier
 before the Dashboard signer uses its key ID. The retiring signer SHALL stop at
@@ -186,7 +184,6 @@ its configured `sign_until`, and the verifier SHALL retain that key through an
 `accept_until` at least 70 seconds later (60-second maximum capability lifetime
 plus two five-second skew allowances), but no more than five minutes later. An
 unknown key ID SHALL fail closed.
-
 The deployment SHALL use two strict UTF-8 JSON documents with unknown or
 duplicate fields rejected. Key IDs SHALL match `[A-Za-z0-9._-]{1,64}`;
 Ed25519 material SHALL be unpadded base64url-encoded raw 32-byte seed/public
@@ -207,39 +204,66 @@ retiring key exists, `current.sign_from == retiring.sign_until == T`,
 `[70 seconds, 5 minutes]`.
 Dashboard and all-butlers SHALL mount the same keyring source read-only;
 all-butlers SHALL receive no private signer material.
-
 Parser, receipt, endpoint, and client code MAY land inert before deployment
 activation, but the production private signer mount SHALL NOT be present until
 every Dashboard runtime-CLI subprocess path is either removed or uses one
-mandatory OS launcher. That launcher SHALL drop the child to a fixed
-unprivileged UID/GID distinct from the Dashboard signer owner, clear
-supplementary groups, set `no_new_privs`, use a child-owned per-invocation HOME
-and configuration directory, and pass an allowlisted environment with no
-database credential, dashboard owner-control key, OAuth secret, or deployment
-secret. The signer SHALL be owned by the Dashboard process identity with mode
-`0400`; tests SHALL prove the unprivileged child receives `EACCES` when opening
-it. Dashboard-local model-verification adapter paths SHALL be removed rather
-than sandboxed. Provider health, device-auth, API-key-test, Settings Console,
-and Secrets aliases SHALL use the sandboxed launcher, and Dashboard Codex
-prewarm or any other adapter invocation SHALL be removed or executed outside
-Dashboard.
-
+mandatory OS launcher. That launcher SHALL allocate an exclusive unprivileged
+UID/GID to each live invocation, clear supplementary groups, set
+`no_new_privs`, use a child-owned per-invocation HOME and configuration
+directory, and pass an allowlisted environment with no database credential,
+dashboard owner-control key, OAuth secret, or deployment secret. A
+Bubblewrap nested-user/mount/PID-namespace domain SHALL deny every peer staging
+tree, peer `/proc` state, canonical credential root, and signer. The outer
+identity SHALL come from reserved UID/GID range `61000..61999`. The sandbox
+SHALL provide a fresh procfs, private tmpfs, minimal device view, one writable
+staged HOME, and only the read-only provider executable/runtime-library, CA,
+and resolver inputs required for networked auth/health; root, run, app,
+canonical homes, peer stages, and host procfs SHALL be absent. The
+identity SHALL NOT be reused until the domain has no live descendant. A fixed
+shared child UID, directory permissions, global serialization, or
+process-group/`setsid` handling alone SHALL NOT satisfy the boundary. Default
+and hotreload Dashboard services SHALL use the same repository-owned
+namespace-capable seccomp profile plus
+`apparmor:unconfined` and `systempaths:unconfined` in default and hotreload
+Dashboard, with no `privileged`, `cap_add`, host PID, or Docker socket. Exact-
+image namespace/pidfd preflight failure SHALL disable CLI-auth launch and
+signer activation without a direct-subprocess fallback. The signer
+SHALL be owned by the Dashboard process identity with mode `0400`; tests SHALL
+prove every unprivileged child receives `EACCES` when opening it.
+Dashboard-local model-verification adapter paths SHALL be removed rather than
+sandboxed. Provider health, device-auth, API-key-test, Settings Console, and
+Secrets aliases SHALL use the sandboxed launcher, and Dashboard Codex prewarm
+or any other adapter invocation SHALL be removed or executed outside Dashboard.
 The trusted parent SHALL resolve canonical CLI-auth authority before spawn and
 stage only the operation-required material into a newly created regular file
 under the child-owned per-invocation HOME. Health and API-key-test commands MAY
 read that staged copy, but any child modification is discarded and SHALL NOT
 write back to canonical authority. Commands used for those read-only checks
-SHALL NOT perform credential rotation. A device-auth child SHALL write only its
-provider's expected relative path inside the staging directory. After success,
-the trusted parent SHALL use no-follow path resolution to verify that output is
-a single-link regular file inside the staging root with the expected owner,
-mode, size bound, and provider schema, then atomically persist it through the
-explicit provider authority with compare-and-set fencing. Symlinks, hardlinks,
-path escapes, unexpected files, authority-version races, cancellation, and
-timeouts SHALL discard the staging tree without persistence. Cleanup SHALL run
-after every terminal outcome. The child SHALL never receive or open the
-canonical root credential path.
-
+SHALL NOT perform credential rotation. A device-auth child SHALL write exactly
+one provider credential artifact at its expected relative path. Provider-
+specific disposable scratch roots MAY contain the exact database, WAL, log,
+configuration, or package files required by that CLI; alternate credential
+artifacts and writes outside those roots SHALL fail closed, and all scratch
+content SHALL be discarded. Direct-child or outer-Bubblewrap exit SHALL NOT
+authorize validation. The launcher SHALL use
+`--as-pid-1 --die-with-parent` plus a trusted `--info-fd`/`--block-fd`
+handshake, open a pidfd for the reported namespace PID 1 before releasing the
+payload, and on every outcome signal and boundedly escalate that pidfd until
+death before separately waiting for the direct Bubblewrap child. It SHALL NOT
+call `waitid` on the non-child namespace PID 1. The parent SHALL then open the expected relative file
+from a trusted staging-root descriptor with
+`openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)` or behaviorally equivalent
+no-follow/beneath constraints, verify the
+single-link regular file's owner, mode, size bound, and provider schema, and
+consume the bounded bytes through that same open descriptor without a path
+reopen. It SHALL then atomically persist through explicit provider authority
+with compare-and-set fencing. Symlinks, hardlinks, path escapes, unexpected
+files, writes outside the provider scratch allowlist, live or daemonized
+descendants, authority-version races, cancellation, timeouts, and containment
+or descriptor failures SHALL discard the staging tree without persistence.
+Cleanup SHALL run before the exclusive identity is
+released after every terminal outcome. The child SHALL never receive or open
+the canonical root credential path.
 The canonical full-stack launcher MAY start Dashboard before all-butlers, but
 the signed client SHALL remain unavailable and SHALL sign nothing until
 `GET /_control/runtime-probe/v1/readiness?kid=<kid>` on the private Switchboard
@@ -253,7 +277,6 @@ While the signer mount is active, rollback SHALL retain the child sandbox and
 disable Test, verify-all, and scheduled verification, or remove the mount before
 old code starts. It SHALL NOT start an image lacking the sandbox or restore a
 local adapter probe beside the mount.
-
 Dashboard SHALL derive the public key from the private seed. A current signer
 SHALL match the current algorithm, ID, derived public key, and `sign_from`,
 SHALL have `sign_until=null`, and SHALL sign only at/after `sign_from`. A
@@ -302,11 +325,17 @@ Scope: v1-mandatory
 - **THEN** Test, verify-all, and scheduled verification contain no
   dashboard-local adapter path, and every remaining provider-health,
   device-auth, API-key-test, Settings, or Secrets runtime-CLI child uses the
-  fixed-UID, cleared-group, `no_new_privs`, child-HOME, allowlisted-environment
-  launcher
+  exclusive-invocation-identity, cleared-group, `no_new_privs`, child-HOME,
+  allowlisted-environment, kernel-containment launcher
 - **AND** a behavior-executing container test proves such a child receives
   `EACCES` when opening the signer and cannot read protected parent environment
   values
+- **AND** concurrent adversarial children cannot read or modify a peer staging
+  tree or inspect peer process state, and no identity is reused while a process
+  remains in its domain
+- **AND** a child that forks, double-forks, or calls `setsid` cannot survive a
+  terminal outcome, mutate staged output after direct-child exit, or cause
+  persistence
 - **AND** a completeness scan covers direct and aliased Dashboard subprocess
   callsites so no runtime CLI bypasses the launcher
 - **AND** rollback retains those protections or removes the mount before an
@@ -336,11 +365,13 @@ Scope: v1-mandatory
 #### Scenario: Sandboxed device auth persists only validated staged output
 
 - **WHEN** a device-auth child succeeds
-- **THEN** the trusted parent persists only the expected no-follow,
-  single-link, in-root, owner/mode/size/schema-valid output through explicit
-  compare-and-set authority
+- **THEN** the trusted parent first proves the complete descendant domain is
+  terminated and fenced, then opens and validates the expected no-follow,
+  single-link, in-root, owner/mode/size/schema-valid output and consumes it
+  through that same descriptor before explicit compare-and-set persistence
 - **AND** any path escape, link, unexpected file, authority race, cancellation,
-  timeout, or validation failure persists nothing and cleans the staging tree
+  timeout, surviving descendant, containment, or validation failure persists
+  nothing and cleans the staging tree before releasing the invocation identity
 
 #### Scenario: Generic Secrets API cannot create a shadow signing key
 

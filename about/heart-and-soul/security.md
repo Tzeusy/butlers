@@ -175,6 +175,13 @@ hold:
   fail-closed behavior are specified before implementation; and
 - generic Secrets APIs, model/runtime children, logs, telemetry, browser
   payloads, and environment diagnostics cannot expose, create, or shadow it.
+- when the signing process launches untrusted runtime children, every concurrent
+  invocation has its own kernel-enforced filesystem and process domain: one
+  child cannot inspect or modify another invocation's staged credentials or
+  process state, and the complete descendant domain is terminated and fenced
+  before staged output is validated or persisted. A shared child identity,
+  directory permissions, `no_new_privs`, a global lock, or process-group
+  handling alone does not satisfy this boundary.
 
 `RUNTIME_PROBE_CONTROL_SIGNING_KEY` is the sole approved use of this exception.
 The owner adopted this amendment and its refined deployment-key contract on

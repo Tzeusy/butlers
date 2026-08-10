@@ -130,14 +130,61 @@ The Dashboard signer mount is an enforcement artifact, not an inert
 representation. Mode `0400` alone does not isolate a file from same-identity
 child processes. Before the mount can activate, every Dashboard runtime-CLI
 spawn path is either removed or forced through one shared OS launcher that
-drops to the fixed unprivileged `butlers-runtime-child` UID/GID, clears
+allocates an exclusive unprivileged UID/GID to each live invocation, clears
 supplementary groups, sets `no_new_privs`, uses a per-invocation child-owned
 HOME/config directory, and supplies an allowlisted environment containing no
-database, owner-control, OAuth, or deployment-secret value. The root-owned
-mode-`0400` signer is therefore unreadable by those children, including provider
-health, device-auth, API-key-test, and Secrets/Settings aliases. Dashboard-local
-model-verification adapter paths are removed at the signer cutover rather than
-sandboxed.
+database, owner-control, OAuth, or deployment-secret value. A kernel-enforced
+per-invocation Bubblewrap filesystem/process domain denies every peer staging
+tree, peer `/proc` state, canonical credential root, and the root-owned
+mode-`0400` signer. `Dockerfile.base` installs an exact Bubblewrap package
+version and records it in the auditable CLI-version manifest.
+The root supervisor allocates one outer UID/GID from reserved range
+`61000..61999`, drops to it, and execs `bwrap` with nested user, mount, PID,
+IPC, and UTS namespaces; a fresh procfs; a private tmpfs `/tmp`; minimal
+`/dev`; one writable bind for that invocation's staged HOME; and read-only
+provider-command/runtime-library, CA, and resolver inputs. It does not unshare
+the network because health and device-auth flows require egress. `/root`,
+`/run`, `/app`, canonical credential homes, peer stages, and host procfs are
+absent. An identity is not reused until its namespace contains no live
+descendant and its stage is removed. A fixed shared child UID, directory
+permissions, a global lock, or process-group/`setsid` handling alone is
+invalid. These controls cover provider health, device-auth, API-key-test, and
+Secrets/Settings aliases. Dashboard-local model-verification adapter paths are
+removed at the signer cutover rather than sandboxed.
+
+The trusted launcher uses Bubblewrap `--as-pid-1 --die-with-parent` and a
+trusted `--info-fd`/`--block-fd` startup handshake; direct payload or outer
+Bubblewrap exit is not a terminal result. Before releasing the block fd, the
+parent opens a pidfd for the reported namespace PID 1. On success, failure,
+cancellation, or timeout it signals that pidfd, escalates to `SIGKILL` after a
+bounded grace period, polls pidfd death, and separately waits for its direct
+Bubblewrap child. It does not call `waitid` on the non-child namespace PID 1.
+Kernel PID-namespace-init death terminates every remaining namespace member,
+including forked, double-forked, or `setsid` descendants. Only then does the
+parent consider staged output. Device auth is
+opened relative to a trusted staging-root file descriptor with
+`openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)` or a behaviorally equivalent
+no-follow primitive. Owner, mode, link count, size, and schema are checked and
+the bounded bytes are consumed through that same open descriptor; the parent
+never validates by path and reopens. Persistence remains fenced by the
+authority compare-and-set. Each provider has an exact disposable scratch-root
+allowlist because a CLI may create databases, WAL, logs, config, or package
+files under staged HOME. Exactly one expected credential artifact is
+persistence-eligible; alternate credential artifacts and writes outside the
+scratch allowlist fail closed. All scratch content is discarded. Any
+containment, termination, descriptor, or scratch-policy failure persists
+nothing and cleans the stage before releasing the invocation identity.
+
+Default and hotreload Dashboard services use the same repository-owned seccomp
+profile permitting only the namespace syscalls Bubblewrap needs plus exact
+`apparmor:unconfined` and `systempaths:unconfined` settings. They add no
+`privileged`, `cap_add`, host PID namespace, or Docker-socket access. Startup
+executes a real nested-user/mount/PID-namespace
+preflight with the exact image and policy. Unsupported user namespaces,
+seccomp/AppArmor denial, missing Bubblewrap, unavailable pidfds, or exhausted
+UID range makes CLI-auth launch and signer activation unavailable while the
+ordinary Dashboard remains healthy. No legacy direct subprocess fallback is
+allowed.
 
 Parsers, receipt storage, the private endpoint, and the dedicated client MAY
 land dark without production key mounts. The canonical launcher may then
@@ -485,10 +532,15 @@ it does not grow a generic alert administration surface.
    verification persistence; the deployed path remains unavailable while
    existing Test/verify/scheduler callers remain unchanged.
 8. Before any production mount, route every non-verification Dashboard CLI-auth
-   child through the fixed-UID/no-new-privileges launcher, remove Dashboard
+   child through the per-invocation identity/containment launcher, remove Dashboard
    Codex prewarm and other non-verification adapter invocation, sanitize child
    environments, and prove the root-owned signer path is unreadable from every
    provider-list, health, device-auth, API-key-test, Settings, and Secrets alias.
+   Adversarial concurrent-child and daemonized-descendant tests in both exact
+   Dashboard Compose variants prove peer
+   staging and peer process state are inaccessible, the complete descendant
+   domain is dead before same-descriptor validation, and no failed containment
+   path can persist or release an identity early.
    Inventory the exact model-settings Test/verify adapter callsites as the only
    deferred local paths; leave them unchanged and unmounted for stage 9.
 9. In one deployable cutover, provision the Dashboard signer and shared verifier
