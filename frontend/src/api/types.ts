@@ -4007,7 +4007,7 @@ export interface IngestionEventSummary {
   tokens_in: number | null;
   tokens_out: number | null;
   session_count: number;
-  /** Linked sessions omitted from cost_usd because their cost is unavailable. */
+  /** Token-using sessions omitted from cost_usd because their price is unavailable. */
   unpriced_session_count?: number;
   /** Sessions that recorded neither token usage nor a stored cost. */
   no_usage_session_count?: number;
@@ -4074,7 +4074,7 @@ export interface ButlerRollupEntry {
   output_tokens: number;
   /** Known-priced subtotal for this butler, if any. */
   cost: number | null;
-  /** Sessions omitted from cost because their cost is unavailable. */
+  /** Token-using sessions omitted from cost because their price is unavailable. */
   unpriced_session_count?: number;
   /** Sessions with no token or stored-cost evidence. */
   no_usage_session_count?: number;
@@ -4088,7 +4088,7 @@ export interface IngestionEventRollup {
   total_output_tokens: number;
   /** Known-priced subtotal across all sessions, if any. */
   total_cost: number | null;
-  /** Sessions omitted from total_cost because their cost is unavailable. */
+  /** Token-using sessions omitted from total_cost because their price is unavailable. */
   unpriced_session_count?: number;
   /** Sessions with no token or stored-cost evidence. */
   no_usage_session_count?: number;
@@ -4181,7 +4181,7 @@ export interface IngestionWindowRollup {
    * endpoint when pricing config is available; null when unavailable.
    */
   cost: number | null;
-  /** Sessions omitted from cost because their cost is unavailable. */
+  /** Token-using sessions omitted from cost because their price is unavailable. */
   unpriced_session_count?: number;
   /** Sessions with no token or stored-cost evidence. */
   no_usage_session_count?: number;

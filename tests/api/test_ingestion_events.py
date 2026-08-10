@@ -926,7 +926,15 @@ async def test_list_events_enrichment_replaces_stale_denormalized_zero_with_unkn
         "trace_id": None,
         "model": None,
     }
-    mock_db.fan_out_with_status = AsyncMock(return_value=({"atlas": [session_row]}, []))
+    no_usage_session_row = {
+        **session_row,
+        "id": str(uuid4()),
+        "input_tokens": None,
+        "output_tokens": None,
+    }
+    mock_db.fan_out_with_status = AsyncMock(
+        return_value=({"atlas": [session_row, no_usage_session_row]}, [])
+    )
 
     with patch(
         "butlers.api.routers.ingestion_events.ingestion_events_list",
@@ -942,6 +950,9 @@ async def test_list_events_enrichment_replaces_stale_denormalized_zero_with_unkn
     item = resp.json()["data"][0]
     assert item["cost_usd"] is None
     assert item["unpriced_session_count"] == 1
+    assert item["no_usage_session_count"] == 1
+    assert item["sessions"][0]["cost_evidence"] == "unpriced"
+    assert item["sessions"][1]["cost_evidence"] == "no_usage"
     assert item["tokens_in"] == 10  # tokens are still populated from the join
 
 
