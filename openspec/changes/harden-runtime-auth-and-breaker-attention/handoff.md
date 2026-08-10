@@ -36,9 +36,10 @@ doctrine/source release gate
 ├── outbox representation → producer activation → Switchboard worker ───────┐
 ├── explicit Codex authority ────────────────────────────────────────────┐   │
 ├── canonical OpenCode execution mapping ───────────────────────────────┼───┤
-└── probe trust representation → signed coordinator → caller cutover ───┘   │
+└── probe trust representation → signed coordinator ────────────────────┐   │
+    Dashboard runtime-child sandbox ───────────────→ mount/caller cutover ──┘
                                                       Models/Spend truth ←──┘
-all nine implementation leaves → gen-1 reconciliation → epic report
+all ten implementation leaves → gen-1 reconciliation → epic report
 ```
 
 | Tracked child | Priority | Depends on | Completion evidence |
@@ -49,11 +50,12 @@ all nine implementation leaves → gen-1 reconciliation → epic report
 | `bu-0uqgo.3` at-most-once Switchboard worker | P0 | producer activation | lease/fence/crash/uncertainty and confirmed-send bookkeeping regressions |
 | `bu-ih90b` explicit Codex authority | P0 | gate | dashboard-refresh/next-invocation, shared-home, and unavailable-authority tests |
 | `bu-0uqgo.4` OpenCode execution mapper | P1 | gate | canonical identity and native CLI argument tests without data migration |
-| `bu-0uqgo.5` probe trust representation | P0 | gate, outbox convention, external migration/Secrets owners | inert key/receipt/grant/mount/redaction evidence |
-| `bu-0uqgo.10` signed probe propagation | P0 | trust, Codex authority, OpenCode mapper | private endpoint, replay, exact-runtime, and no-breaker-reset tests |
-| `bu-0uqgo.11` probe caller cutover | P1 | signed propagation | Test/verify/scheduler cutover and legacy local-probe absence |
+| `bu-0uqgo.5` probe trust representation | P0 | gate, outbox convention, external migration/Secrets owners | inert schema/parser/receipt/grant/redaction evidence with no production key mount |
+| `bu-0uqgo.10` signed probe propagation | P0 | trust, Codex authority, OpenCode mapper | fixture-key private endpoint, replay, exact-runtime, and no-breaker-reset tests while production remains unavailable |
+| `bu-0uqgo.12` Dashboard CLI-auth child sandbox | P0 | gate, terminal base-image owner, explicit Codex authority, OpenCode mapper | complete runtime-CLI inventory, fixed-UID/no-new-privileges launcher, fenced credential staging, signer-open denial, and exact deferred verification allowlist |
+| `bu-0uqgo.11` probe mount and caller cutover | P1 | signed propagation, runtime-child sandbox | canonical full-stack readiness gate, Test/verify/scheduler cutover, legacy local-probe absence, and safe rollback |
 | `bu-0uqgo.6` Models/Spend truth | P1 | worker, probe cutover, external frontend owners | batched breaker state, truthful degraded state, and one fenced reissue successor |
-| `bu-0uqgo.7` gen-1 reconciliation | P0 | all nine implementation leaves | exact implementation/spec/ACL/concurrency and separately authorized runtime evidence |
+| `bu-0uqgo.7` gen-1 reconciliation | P0 | all ten implementation leaves | exact implementation/spec/ACL/concurrency and separately authorized runtime evidence |
 | `bu-0uqgo.8` epic report | P0 | implementation plus reconciliation | complete evidence matrix, diagrams, and VISION callback |
 
 ## Verification Matrix

@@ -208,6 +208,52 @@ retiring key exists, `current.sign_from == retiring.sign_until == T`,
 Dashboard and all-butlers SHALL mount the same keyring source read-only;
 all-butlers SHALL receive no private signer material.
 
+Parser, receipt, endpoint, and client code MAY land inert before deployment
+activation, but the production private signer mount SHALL NOT be present until
+every Dashboard runtime-CLI subprocess path is either removed or uses one
+mandatory OS launcher. That launcher SHALL drop the child to a fixed
+unprivileged UID/GID distinct from the Dashboard signer owner, clear
+supplementary groups, set `no_new_privs`, use a child-owned per-invocation HOME
+and configuration directory, and pass an allowlisted environment with no
+database credential, dashboard owner-control key, OAuth secret, or deployment
+secret. The signer SHALL be owned by the Dashboard process identity with mode
+`0400`; tests SHALL prove the unprivileged child receives `EACCES` when opening
+it. Dashboard-local model-verification adapter paths SHALL be removed rather
+than sandboxed. Provider health, device-auth, API-key-test, Settings Console,
+and Secrets aliases SHALL use the sandboxed launcher, and Dashboard Codex
+prewarm or any other adapter invocation SHALL be removed or executed outside
+Dashboard.
+
+The trusted parent SHALL resolve canonical CLI-auth authority before spawn and
+stage only the operation-required material into a newly created regular file
+under the child-owned per-invocation HOME. Health and API-key-test commands MAY
+read that staged copy, but any child modification is discarded and SHALL NOT
+write back to canonical authority. Commands used for those read-only checks
+SHALL NOT perform credential rotation. A device-auth child SHALL write only its
+provider's expected relative path inside the staging directory. After success,
+the trusted parent SHALL use no-follow path resolution to verify that output is
+a single-link regular file inside the staging root with the expected owner,
+mode, size bound, and provider schema, then atomically persist it through the
+explicit provider authority with compare-and-set fencing. Symlinks, hardlinks,
+path escapes, unexpected files, authority-version races, cancellation, and
+timeouts SHALL discard the staging tree without persistence. Cleanup SHALL run
+after every terminal outcome. The child SHALL never receive or open the
+canonical root credential path.
+
+The canonical full-stack launcher MAY start Dashboard before all-butlers, but
+the signed client SHALL remain unavailable and SHALL sign nothing until
+`GET /_control/runtime-probe/v1/readiness?kid=<kid>` on the private Switchboard
+ASGI surface returns HTTP `200` with exactly `{"status":"ready"}`. It SHALL
+return HTTP `503` with exactly `{"status":"unavailable"}` when the configured
+current verifier does not match, expose no configured key ID or key material,
+accept no capability, perform no catalog lookup or runtime launch, and remain
+absent from generic MCP discovery. Dashboard's ordinary health SHALL remain
+available so `oauth-gate` can start all-butlers without a dependency cycle.
+While the signer mount is active, rollback SHALL retain the child sandbox and
+disable Test, verify-all, and scheduled verification, or remove the mount before
+old code starts. It SHALL NOT start an image lacking the sandbox or restore a
+local adapter probe beside the mount.
+
 Dashboard SHALL derive the public key from the private seed. A current signer
 SHALL match the current algorithm, ID, derived public key, and `sign_from`,
 SHALL have `sign_until=null`, and SHALL sign only at/after `sign_from`. A
@@ -249,6 +295,52 @@ Scope: v1-mandatory
 - **AND** the browser payload, generic MCP tool list/call, runtime prompt,
   telemetry, logs, and generic Secrets API inventory/detail/mutation/audit
   responses contain no private key or private-key-derived fingerprint
+
+#### Scenario: Every Dashboard runtime CLI child is isolated from the signer
+
+- **WHEN** a production Dashboard deployment mounts the private signer
+- **THEN** Test, verify-all, and scheduled verification contain no
+  dashboard-local adapter path, and every remaining provider-health,
+  device-auth, API-key-test, Settings, or Secrets runtime-CLI child uses the
+  fixed-UID, cleared-group, `no_new_privs`, child-HOME, allowlisted-environment
+  launcher
+- **AND** a behavior-executing container test proves such a child receives
+  `EACCES` when opening the signer and cannot read protected parent environment
+  values
+- **AND** a completeness scan covers direct and aliased Dashboard subprocess
+  callsites so no runtime CLI bypasses the launcher
+- **AND** rollback retains those protections or removes the mount before an
+  older image starts
+
+#### Scenario: Canonical full-stack startup gates signing on verifier readiness
+
+- **WHEN** the canonical default or hotreload launcher restarts the whole stack
+  with signer and verifier files provisioned
+- **THEN** Dashboard health permits `oauth-gate` and all-butlers startup, but
+  the runtime-probe client reports unavailable and signs nothing
+- **AND** signing becomes available only after Switchboard's private non-secret
+  readiness response confirms its matching current verifier key ID
+- **AND** that response uses only the exact `200/ready` or `503/unavailable`
+  shape, reveals no configured key ID/material, and performs no receipt, lookup,
+  launch, or persistence
+- **AND** a missing or mismatched readiness response preserves prior
+  verification history and cannot create a runtime child or signed request
+
+#### Scenario: Sandboxed CLI auth health uses a disposable staged copy
+
+- **WHEN** Dashboard runs provider health or API-key testing
+- **THEN** the trusted parent stages a validated authority copy in the child
+  HOME, the sandboxed child cannot open the canonical path, and all staged
+  modifications are discarded without authority writeback
+
+#### Scenario: Sandboxed device auth persists only validated staged output
+
+- **WHEN** a device-auth child succeeds
+- **THEN** the trusted parent persists only the expected no-follow,
+  single-link, in-root, owner/mode/size/schema-valid output through explicit
+  compare-and-set authority
+- **AND** any path escape, link, unexpected file, authority race, cancellation,
+  timeout, or validation failure persists nothing and cleans the staging tree
 
 #### Scenario: Generic Secrets API cannot create a shadow signing key
 
@@ -320,14 +412,18 @@ Scope: v1-mandatory
 - **AND** no environment-value, credential-store, database, generic-Secrets,
   generated-key, or unsigned fallback is attempted
 
-#### Scenario: Rotation restarts verifier before signer
+#### Scenario: Rotation gates signer use on verifier readiness
 
 - **WHEN** the operator rotates the process-bound deployment key
 - **THEN** it chooses cutover `T`, installs a shared keyring whose old key has
   `sign_until=T`, whose new key has `sign_from=T`, and whose old-key
-  `accept_until` is within `[T+70s, T+5m]`, then restarts all-butlers before `T`
-- **AND** Dashboard loads a matching old signer bounded by `sign_until=T`
-  before cutover and loads the matching new signer at or after `T`
+  `accept_until` is within `[T+70s, T+5m]`, and installs a matching old signer
+  bounded by `sign_until=T` before cutover
+- **AND** the canonical full-stack restart leaves Dashboard signing disabled
+  until restarted Switchboard confirms that keyring ready
+- **AND** at or after `T`, Dashboard loads the matching new signer through a
+  second canonical full-stack restart and again waits for matching verifier
+  readiness
 - **AND** the old signer cannot issue after `T`, the new signer cannot issue
   before `T`, and a late Dashboard restart creates safe probe unavailability
 - **AND** Switchboard rejects old-key capabilities issued after `T` and rejects

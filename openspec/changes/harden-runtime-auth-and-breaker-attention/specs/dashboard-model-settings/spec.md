@@ -35,6 +35,18 @@ catalog entry ID, enforces bounded timeout, per-entry de-duplication, and a
 bounded global concurrency cap, and accepts no credential material, prompt,
 model override, or runtime arguments from the dashboard. A successful probe
 updates verification evidence only; it does not close an open breaker.
+The production signing-key mount SHALL be activated only after every Dashboard
+runtime-CLI child path is removed or forced through the fixed unprivileged
+launcher required by core-credentials REQ-core-credentials-002. The cutover of
+Test, verify-all, and scheduled verification SHALL remove every
+dashboard-local runtime-adapter probe path. The signed client SHALL remain
+unavailable and sign nothing during canonical full-stack startup until
+Switchboard's private `GET /_control/runtime-probe/v1/readiness?kid=<kid>`
+returns the exact `200/ready` response for the matching verifier key ID; its
+exact unavailable behavior and no-action/no-disclosure limits are those in
+core-credentials REQ-core-credentials-002. Rollback while the mount is active
+SHALL retain the child sandbox and make model-verification callers unavailable
+rather than restoring a local adapter probe.
 
 The dedicated client SHALL use `POST /_control/runtime-probe/v1` with the
 compact capability only in `Authorization: Bearer`. Its exact protected header,
@@ -93,6 +105,18 @@ Scope: v1-mandatory
 - **THEN** it uses the dedicated control client and scoped capability as an
   explicitly registered scheduler caller
 - **AND** it does not bypass the command through generic MCP-tool access
+
+#### Scenario: Production signer mount cannot reach an unsandboxed runtime child
+
+- **WHEN** the Dashboard deployment activates its private signing-key mount
+- **THEN** Test, verify-all, and scheduled verification use only the dedicated
+  signed client and no dashboard-local model-verification adapter can spawn
+- **AND** every other Dashboard runtime-CLI child is forced through the
+  fixed-UID sandbox and behaviorally denied access to the signer
+- **AND** the client signs nothing until Switchboard verifier readiness matches
+  its current key ID
+- **AND** a rollback retains the sandbox and disables those callers, or removes
+  the mount before legacy code can start
 
 #### Scenario: Probe success does not close a breaker
 

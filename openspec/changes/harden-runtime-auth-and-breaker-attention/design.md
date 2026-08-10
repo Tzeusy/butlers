@@ -126,6 +126,34 @@ corresponding non-secret verification key. This preserves the actual
 Switchboard runtime boundary without pretending a file mount can isolate one
 module inside the shared all-butlers process.
 
+The Dashboard signer mount is an enforcement artifact, not an inert
+representation. Mode `0400` alone does not isolate a file from same-identity
+child processes. Before the mount can activate, every Dashboard runtime-CLI
+spawn path is either removed or forced through one shared OS launcher that
+drops to the fixed unprivileged `butlers-runtime-child` UID/GID, clears
+supplementary groups, sets `no_new_privs`, uses a per-invocation child-owned
+HOME/config directory, and supplies an allowlisted environment containing no
+database, owner-control, OAuth, or deployment-secret value. The root-owned
+mode-`0400` signer is therefore unreadable by those children, including provider
+health, device-auth, API-key-test, and Secrets/Settings aliases. Dashboard-local
+model-verification adapter paths are removed at the signer cutover rather than
+sandboxed.
+
+Parsers, receipt storage, the private endpoint, and the dedicated client MAY
+land dark without production key mounts. The canonical launcher may then
+perform its normal full-stack stop/start with both key files provisioned. A
+started Dashboard loads the signer but its control client remains unavailable
+and signs nothing until `GET /_control/runtime-probe/v1/readiness?kid=<kid>` on
+the private Switchboard ASGI surface returns HTTP `200` with exactly
+`{"status":"ready"}`. The endpoint returns HTTP `503` with exactly
+`{"status":"unavailable"}` when the current verifier does not match, exposes
+no configured key ID or material, accepts no capability, performs no lookup or
+launch, and is absent from generic MCP discovery. This readiness gate allows
+Dashboard health and `oauth-gate` to bring up all-butlers without a dependency
+cycle. While the signer mount is active, rollback retains the child sandbox and
+disables Test, verify-all, and scheduled verification, or removes the mount
+before restoring an image without those protections.
+
 The dedicated client calls `POST /_control/runtime-probe/v1`. It places one
 compact JWS only in `Authorization: Bearer <compact-jws>`; cookies, query
 parameters, and request-body capability copies are rejected. The protected JWS
@@ -219,13 +247,16 @@ history unchanged; no catalog lookup, receipt, runtime launch, or verification
 persistence occurs. Key files are immutable process snapshots and are reloaded
 only by restarting their owning process. Rotation chooses a UTC cutover `T`,
 sets the old key's `sign_until=T`, the new key's `sign_from=T`, and the old
-retiring key's `accept_until` in `[T+70s, T+5m]`. The operator installs that shared keyring and
-restarts all-butlers first. Before `T`, it installs the matching old signer with
-`sign_until=T` and restarts Dashboard. At or after `T`, it installs the matching
-new signer and restarts Dashboard again. V1 rotation is restart-driven: the old
-process cannot switch keys at `T`, and the new key is not used until that second
-Dashboard restart. A late restart creates safe probe unavailability, not an
-extended old-signing window. Switchboard enforces both
+retiring key's `accept_until` in `[T+70s, T+5m]`. Before `T`, the operator
+provisions that shared keyring plus the matching old signer bounded by
+`sign_until=T`, then uses the canonical full-stack restart. Dashboard signs only
+after the restarted Switchboard reports the matching verifier ready. At or
+after `T`, the operator provisions the matching new signer and uses the same
+full-stack restart; readiness again prevents use of the new key before
+Switchboard loads it. V1 rotation is restart-driven: the old process cannot
+switch keys at `T`, and the new key is not used until that second restart. A
+late restart creates safe probe unavailability, not an extended old-signing
+window. Switchboard enforces both
 `sign_until` and `accept_until` from its immutable snapshot, so an operator who
 misses the later removal restart cannot extend retiring-key acceptance beyond
 five minutes. A later all-butlers restart removes the expired entry. Restart
@@ -444,18 +475,31 @@ it does not grow a generic alert administration surface.
    confirmed transport despite bookkeeping failure; fence recovery and never
    replay an ambiguous send.
 6. In parallel with stages 4-5 once stage 2 establishes the core migration
-   convention, add the inert runtime-probe trust representation: exact signer/verifier
-   mounts, replay receipts, narrow grants, Secrets reservation, and redaction.
-   No endpoint or dashboard caller changes in this step.
-7. Deploy the signed private coordinator and dedicated client dark. It uses the
-   exact Codex authority, OpenCode mapper, runtime home/configuration, receipt,
-   and verification persistence while existing Test/verify/scheduler callers
-   remain unchanged.
-8. Cut Test, verify-all, and scheduled verification over together and remove or
-   reject every dashboard-local adapter-probe fallback. Typed control failures
-   preserve prior verification evidence and probe success never resets a
-   breaker.
-9. Add the sanitized Models/Spend attention truth and owner-controlled reissue
+   convention, add the inert runtime-probe trust representation: exact
+   signer/keyring schemas and loaders, replay receipts, narrow grants, Secrets
+   reservation, and redaction. Do not add production signer or verifier mounts
+   and do not change an endpoint or dashboard caller in this step.
+7. Land the signed private coordinator and dedicated client dark, still without
+   production key mounts. Fixture-backed tests exercise the exact Codex
+   authority, OpenCode mapper, runtime home/configuration, receipt, and
+   verification persistence; the deployed path remains unavailable while
+   existing Test/verify/scheduler callers remain unchanged.
+8. Before any production mount, route every non-verification Dashboard CLI-auth
+   child through the fixed-UID/no-new-privileges launcher, remove Dashboard
+   Codex prewarm and other non-verification adapter invocation, sanitize child
+   environments, and prove the root-owned signer path is unreadable from every
+   provider-list, health, device-auth, API-key-test, Settings, and Secrets alias.
+   Inventory the exact model-settings Test/verify adapter callsites as the only
+   deferred local paths; leave them unchanged and unmounted for stage 9.
+9. In one deployable cutover, provision the Dashboard signer and shared verifier
+   mounts and use the canonical full-stack restart. Dashboard control remains
+   unavailable and signs nothing until Switchboard's non-secret readiness check
+   confirms the matching verifier key ID. Cut Test, verify-all, and scheduled
+   verification over together and remove every dashboard-local adapter-probe
+   path. Default and hotreload launcher tests prove startup and rollback without
+   a dependency cycle. Typed control failures preserve prior verification
+   evidence and probe success never resets a breaker.
+10. Add the sanitized Models/Spend attention truth and owner-controlled reissue
    only after worker fencing and probe cutover are stable. Gen-1 reconciliation
    MAY prepare static/test evidence before deployment, but cannot complete until
    separately authorized exact-runtime evidence is obtained. Execute the epic
@@ -465,7 +509,10 @@ Rollback stops new producers/workers before removing consumers and leaves
 outbox rows readable for operator diagnosis. It never deletes evidence or
 secret rows. A migration downgrade is limited to the new table/grants only
 when no deployed consumer depends on it; otherwise forward remediation is the
-safe rollback path.
+safe rollback path. Probe-control rollback keeps the runtime-child sandbox in
+place and disables its callers, or removes the private mount before any legacy
+Dashboard binary can run. An image without the sandbox and local-adapter
+removal cannot start while the signer mount exists.
 
 ## Open Questions
 
