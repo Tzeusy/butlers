@@ -10,8 +10,20 @@ generated runtime configuration, and runtime arguments as a new daemon
 invocation, but SHALL expose no domain MCP tools and SHALL not create routed
 dispatch provenance. It SHALL be reached only through an authenticated
 dashboard-to-Switchboard control-plane command that is not registered in the
-generic MCP/LLM tool surface. The command accepts only a catalog entry ID,
-enforces owner authorization, bounded timeout, per-entry de-duplication, and a
+generic MCP/LLM tool surface. Dashboard-triggered Test and Verify requests
+SHALL first pass the fail-closed `require_dashboard_owner_control` dependency:
+a configured non-empty `DASHBOARD_API_KEY` and constant-time matching
+`X-API-Key` header are required, with absent configuration reported as safe
+unavailability. The dashboard server SHALL then call Switchboard through a
+dedicated `runtime_probe_control` client using a separately scoped system
+`RUNTIME_PROBE_CONTROL_TOKEN` capability from the explicit shared credential
+authority. Switchboard SHALL use constant-time comparison and require that token
+on its dedicated internal-control endpoint before catalog resolution, runtime
+launch, or verification persistence. It SHALL be available only to the
+dashboard control client and the explicitly registered trusted verification
+scheduler; it SHALL not be carried by browser requests, model sessions, generic
+MCP clients, the normal MCP client manager, or logs. The command accepts only a
+catalog entry ID, enforces bounded timeout, per-entry de-duplication, and a
 bounded global concurrency cap, and accepts no credential material, prompt,
 model override, or runtime arguments from the dashboard. A successful probe
 updates verification evidence only; it does not close an open breaker.
@@ -35,8 +47,32 @@ Scope: v1-mandatory
 - **WHEN** a model session, ordinary MCP client, or unauthenticated caller
   enumerates or invokes Switchboard tools
 - **THEN** it cannot discover or invoke the runtime-probe control command
-- **AND** only the authorized dashboard control-plane client can request a
-  bounded probe by catalog entry ID
+- **AND** only the control client with the scoped `RUNTIME_PROBE_CONTROL_TOKEN`
+  capability can request a bounded probe by catalog entry ID
+
+#### Scenario: Dashboard-triggered probe requires owner control before Switchboard work
+
+- **WHEN** the dashboard owner-control key is absent from configuration, or a
+  dashboard caller omits or supplies a wrong `X-API-Key` for Test or Verify
+- **THEN** the API returns its safe unavailable or `401` response before it
+  contacts Switchboard
+- **AND** it launches no runtime and writes no verification evidence
+
+#### Scenario: Direct control-plane callers require the scoped capability
+
+- **WHEN** a caller reaches the private runtime-probe command without the
+  valid scoped `RUNTIME_PROBE_CONTROL_TOKEN` capability
+- **THEN** Switchboard rejects it before catalog lookup, runtime launch, or
+  verification persistence
+- **AND** a generic MCP client cannot substitute its normal connection for
+  that capability
+
+#### Scenario: Scheduled verification is a registered trusted control caller
+
+- **WHEN** the scheduled verification sweep requests a runtime probe
+- **THEN** it uses the dedicated control client and scoped capability as an
+  explicitly registered scheduler caller
+- **AND** it does not bypass the command through generic MCP-tool access
 
 #### Scenario: Probe success does not close a breaker
 

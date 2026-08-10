@@ -111,12 +111,28 @@ has no domain MCP tools and does not write dispatch provenance.
 The dashboard calls a private authenticated control-plane command, not a
 generic Switchboard MCP tool. It is absent from model-visible tool discovery
 and accepts only a catalog entry ID: no credential material, model override,
-runtime arguments, or arbitrary prompt crosses from the dashboard. The
-dashboard API enforces owner authorization; the control command enforces a
-bounded timeout, per-entry de-duplication, and a small global concurrency cap.
-A success is labelled **runtime probe**, updates verification evidence only,
-and cannot close a breaker. A failed, rate-limited, or absent coordinator is
-shown as unavailable/degraded, not as a failed model or a successful probe.
+runtime arguments, or arbitrary prompt crosses from the dashboard. A
+dashboard-triggered Test or Verify requires the same fail-closed
+`require_dashboard_owner_control` gate used for attention reissue before it
+contacts Switchboard.
+
+The dashboard server and the trusted verification scheduler call Switchboard
+through a dedicated `runtime_probe_control` client, authenticated with a
+separately scoped system credential `RUNTIME_PROBE_CONTROL_TOKEN`. That token
+is resolved from the explicit shared credential authority with no local or
+environment fallback, and uses a dedicated internal-control header/endpoint;
+it is not an MCP argument. It is loaded only by the dashboard control client,
+the trusted scheduler, and Switchboard; it never reaches the browser, generic
+MCP clients, model sessions, logs, or the normal MCP client manager.
+Switchboard uses constant-time comparison and rejects a missing or invalid token
+before it resolves a catalog entry, launches a runtime, or writes verification
+evidence. The scheduled sweep is an explicitly registered trusted internal
+caller using that credential, not a generic-MCP exemption. The command enforces
+a bounded timeout, per-entry de-duplication, and a small global concurrency cap.
+A success is labelled **runtime probe**, updates verification evidence only, and
+cannot close a breaker. A failed, rate-limited, unauthorized, or absent
+coordinator is shown as unavailable/degraded, not as a failed model or a
+successful probe.
 
 ### 3. Record qualifying dispatch outcomes and breaker openings atomically
 

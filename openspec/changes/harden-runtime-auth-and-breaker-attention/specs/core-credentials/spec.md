@@ -134,3 +134,38 @@ Scope: v1-mandatory
   local scope was ignored
 - **AND** it SHALL not reveal either credential, token fingerprint, or raw
   serialized auth document
+
+## ADDED Requirements
+
+### Requirement: Scoped Runtime-Probe Control Credential
+
+The system SHALL use a distinct system credential named
+`RUNTIME_PROBE_CONTROL_TOKEN` to authenticate the private Dashboard/Scheduler
+to Switchboard runtime-probe control plane. The dashboard control client,
+registered verification scheduler, and Switchboard SHALL resolve it from the
+explicit shared credential authority with no schema-local or environment
+fallback. They SHALL not expose it to a browser, generic MCP client, model
+session, normal MCP client manager, telemetry, audit note, or log. Missing,
+malformed, or unavailable token state SHALL make the control plane unavailable;
+it SHALL not fall back to an unauthenticated command.
+
+ID: REQ-core-credentials-002
+Source: heart-and-soul/security-and-secrets.md; RFC 0003; dashboard-model-settings REQ-dashboard-model-settings-001; design.md Decision 2
+Scope: v1-mandatory
+
+#### Scenario: Missing control credential fails closed before runtime work
+
+- **WHEN** the dashboard control client, scheduler, or Switchboard cannot
+  resolve `RUNTIME_PROBE_CONTROL_TOKEN` from its shared authority
+- **THEN** the requested runtime probe reports the control plane unavailable
+  without catalog lookup, runtime launch, or verification persistence
+- **AND** it does not use a local value, environment fallback, or generic MCP
+  route as a substitute
+
+#### Scenario: Private control token remains out of browser and MCP surfaces
+
+- **WHEN** the dashboard requests a runtime probe or the scheduler runs one
+- **THEN** the server-side dedicated control client supplies the token only on
+  the internal control-plane request
+- **AND** the browser payload, generic MCP tool list/call, runtime prompt,
+  telemetry, and logs contain no token value or token-derived fingerprint
