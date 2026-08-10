@@ -56,6 +56,26 @@ Scope: v1-mandatory
   using the dispatch-attempt ID as a timestamp tie-breaker
 - **AND** exactly one resulting attention episode is appended
 
+#### Scenario: Concurrent failed half-open probes observe one reopening edge
+
+- **WHEN** an already-open catalog entry's cooldown has expired
+- **AND** two or more independently resolved routed probes with distinct
+  attempt IDs all record qualifying failures concurrently
+- **THEN** the serialized first reopening transition appends exactly one new
+  attention episode
+- **AND** every later failure is retained as dispatch evidence but appends no
+  additional episode
+
+#### Scenario: Outcome-recorder persistence failure does not alter dispatch handling
+
+- **WHEN** the serialized qualifying-outcome transaction cannot acquire its
+  required database capability or cannot commit its attempt and outbox writes
+- **THEN** it persists neither a partial qualifying outcome nor an attention
+  episode and it does not directly invoke external notification delivery
+- **AND** the original runtime failure retains its existing caller-visible
+  failure and same-tier failover posture
+- **AND** the system emits safe degraded-provenance evidence for an operator
+
 #### Scenario: Verification evidence does not reset the breaker
 
 - **WHEN** a dashboard or scheduled runtime probe updates
@@ -101,32 +121,34 @@ Scope: v1-mandatory
 
 ## ADDED Requirements
 
-### Requirement: Runtime-Specific Catalog Model Identifier Validation
+### Requirement: Canonical Catalog Model Identity Survives Runtime-Specific Execution
 
-The model catalog SHALL validate a model identifier according to the selected
-runtime and provider profile rather than impose a global identifier syntax. For
-the configured OpenCode Go profile, a stored identifier prefixed
-`opencode-go/` is invalid; its provider-native bare model identifier SHALL be
-stored and passed to the runtime. Other OpenCode provider forms SHALL not be
-silently normalized.
+The model catalog SHALL preserve its canonical provider-qualified `model_id`
+as the identity used by catalog discovery, pricing, spend rules, token-ledger
+history, routing, and dispatch provenance. For the configured OpenCode Go
+profile, `opencode-go/<native-id>` is a valid canonical catalog identity;
+runtime-opencode owns deriving `<native-id>` only for the CLI execution
+argument. Catalog mutation, verification, and migration code SHALL NOT silently
+rewrite that canonical identity to a bare execution identifier.
 
 ID: REQ-model-catalog-002
 Source: model-catalog Model Catalog Schema; runtime-opencode Model Selection; design.md Decision 2
 Scope: v1-mandatory
 
-#### Scenario: Known invalid OpenCode Go prefix is rejected on mutation
+#### Scenario: Canonical OpenCode Go identity remains priced and routable
 
-- **WHEN** an operator creates or updates an OpenCode Go catalog entry with a
-  `model_id` beginning `opencode-go/`
-- **THEN** the API rejects the mutation with an actionable provider-native ID
-  validation error
-- **AND** it does not persist the invalid identifier
+- **WHEN** a catalog row stores `opencode-go/minimax-m2.7` or
+  `opencode-go/mimo-v2.5`
+- **THEN** pricing, spend-rule lookup, routing, and historical dispatch evidence
+  continue to use that exact canonical identifier
+- **AND** only the OpenCode execution command receives the corresponding bare
+  provider-native suffix
 
-#### Scenario: Guarded migration corrects known affected rows only
+#### Scenario: Existing canonical catalog identifiers are not data-migrated
 
-- **WHEN** the catalog migration encounters an existing OpenCode Go entry with
-  the known invalid prefix
-- **THEN** it removes exactly that prefix while preserving the rest of the
-  identifier and all unrelated catalog fields
-- **AND** it does not rewrite non-Go OpenCode provider identifiers or another
-  runtime's model IDs
+- **WHEN** the change is deployed to an existing catalog containing canonical
+  `opencode-go/<native-id>` rows
+- **THEN** it performs no identifier or pricing-history rewrite and retains all
+  existing verification evidence
+- **AND** it does not rewrite a non-Go OpenCode provider identifier or another
+  runtime's model ID

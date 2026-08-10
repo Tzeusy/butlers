@@ -5,10 +5,16 @@
 The Models API's per-entry test and scheduled verification SHALL invoke a
 deterministic Switchboard-owned runtime-probe coordinator. The coordinator
 SHALL use the same runtime home, authoritative CLI-auth source, adapter
-construction, resolved model identifier, and runtime arguments as a new daemon
+construction, canonical model identifier, runtime-specific execution mapping,
+generated runtime configuration, and runtime arguments as a new daemon
 invocation, but SHALL expose no domain MCP tools and SHALL not create routed
-dispatch provenance. A successful probe updates verification evidence only; it
-does not close an open breaker.
+dispatch provenance. It SHALL be reached only through an authenticated
+dashboard-to-Switchboard control-plane command that is not registered in the
+generic MCP/LLM tool surface. The command accepts only a catalog entry ID,
+enforces owner authorization, bounded timeout, per-entry de-duplication, and a
+bounded global concurrency cap, and accepts no credential material, prompt,
+model override, or runtime arguments from the dashboard. A successful probe
+updates verification evidence only; it does not close an open breaker.
 
 ID: REQ-dashboard-model-settings-001
 Source: dashboard-model-settings Catalog Verify-All API and Hourly Automated Verification Sweep; model-catalog REQ-model-catalog-001; design.md Decisions 2 and 6
@@ -19,9 +25,18 @@ Scope: v1-mandatory
 - **WHEN** an operator selects `Test` for a catalog entry or the scheduled
   verification sweep runs
 - **THEN** the request is executed by the runtime-probe coordinator using the
-  same shared runtime environment and catalog arguments as new daemon work
+  same shared runtime environment, canonical-to-execution mapping, generated
+  runtime configuration, and catalog arguments as new daemon work
 - **AND** the returned evidence is labelled as a runtime probe rather than a
   routed session result
+
+#### Scenario: Probe control command is not a generic routable tool
+
+- **WHEN** a model session, ordinary MCP client, or unauthenticated caller
+  enumerates or invokes Switchboard tools
+- **THEN** it cannot discover or invoke the runtime-probe control command
+- **AND** only the authorized dashboard control-plane client can request a
+  bounded probe by catalog entry ID
 
 #### Scenario: Probe success does not close a breaker
 
@@ -34,7 +49,8 @@ Scope: v1-mandatory
 #### Scenario: Probe coordinator unavailability is honest
 
 - **WHEN** the runtime-probe coordinator is unavailable or cannot establish
-  the authoritative runtime environment
+  the authoritative runtime environment, exceeds its rate/concurrency limit,
+  or reaches its bounded timeout
 - **THEN** the test response reports the coordinator as unavailable or degraded
   without overwriting the last successful verification evidence
 - **AND** the UI does not show a successful model test or a generic provider

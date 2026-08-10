@@ -12,9 +12,11 @@ then wrote its marker and attention ledger. Concurrent producers could all
 pass that check. A Messenger send could also succeed before a routing-log ACL
 error caused the caller to regard it as failed and retry.
 
-[Observed] OpenCode Go rejected the provider-qualified catalog IDs involved in
-this incident and suggested their bare provider-native IDs. No credential
-content was inspected or exposed during diagnosis.
+[Observed] daemon OpenCode invocations rejected the provider-qualified catalog
+IDs involved in this incident and suggested bare provider-native IDs, while the
+catalog, pricing, spend rules, history, and provider discovery use those
+provider-qualified IDs as canonical identity. No credential content was
+inspected or exposed during diagnosis.
 
 This design must preserve the system's binding boundaries: one authoritative
 Tier-1 credential location (security model), deterministic daemon control
@@ -26,8 +28,8 @@ observability rather than delivery authority (RFC 0011 Amendment 1).
 
 **Goals:**
 
-- Ensure every CLI-auth restore and rotation uses one explicit shared authority
-  in both schema-separated and flat topologies.
+- Ensure every Codex CLI-auth restore and rotation uses one explicit shared
+  authority in both schema-separated and flat topologies.
 - Make a routed dispatch failure atomically create at most one attention
   episode for each closed-to-open breaker transition, including a failed
   half-open probe.
@@ -37,18 +39,18 @@ observability rather than delivery authority (RFC 0011 Amendment 1).
   external send, and make the resulting state operable rather than silent.
 - Test a catalog entry through the actual daemon runtime environment without
   misrepresenting that probe as a routed breaker recovery.
-- Correct known bad OpenCode Go catalog IDs and prevent the same invalid prefix
-  from being stored again.
+- Preserve canonical OpenCode Go catalog identity while translating it to the
+  provider-native CLI argument at the one execution boundary that requires it.
 
 **Non-Goals:**
 
 - Deleting, copying, or revealing existing schema-local credential values.
 - Treating a dashboard probe, manual model test, or verification cache update
   as a `model_dispatch_attempts.success` row or as a breaker reset.
-- Turning all notifications or all historical direct delivery callers into the
+- Turning all notifications or all historical direct-delivery callers into the
   new outbox in this change. It introduces the reusable facility and migrates
-  the two operational-attention producers with the demonstrated unsafe shape:
-  model breaker and fleet halt.
+  only the two operational-attention producers with the demonstrated unsafe
+  shape: model breaker and fleet halt.
 - Retrying an ambiguous Telegram/Messenger request automatically, introducing
   a generic queue framework, or adding a new LLM session to send attention.
 - Backfilling old open breakers into new alert episodes during rollout. The
@@ -66,39 +68,55 @@ system-global values. In flat topology the authority pool may be the same
 object as the local pool; it is still explicit and never treated as absent
 because it is not a fallback.
 
-`cli-auth/*` persistence, restore, live Codex reconciliation, dashboard device
-auth, and connector startup will exclusively use those strict methods. An
-authority lookup failure returns a safe unavailable result and never falls
-back to a schema-local `cli-auth/*` row. Local CLI-auth metadata may be read
-only to report an ignored-scope conflict without exposing values or token
-fingerprints.
+`cli-auth/codex` persistence, restore, live Codex reconciliation, dashboard
+device auth, Codex runtime probes, and Codex-dependent connector startup will
+exclusively use those strict methods. An authority lookup failure returns a safe
+unavailable result and never falls back to a schema-local `cli-auth/codex` row.
+Local Codex CLI-auth metadata may be read only to report an ignored-scope
+conflict without exposing values or token fingerprints. Existing persistence
+and authority behavior for other CLI providers, including OpenCode, remains
+unchanged in this change.
 
 This is deliberately narrower than changing all `CredentialStore` resolution.
 The security model already says each credential has exactly one authoritative
-location; `cli-auth/*` is the system credential class that needs this stronger
-form. It fixes the shared-volume overwrite without changing established
-per-domain credential resolution.
+location; `cli-auth/codex` is the demonstrated shared-runtime system credential
+that needs this stronger form. It fixes the shared-volume overwrite without
+changing established per-domain or other-provider credential resolution.
 
-### 2. Catalog identifiers are runtime/provider-native and probes run at the runtime boundary
+### 2. Catalog identity is canonical; provider-native OpenCode syntax is an execution-boundary concern
 
-`model_catalog.model_id` remains the adapter argument, but validation becomes
-runtime-provider specific rather than imposing one global slash convention.
-For the configured OpenCode Go profile, `opencode-go/<native-id>` is rejected
-and the provider-native `<native-id>` form is persisted and passed to the CLI.
-Other OpenCode provider forms are not blindly rewritten.
+`model_catalog.model_id` remains the canonical provider-qualified identity
+used by catalog discovery, pricing, spend rules, token-ledger history, and
+routing. In particular, `opencode-go/<native-id>` remains persisted and is not
+migrated to a bare ID. No catalog API, migration, or historical-record rewrite
+may silently strip that provider namespace.
 
-A guarded data migration changes only known affected OpenCode Go rows. Catalog
-create/update validates the known-invalid prefix before persistence. The
-catalog test and hourly verification move to a deterministic
+`OpenCodeAdapter` owns a named, pure canonical-to-execution translation. When
+the resolved canonical OpenCode model begins `opencode-go/`, it invokes the
+configured CLI with the suffix `<native-id>` after `--model`; it retains the
+canonical value for all caller-visible provenance, pricing, spend, and history.
+Other qualified providers and unrelated runtimes pass their model identifiers
+unchanged. Existing bare values, if any, retain their existing execution
+behavior rather than being broadly normalized.
+
+The catalog test and hourly verification move to a deterministic
 Switchboard-owned runtime-probe coordinator that uses the same shared runtime
-home, credential authority, adapter construction, model ID, and runtime args
-as a normal daemon invocation. The coordinator has no domain MCP tools and
-does not write dispatch provenance.
+home, applicable credential authority, adapter construction,
+canonical-to-execution mapping, generated OpenCode configuration, and runtime
+args as a normal daemon invocation. The separate OpenCode CLI-auth health check
+uses the same pure execution mapper but remains an auth-specific check: it does
+not create catalog verification or routed dispatch provenance. The coordinator
+has no domain MCP tools and does not write dispatch provenance.
 
-The dashboard calls this internal control-plane RPC and labels the result as a
-**runtime probe**. A success updates verification evidence only; it cannot
-close a breaker. A failed/absent runtime coordinator is shown as unavailable,
-not as a failed model or a successful probe.
+The dashboard calls a private authenticated control-plane command, not a
+generic Switchboard MCP tool. It is absent from model-visible tool discovery
+and accepts only a catalog entry ID: no credential material, model override,
+runtime arguments, or arbitrary prompt crosses from the dashboard. The
+dashboard API enforces owner authorization; the control command enforces a
+bounded timeout, per-entry de-duplication, and a small global concurrency cap.
+A success is labelled **runtime probe**, updates verification evidence only,
+and cannot close a breaker. A failed, rate-limited, or absent coordinator is
+shown as unavailable/degraded, not as a failed model or a successful probe.
 
 ### 3. Record qualifying dispatch outcomes and breaker openings atomically
 
@@ -111,9 +129,10 @@ resulting state before releasing the lock.
 When and only when the state changes closed -> open, the same transaction
 appends a `runtime-attention-outbox` record keyed by the triggering dispatch
 attempt's immutable bigint ID. A concurrent sixth failure sees the already-open
-prior state and cannot create another record. A failed half-open probe sees a
-closed prior state and creates a new episode; a routed success closes the
-derived breaker but does not create an alert.
+prior state and cannot create another record. If multiple independently
+resolved half-open probes fail concurrently, the serialized first reopening
+creates exactly one new episode and every later failure sees the reopened state.
+A routed success closes the derived breaker but does not create an alert.
 
 The breaker remains evidence-derived for routing. The outbox is delivery
 episode state, not a second source of truth for whether a model is selectable.
@@ -123,25 +142,51 @@ transaction timestamps cannot make the transition nondeterministic.
 An advisory lock was chosen over a `FOR UPDATE` lock on `model_catalog`: runtime
 roles intentionally have no catalog-update authority. A unique audit marker
 alone was rejected because it cannot identify the state edge and cannot make
-external delivery atomic.
+external delivery atomic. If the outcome-and-outbox transaction cannot commit,
+the spawner preserves the original dispatch failure and normal failover posture,
+does not make a direct external delivery attempt, writes neither partial outcome
+nor episode, and emits safe degraded-provenance evidence for an operator.
 
 ### 4. A durable public attention outbox is append-only for producers and Switchboard-owned for delivery
 
 The core migration creates `public.runtime_attention_outbox` with a stable
-episode ID, unique dedup key, source (`model_breaker` or `fleet_halt`),
-immutable safe payload, delivery state, timestamps, safe error class/detail,
-optional `switchboard.notifications` reference, and optional manual-reissue
-lineage. It stores no secret value and no raw credential/error payload.
+episode ID, unique triggering-edge key, source (`model_breaker` or
+`fleet_halt`), immutable safe payload, delivery state, timestamps, safe error
+class/detail, optional `switchboard.notifications` reference, optional
+manual-reissue lineage, and a fenced delivery claim (`claim_token`, monotonic
+claim epoch, claimer instance, and claim timestamp). It stores no secret value
+and no raw credential/error payload. Partial unique constraints cover each
+`model_breaker` triggering dispatch-attempt ID and each `fleet_halt`
+calendar-month breach key; another partial unique constraint on
+`manual_reissue_of` permits at most one direct successor per original episode.
+An atomic `INSERT ... ON CONFLICT` operation returns that same successor to
+concurrent requests.
 
-Runtime roles receive only the narrowly required append permission for rows
-they produce; they do not read, claim, alter, or send outbox rows. Switchboard
-has the read/update rights required to claim them, and the dashboard's
-privileged operator read model exposes sanitized state. This is a public
-coordination record analogous to dispatch provenance, not direct inter-butler
-data access; the actual delivery crosses the Switchboard/Messenger boundary.
+Producers receive no raw outbox `INSERT` privilege. A narrow fixed-search-path
+`SECURITY DEFINER` core producer operation is the only append path: it derives
+the deduplication key and safe payload from the just-recorded dispatch attempt
+or verified fleet-halt evidence, checks the calling runtime role against that
+evidence, and establishes the state edge and episode in one transaction. It
+accepts no caller-controlled delivery state, recipient, payload, or arbitrary
+deduplication key. Switchboard alone receives row read/update authority.
 
-The deterministic Switchboard worker claims rows with `FOR UPDATE SKIP LOCKED`
-and transitions them:
+The outbox retains an immutable source snapshot and is deliberately not deleted
+through `model_catalog` or `model_dispatch_attempts` cascades. A catalog entry
+or its dispatch attempts may later be removed under existing policy, while the
+episode retains its original attempt/edge identifier and sanitized model/alias
+snapshot for operator/audit retention.
+
+Runtime roles receive only permission to invoke the narrowly scoped producer
+operation for rows they produce; they do not read, insert directly, claim,
+alter, or send outbox rows. Switchboard has the read/update rights required to
+claim them, and the dashboard's privileged operator read model exposes
+sanitized state. This is a public coordination record analogous to dispatch
+provenance, not direct inter-butler data access; the actual delivery crosses the
+Switchboard/Messenger boundary.
+
+The deterministic Switchboard worker first owns one Switchboard delivery-service
+lease, then claims rows with `FOR UPDATE SKIP LOCKED`, records a fresh fenced
+claim token/epoch, and transitions them:
 
 ```mermaid
 stateDiagram-v2
@@ -156,14 +201,25 @@ stateDiagram-v2
     uncertain --> [*]
 ```
 
-The state is committed as `sending` immediately before external transport.
+The state and claim are committed as `sending` immediately before external
+transport. The worker verifies its delivery-service lease and claim token
+immediately before invoking transport; every pending, sent, failed, or
+uncertain transition is conditional on that same token. A recovery worker never
+reclaims a `sending` row for another send. Only after it owns the delivery
+service lease and fences the prior claim may it transition an orphaned sending
+row to `uncertain`; a still-live claimant prevents that recovery and reissue
+remains unavailable while the row is `sending`.
+
 Once external transport may have begun, a network timeout, process death, or
 any other ambiguous outcome is terminal `uncertain` and is never replayed
 automatically. A worker may return a claimed row to `pending` with bounded
-backoff only when it can prove that it did not begin external transport. An
-operator may explicitly create one fresh, auditable child episode after viewing
-the uncertain state; it does not mutate the original record or reset the
-breaker.
+backoff only when it can prove that it did not begin external transport. A
+fenced stale worker must not invoke transport or mutate state. An operator may
+explicitly create one fresh, auditable child episode after viewing the uncertain
+state; it does not mutate the original record or reset the breaker. Such a
+manual child is deliberately a new owner-visible attempt: `uncertain` remains
+honest that the original may have been delivered or may still have been in
+flight when its claimant died.
 
 This is at-most-once **per episode**, not impossible exactly-once semantics
 across Telegram and PostgreSQL. The owner accepted the intentional trade-off:
@@ -218,10 +274,10 @@ it does not grow a generic alert administration surface.
 - **A shared authority is unavailable at startup** -> fail closed for auth
   restore, log safe authority-unavailable context, and never resurrect stale
   schema-local CLI auth; existing CLI filesystem state is not deleted.
-- **A catalog migration changes an intended non-Go OpenCode model** -> migrate
-  only the exact configured `opencode-go/` invalid prefix and add a
-  migration-test fixture for every changed row; do not normalize other
-  provider syntax.
+- **The CLI's execution syntax diverges from catalog discovery** -> retain the
+  canonical provider-qualified catalog key and test the narrow OpenCode adapter
+  translation with the exact observed Minimax and Mimo aliases, qualified
+  non-Go controls, pricing lookup, and the generated runtime configuration.
 - **New public table grants widen a runtime role** -> producers get append-only
   permissions and cannot inspect other producers' payloads or transition
   state; Switchboard is the only delivery claimant.
@@ -235,12 +291,13 @@ it does not grow a generic alert administration surface.
 
 ## Migration Plan
 
-1. Add the core outbox table, constraints, indexes, targeted grants, and
-   guarded OpenCode Go ID data migration. Do not delete local CLI-auth rows,
-   historical dispatch attempts, notifications, audit markers, or ledger rows.
-2. Deploy authority-aware credential code. Every daemon and connector restores
-   only from the public/shared authority; repeated writers to a shared volume
-   now write the same canonical document atomically.
+1. Add the core outbox table, claim/reissue constraints, indexes, and targeted
+   grants. Do not delete local CLI-auth rows, historical dispatch attempts,
+   notifications, audit markers, or ledger rows; do not rewrite catalog model
+   identifiers or pricing/history identity.
+2. Deploy authority-aware Codex credential code. Every Codex daemon and
+   connector restores only from the public/shared Codex authority; repeated
+   writers to a shared volume now write the same canonical document atomically.
 3. Deploy the atomic outcome recorder and Switchboard worker. New breaker
    episodes use the outbox immediately; existing open breaker history is not
    backfilled or re-paged.
@@ -248,7 +305,8 @@ it does not grow a generic alert administration surface.
    bookkeeping failures. Add safe transition logs, metrics, and Models API/UI
    state before enabling manual reissue.
 5. Replace dashboard-local model verification with the Switchboard runtime
-   probe, then validate recovery with a real routed session rather than
+   probe, using the same canonical-to-execution OpenCode mapping as daemon
+   dispatch, then validate recovery with a real routed session rather than
    treating the probe as a reset.
 
 Rollback stops new producers/workers before removing consumers and leaves

@@ -2,31 +2,51 @@
 
 ### Requirement: Model Selection
 
-The adapter SHALL pass the resolved catalog model identifier verbatim via the
-`--model` CLI flag before the prompt. Identifier syntax is runtime-provider
-specific, not globally required to use `provider/model`: an OpenCode Go
-profile receives its provider-native bare model ID (for example,
-`minimax-m2.7`), while an OpenCode provider that defines a qualified form
-receives that qualified form unchanged. Model catalog validation owns rejection
-of known invalid forms before invocation.
+The adapter SHALL retain the resolved catalog model identifier as the canonical
+caller-visible identity for routing, pricing, spend enforcement, token-ledger
+history, and provenance. At the OpenCode CLI execution boundary it SHALL derive
+a separate execution identifier with a named, pure mapping: a canonical
+`opencode-go/<native-id>` identifier is passed to `--model` as `<native-id>`;
+other qualified identifiers and existing bare identifiers are passed unchanged.
+The mapping SHALL be used by normal OpenCode invocation, generated runtime
+configuration, and the OpenCode CLI-auth health command. It SHALL not mutate a
+catalog row, pricing key, historical dispatch record, or provider label.
 
 ID: REQ-runtime-opencode-001
 Source: runtime-opencode Model Selection; model-catalog REQ-model-catalog-002; design.md Decision 2
 Scope: v1-mandatory
 
-#### Scenario: Provider-native OpenCode Go model passed via flag
+#### Scenario: Canonical OpenCode Go Minimax identity has a native execution argument
 
-- **WHEN** an OpenCode Go model string `minimax-m2.7` is provided to
-  `invoke()`
+- **WHEN** the resolved catalog model is
+  `opencode-go/minimax-m2.7`
 - **THEN** the command includes `--model minimax-m2.7` before the prompt
-- **AND** the adapter does not prepend `opencode-go/`
+- **AND** all caller-visible routing, pricing, and provenance identity remains
+  `opencode-go/minimax-m2.7`
 
-#### Scenario: Qualified provider model is preserved
+#### Scenario: Canonical OpenCode Go Mimo identity has a native execution argument
 
-- **WHEN** a valid qualified OpenCode provider model string such as
-  `anthropic/claude-sonnet-4-5` is provided to `invoke()`
-- **THEN** the command includes that exact string after `--model`
-- **AND** the adapter does not strip or rewrite its provider segment
+- **WHEN** the resolved catalog model is `opencode-go/mimo-v2.5`
+- **THEN** the command includes `--model mimo-v2.5` before the prompt
+- **AND** all caller-visible routing, pricing, and provenance identity remains
+  `opencode-go/mimo-v2.5`
+
+#### Scenario: Other provider syntax is preserved
+
+- **WHEN** a qualified OpenCode provider model such as
+  `anthropic/claude-sonnet-4-5`, an unrelated runtime model, or an existing
+  bare model string is selected
+- **THEN** the adapter does not strip, prepend, or otherwise rewrite it
+- **AND** the mapping is not applied outside the OpenCode CLI execution
+  boundary
+
+#### Scenario: CLI-auth health command shares the execution mapping
+
+- **WHEN** the OpenCode Go CLI-auth health check invokes its pinned canonical
+  catalog/provider model
+- **THEN** it derives the exact same native `--model` argument as the adapter
+- **AND** its check does not create catalog verification or routed dispatch
+  provenance
 
 #### Scenario: No model specified
 

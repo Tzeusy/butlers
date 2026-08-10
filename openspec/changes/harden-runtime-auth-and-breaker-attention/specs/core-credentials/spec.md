@@ -13,12 +13,13 @@ reconciliation SHALL never log credential content, SHALL write a replacement
 atomically with mode `0600`, and SHALL refresh the local rotation baseline
 after a DB-originated write.
 
-All CLI-auth restore, live Codex reconciliation, runtime-originated rotation
-persistence, dashboard device authentication, dashboard runtime probes, and
-connector startup paths SHALL use the explicit authority channel. They SHALL
-not read a schema-local `cli-auth/*` row as a fallback or bootstrap source.
-Ordinary domain credentials retain the existing local-first `CredentialStore`
-resolution behavior.
+All `cli-auth/codex` restore, live Codex reconciliation, Codex
+runtime-originated rotation persistence, Codex dashboard device authentication,
+Codex runtime probes, and Codex-dependent connector startup paths SHALL use the
+explicit authority channel. They SHALL not read a schema-local
+`cli-auth/codex` row as a fallback or bootstrap source. Ordinary domain
+credentials and existing other-provider CLI-auth authority behavior retain
+their existing resolution behavior.
 
 ID: REQ-core-credentials-001
 Source: heart-and-soul/security-and-secrets.md; RFC 0006; core-credentials Live Codex Device-Auth Reconciliation; design.md Decision 1

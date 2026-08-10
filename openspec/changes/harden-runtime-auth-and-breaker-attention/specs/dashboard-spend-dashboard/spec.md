@@ -40,9 +40,9 @@ Scope: v1-mandatory
 - **WHEN** the monthly ceiling transitions from not-breached to breached — the
   first current-calendar-month `quota_skip` dispatch denial whose
   `failure_reason` starts `Monthly spend ceiling reached`
-- **THEN** the spawner transaction appends exactly one `fleet_halt` attention
-  episode keyed to that calendar-month breach window and carrying only the
-  safe denied-dispatch count and Spend drawer door
+- **THEN** the authorized producer operation in the spawner transaction appends
+  exactly one `fleet_halt` attention episode keyed to that calendar-month breach
+  window and carrying only the safe denied-dispatch count and Spend drawer door
 - **AND** it does not directly page the owner, write an attention ledger row,
   or rely on an audit-log debounce marker
 - **AND** every later denial in that same breach window appends neither another

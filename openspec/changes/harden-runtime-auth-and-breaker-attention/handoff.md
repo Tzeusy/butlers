@@ -10,8 +10,8 @@ not created Beads, changed runtime state, migrated data, or implemented code.
 | Gate | Result | Evidence / decision |
 |---|---|---|
 | 0 — Shape | pass | This is a bounded feature request spanning credentials, routing, Switchboard delivery, model catalog, and two operator surfaces; it is not a broad project-direction exercise. |
-| 1 — Current truth | pass | Live diagnosis established a stale schema-local Codex credential overwriting the shared daemon home, dashboard-local probes diverging from routed dispatch, invalid OpenCode Go IDs, a non-atomic breaker debounce, and a post-send ACL failure that reclassified confirmed Telegram delivery. |
-| 2 — Desired state | pass | One explicit CLI-auth authority; provider-native runtime IDs; runtime-bound probes; serialized breaker-edge episodes; Switchboard-owned at-most-once delivery; explicit uncertain reissue; truthful UI facts. |
+| 1 — Current truth | pass | Live diagnosis established a stale schema-local Codex credential overwriting the shared daemon home, dashboard-local probes diverging from routed dispatch, OpenCode canonical-identity versus execution-syntax divergence, a non-atomic breaker debounce, and a post-send ACL failure that reclassified confirmed Telegram delivery. |
+| 2 — Desired state | pass | One explicit Codex CLI-auth authority; canonical catalog identity with execution-boundary OpenCode mapping; private runtime-bound probes; serialized breaker-edge episodes; Switchboard-owned at-most-once delivery; explicit uncertain reissue; truthful UI facts. |
 | 3 — Specification | pass | `proposal.md`, `design.md`, and nine capability deltas describe the behavior and limits. |
 | 4 — Risks and constraints | pass | The design preserves schema isolation, does not expose or copy secret values, does not backfill historical pages, does not automatically resend ambiguous transport, and keeps probes separate from routed success provenance. |
 | 5 — Work package | pass | `tasks.md` provides dependency-ordered implementation and verification work below. |
@@ -25,19 +25,19 @@ with the following dependency graph after approval:
 ```text
 outbox schema + atomic outcome recorder ──┬── Switchboard outbox worker + route result
                                           ├── fleet-halt producer migration
-explicit CLI-auth authority ──────────────┼── runtime-bound model probe
+explicit Codex CLI-auth authority ────────┼── private runtime-bound model probe
                                           │     └── Models API/UI truth surface
-provider-native OpenCode validation ──────┘
+canonical-to-execution OpenCode mapping ──┘
 all implementation leaves ─────────────────── final ACL/concurrency/e2e evidence
 ```
 
 | Draft child | Priority | Depends on | Completion evidence |
 |---|---:|---|---|
-| Durable outbox schema and serialized dispatch recorder | P0 | — | real-Postgres migration and concurrent edge tests prove one episode |
+| Durable outbox schema and serialized dispatch recorder | P0 | — | real-Postgres migration, authorized producer, retention, and concurrent edge tests prove one episode |
 | Explicit CLI-auth authority | P0 | — | multi-daemon/shared-home and unavailable-authority regressions pass without values in logs |
-| Switchboard at-most-once worker and terminal route semantics | P0 | outbox schema/recorder | role-isolation, crash/uncertainty, and post-send ACL regressions pass |
+| Switchboard at-most-once worker and terminal route semantics | P0 | outbox schema/recorder | role-isolation, fenced claim/recovery, crash/uncertainty, and post-send ACL regressions pass |
 | Fleet-halt outbox migration | P1 | outbox schema/recorder | one calendar-month episode, no direct ledger/audit debounce path |
-| OpenCode ID correction and runtime-probe coordinator | P1 | CLI-auth authority | provider-native invocation and no-breaker-reset probe tests pass |
+| OpenCode execution mapping and private runtime-probe coordinator | P1 | Codex CLI-auth authority | canonical pricing identity, native invocation, private control, and no-breaker-reset probe tests pass |
 | Models/Spend API and UI truth surfaces | P1 | worker and runtime probe | API/frontend tests cover independent states, unavailable state, and one reissue successor |
 | Cross-boundary verification and deployment evidence | P0 | all above | exact-head test matrix, ACL proof, and authorized live runtime validation complete |
 
@@ -46,9 +46,9 @@ all implementation leaves ──────────────────
 | Concern | Required automated evidence | Authorized runtime evidence |
 |---|---|---|
 | Credential authority | unit/integration tests for explicit authority, local conflict, flat topology, shared-home writer order, rotation fencing, and safe logs | inspect provenance/metadata only; prove every daemon restores the same authority without reading values |
-| Breaker episode edge | real-Postgres concurrent writer tests with equal timestamps and distinct attempt IDs | induce one safe controlled breaker edge only after deployment authorization; observe one durable episode |
-| Delivery semantics | route test where Messenger succeeds and routing-log ACL fails; worker recovery/uncertainty tests | verify sent/uncertain episode state and no automatic duplicate delivery |
-| OpenCode and probe | adapter/API tests for bare Go IDs and probe-no-reset behavior | use an actual runtime probe plus a separate routed session; compare their independent evidence |
+| Breaker episode edge | real-Postgres concurrent writer tests with equal timestamps and distinct attempt IDs, including failed half-open races | induce one safe controlled breaker edge only after deployment authorization; observe one durable episode |
+| Delivery semantics | producer ACL/forgery tests, two-worker claim, fenced recovery/uncertainty, and post-send ACL route tests | verify sent/uncertain episode state and no automatic duplicate delivery |
+| OpenCode and probe | adapter/API tests for canonical Go identities with native execution arguments, private control authorization, and probe-no-reset behavior | use an actual runtime probe plus a separate routed session; compare their independent evidence |
 | UI | API contract and frontend interaction tests for state separation, degraded observation, confirmation, and idempotent reissue | confirm Models/Spend surfaces reflect actual API state without a false success toast |
 
 ## Validation Record
