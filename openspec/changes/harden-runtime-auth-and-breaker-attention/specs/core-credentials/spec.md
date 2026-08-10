@@ -137,35 +137,48 @@ Scope: v1-mandatory
 
 ## ADDED Requirements
 
-### Requirement: Scoped Runtime-Probe Control Credential
+### Requirement: Non-Enumerable Runtime-Probe Control Capability
 
-The system SHALL use a distinct system credential named
+The system SHALL use a distinct infrastructure control secret named
 `RUNTIME_PROBE_CONTROL_TOKEN` to authenticate the private Dashboard/Scheduler
-to Switchboard runtime-probe control plane. The dashboard control client,
-registered verification scheduler, and Switchboard SHALL resolve it from the
-explicit shared credential authority with no schema-local or environment
-fallback. They SHALL not expose it to a browser, generic MCP client, model
-session, normal MCP client manager, telemetry, audit note, or log. Missing,
-malformed, or unavailable token state SHALL make the control plane unavailable;
-it SHALL not fall back to an unauthenticated command.
+to Switchboard runtime-probe control plane. It SHALL be delivered through a
+dedicated deployment-secret mount readable only by the dashboard control
+client, registered verification scheduler, and Switchboard. It SHALL NOT be
+stored in a schema-local or `public.butler_secrets` credential row, resolved by
+`CredentialStore`, or supplied through an environment-value fallback. It SHALL
+not be exposed to a browser, generic MCP client, model session, normal MCP
+client manager, telemetry, audit note, log, or generic Secrets API inventory,
+detail, mutation, or fingerprint response. The generic Secrets API SHALL reject
+this reserved control-secret key rather than creating a shadow DB credential.
+Missing, malformed, or unavailable mounted secret state SHALL make the control
+plane unavailable; it SHALL not fall back to an unauthenticated command.
 
 ID: REQ-core-credentials-002
 Source: heart-and-soul/security-and-secrets.md; RFC 0003; dashboard-model-settings REQ-dashboard-model-settings-001; design.md Decision 2
 Scope: v1-mandatory
 
-#### Scenario: Missing control credential fails closed before runtime work
+#### Scenario: Missing mounted control secret fails closed before runtime work
 
 - **WHEN** the dashboard control client, scheduler, or Switchboard cannot
-  resolve `RUNTIME_PROBE_CONTROL_TOKEN` from its shared authority
+  read `RUNTIME_PROBE_CONTROL_TOKEN` from its dedicated deployment-secret mount
 - **THEN** the requested runtime probe reports the control plane unavailable
   without catalog lookup, runtime launch, or verification persistence
-- **AND** it does not use a local value, environment fallback, or generic MCP
-  route as a substitute
+- **AND** it does not use a credential-store value, local value, environment
+  fallback, or generic MCP route as a substitute
 
-#### Scenario: Private control token remains out of browser and MCP surfaces
+#### Scenario: Private control token remains outside browser, MCP, and generic Secrets surfaces
 
 - **WHEN** the dashboard requests a runtime probe or the scheduler runs one
 - **THEN** the server-side dedicated control client supplies the token only on
   the internal control-plane request
 - **AND** the browser payload, generic MCP tool list/call, runtime prompt,
-  telemetry, and logs contain no token value or token-derived fingerprint
+  telemetry, logs, and generic Secrets API inventory/detail/mutation/audit
+  responses contain no token value or token-derived fingerprint
+
+#### Scenario: Generic Secrets API cannot create a shadow control token
+
+- **WHEN** a browser-facing generic Secrets API caller inventories, fetches,
+  mutates, or attempts to create `RUNTIME_PROBE_CONTROL_TOKEN`
+- **THEN** the key is absent from inventory/detail responses and mutation is
+  rejected as reserved for deployment-secret control use
+- **AND** no token value or fingerprint is added to an API or audit response

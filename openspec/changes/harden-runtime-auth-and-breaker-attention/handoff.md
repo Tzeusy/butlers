@@ -48,7 +48,7 @@ all implementation leaves ──────────────────
 | Credential authority | unit/integration tests for explicit authority, local conflict, flat topology, shared-home writer order, rotation fencing, and safe logs | inspect provenance/metadata only; prove every daemon restores the same authority without reading values |
 | Breaker episode edge | real-Postgres concurrent writer tests with equal timestamps and distinct attempt IDs, including failed half-open races | induce one safe controlled breaker edge only after deployment authorization; observe one durable episode |
 | Delivery semantics | producer ACL/forgery tests, two-worker claim, fenced recovery/uncertainty, and post-send ACL route tests | verify sent/uncertain episode state and no automatic duplicate delivery |
-| OpenCode and probe | adapter/API tests for canonical Go identities with native execution arguments, fail-closed owner control, scoped control-token denial, and probe-no-reset behavior | use an actual runtime probe plus a separate routed session; compare their independent evidence |
+| OpenCode and probe | adapter/API tests for canonical Go identities with native execution arguments, fail-closed owner control, mounted-token/generic-Secrets exclusion, scoped control denial, and probe-no-reset behavior | use an actual runtime probe plus a separate routed session; compare their independent evidence |
 | UI | API contract and frontend interaction tests for state separation, degraded observation, confirmation, fail-closed owner-control key states, and idempotent reissue | confirm Models/Spend surfaces reflect actual API state without a false success toast |
 
 ## Validation Record

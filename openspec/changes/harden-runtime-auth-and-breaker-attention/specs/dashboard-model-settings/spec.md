@@ -16,17 +16,19 @@ a configured non-empty `DASHBOARD_API_KEY` and constant-time matching
 `X-API-Key` header are required, with absent configuration reported as safe
 unavailability. The dashboard server SHALL then call Switchboard through a
 dedicated `runtime_probe_control` client using a separately scoped system
-`RUNTIME_PROBE_CONTROL_TOKEN` capability from the explicit shared credential
-authority. Switchboard SHALL use constant-time comparison and require that token
-on its dedicated internal-control endpoint before catalog resolution, runtime
-launch, or verification persistence. It SHALL be available only to the
-dashboard control client and the explicitly registered trusted verification
-scheduler; it SHALL not be carried by browser requests, model sessions, generic
-MCP clients, the normal MCP client manager, or logs. The command accepts only a
-catalog entry ID, enforces bounded timeout, per-entry de-duplication, and a
-bounded global concurrency cap, and accepts no credential material, prompt,
-model override, or runtime arguments from the dashboard. A successful probe
-updates verification evidence only; it does not close an open breaker.
+`RUNTIME_PROBE_CONTROL_TOKEN` capability from a dedicated deployment-secret
+mount, never from `CredentialStore` or the generic Secrets API. Switchboard
+SHALL use constant-time comparison and require that token on its dedicated
+internal-control endpoint before catalog resolution, runtime launch, or
+verification persistence. It SHALL be available only to the dashboard control
+client and the explicitly registered trusted verification scheduler; it SHALL
+not be carried by browser requests, model sessions, generic MCP clients, the
+normal MCP client manager, logs, or any generic Secrets API response. The
+command accepts only a catalog entry ID, enforces bounded timeout, per-entry
+de-duplication, and a bounded global concurrency cap, and accepts no credential
+material, prompt, model override, or runtime arguments from the dashboard. A
+successful probe updates verification evidence only; it does not close an open
+breaker.
 
 ID: REQ-dashboard-model-settings-001
 Source: dashboard-model-settings Catalog Verify-All API and Hourly Automated Verification Sweep; model-catalog REQ-model-catalog-001; design.md Decisions 2 and 6

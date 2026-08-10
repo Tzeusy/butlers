@@ -119,11 +119,14 @@ contacts Switchboard.
 The dashboard server and the trusted verification scheduler call Switchboard
 through a dedicated `runtime_probe_control` client, authenticated with a
 separately scoped system credential `RUNTIME_PROBE_CONTROL_TOKEN`. That token
-is resolved from the explicit shared credential authority with no local or
-environment fallback, and uses a dedicated internal-control header/endpoint;
-it is not an MCP argument. It is loaded only by the dashboard control client,
-the trusted scheduler, and Switchboard; it never reaches the browser, generic
-MCP clients, model sessions, logs, or the normal MCP client manager.
+is delivered via a deployment-secret mount into only the dashboard control
+client, trusted scheduler, and Switchboard—not via `CredentialStore`,
+`public.butler_secrets`, or an environment-value fallback—and uses a dedicated
+internal-control header/endpoint; it is not an MCP argument. It is
+non-enumerable by the browser-facing Secrets API, which rejects the reserved key
+instead of storing a shadow credential, so neither its value nor fingerprint can
+reach the browser. It never reaches generic MCP clients, model sessions, logs,
+or the normal MCP client manager.
 Switchboard uses constant-time comparison and rejects a missing or invalid token
 before it resolves a catalog entry, launches a runtime, or writes verification
 evidence. The scheduled sweep is an explicitly registered trusted internal
