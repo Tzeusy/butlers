@@ -193,7 +193,10 @@ started Dashboard loads the signer but its control client remains unavailable
 and signs nothing until `GET /_control/runtime-probe/v1/readiness?kid=<kid>` on
 the private Switchboard ASGI surface returns HTTP `200` with exactly
 `{"status":"ready"}`. The endpoint returns HTTP `503` with exactly
-`{"status":"unavailable"}` when the current verifier does not match, exposes
+`{"status":"unavailable"}` when the requested key does not match a loaded
+verifier that is valid for issuance at the current integer second: the current
+entry is eligible only at or after `sign_from`, while the retiring entry is
+eligible only at or before `sign_until` and not after `accept_until`. It exposes
 no configured key ID or material, accepts no capability, performs no lookup or
 launch, and is absent from generic MCP discovery. This readiness gate allows
 Dashboard health and `oauth-gate` to bring up all-butlers without a dependency

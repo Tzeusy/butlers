@@ -116,7 +116,8 @@ Scope: v1-mandatory
   behaviorally denied access to the signer and peer invocations, and has no
   surviving descendant before staged output can be consumed
 - **AND** the client signs nothing until Switchboard verifier readiness matches
-  its current key ID
+  its configured signer key ID to a currently issuable current or retiring
+  verifier entry
 - **AND** a rollback retains the sandbox and disables those callers, or removes
   the mount before legacy code can start
 

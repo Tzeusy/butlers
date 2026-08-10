@@ -268,8 +268,11 @@ The canonical full-stack launcher MAY start Dashboard before all-butlers, but
 the signed client SHALL remain unavailable and SHALL sign nothing until
 `GET /_control/runtime-probe/v1/readiness?kid=<kid>` on the private Switchboard
 ASGI surface returns HTTP `200` with exactly `{"status":"ready"}`. It SHALL
-return HTTP `503` with exactly `{"status":"unavailable"}` when the configured
-current verifier does not match, expose no configured key ID or key material,
+return HTTP `503` with exactly `{"status":"unavailable"}` unless the requested
+key ID matches a loaded verifier that is valid for issuance at the current
+integer second: the current entry is eligible only at or after `sign_from`,
+while the retiring entry is eligible only at or before `sign_until` and not
+after `accept_until`. It SHALL expose no configured key ID or key material,
 accept no capability, perform no catalog lookup or runtime launch, and remain
 absent from generic MCP discovery. Dashboard's ordinary health SHALL remain
 available so `oauth-gate` can start all-butlers without a dependency cycle.
@@ -348,7 +351,9 @@ Scope: v1-mandatory
 - **THEN** Dashboard health permits `oauth-gate` and all-butlers startup, but
   the runtime-probe client reports unavailable and signs nothing
 - **AND** signing becomes available only after Switchboard's private non-secret
-  readiness response confirms its matching current verifier key ID
+  readiness response confirms the configured signer key ID matches either the
+  current verifier at or after `sign_from` or the retiring verifier at or before
+  `sign_until` and not after `accept_until`
 - **AND** that response uses only the exact `200/ready` or `503/unavailable`
   shape, reveals no configured key ID/material, and performs no receipt, lookup,
   launch, or persistence
@@ -451,10 +456,11 @@ Scope: v1-mandatory
   `accept_until` is within `[T+70s, T+5m]`, and installs a matching old signer
   bounded by `sign_until=T` before cutover
 - **AND** the canonical full-stack restart leaves Dashboard signing disabled
-  until restarted Switchboard confirms that keyring ready
+  until restarted Switchboard confirms the old configured signer matches the
+  still-issuable retiring verifier entry
 - **AND** at or after `T`, Dashboard loads the matching new signer through a
-  second canonical full-stack restart and again waits for matching verifier
-  readiness
+  second canonical full-stack restart and again waits until Switchboard
+  confirms the new configured signer matches the now-issuable current verifier
 - **AND** the old signer cannot issue after `T`, the new signer cannot issue
   before `T`, and a late Dashboard restart creates safe probe unavailability
 - **AND** Switchboard rejects old-key capabilities issued after `T` and rejects
@@ -463,3 +469,15 @@ Scope: v1-mandatory
 - **AND** a later all-butlers restart removes the expired old entry
 - **AND** durable receipts continue to reject a capability consumed before any
   of those restarts
+
+#### Scenario: Pre-cutover old signer becomes ready through the retiring verifier
+
+- **WHEN** the shared rotation keyring is loaded before cutover `T` with the new
+  key as current and the old key as retiring, and Dashboard loads the matching
+  old signer bounded by `sign_until=T`
+- **THEN** the readiness endpoint returns `200/ready` for the old signer's key ID
+  while the current integer second is at or before `T` and not after
+  `accept_until`
+- **AND** it returns `503/unavailable` for that key ID after `T`, without
+  disclosing which verifier entry matched or performing receipt, lookup, launch,
+  or persistence work
