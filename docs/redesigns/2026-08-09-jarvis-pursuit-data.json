@@ -271,6 +271,7 @@
           "recommendation": "Render a Chronicles process-status pill adjacent to the date using voice_source; retain stale as a source state rather than the sole provenance disclosure.",
           "severity": "high",
           "status": "new",
+          "confidence": "source-confirmed",
           "title": "Chronicles hides templated versus cached narrative provenance"
         },
         {
@@ -301,6 +302,7 @@
           "recommendation": "Expose per-row mutation outcome/error, ideally with an inline named error plus an accessible toast; add route-error regression coverage for Retry and Escalate.",
           "severity": "medium",
           "status": "new",
+          "confidence": "source-confirmed",
           "title": "Notification recovery failures have no user-visible result"
         },
         {
@@ -332,6 +334,7 @@
           "recommendation": "Carry isError/refetch from useChroniclesPointEvents into a named degraded map/scrubber state; preserve loaded data only with explicit stale-source disclosure and add an error-path test.",
           "severity": "medium",
           "status": "new",
+          "confidence": "source-confirmed",
           "title": "Chronicles point-event failure still becomes a quiet map and unsnapped scrubber"
         }
       ],
@@ -366,6 +369,7 @@
             }
           ],
           "move": 1,
+          "confidence": "source-confirmed",
           "reason": "The backend closes coverage/availability before cache prose, and the page suppresses content for non-content states. However, a live templated briefing is rendered without the required process-source indication, so the owner cannot distinguish deterministic prose from cached LLM prose.",
           "title": "Chronicles narrative truth",
           "verdict": "landed-with-gaps"
@@ -399,6 +403,7 @@
             }
           ],
           "move": 2,
+          "confidence": "source-confirmed",
           "reason": "The UI uses the immutable message-scoped cancellation endpoint, displays failure rather than a false stopped state, and the backend durably fences invocation across handoffs before requiring actual runtime acknowledgement.",
           "title": "Make Stop actually stop",
           "verdict": "as-designed"
@@ -437,6 +442,7 @@
             }
           ],
           "move": 3,
+          "confidence": "source-confirmed",
           "reason": "Infrastructure conditions have a live, availability-aware System surface, while delegation rows have both per-butler provenance panels and fleet-wide wake-failure attention routing. Empty, partial, and failed-source states are distinguished.",
           "title": "Doors on infrastructure-condition and delegation ledgers",
           "verdict": "as-designed"
@@ -475,6 +481,7 @@
             }
           ],
           "move": 4,
+          "confidence": "source-confirmed",
           "reason": "Failed notification rows are actionable through real synchronous retry/escalate routes with atomic anti-duplicate claims and durable forward links. But an action rejection/transport error has no UI error consumer: the pending label disappears and the row remains failed without explaining why the requested recovery did not run.",
           "title": "Delivery receipt spine",
           "verdict": "landed-with-gaps"
@@ -508,6 +515,7 @@
             }
           ],
           "move": 5,
+          "confidence": "source-confirmed",
           "reason": "The sweep landed the CI coercion guard, day-ribbon degraded state, full-family Chronicles invalidation, and source-state error UI. A remaining point-events leaf still collapses a failed query to [], feeding an empty-snap scrubber and map empty state without a degraded indicator.",
           "title": "Fabricated-calm leaf sweep and Chronicles refresh",
           "verdict": "landed-with-gaps"
@@ -610,6 +618,7 @@
           "recommendation": "Perform an owner-approved runtime provenance check and targeted Finance/Switchboard recovery. Prove the live Finance MCP receiver returns task_id/task_name, then explicitly assess/replay the two terminal ledger rows under a documented recovery path; do not silently relabel or mass-retry terminal evidence.",
           "severity": "high",
           "status": "regression",
+          "confidence": "live-confirmed",
           "title": "Finance is a live terminal failure target for Travel domain events"
         },
         {
@@ -636,6 +645,7 @@
           "recommendation": "Render last_delivery_at with Time using the suitable absolute or smart mode and add a component assertion for the primitive, preserving the existing honest 'No deliveries yet' null state.",
           "severity": "low",
           "status": "new",
+          "confidence": "source-confirmed",
           "title": "Insight delivery timestamp bypasses the canonical owner-timezone primitive"
         }
       ],
@@ -670,6 +680,7 @@
             }
           ],
           "move": 6,
+          "confidence": "source-confirmed",
           "reason": "The owner ledger is a separate durable lifecycle with API and System-page consumption; failed ledger reads surface degraded rather than an all-clear. Live GET returned 11 available owner conditions, including aging finance anomalies and overdue bills.",
           "title": "Owner condition ledger",
           "verdict": "as-designed"
@@ -703,6 +714,7 @@
             }
           ],
           "move": 7,
+          "confidence": "source-confirmed",
           "reason": "The repaired endpoints retain source-specific identity at the final hop: timeline drawers route to the exact session or notification, audit request IDs become filtered session doors, and health insight categories map to owned health surfaces without trusting arbitrary metadata.",
           "title": "Last-hop door repair",
           "verdict": "as-designed"
@@ -736,6 +748,7 @@
             }
           ],
           "move": 8,
+          "confidence": "source-confirmed",
           "reason": "Conversation identity is anchored atomically by external channel/thread and provider resume state is runtime-compatible and TTL-bounded, falling back cleanly to cold start. The dashboard widget consumes the durable conversation/SSE spine and has explicit Stop confirmation handling.",
           "title": "Conversational spine v2",
           "verdict": "as-designed"
@@ -769,6 +782,7 @@
             }
           ],
           "move": 9,
+          "confidence": "source-confirmed",
           "reason": "Broker-side validation, deduplication, urgency, adaptive delivery, context-aware holding, and truthful delivery-state consumption are present and live. The operational tile nevertheless formats last_delivery_at with browser-local toLocaleString instead of the binding owner-timezone Time primitive.",
           "title": "Insight broker v2",
           "verdict": "landed-with-gaps"
@@ -807,6 +821,7 @@
             }
           ],
           "move": 10,
+          "confidence": "live-confirmed",
           "reason": "The durable pub/sub bus, idempotent fan-out, fenced subscriber wake, reconciliation design, visibility API, and detail panel are landed. However, live evidence shows two Travel-to-Finance deliveries marked failed_permanent with an incomplete None payload even though current main registers Finance's domain_events group and receive_domain_event returns the required provenance. This is a current runtime delivery regression, not a decorative dashboard issue.",
           "title": "Domain-event bus",
           "verdict": "landed-with-gaps"
@@ -840,6 +855,7 @@
             }
           ],
           "move": 11,
+          "confidence": "source-confirmed",
           "reason": "Irreversible/bulk operations use a shared pending-safe confirmation primitive, reversible operations are delayed behind a cancellable, namespaced undo window, and a repository-wide lint guard rejects bare confirm calls.",
           "title": "One safety envelope",
           "verdict": "as-designed"
@@ -887,6 +903,7 @@
             }
           ],
           "move": 12,
+          "confidence": "source-confirmed",
           "reason": "The command, shortcut, route, and help-sheet surfaces share registries, while page actions can derive palette and keyboard behavior from one declaration. The shipped remainder adds hot-loop coverage for system, sessions, timeline, issues, QA, spend, education, and health surfaces.",
           "title": "Keyboard chassis completion",
           "verdict": "as-designed"
@@ -915,6 +932,7 @@
             }
           ],
           "move": 13,
+          "confidence": "source-confirmed",
           "reason": "Routing is evidence-based when sufficient dispatch history exists, otherwise explicitly reports insufficient data; pre-spawn quota and ceiling checks, routing cache, and speculative warmup preserve deterministic denial and attempt provenance.",
           "title": "Inference efficiency",
           "verdict": "as-designed"
@@ -933,6 +951,7 @@
             }
           ],
           "move": 14,
+          "confidence": "source-confirmed",
           "reason": "This is the explicitly retained blocked run-07 move, not a newly discovered regression. Existing provenance and relationship safeguards are preservation points, but they do not constitute the blocked trust-mechanics move.",
           "title": "Knowledge-graph trust mechanics",
           "verdict": "not-landed"
@@ -961,6 +980,7 @@
             }
           ],
           "move": 15,
+          "confidence": "source-confirmed",
           "reason": "The move established repository-wide enforcement for visible dashboard population consistency: named polling policy, shared status primitives, token/state guards, and route-chunk prefetch coverage. The enforcement is not merely a one-page cleanup.",
           "title": "Population coverage gates",
           "verdict": "as-designed"
@@ -994,6 +1014,7 @@
             }
           ],
           "move": 16,
+          "confidence": "source-confirmed",
           "reason": "The atmosphere feed is a deterministic, keyless source with explicit configured, stale, source-error, and legitimately unavailable-pollen semantics. The UI route and hook consume the returned state, and the live instance truthfully reports that no home location is configured.",
           "title": "Authoritative-source perception",
           "verdict": "as-designed"
@@ -2434,6 +2455,8 @@
     ],
     "beads": {
       "gate": "bu-4sza7",
+      "gate_status_at_document_refresh": "closed",
+      "gate_closed_at": "2026-08-10T03:17:21Z",
       "epic": "bu-6jv4m",
       "moves": [
         {
@@ -2498,7 +2521,7 @@
         }
       ],
       "reconciliation": "bu-6jv4m.16",
-      "release_instruction": "Close bu-4sza7 to release the 15 implementation children. This does not authorize live restart, replay, connector mutation, secret inspection, or external side effects."
+      "release_instruction": "The owner closed bu-4sza7 on 2026-08-10, releasing the 15 implementation children. This does not authorize live restart, replay, connector mutation, secret inspection, or external side effects."
     },
     "corrections": [
       "Run-07 move 1 is now genuinely implemented in PR #3573; its remaining gap is visible voice provenance, not the prior docs-only state.",

@@ -65,24 +65,30 @@ not proof that useful owner-facing work completed.
 
 Sixteen moves graded: **10 as-designed, 5 landed-with-gaps, 1 not-landed, 0 regressed**.
 
-| Move | Grade | Current evidence |
-|---|---|---|
-| 1. Chronicles narrative truth | landed-with-gaps | Coverage-first narrative states are real; `voice_source=templated` is live but not rendered. |
-| 2. Make Stop actually stop | as-designed | Message-scoped cancellation durably fences invocation and waits for runtime acknowledgement. |
-| 3. Condition and delegation ledger doors | as-designed | System conditions, per-butler delegation rows, and wake-failure attention are live and availability-aware. |
-| 4. Delivery receipt spine | landed-with-gaps | Retry/Escalate are real and atomic, but rejected recovery has no visible result. |
-| 5. Fabricated-calm leaf sweep | landed-with-gaps | Full Chronicles family invalidation landed; point-event failure still becomes empty map/scrubber evidence. |
-| 6. Owner condition ledger | as-designed | Durable owner conditions, reconciliation, ageing, and recovery surfaces are present. |
-| 7. Last-hop door repair | as-designed | Notification, request, session, and health destinations preserve the proven identity. |
-| 8. Conversational spine v2 | as-designed | Cross-channel anchor, sticky routing, provider resume, SSE, and durable Stop are real. |
-| 9. Insight broker v2 | landed-with-gaps | Broker controls and clustering are real; the System tile bypasses owner time. |
-| 10. Domain-event bus | landed-with-gaps | Durable bus and tests exist; two live Travel-to-Finance rows are `failed_permanent`. |
-| 11. One safety envelope | as-designed | Pending-safe confirmation, undo windows, and the raw-confirm lint are real. |
-| 12. Keyboard chassis completion | as-designed | Shared route/action/shortcut registries and targeted hot loops landed. |
-| 13. Inference efficiency | as-designed | Evidence routing, cache, quota/ceiling fold, and speculative prewarm landed. |
-| 14. Knowledge-graph trust mechanics | not-landed | Still intentionally blocked as `bu-ep4ks.14`; do not duplicate it. |
-| 15. Population coverage gates | as-designed | Named polling, shared state/keyboard primitives, and route prefetch enforcement landed. |
-| 16. Authoritative-source perception | as-designed | Atmosphere feed and UI are real; unconfigured state is reported honestly. |
+Confidence is assigned to the central QC claim, not merely to the presence of a supporting
+GET: **live-confirmed** means the claim was directly observed through a read-only live check;
+**source-confirmed** means a decisive source/test trace proves it; **inferred** is reserved for
+claims without either decisive observation. The per-finding and per-move grades live in the data
+artifact.
+
+| Move | Grade | Confidence | Current evidence |
+|---|---|---|---|
+| 1. Chronicles narrative truth | landed-with-gaps | source-confirmed | Coverage-first narrative states are real; `voice_source=templated` is live but not rendered. |
+| 2. Make Stop actually stop | as-designed | source-confirmed | Message-scoped cancellation durably fences invocation and waits for runtime acknowledgement. |
+| 3. Condition and delegation ledger doors | as-designed | source-confirmed | System conditions, per-butler delegation rows, and wake-failure attention are live and availability-aware. |
+| 4. Delivery receipt spine | landed-with-gaps | source-confirmed | Retry/Escalate are real and atomic, but rejected recovery has no visible result. |
+| 5. Fabricated-calm leaf sweep | landed-with-gaps | source-confirmed | Full Chronicles family invalidation landed; point-event failure still becomes empty map/scrubber evidence. |
+| 6. Owner condition ledger | as-designed | source-confirmed | Durable owner conditions, reconciliation, ageing, and recovery surfaces are present. |
+| 7. Last-hop door repair | as-designed | source-confirmed | Notification, request, session, and health destinations preserve the proven identity. |
+| 8. Conversational spine v2 | as-designed | source-confirmed | Cross-channel anchor, sticky routing, provider resume, SSE, and durable Stop are real. |
+| 9. Insight broker v2 | landed-with-gaps | source-confirmed | Broker controls and clustering are real; the System tile bypasses owner time. |
+| 10. Domain-event bus | landed-with-gaps | live-confirmed | Durable bus and tests exist; two live Travel-to-Finance rows are `failed_permanent`. |
+| 11. One safety envelope | as-designed | source-confirmed | Pending-safe confirmation, undo windows, and the raw-confirm lint are real. |
+| 12. Keyboard chassis completion | as-designed | source-confirmed | Shared route/action/shortcut registries and targeted hot loops landed. |
+| 13. Inference efficiency | as-designed | source-confirmed | Evidence routing, cache, quota/ceiling fold, and speculative prewarm landed. |
+| 14. Knowledge-graph trust mechanics | not-landed | source-confirmed | Still intentionally blocked as `bu-ep4ks.14`; do not duplicate it. |
+| 15. Population coverage gates | as-designed | source-confirmed | Named polling, shared state/keyboard primitives, and route prefetch enforcement landed. |
+| 16. Authoritative-source perception | as-designed | source-confirmed | Atmosphere feed and UI are real; unconfigured state is reported honestly. |
 
 The five gaps are narrow but important. Run-07 move 1 is no longer a docs-only landing;
 that prior correction is retired. The new operational hold is move 10: current source and
@@ -348,10 +354,13 @@ The gated program is epic `bu-6jv4m`:
 - Ranked moves: `bu-6jv4m.1` through `bu-6jv4m.15`, in dossier rank order
 - Terminal reconciliation: `bu-6jv4m.16`
 
-Every implementation child depends on the open gate. The reconciliation child depends on the
-gate and all 15 moves. `bd ready` contains neither implementation nor reconciliation work while
-the gate remains open; dependency-cycle and run-08 lint checks are clean.
+At audit completion the implementation children depended on the open gate. The reconciliation
+child depends on the gate and all 15 moves. The owner closed `bu-4sza7` on 2026-08-10, releasing
+the 15 implementation children; reconciliation remains sequenced behind those moves. The
+documentation artifacts in this PR are the gate's required dossier and data record, and
+dependency-cycle and run-08 lint checks were clean when the audit completed.
 
-**Owner action:** close `bu-4sza7` to release the 15 implementation children. Closing the gate
-does not authorize live restart, replay, connector mutation, secret inspection, retention-policy
-invention, or external side effects where a child records a narrower approval boundary.
+**Current release status:** the owner release action has already occurred. Closing the gate
+permits only the child packets' scoped execution; it does not authorize live restart, replay,
+connector mutation, secret inspection, retention-policy invention, or external side effects where
+a child records a narrower approval boundary.
