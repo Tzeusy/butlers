@@ -278,9 +278,9 @@ it does not grow a generic alert administration surface.
   canonical provider-qualified catalog key and test the narrow OpenCode adapter
   translation with the exact observed Minimax and Mimo aliases, qualified
   non-Go controls, pricing lookup, and the generated runtime configuration.
-- **New public table grants widen a runtime role** -> producers get append-only
-  permissions and cannot inspect other producers' payloads or transition
-  state; Switchboard is the only delivery claimant.
+- **New public table grants widen a runtime role** -> producers receive only
+  validated producer-function execution and cannot inspect payloads, insert
+  directly, or transition state; Switchboard is the only delivery claimant.
 - **The dashboard is disconnected from Switchboard during a probe** -> show a
   degraded coordinator state and preserve existing verification evidence rather
   than reporting a false model failure or success.
