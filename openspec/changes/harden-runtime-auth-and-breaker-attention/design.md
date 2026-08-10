@@ -412,7 +412,10 @@ it does not grow a generic alert administration surface.
 - **The CLI's execution syntax diverges from catalog discovery** -> retain the
   canonical provider-qualified catalog key and test the narrow OpenCode adapter
   translation with the exact observed Minimax and Mimo aliases, qualified
-  non-Go controls, pricing lookup, and the generated runtime configuration.
+  non-Go controls, pricing lookup, and the current generated runtime
+  configuration. That configuration has no selected-model field and does not
+  invent one; provider-registration-specific transforms remain outside the
+  canonical-to-execution mapper.
 - **New public table grants widen a runtime role** -> producers receive only
   validated producer-function execution and cannot inspect payloads, insert
   directly, or transition state; Switchboard is the only delivery claimant.

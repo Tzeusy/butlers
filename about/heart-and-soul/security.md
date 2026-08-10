@@ -176,9 +176,9 @@ hold:
 - generic Secrets APIs, model/runtime children, logs, telemetry, browser
   payloads, and environment diagnostics cannot expose, create, or shadow it.
 
-This amendment proposes `RUNTIME_PROBE_CONTROL_SIGNING_KEY` as the sole use of
-this exception. It becomes approved only when the owner explicitly adopts this
-amendment. It authenticates the private Dashboard API/scheduler control client
+`RUNTIME_PROBE_CONTROL_SIGNING_KEY` is the sole approved use of this exception.
+The owner adopted this amendment and its refined deployment-key contract on
+2026-08-10. It authenticates the private Dashboard API/scheduler control client
 to Switchboard. The Dashboard API process is the only private-key reader;
 Switchboard and the all-butlers runtime receive verification material only.
 Missing or mismatched key material makes the control plane unavailable and

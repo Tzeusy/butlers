@@ -2,14 +2,15 @@
 
 ## Status
 
-**Gate 6 passed for the merged design; doctrine adoption is pending.** The
+**Gate 6 passed and the refined security-doctrine contract is adopted.** The
 owner approved the signed process-bound control design and explicit at-most-once
 policy before PR #3705 merged. The subsequent execution-planning review made
 the deployment-key representation and rotation contract more precise and
-drafted the required doctrine amendment. Beads exist, but implementation stays
-held until the owner explicitly adopts that exact amendment, it merges, and the
-repaired graph receives fresh GO verification. No runtime state, data, or code
-has been changed by this planning phase.
+drafted the required doctrine amendment. The owner explicitly adopted that
+exact amendment and refined contract on 2026-08-10. Beads exist, but
+implementation stays held until the amendment merges and the repaired graph
+receives fresh GO verification. No runtime state, data, or code has been
+changed by this planning phase.
 
 ## Funnel Gate Record
 
@@ -22,7 +23,7 @@ has been changed by this planning phase.
 | 4 — Risks and constraints | pass | The design preserves schema isolation, does not expose or copy secret values, does not backfill historical pages, does not automatically resend ambiguous transport, and keeps probes separate from routed success provenance. |
 | 5 — Work package | pass | `tasks.md` provides dependency-ordered implementation and verification work below. |
 | 6 — Human sign-off | pass | The owner approved the design merged by PR #3705 and requested the `$th-projects` execution-planning phase. |
-| Execution release — doctrine adoption | pending | The exact post-merge security-doctrine amendment and refined key-file/rotation contract require explicit owner adoption before merge or implementation release. |
+| Execution release — doctrine adoption | pass | On 2026-08-10 the owner explicitly adopted the exact post-merge security-doctrine amendment and refined key-file/rotation contract. Merge and fresh graph verification remain release conditions. |
 
 ## Execution decomposition record
 
@@ -71,17 +72,16 @@ all nine implementation leaves → gen-1 reconciliation → epic report
 - `openspec validate harden-runtime-auth-and-breaker-attention --strict` passes.
 - `git diff --check` passes for the tracked change package.
 - Repository-wide `spec-trace-check.py --authoring` is not a usable clean gate:
-  it reported **2,608 existing errors** across main specifications and unrelated
+  it reported **2,618 existing errors** across main specifications and unrelated
   active changes, and the tool has no scoped-change mode. This package uses
   unique requirement IDs and complete `ID`/`Source`/`Scope` metadata; its
   implementation tasks require test citations before completion.
 
 ## Execution release gate
 
-Original design sign-off is recorded; adoption of the exact doctrine amendment
-in this correction remains pending. `bu-0uqgo.9` keeps every implementation
-lane held until that adoption is recorded, the correction is merged, and the
-repaired graph receives fresh GO verification. Closing that gate releases only
-dependency-ready Beads;
+Original design sign-off and explicit adoption of the exact doctrine amendment
+are recorded. `bu-0uqgo.9` keeps every implementation lane held until this
+correction is merged and the repaired graph receives fresh GO verification.
+Closing that gate releases only dependency-ready Beads;
 it does not authorize live key generation, deployment, restart, induced
 breaker/fleet failures, ambiguous-send simulation, or external resend.
