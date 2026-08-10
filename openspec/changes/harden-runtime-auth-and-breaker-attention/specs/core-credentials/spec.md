@@ -219,6 +219,19 @@ SHALL provide a fresh procfs, private tmpfs, minimal device view, one writable
 staged HOME, and only the read-only provider executable/runtime-library, CA,
 and resolver inputs required for networked auth/health; root, run, app,
 canonical homes, peer stages, and host procfs SHALL be absent. The
+parent SHALL spawn Bubblewrap with `close_fds=True` and an exact `pass_fds`
+allowlist containing only stdio and typed launcher-created Bubblewrap setup
+pipes or seccomp descriptors. Those referents SHALL NOT be the signer,
+canonical authority, a staging-root descriptor, a peer stage, parent procfs, or
+other credential-bearing material. A repository-owned
+`runtime-cli-sandbox-init` SHALL become namespace PID 1 and, after the trusted
+handshake releases it, SHALL close every descriptor above stderr with
+`close_range(3, UINT_MAX, 0)`, verify that no unexpected descriptor remains,
+and `execve` the provider CLI. The runtime payload SHALL therefore inherit only
+the approved stdio endpoints and no Bubblewrap setup descriptor. Missing
+`close_range`, a missing or mismatched shim, an unsafe descriptor referent, or
+close/verification failure SHALL disable CLI-auth launch and signer activation
+without fallback. The
 identity SHALL NOT be reused until the domain has no live descendant. A fixed
 shared child UID, directory permissions, global serialization, or
 process-group/`setsid` handling alone SHALL NOT satisfy the boundary. Default
@@ -259,8 +272,9 @@ consume the bounded bytes through that same open descriptor without a path
 reopen. It SHALL then atomically persist through explicit provider authority
 with compare-and-set fencing. Symlinks, hardlinks, path escapes, unexpected
 files, writes outside the provider scratch allowlist, live or daemonized
-descendants, authority-version races, cancellation, timeouts, and containment
-or descriptor failures SHALL discard the staging tree without persistence.
+ descendants, authority-version races, cancellation, timeouts, inherited-FD
+ closure failures, containment failures, or staged-output descriptor failures
+ SHALL discard the staging tree without persistence.
 Cleanup SHALL run before the exclusive identity is
 released after every terminal outcome. The child SHALL never receive or open
 the canonical root credential path.
@@ -336,6 +350,9 @@ Scope: v1-mandatory
 - **AND** concurrent adversarial children cannot read or modify a peer staging
   tree or inspect peer process state, and no identity is reused while a process
   remains in its domain
+- **AND** an intentionally inheritable descriptor for signer-equivalent secret
+  material, canonical authority, or a peer stage is closed before provider code
+  executes, while the runtime payload has no descriptor above stderr
 - **AND** a child that forks, double-forks, or calls `setsid` cannot survive a
   terminal outcome, mutate staged output after direct-child exit, or cause
   persistence

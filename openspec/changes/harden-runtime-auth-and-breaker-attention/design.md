@@ -142,10 +142,22 @@ The root supervisor allocates one outer UID/GID from reserved range
 `61000..61999`, drops to it, and execs `bwrap` with nested user, mount, PID,
 IPC, and UTS namespaces; a fresh procfs; a private tmpfs `/tmp`; minimal
 `/dev`; one writable bind for that invocation's staged HOME; and read-only
-provider-command/runtime-library, CA, and resolver inputs. It does not unshare
-the network because health and device-auth flows require egress. `/root`,
-`/run`, `/app`, canonical credential homes, peer stages, and host procfs are
-absent. An identity is not reused until its namespace contains no live
+ provider-command/runtime-library, CA, and resolver inputs. It does not unshare
+ the network because health and device-auth flows require egress. `/root`,
+ `/run`, `/app`, canonical credential homes, peer stages, and host procfs are
+ absent. The parent launches Bubblewrap with `close_fds=True` and an exact
+ `pass_fds` allowlist containing only stdio plus typed Bubblewrap setup pipes or
+ seccomp descriptors created by the trusted launcher; none may reference the
+ signer, canonical authority, staging-root descriptors, a peer stage, parent
+ procfs, or other credential-bearing material. A repository-owned
+ `runtime-cli-sandbox-init` is the namespace PID 1: after the Bubblewrap
+ handshake releases it, the shim closes every descriptor above stderr with
+ `close_range(3, UINT_MAX, 0)`, verifies that no unexpected descriptor remains,
+ and then `execve`s the provider CLI. Thus even the allowlisted setup
+ descriptors are unavailable to the runtime payload. Missing `close_range`, a
+ missing or mismatched shim, an unsafe stdio/setup descriptor referent, or a
+ close/verification failure fails launch and signer activation closed. An
+ identity is not reused until its namespace contains no live
 descendant and its stage is removed. A fixed shared child UID, directory
 permissions, a global lock, or process-group/`setsid` handling alone is
 invalid. These controls cover provider health, device-auth, API-key-test, and
@@ -172,11 +184,13 @@ allowlist because a CLI may create databases, WAL, logs, config, or package
 files under staged HOME. Exactly one expected credential artifact is
 persistence-eligible; alternate credential artifacts and writes outside the
 scratch allowlist fail closed. All scratch content is discarded. Any
-containment, termination, descriptor, or scratch-policy failure persists
-nothing and cleans the stage before releasing the invocation identity.
+ containment, inherited-descriptor closure, termination, staged-output
+ descriptor, or scratch-policy failure persists
+ nothing and cleans the stage before releasing the invocation identity.
 
 Default and hotreload Dashboard services use the same repository-owned seccomp
-profile permitting only the namespace syscalls Bubblewrap needs plus exact
+profile permitting only the namespace syscalls Bubblewrap needs plus
+`close_range` for the trusted PID1 shim, together with exact
 `apparmor:unconfined` and `systempaths:unconfined` settings. They add no
 `privileged`, `cap_add`, host PID namespace, or Docker-socket access. Startup
 executes a real nested-user/mount/PID-namespace
