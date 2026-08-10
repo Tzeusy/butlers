@@ -1,5 +1,46 @@
 ## ADDED Requirements
 
+### Requirement: Runtime-Probe Replay Receipt Is Switchboard-Owned
+
+The core migration SHALL create a durable
+`public.runtime_probe_control_receipts` relation that contains only a
+Switchboard receipt timestamp, key ID, capability expiry, fixed audience, and
+SHA-256 nonce digest. It SHALL have a unique constraint on the fixed audience
+and nonce digest, SHALL NOT retain a raw nonce or signature, and SHALL retain a
+receipt through at least the capability expiry plus the configured five-second
+clock-skew allowance. Switchboard SHALL atomically insert and commit that
+receipt after successful capability verification but before catalog lookup,
+runtime launch, or verification persistence. Only Switchboard's runtime role
+may create, inspect for replay, or remove expired receipt rows; ordinary
+butler, connector, and dashboard runtime roles receive no direct receipt-table
+grant. Expired-row cleanup SHALL not remove a row before its retention bound.
+
+ID: REQ-database-security-008
+Source: heart-and-soul/security-and-secrets.md; RFC 0003; core-credentials REQ-core-credentials-002; design.md Decision 2
+Scope: v1-mandatory
+
+#### Scenario: Concurrent replay receipt claim permits one control execution
+
+- **WHEN** two valid control requests with the same nonce reach Switchboard
+  concurrently
+- **THEN** exactly one unique receipt insert succeeds and commits before any
+  catalog lookup, runtime launch, or verification persistence
+- **AND** the other request is rejected as a replay with no side effect
+
+#### Scenario: Receipt retention cannot reopen a valid replay window
+
+- **WHEN** a cleanup worker considers a receipt whose capability is within its
+  accepted expiry plus five-second skew window
+- **THEN** it retains the receipt
+- **AND** it deletes only rows whose retention bound has elapsed
+
+#### Scenario: Receipt material and access remain narrow
+
+- **WHEN** a non-Switchboard runtime, connector, or dashboard role attempts to
+  query, insert, update, or delete a receipt
+- **THEN** PostgreSQL rejects the direct operation
+- **AND** no persisted row contains a raw nonce or capability signature
+
 ### Requirement: Runtime Attention Outbox Least-Privilege Authorization
 
 The core migration SHALL grant the public runtime-attention outbox only the

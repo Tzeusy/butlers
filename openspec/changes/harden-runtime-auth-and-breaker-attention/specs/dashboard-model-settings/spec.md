@@ -18,14 +18,17 @@ unavailability. The dashboard server SHALL then call Switchboard through a
 dedicated `runtime_probe_control` client using a separately scoped system
 signed capability produced by `RUNTIME_PROBE_CONTROL_SIGNING_KEY` from a
 dedicated Dashboard-only deployment-secret mount, never from `CredentialStore`
-or the generic Secrets API. Switchboard SHALL verify that signature with its
-non-secret verification key and require the fixed
+or the generic Secrets API. Switchboard SHALL accept only Ed25519 JWS
+capabilities with protected `alg=EdDSA` and protected configured key ID, using
+its non-secret verification key; it SHALL reject token-selected `none`,
+symmetric, and other algorithms. It SHALL require the fixed
 `switchboard.runtime_probe_control.v1` audience, matching catalog entry ID,
-registered caller class, expiry of at most one minute, configured key ID, and
-unused nonce on its dedicated
-internal-control endpoint. It SHALL atomically persist a bounded-expiry unique
-nonce receipt before catalog resolution, runtime launch, or verification
-persistence. The private signing key SHALL not be available to the
+registered caller class, five-second-skew-bounded `iat`/`exp` interval of at
+most one minute, and unused 256-bit nonce on its dedicated internal-control
+endpoint. It SHALL atomically commit a SHA-256 nonce-digest receipt before
+catalog resolution, runtime launch, or verification persistence, retain it
+through at least `exp + 5s`, and never retain a raw nonce or signature. The
+private signing key SHALL not be available to the
 all-butlers daemon, model sessions, generic MCP clients, the normal MCP client
 manager, logs, or any generic Secrets API response. The command accepts only a
 catalog entry ID, enforces bounded timeout, per-entry de-duplication, and a
@@ -66,8 +69,9 @@ Scope: v1-mandatory
 #### Scenario: Direct control-plane callers require the scoped signed capability
 
 - **WHEN** a caller reaches the private runtime-probe command without the
-  valid scoped signature, fixed audience, matching caller class/catalog ID,
-  unexpired nonce, and configured verification key
+  valid fixed-algorithm signature, fixed audience, matching caller
+  class/catalog ID, accepted bounded time claims, unused nonce, and configured
+  verification key
 - **THEN** Switchboard rejects it before catalog lookup, runtime launch, or
   verification persistence
 - **AND** a generic MCP client cannot substitute its normal connection for

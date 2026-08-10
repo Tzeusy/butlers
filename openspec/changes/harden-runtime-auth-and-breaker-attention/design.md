@@ -128,16 +128,27 @@ module inside the shared all-butlers process.
 
 Each signed request carries only the fixed
 `switchboard.runtime_probe_control.v1` audience, a catalog entry ID, registered
-caller class (`dashboard` or `scheduler`), issue/expiry times, a one-time nonce,
-and key ID. Its lifetime is bounded to one minute. Switchboard accepts only
-configured current or bounded-overlap retiring verification keys for that key
-ID, then verifies the signature and audience, atomically records the nonce in a
-durable unique receipt with bounded expiry, and only then performs catalog
-resolution, launch, or verification persistence. This makes a replay fail even
-across a Switchboard restart; an unknown key ID, expired capability, or failed
-signature fails closed. Key rotation installs the new verifier before the
-Dashboard signer changes key ID, and removes the retiring verifier after its
-bounded overlap. The private key is not a
+caller class (`dashboard` or `scheduler`), issue/expiry times, a 256-bit
+cryptographically random nonce, and key ID. The only accepted signature is an
+Ed25519 JWS with protected `alg=EdDSA` and protected key ID; no token-selected
+algorithm is trusted, so `none`, symmetric, and other asymmetric algorithms
+are rejected. The verifier permits at most five seconds of clock skew, requires
+`iat <= now + 5s`, `exp >= now - 5s`, and `0 < exp - iat <= 60s`.
+
+Switchboard accepts only configured current or retiring verification keys for
+the protected key ID, then verifies the signature and every claim, atomically
+inserts a SHA-256 nonce digest into a durable unique receipt, commits it before
+catalog lookup, runtime launch, or verification persistence, and retains the
+receipt at least through `exp + 5s`. Thus two concurrent uses of one capability
+have exactly one winner, while a cleanup cannot reopen a still-valid replay
+window. The receipt stores neither the raw nonce nor a signature. This makes a
+replay fail even across a Switchboard restart; an unknown key ID, invalid
+algorithm/signature, invalid time bounds, or duplicate nonce fails closed.
+
+Key rotation installs the new verifier before the Dashboard signer changes key
+ID. The retiring verifier stays available for at least 70 seconds after the old
+signer stops (the 60-second maximum lifetime plus two five-second skew
+allowances) and is removed within five minutes. The private key is not a
 `CredentialStore`/`public.butler_secrets` value or environment-value fallback;
 the browser-facing Secrets API rejects the reserved key rather than storing a
 shadow credential. Neither private key nor signatures reach browser payloads,

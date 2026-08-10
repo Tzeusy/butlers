@@ -141,10 +141,17 @@ Scope: v1-mandatory
 
 The system SHALL authenticate the private Dashboard/Scheduler to Switchboard
 runtime-probe control plane with a short-lived asymmetric signed capability,
-not a shared bearer token. The capability SHALL sign a fixed
-`switchboard.runtime_probe_control.v1` audience, catalog entry ID, registered
-caller class, issue/expiry times, single-use nonce, and key ID; its lifetime
-SHALL NOT exceed one minute. A private `RUNTIME_PROBE_CONTROL_SIGNING_KEY` SHALL
+not a shared bearer token. The only accepted capability format SHALL be an
+Ed25519 JWS with protected `alg=EdDSA` and protected key ID; the verifier SHALL
+resolve that key ID only from its deployment-configured keyring, SHALL NOT
+perform remote/dynamic key lookup, and SHALL reject `jku`/`x5u` headers. It
+SHALL NOT select an algorithm from an untrusted capability and SHALL reject
+`none`, symmetric, and other asymmetric algorithms. The signed capability
+SHALL bind a fixed `switchboard.runtime_probe_control.v1` audience, catalog entry ID,
+registered caller class, issue/expiry times, 256-bit cryptographically random
+single-use nonce, and key ID. The verifier SHALL allow at most five seconds of
+clock skew and accept only `iat <= now + 5s`, `exp >= now - 5s`, and
+`0 < exp - iat <= 60s`. A private `RUNTIME_PROBE_CONTROL_SIGNING_KEY` SHALL
 be delivered through a dedicated deployment-secret mount only to the Dashboard
 API process, including its registered verification scheduler. The all-butlers
 daemon, Switchboard, unrelated butlers, and model-runtime child processes SHALL
@@ -159,10 +166,12 @@ shadow DB credential. Missing, malformed, unavailable, or mismatched signing /
 verification key state SHALL make the control plane unavailable; it SHALL not
 fall back to an unauthenticated command.
 
-The verifier SHALL accept only configured current and bounded-overlap retiring
-verification keys identified by key ID. Rotation SHALL install the new verifier
-before the Dashboard signer uses its key ID and remove the retiring verifier
-after its bounded overlap; an unknown key ID SHALL fail closed.
+The verifier SHALL accept only configured current and retiring verification
+keys identified by protected key ID. Rotation SHALL install the new verifier
+before the Dashboard signer uses its key ID and retain the retiring verifier
+for at least 70 seconds after its signer stops (60-second maximum capability
+lifetime plus two five-second skew allowances), but no longer than five
+minutes. An unknown key ID SHALL fail closed.
 
 ID: REQ-core-credentials-002
 Source: heart-and-soul/security-and-secrets.md; RFC 0003; dashboard-model-settings REQ-dashboard-model-settings-001; design.md Decision 2
@@ -201,23 +210,46 @@ Scope: v1-mandatory
 
 - **WHEN** the dashboard control client or registered scheduler sends a probe
   request to Switchboard
-- **THEN** its signed capability binds the fixed control-plane audience, catalog
-  entry ID, caller class, issue/expiry time of at most one minute, nonce, and
-  key ID
-- **AND** Switchboard accepts only the configured current or bounded-overlap
-  retiring key for that key ID, verifies signature, audience, caller class, and
-  expiry, then atomically records the nonce in a durable unique receipt with
-  bounded expiry
-  before catalog lookup, runtime launch, or verification persistence
+- **THEN** its Ed25519/`EdDSA` signed capability binds the fixed control-plane
+  audience, catalog entry ID, caller class, issue/expiry time of at most one
+  minute, 256-bit nonce, and protected key ID
+- **AND** Switchboard accepts only the configured current or retiring key for
+  that key ID, verifies the fixed algorithm, signature, audience, caller class,
+  and bounded time claims, then atomically inserts a SHA-256 nonce digest into
+  a durable unique receipt and commits it before catalog lookup, runtime launch,
+  or verification persistence
+- **AND** that receipt retains the digest through at least `exp + 5s`, stores
+  neither the raw nonce nor signature, and cleanup cannot remove it before the
+  capability's accepted lifetime has ended
 - **AND** an invalid, expired, audience-mismatched, or replayed capability is
   rejected without a probe
+
+#### Scenario: Concurrent use of one capability yields one probe
+
+- **WHEN** two Switchboard control requests concurrently present the same
+  otherwise valid signed capability
+- **THEN** the durable unique nonce-digest insert permits exactly one request
+  to proceed beyond receipt creation
+- **AND** the losing request is rejected as a replay without catalog lookup,
+  runtime launch, or verification persistence
+
+#### Scenario: Algorithm and clock validation fail before receipt creation
+
+- **WHEN** a capability has `alg=none`, a symmetric or unsupported asymmetric
+  algorithm, dynamic key-discovery header, invalid Ed25519 signature, an
+  unknown protected key ID, a future `iat` beyond five seconds, expired `exp`
+  beyond five seconds, or an issue/expiry interval outside `(0, 60]` seconds
+- **THEN** Switchboard rejects it before creating a receipt, catalog lookup,
+  runtime launch, or verification persistence
 
 #### Scenario: Key rotation preserves the fail-closed boundary
 
 - **WHEN** the deployment rotates the runtime-probe signing key
 - **THEN** it installs the new public verification key before the Dashboard
   starts signing with its new key ID
-- **AND** Switchboard accepts the retiring verification key only for its
-  bounded overlap and rejects unknown key IDs
+- **AND** Switchboard accepts the retiring verification key for at least 70
+  seconds after its signer stops and no longer than five minutes, so a valid
+  pre-cutover capability remains valid for its normal accepted lifetime
+- **AND** it rejects unknown key IDs
 - **AND** removal of the retiring key does not fall back to a bearer token,
   credential-store value, or unsigned request
