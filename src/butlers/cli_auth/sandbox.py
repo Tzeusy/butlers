@@ -42,6 +42,31 @@ class SandboxUnavailableError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class _DeviceAuthStageTreePolicy:
+    """The only credential artifact and disposable scratch roots one CLI may write."""
+
+    provider_name: str
+    credential_artifact: Path
+    scratch_roots: tuple[Path, ...] = ()
+
+
+# Neither currently registered device-auth CLI requires a persistent scratch
+# root during its device-code flow.  Keep that empty policy explicit: a new
+# provider (or a verified CLI requirement) must declare its exact disposable
+# roots here before child-created files can cross the parent trust boundary.
+_DEVICE_AUTH_STAGE_TREE_POLICIES = (
+    _DeviceAuthStageTreePolicy(
+        provider_name="opencode-openai",
+        credential_artifact=Path(".local") / "share" / "opencode" / "auth.json",
+    ),
+    _DeviceAuthStageTreePolicy(
+        provider_name="codex",
+        credential_artifact=Path(".codex") / "auth.json",
+    ),
+)
+
+
+@dataclass(frozen=True)
 class ReadonlySandboxAuthority:
     """One parent-validated authority copy staged only in a child HOME."""
 
@@ -293,6 +318,81 @@ def _require_private_directory(fd: int, *, expected_uid: int) -> None:
         raise StagedOutputValidationError("staged directory metadata is unsafe")
 
 
+def _stage_tree_policy(relative_output_path: Path) -> _DeviceAuthStageTreePolicy:
+    """Return the provider-declared scratch policy for one fixed artifact path."""
+    for policy in _DEVICE_AUTH_STAGE_TREE_POLICIES:
+        if relative_output_path == policy.credential_artifact:
+            return policy
+    raise StagedOutputValidationError("staged output path has no provider tree policy")
+
+
+def _validate_device_auth_stage_tree(
+    stage_home_fd: int,
+    relative_output_path: Path,
+    *,
+    expected_uid: int,
+) -> None:
+    """Reject peer artifacts and undeclared writes before consuming device output.
+
+    Every directory is reached through the trusted staged-HOME descriptor with
+    ``O_NOFOLLOW``.  The registered policies currently permit only the output
+    artifact and its parent directories; the generic tree form makes a future
+    provider declare an exact disposable scratch root rather than inherit an
+    implicit broad HOME allowlist.
+    """
+    policy = _stage_tree_policy(relative_output_path)
+    artifact_parts = _validated_relative_parts(policy.credential_artifact)
+    if artifact_parts != _validated_relative_parts(relative_output_path):
+        raise StagedOutputValidationError("staged output path does not match its provider policy")
+
+    scratch_parts = {_validated_relative_parts(root) for root in policy.scratch_roots}
+    if any(
+        scratch == artifact_parts
+        or scratch[: len(artifact_parts)] == artifact_parts
+        or artifact_parts[: len(scratch)] == scratch
+        for scratch in scratch_parts
+    ):
+        raise StagedOutputValidationError(
+            "provider scratch policy overlaps its credential artifact"
+        )
+
+    allowed_children: dict[tuple[str, ...], set[str]] = {}
+    for allowed_path in (artifact_parts, *scratch_parts):
+        parent: tuple[str, ...] = ()
+        for part in allowed_path:
+            allowed_children.setdefault(parent, set()).add(part)
+            parent = (*parent, part)
+
+    def _validate_directory(directory_fd: int, prefix: tuple[str, ...]) -> None:
+        _require_private_directory(directory_fd, expected_uid=expected_uid)
+        if set(os.listdir(directory_fd)) != allowed_children.get(prefix, set()):
+            raise StagedOutputValidationError("staged HOME contains an undeclared artifact")
+
+        for child in allowed_children.get(prefix, set()):
+            child_prefix = (*prefix, child)
+            if child_prefix == artifact_parts:
+                # The same descriptor-constrained reader below validates this
+                # leaf's no-follow type/owner/mode/link-count/size contract.
+                continue
+            child_fd = os.open(
+                child,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=directory_fd,
+            )
+            try:
+                _require_private_directory(child_fd, expected_uid=expected_uid)
+                if child_prefix not in scratch_parts:
+                    _validate_directory(child_fd, child_prefix)
+            finally:
+                os.close(child_fd)
+
+    root_fd = os.dup(stage_home_fd)
+    try:
+        _validate_directory(root_fd, ())
+    finally:
+        os.close(root_fd)
+
+
 def _read_expected_output_from_stage_fd(
     stage_home_fd: int,
     relative_output_path: Path,
@@ -379,6 +479,11 @@ def read_validated_staged_device_auth_output(
         return None
 
     try:
+        _validate_device_auth_stage_tree(
+            stage_home_fd,
+            relative_output_path,
+            expected_uid=expected_uid,
+        )
         return _read_expected_output_from_stage_fd(
             stage_home_fd,
             relative_output_path,
@@ -398,6 +503,7 @@ async def persist_staged_device_auth_output(
     expected_uid: int,
     pid1_terminated: bool,
     payload_fds_closed: bool,
+    expected_authority_value: str | None,
     codex_authority: CredentialStore | None = None,
 ) -> bool:
     """Persist one validated staged device-auth result after containment.
@@ -420,5 +526,6 @@ async def persist_staged_device_auth_output(
         provider,
         store,
         content,
+        expected_authority_value=expected_authority_value,
         codex_authority=codex_authority,
     )

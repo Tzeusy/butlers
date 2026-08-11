@@ -73,6 +73,9 @@ class CLIAuthSession:
         """Spawn the CLI login subprocess and begin reading stdout."""
         logger.info("CLI auth session %s: starting %s", self.id, self.provider.name)
 
+        if not await self._prepare_persistence_authority_before_launch():
+            return
+
         try:
             self._sandbox_handle = await self.sandbox.launch_device_auth(self.provider)
         except SandboxUnavailableError:
@@ -86,6 +89,44 @@ class CLIAuthSession:
 
         self._reader_task = asyncio.create_task(self._read_stdout())
         self._timeout_task = asyncio.create_task(self._watch_timeout())
+
+    async def _prepare_persistence_authority_before_launch(self) -> bool:
+        """Fail closed before child spawn when its authority fence is unavailable."""
+        if self.on_success is None:
+            self.state = "failed"
+            self.message = "Credential authority unavailable."
+            logger.warning("CLI auth session %s: no persistence authority callback", self.id)
+            self._done_event.set()
+            return False
+
+        callback_type = type(self.on_success)
+        if not getattr(callback_type, "requires_prelaunch_prepare", False):
+            # Plain callbacks remain useful for isolated session tests and do
+            # not represent an application credential authority.  All
+            # production factories return the explicit preparable object.
+            return True
+
+        prepare = getattr(self.on_success, "prepare_for_device_auth", None)
+        if not callable(prepare):
+            self.state = "failed"
+            self.message = "Credential authority unavailable."
+            logger.warning("CLI auth session %s: persistence authority is malformed", self.id)
+            self._done_event.set()
+            return False
+
+        try:
+            prepared = await prepare(self.provider)
+        except Exception:
+            prepared = False
+
+        if prepared is True:
+            return True
+
+        self.state = "failed"
+        self.message = "Credential authority unavailable."
+        logger.warning("CLI auth session %s: persistence authority is unavailable", self.id)
+        self._done_event.set()
+        return False
 
     async def _read_stdout(self) -> None:
         """Own cancellation-safe session completion around all child phases."""
@@ -101,6 +142,17 @@ class CLIAuthSession:
                 self.message = "CLI authentication was cancelled."
             self._done_event.set()
             raise
+        except ValueError:
+            # StreamReader raises ValueError when untrusted stdout exceeds its
+            # configured line limit without a separator.  Treat it exactly as
+            # a malformed child receipt: do not expose its text, terminate the
+            # sandbox handle, and make the session terminal without calling
+            # persistence.
+            await self._terminate_sandbox_handle()
+            self.state = "failed"
+            self.message = "CLI authentication output was invalid."
+            logger.warning("CLI auth session %s: sandboxed stdout was invalid", self.id)
+            self._done_event.set()
 
     async def _read_stdout_until_terminal(self) -> None:
         """Read sandboxed provider output and finalize its containment handle."""
@@ -156,20 +208,27 @@ class CLIAuthSession:
         elif self._success_observed and self.state != "expired" and self.on_success is not None:
             try:
                 persisted = await self.on_success(self.provider, staged_output=staged_output)
-                if self.provider.name == "codex" and persisted is False:
-                    # The CLI may have written a local auth.json, but without
-                    # a durable system-global write it is not an authorized
-                    # Codex session and must not be presented as one.
+                if persisted is False:
+                    # A parsed provider receipt is provisional.  Every
+                    # device-auth provider needs its explicit authority write
+                    # to confirm the session; only Codex has a more specific
+                    # system-global authority message.
                     self.state = "failed"
-                    self.message = "Codex authentication was not saved to the system authority."
-                    logger.warning(
-                        "CLI auth session %s: Codex authority persistence failed safely",
-                        self.id,
-                    )
+                    if self.provider.name == "codex":
+                        self.message = "Codex authentication was not saved to the system authority."
+                        logger.warning(
+                            "CLI auth session %s: Codex authority persistence failed safely",
+                            self.id,
+                        )
+                    else:
+                        self.message = "Authentication was not saved to the credential authority."
+                        logger.warning(
+                            "CLI auth session %s: persistence did not confirm authority safely",
+                            self.id,
+                        )
             except Exception:
-                # The Codex callback persists and reconciles an auth document.
-                # Its exception text can contain provider diagnostics, so do not
-                # pass it through the session logger.
+                # Callback exceptions can retain staged provider diagnostics.
+                # Never log a traceback or exception text from any provider.
                 if self.provider.name == "codex":
                     self.state = "failed"
                     self.message = "Codex authentication was not saved to the system authority."
@@ -180,7 +239,10 @@ class CLIAuthSession:
                 else:
                     self.state = "failed"
                     self.message = "Authentication was not saved to the credential authority."
-                    logger.exception("CLI auth session %s: on_success callback failed", self.id)
+                    logger.warning(
+                        "CLI auth session %s: on_success callback failed safely",
+                        self.id,
+                    )
             else:
                 if self.state != "failed":
                     self.state = "success"

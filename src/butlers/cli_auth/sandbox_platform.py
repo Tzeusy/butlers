@@ -649,6 +649,38 @@ class _BubblewrapDeviceAuthHandle:
     async def _wait_for_pid1_death(self, timeout_s: float) -> bool:
         return await asyncio.to_thread(self._pidfd_is_dead, self._pidfd, timeout_s)
 
+    async def _wait_for_outer_child(self, *, kill_on_timeout: bool) -> bool:
+        """Observe the direct Bubblewrap child without treating its exit as PID1 proof."""
+        try:
+            await asyncio.wait_for(self.process.wait(), timeout=_OUTER_CHILD_WAIT_S)
+            return True
+        except TimeoutError:
+            if not kill_on_timeout:
+                return False
+            with contextlib.suppress(Exception):
+                self.process.kill()
+            try:
+                await asyncio.wait_for(self.process.wait(), timeout=_OUTER_CHILD_WAIT_S)
+            except (Exception, TimeoutError):
+                return False
+            return True
+        except Exception:
+            return False
+
+    async def _kill_outer_child_and_prove_pid1_death(self) -> bool:
+        """Use the direct child only as a fallback, then require pidfd death proof.
+
+        A pidfd syscall failure says nothing about whether namespace PID1 (and
+        its inherited stage bind) survives.  Killing the direct Bubblewrap
+        child is best effort; stage cleanup remains forbidden until the pidfd
+        independently becomes readable and the direct child can be observed.
+        """
+        with contextlib.suppress(Exception):
+            self.process.kill()
+        if not await self._wait_for_outer_child(kill_on_timeout=False):
+            return False
+        return await self._wait_for_pid1_death(_PID1_KILL_S)
+
     async def _terminate_pid1_then_wait_outer_child(self) -> bool:
         """Kill namespace PID1 first, then wait only for direct Bubblewrap child."""
         if self._pid1_terminated is not None:
@@ -660,8 +692,8 @@ class _BubblewrapDeviceAuthHandle:
             # PID1 may have exited normally after emitting provider output.
             pass
         except OSError:
-            self._pid1_terminated = False
-            return False
+            self._pid1_terminated = await self._kill_outer_child_and_prove_pid1_death()
+            return self._pid1_terminated
 
         pid1_dead = await self._wait_for_pid1_death(_PID1_GRACE_S)
         if not pid1_dead:
@@ -670,34 +702,16 @@ class _BubblewrapDeviceAuthHandle:
             except ProcessLookupError:
                 pass
             except OSError:
-                self._pid1_terminated = False
-                return False
+                self._pid1_terminated = await self._kill_outer_child_and_prove_pid1_death()
+                return self._pid1_terminated
             pid1_dead = await self._wait_for_pid1_death(_PID1_KILL_S)
 
         if not pid1_dead:
-            # Do not reuse an outer identity when PID namespace death is not
-            # proven, even if Bubblewrap itself later happens to exit.
-            with contextlib.suppress(Exception):
-                self.process.kill()
-            self._pid1_terminated = False
-            return False
+            self._pid1_terminated = await self._kill_outer_child_and_prove_pid1_death()
+            return self._pid1_terminated
 
-        try:
-            await asyncio.wait_for(self.process.wait(), timeout=_OUTER_CHILD_WAIT_S)
-        except TimeoutError:
-            with contextlib.suppress(Exception):
-                self.process.kill()
-            try:
-                await asyncio.wait_for(self.process.wait(), timeout=_OUTER_CHILD_WAIT_S)
-            except (Exception, TimeoutError):
-                self._pid1_terminated = False
-                return False
-        except Exception:
-            self._pid1_terminated = False
-            return False
-
-        self._pid1_terminated = True
-        return True
+        self._pid1_terminated = await self._wait_for_outer_child(kill_on_timeout=True)
+        return self._pid1_terminated
 
     async def _discard_stage(self, *, release_identity: bool) -> None:
         if self._stage_discarded:
@@ -739,21 +753,36 @@ class _BubblewrapDeviceAuthHandle:
                     pid1_terminated=True,
                     payload_fds_closed=True,
                 )
-            await self._discard_stage(release_identity=pid1_terminated)
+            if pid1_terminated:
+                await self._discard_stage(release_identity=True)
+            else:
+                logger.warning(
+                    "Dashboard CLI-auth sandbox retained a stage after unproven PID1 death"
+                )
             return content
 
     async def complete_readonly(self) -> bool:
         """Discard a read-only stage only after namespace PID1 is proven dead."""
         async with self._lifecycle_lock:
             pid1_terminated = await self._terminate_pid1_then_wait_outer_child()
-            await self._discard_stage(release_identity=pid1_terminated)
+            if pid1_terminated:
+                await self._discard_stage(release_identity=True)
+            else:
+                logger.warning(
+                    "Dashboard CLI-auth sandbox retained a stage after unproven PID1 death"
+                )
             return pid1_terminated
 
     async def terminate(self) -> None:
         """Cancel the full namespace before stage cleanup or identity reuse."""
         async with self._lifecycle_lock:
             pid1_terminated = await self._terminate_pid1_then_wait_outer_child()
-            await self._discard_stage(release_identity=pid1_terminated)
+            if pid1_terminated:
+                await self._discard_stage(release_identity=True)
+            else:
+                logger.warning(
+                    "Dashboard CLI-auth sandbox retained a stage after unproven PID1 death"
+                )
 
 
 class BubblewrapDashboardCLIAuthSandbox:
@@ -878,6 +907,13 @@ class BubblewrapDashboardCLIAuthSandbox:
             raise SandboxLaunchValidationError(
                 "namespace PID1 shim did not acknowledge closure"
             ) from exc
+        except ValueError as exc:
+            # StreamReader rejects an oversized/no-newline receipt with
+            # ValueError.  Normalize it into the startup validation path so
+            # the already-started PID namespace receives pidfd cleanup.
+            raise SandboxLaunchValidationError(
+                "namespace PID1 shim closure receipt is invalid"
+            ) from exc
         if ready_line != _READY_LINE:
             raise SandboxLaunchValidationError("namespace PID1 shim closure receipt is invalid")
 
@@ -909,15 +945,21 @@ class BubblewrapDashboardCLIAuthSandbox:
                 process.kill()
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(process.wait(), timeout=_OUTER_CHILD_WAIT_S)
+            # The direct Bubblewrap child can exit while namespace PID1 still
+            # owns the stage bind.  Without a pidfd there is no independent
+            # death receipt, so retain both the stage directory and its UID
+            # lease rather than mistaking the outer-child wait for containment.
+            if stage is not None:
+                _close_fd(stage.root_fd)
+            logger.warning("Dashboard CLI-auth sandbox retained a startup stage without PID1 proof")
+            return
+
         if stage is not None:
             _close_fd(stage.root_fd)
             with contextlib.suppress(OSError):
                 await asyncio.to_thread(__import__("shutil").rmtree, stage.path)
-        # No child domain started, so returning this identity is safe.  If a
-        # direct Bubblewrap child existed but pidfd setup failed, intentionally
-        # retain the lease rather than reusing an identity without PID1 proof.
-        if process is None:
-            await self._identity_pool.release(identity)
+        # No child domain started, so returning this identity is safe.
+        await self._identity_pool.release(identity)
 
     async def _launch_invocation(
         self,

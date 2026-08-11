@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -165,7 +166,7 @@ async def test_device_auth_guard_failure_prevents_staged_bytes_persistence(
     stage_home, output = _make_stage_output(tmp_path / "stage-home")
 
     store = MagicMock()
-    store.store = AsyncMock()
+    store.store_shared_if_unchanged = AsyncMock(return_value=True)
     stage_home_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY)
     try:
         persisted = await persist_staged_device_auth_output(
@@ -176,16 +177,17 @@ async def test_device_auth_guard_failure_prevents_staged_bytes_persistence(
             expected_uid=os.geteuid(),
             pid1_terminated=pid1_terminated,
             payload_fds_closed=payload_fds_closed,
+            expected_authority_value=None,
         )
     finally:
         os.close(stage_home_fd)
 
     assert persisted is False
-    store.store.assert_not_awaited()
+    store.store_shared_if_unchanged.assert_not_awaited()
 
 
 async def test_device_auth_persists_validated_bytes_from_trusted_stage_fd(tmp_path: Path) -> None:
-    """REQ-core-credentials-002: persistence consumes the staged descriptor, not canonical path."""
+    """REQ-core-credentials-002: persistence projects one strict OpenAI authority."""
     from butlers.cli_auth.sandbox import persist_staged_device_auth_output
 
     canonical = tmp_path / "canonical" / "auth.json"
@@ -193,13 +195,27 @@ async def test_device_auth_persists_validated_bytes_from_trusted_stage_fd(tmp_pa
     canonical.write_text('{"canonical":"must-not-be-read"}', encoding="utf-8")
 
     stage_home, output = _make_stage_output(tmp_path / "stage-home")
-    staged_content = '{"openai":{"type":"oauth"}}'
+    staged_content = """{
+      "openai": {
+        "type": "oauth",
+        "refresh": "synthetic-device-refresh",
+        "access": "synthetic-device-access",
+        "expires": 1700000000,
+        "enterpriseUrl": "https://enterprise.example.test",
+        "accountId": "synthetic-account"
+      }
+    }"""
+    expected_content = (
+        '{"openai":{"access":"synthetic-device-access","accountId":"synthetic-account",'
+        '"enterpriseUrl":"https://enterprise.example.test","expires":1700000000,'
+        '"refresh":"synthetic-device-refresh","type":"oauth"}}'
+    )
     output.write_text(staged_content, encoding="utf-8")
     os.chmod(output, 0o600)
 
     provider = replace(PROVIDERS["opencode-openai"], token_path=canonical)
     store = MagicMock()
-    store.store = AsyncMock()
+    store.store_shared_if_unchanged = AsyncMock(return_value=True)
     stage_home_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY)
     try:
         persisted = await persist_staged_device_auth_output(
@@ -210,19 +226,215 @@ async def test_device_auth_persists_validated_bytes_from_trusted_stage_fd(tmp_pa
             expected_uid=os.geteuid(),
             pid1_terminated=True,
             payload_fds_closed=True,
+            expected_authority_value=None,
         )
     finally:
         os.close(stage_home_fd)
 
     assert persisted is True
-    assert canonical.read_text(encoding="utf-8") == '{"canonical":"must-not-be-read"}'
-    store.store.assert_awaited_once_with(
+    assert canonical.read_text(encoding="utf-8") == expected_content
+    store.store_shared_if_unchanged.assert_awaited_once_with(
         "cli-auth/opencode-openai",
-        staged_content,
+        expected_content,
+        expected_value=None,
         category="cli-auth",
         description="CLI auth token for OpenCode (OpenAI)",
         is_sensitive=True,
     )
+
+
+@pytest.mark.parametrize(
+    "staged_content",
+    [
+        (
+            b'{"openai":{"type":"oauth","refresh":"synthetic-refresh",'
+            b'"access":"synthetic-access","expires":1700000000},'
+            b'"opencode-go":{"type":"api","key":"peer-must-not-persist"}}'
+        ),
+        (
+            b'{"openai":{"type":"oauth","refresh":"synthetic-refresh",'
+            b'"access":"synthetic-access","expires":1700000000,'
+            b'"unexpected":{"peer":"must-not-persist"}}}'
+        ),
+        (
+            b'{"openai":{"type":"oauth","refresh":"synthetic-refresh",'
+            b'"access":"synthetic-access","expires":1700000000,'
+            b'"access":"duplicate-must-not-persist"}}'
+        ),
+        (
+            b'{"openai":{"type":"oauth","refresh":"synthetic-refresh",'
+            b'"access":"synthetic-access","expires":NaN}}'
+        ),
+    ],
+)
+async def test_device_auth_rejects_unprojectable_openai_output_before_persistence(
+    tmp_path: Path,
+    staged_content: bytes,
+) -> None:
+    """REQ-core-credentials-002: device output cannot carry peer or ambiguous authority."""
+    from butlers.cli_auth.sandbox import persist_staged_device_auth_output
+
+    provider = replace(
+        PROVIDERS["opencode-openai"],
+        token_path=tmp_path / ".local" / "share" / "opencode" / "auth.json",
+    )
+    stage_home, output = _make_stage_output(tmp_path / "stage-home")
+    output.write_bytes(staged_content)
+    os.chmod(output, 0o600)
+
+    store = MagicMock()
+    store.store_shared_if_unchanged = AsyncMock(return_value=True)
+    stage_home_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        persisted = await persist_staged_device_auth_output(
+            provider,
+            store,
+            stage_home_fd=stage_home_fd,
+            relative_output_path=output.relative_to(stage_home),
+            expected_uid=os.geteuid(),
+            pid1_terminated=True,
+            payload_fds_closed=True,
+            expected_authority_value=None,
+        )
+    finally:
+        os.close(stage_home_fd)
+
+    assert persisted is False
+    store.store_shared_if_unchanged.assert_not_awaited()
+
+
+async def test_codex_device_auth_persists_only_strict_projected_authority(
+    tmp_path: Path,
+) -> None:
+    """REQ-core-credentials-002: Codex device auth persists its exact OAuth shape."""
+    from butlers.cli_auth.sandbox import persist_staged_device_auth_output
+
+    stage_home = tmp_path / "stage-home"
+    stage_home.mkdir(mode=0o700)
+    output = stage_home / ".codex" / "auth.json"
+    output.parent.mkdir(mode=0o700)
+    staged_content = """{
+      "tokens": {
+        "refresh_token": "synthetic-refresh",
+        "id_token": "synthetic.id.signature",
+        "account_id": "synthetic-account",
+        "access_token": "synthetic.access.signature"
+      },
+      "last_refresh": "2026-08-12T00:00:00Z",
+      "OPENAI_API_KEY": null,
+      "auth_mode": "chatgpt"
+    }"""
+    expected_content = (
+        '{"OPENAI_API_KEY":null,"auth_mode":"chatgpt",'
+        '"last_refresh":"2026-08-12T00:00:00Z",'
+        '"tokens":{"access_token":"synthetic.access.signature",'
+        '"account_id":"synthetic-account","id_token":"synthetic.id.signature",'
+        '"refresh_token":"synthetic-refresh"}}'
+    )
+    output.write_text(staged_content, encoding="utf-8")
+    os.chmod(output, 0o600)
+
+    provider = replace(PROVIDERS["codex"], token_path=tmp_path / "canonical" / "auth.json")
+    authority = MagicMock()
+    authority.require_system_global_pool = MagicMock()
+    authority.store_codex_cli_auth_if_unchanged = AsyncMock(return_value=True)
+    stage_home_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        persisted = await persist_staged_device_auth_output(
+            provider,
+            authority,
+            stage_home_fd=stage_home_fd,
+            relative_output_path=output.relative_to(stage_home),
+            expected_uid=os.geteuid(),
+            pid1_terminated=True,
+            payload_fds_closed=True,
+            codex_authority=authority,
+            expected_authority_value=None,
+        )
+    finally:
+        os.close(stage_home_fd)
+
+    assert persisted is True
+    authority.store_codex_cli_auth_if_unchanged.assert_awaited_once_with(
+        expected_content,
+        expected_value=None,
+    )
+    assert provider.token_path is not None
+    assert provider.token_path.read_text(encoding="utf-8") == expected_content
+
+
+@pytest.mark.parametrize(
+    "staged_content",
+    [
+        b'{"peer":"nonempty-object-must-not-persist"}',
+        (
+            b'{"auth_mode":"chatgpt","OPENAI_API_KEY":null,'
+            b'"tokens":{"id_token":"synthetic.id.signature",'
+            b'"access_token":"synthetic.access.signature",'
+            b'"refresh_token":"synthetic-refresh","account_id":null},'
+            b'"last_refresh":"2026-08-12T00:00:00Z",'
+            b'"peer":{"must":"not-persist"}}'
+        ),
+        (
+            b'{"auth_mode":"chatgpt","OPENAI_API_KEY":null,'
+            b'"tokens":{"id_token":"synthetic.id.signature",'
+            b'"access_token":"synthetic.access.signature",'
+            b'"refresh_token":"synthetic-refresh","account_id":null,'
+            b'"unexpected":{"must":"not-persist"}},'
+            b'"last_refresh":"2026-08-12T00:00:00Z"}'
+        ),
+        (
+            b'{"auth_mode":"chatgpt","OPENAI_API_KEY":null,'
+            b'"tokens":{"id_token":"synthetic.id.signature",'
+            b'"access_token":"synthetic.access.signature",'
+            b'"refresh_token":"synthetic-refresh",'
+            b'"refresh_token":"duplicate-must-not-persist","account_id":null},'
+            b'"last_refresh":"2026-08-12T00:00:00Z"}'
+        ),
+        (
+            b'{"auth_mode":"chatgpt","OPENAI_API_KEY":null,'
+            b'"tokens":{"id_token":"synthetic.id.signature",'
+            b'"access_token":"synthetic.access.signature",'
+            b'"refresh_token":"synthetic-refresh","account_id":null},'
+            b'"last_refresh":NaN}'
+        ),
+    ],
+)
+async def test_codex_device_auth_rejects_unprojectable_output_before_persistence(
+    tmp_path: Path,
+    staged_content: bytes,
+) -> None:
+    """REQ-core-credentials-002: Codex accepts no generic nonempty JSON fallback."""
+    from butlers.cli_auth.sandbox import persist_staged_device_auth_output
+
+    stage_home = tmp_path / "stage-home"
+    stage_home.mkdir(mode=0o700)
+    output = stage_home / ".codex" / "auth.json"
+    output.parent.mkdir(mode=0o700)
+    output.write_bytes(staged_content)
+    os.chmod(output, 0o600)
+
+    authority = MagicMock()
+    authority.require_system_global_pool = MagicMock()
+    authority.store_codex_cli_auth_if_unchanged = AsyncMock(return_value=True)
+    stage_home_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        persisted = await persist_staged_device_auth_output(
+            PROVIDERS["codex"],
+            authority,
+            stage_home_fd=stage_home_fd,
+            relative_output_path=output.relative_to(stage_home),
+            expected_uid=os.geteuid(),
+            pid1_terminated=True,
+            payload_fds_closed=True,
+            codex_authority=authority,
+            expected_authority_value=None,
+        )
+    finally:
+        os.close(stage_home_fd)
+
+    assert persisted is False
+    authority.store_codex_cli_auth_if_unchanged.assert_not_awaited()
 
 
 @pytest.mark.parametrize("attack", ["symlink", "hardlink", "escape"])
@@ -250,7 +462,7 @@ async def test_device_auth_rejects_linked_or_escaped_staged_output_before_persis
 
     provider = replace(PROVIDERS["opencode-openai"], token_path=canonical)
     store = MagicMock()
-    store.store = AsyncMock()
+    store.store_shared_if_unchanged = AsyncMock(return_value=True)
     stage_home_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY)
     try:
         persisted = await persist_staged_device_auth_output(
@@ -261,12 +473,216 @@ async def test_device_auth_rejects_linked_or_escaped_staged_output_before_persis
             expected_uid=os.geteuid(),
             pid1_terminated=True,
             payload_fds_closed=True,
+            expected_authority_value=None,
         )
     finally:
         os.close(stage_home_fd)
 
     assert persisted is False
-    store.store.assert_not_awaited()
+    store.store_shared_if_unchanged.assert_not_awaited()
+
+
+async def test_device_auth_rejects_a_peer_staged_credential_artifact_before_persistence(
+    tmp_path: Path,
+) -> None:
+    """REQ-core-credentials-002: one valid output cannot mask a peer authority file."""
+    from butlers.cli_auth.sandbox import persist_staged_device_auth_output
+
+    provider = replace(
+        PROVIDERS["opencode-openai"],
+        token_path=tmp_path / ".local" / "share" / "opencode" / "auth.json",
+    )
+    stage_home, output = _make_stage_output(tmp_path / "stage-home")
+    output.write_bytes(
+        b'{"openai":{"type":"oauth","refresh":"synthetic-refresh",'
+        b'"access":"synthetic-access","expires":1700000000}}'
+    )
+    os.chmod(output, 0o600)
+    peer_artifact = output.with_name("peer-credential-artifact.json")
+    peer_artifact.write_text('{"peer":"must-not-persist"}', encoding="utf-8")
+    os.chmod(peer_artifact, 0o600)
+
+    store = MagicMock()
+    store.store_shared_if_unchanged = AsyncMock(return_value=True)
+    stage_home_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        persisted = await persist_staged_device_auth_output(
+            provider,
+            store,
+            stage_home_fd=stage_home_fd,
+            relative_output_path=output.relative_to(stage_home),
+            expected_uid=os.geteuid(),
+            pid1_terminated=True,
+            payload_fds_closed=True,
+            expected_authority_value=None,
+        )
+    finally:
+        os.close(stage_home_fd)
+
+    assert persisted is False
+    store.store_shared_if_unchanged.assert_not_awaited()
+
+
+async def test_opencode_device_auth_authority_cas_conflict_persists_nothing_or_projects_no_file(
+    tmp_path: Path,
+) -> None:
+    """REQ-core-credentials-002: a concurrent authority replacement wins over staged output."""
+    from butlers.cli_auth.sandbox import persist_staged_device_auth_output
+
+    canonical = tmp_path / "canonical" / "auth.json"
+    provider = replace(PROVIDERS["opencode-openai"], token_path=canonical)
+    stage_home, output = _make_stage_output(tmp_path / "stage-home")
+    output.write_bytes(
+        b'{"openai":{"type":"oauth","refresh":"new-refresh",'
+        b'"access":"new-access","expires":1700000000}}'
+    )
+    os.chmod(output, 0o600)
+
+    store = MagicMock()
+    store.store_shared_if_unchanged = AsyncMock(return_value=False)
+    stage_home_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        persisted = await persist_staged_device_auth_output(
+            provider,
+            store,
+            stage_home_fd=stage_home_fd,
+            relative_output_path=output.relative_to(stage_home),
+            expected_uid=os.geteuid(),
+            pid1_terminated=True,
+            payload_fds_closed=True,
+            expected_authority_value='{"openai":{"access":"owner-newer"}}',
+        )
+    finally:
+        os.close(stage_home_fd)
+
+    assert persisted is False
+    store.store_shared_if_unchanged.assert_awaited_once()
+    assert not canonical.exists()
+
+
+async def test_device_auth_authority_write_error_is_value_free_and_projects_no_file(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """REQ-core-credentials-002: authority write errors never log or project staged bytes."""
+    from butlers.cli_auth.sandbox import persist_staged_device_auth_output
+
+    staged_sentinel = "STAGED-AUTHORITY-WRITE-MUST-NOT-LOG"
+    canonical = tmp_path / "canonical" / "auth.json"
+    provider = replace(PROVIDERS["opencode-openai"], token_path=canonical)
+    stage_home, output = _make_stage_output(tmp_path / "stage-home")
+    output.write_bytes(
+        b'{"openai":{"type":"oauth","refresh":"'
+        + staged_sentinel.encode("utf-8")
+        + b'","access":"synthetic-access","expires":1700000000}}'
+    )
+    os.chmod(output, 0o600)
+
+    store = MagicMock()
+    store.store_shared_if_unchanged = AsyncMock(side_effect=RuntimeError(staged_sentinel))
+    stage_home_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        with caplog.at_level("WARNING", logger="butlers.cli_auth.persistence"):
+            persisted = await persist_staged_device_auth_output(
+                provider,
+                store,
+                stage_home_fd=stage_home_fd,
+                relative_output_path=output.relative_to(stage_home),
+                expected_uid=os.geteuid(),
+                pid1_terminated=True,
+                payload_fds_closed=True,
+                expected_authority_value=None,
+            )
+    finally:
+        os.close(stage_home_fd)
+
+    assert persisted is False
+    assert not canonical.exists()
+    assert staged_sentinel not in caplog.text
+
+
+async def test_opencode_device_auth_cas_success_reconciles_the_canonical_runtime_file(
+    tmp_path: Path,
+) -> None:
+    """REQ-core-credentials-002: a confirmed authority write is usable without restart."""
+    from butlers.cli_auth.sandbox import persist_staged_device_auth_output
+
+    canonical = tmp_path / "canonical" / "auth.json"
+    provider = replace(PROVIDERS["opencode-openai"], token_path=canonical)
+    stage_home, output = _make_stage_output(tmp_path / "stage-home")
+    output.write_bytes(
+        b'{"openai":{"type":"oauth","refresh":"synthetic-refresh",'
+        b'"access":"synthetic-access","expires":1700000000}}'
+    )
+    os.chmod(output, 0o600)
+
+    store = MagicMock()
+    store.store_shared_if_unchanged = AsyncMock(return_value=True)
+    stage_home_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        persisted = await persist_staged_device_auth_output(
+            provider,
+            store,
+            stage_home_fd=stage_home_fd,
+            relative_output_path=output.relative_to(stage_home),
+            expected_uid=os.geteuid(),
+            pid1_terminated=True,
+            payload_fds_closed=True,
+            expected_authority_value=None,
+        )
+    finally:
+        os.close(stage_home_fd)
+
+    assert persisted is True
+    assert provider.is_authenticated() is True
+    assert canonical.read_text(encoding="utf-8") == (
+        '{"openai":{"access":"synthetic-access","expires":1700000000,'
+        '"refresh":"synthetic-refresh","type":"oauth"}}'
+    )
+
+
+async def test_codex_device_auth_authority_cas_conflict_persists_nothing_or_projects_no_file(
+    tmp_path: Path,
+) -> None:
+    """REQ-core-credentials-001: a newer system-global Codex authority cannot be replaced."""
+    from butlers.cli_auth.sandbox import persist_staged_device_auth_output
+
+    canonical = tmp_path / "canonical" / "auth.json"
+    provider = replace(PROVIDERS["codex"], token_path=canonical)
+    stage_home = tmp_path / "stage-home"
+    stage_home.mkdir(mode=0o700)
+    output = stage_home / ".codex" / "auth.json"
+    output.parent.mkdir(mode=0o700)
+    output.write_bytes(
+        b'{"auth_mode":"chatgpt","OPENAI_API_KEY":null,'
+        b'"tokens":{"id_token":"synthetic-id","access_token":"synthetic-access",'
+        b'"refresh_token":"synthetic-refresh","account_id":null},'
+        b'"last_refresh":"2026-08-12T00:00:00Z"}'
+    )
+    os.chmod(output, 0o600)
+
+    authority = MagicMock()
+    authority.require_system_global_pool = MagicMock()
+    authority.store_codex_cli_auth_if_unchanged = AsyncMock(return_value=False)
+    stage_home_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        persisted = await persist_staged_device_auth_output(
+            provider,
+            authority,
+            stage_home_fd=stage_home_fd,
+            relative_output_path=output.relative_to(stage_home),
+            expected_uid=os.geteuid(),
+            pid1_terminated=True,
+            payload_fds_closed=True,
+            codex_authority=authority,
+            expected_authority_value='{"auth_mode":"chatgpt","newer":"owner"}',
+        )
+    finally:
+        os.close(stage_home_fd)
+
+    assert persisted is False
+    authority.store_codex_cli_auth_if_unchanged.assert_awaited_once()
+    assert not canonical.exists()
 
 
 class _FakeDeviceAuthProcess:
@@ -321,6 +737,99 @@ class _RecordingDeviceAuthLauncher:
         return _RecordingDeviceAuthHandle(self._events, staged_output=self._staged_output)
 
 
+async def test_device_auth_prepares_the_authority_fence_before_sandbox_launch() -> None:
+    """REQ-core-credentials-002: a preparable authority fence orders before child spawn."""
+    from butlers.cli_auth.session import CLIAuthSession
+
+    events: list[str] = []
+
+    class _PreparedCallback:
+        requires_prelaunch_prepare = True
+
+        async def prepare_for_device_auth(self, _provider) -> bool:
+            events.append("prepare")
+            return True
+
+        async def __call__(self, _provider, *, staged_output: bytes) -> bool:
+            del staged_output
+            events.append("persist")
+            return True
+
+    session = CLIAuthSession(
+        id="authority-before-launch",
+        provider=PROVIDERS["codex"],
+        on_success=_PreparedCallback(),
+        sandbox=_RecordingDeviceAuthLauncher(
+            events,
+            staged_output=b'{"auth_mode":"chatgpt"}',
+        ),
+    )
+
+    await session.start()
+    await session.wait()
+
+    assert session.state == "success"
+    assert events == ["prepare", "launch", "finalize", "persist"]
+
+
+async def test_device_auth_does_not_launch_when_authority_preparation_fails() -> None:
+    """REQ-core-credentials-002: unavailable prelaunch authority means no child domain."""
+    from butlers.cli_auth.session import CLIAuthSession
+
+    events: list[str] = []
+
+    class _UnavailableCallback:
+        requires_prelaunch_prepare = True
+
+        async def prepare_for_device_auth(self, _provider) -> bool:
+            events.append("prepare")
+            return False
+
+        async def __call__(self, _provider, *, staged_output: bytes) -> bool:
+            del staged_output
+            events.append("persist")
+            return True
+
+    session = CLIAuthSession(
+        id="authority-unavailable",
+        provider=PROVIDERS["opencode-openai"],
+        on_success=_UnavailableCallback(),
+        sandbox=_RecordingDeviceAuthLauncher(
+            events,
+            staged_output=b'{"openai":{"type":"oauth"}}',
+        ),
+    )
+
+    await session.start()
+
+    assert session.state == "failed"
+    assert session.message == "Credential authority unavailable."
+    assert session._done_event.is_set()
+    assert events == ["prepare"]
+
+
+async def test_device_auth_does_not_launch_without_a_persistence_callback() -> None:
+    """REQ-core-credentials-002: an absent authority callback is a prelaunch failure."""
+    from butlers.cli_auth.session import CLIAuthSession
+
+    events: list[str] = []
+    session = CLIAuthSession(
+        id="authority-callback-missing",
+        provider=PROVIDERS["opencode-openai"],
+        sandbox=_RecordingDeviceAuthLauncher(
+            events,
+            staged_output=b'{"openai":{"type":"oauth"}}',
+        ),
+    )
+
+    await session.start()
+
+    assert session.state == "failed"
+    assert session.message == "Credential authority unavailable."
+    assert session._done_event.is_set()
+    assert events == []
+
+
 async def test_device_auth_session_uses_sandbox_handle_before_persisting_staged_bytes() -> None:
     """REQ-core-credentials-002: device auth has no direct-child fallback or pre-PID1 write."""
     from butlers.cli_auth.session import CLIAuthSession
@@ -368,6 +877,139 @@ async def test_device_auth_session_does_not_persist_when_sandbox_finalization_fa
 
     assert session.state == "failed"
     assert events == ["launch", "finalize"]
+    on_success.assert_not_awaited()
+
+
+async def test_opencode_device_auth_false_persistence_callback_is_a_terminal_failure() -> None:
+    """REQ-core-credentials-002: every provider requires a confirmed authority write."""
+    from butlers.cli_auth.session import CLIAuthSession
+
+    events: list[str] = []
+    provider = replace(
+        PROVIDERS["opencode-openai"],
+        success_pattern=re.compile(r"Successfully logged in"),
+    )
+
+    async def _not_persisted(_provider, *, staged_output: bytes) -> bool:
+        assert staged_output == b'{"openai":{"type":"oauth"}}'
+        events.append("persist")
+        return False
+
+    session = CLIAuthSession(
+        id="opencode-device-auth-unpersisted",
+        provider=provider,
+        on_success=_not_persisted,
+        sandbox=_RecordingDeviceAuthLauncher(
+            events,
+            staged_output=b'{"openai":{"type":"oauth"}}',
+        ),
+    )
+    await session.start()
+    await session.wait()
+
+    assert session.state == "failed"
+    assert session.message == "Authentication was not saved to the credential authority."
+    assert session.message != "Authentication successful."
+    assert events == ["launch", "finalize", "persist"]
+
+
+async def test_opencode_device_auth_persistence_exception_is_value_free_and_terminal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """REQ-core-credentials-002: staged authority bytes never reach callback diagnostics."""
+    from butlers.cli_auth.session import CLIAuthSession
+
+    events: list[str] = []
+    staged_sentinel = "STAGED-OPENCODE-AUTHORITY-MUST-NOT-LOG"
+    provider = replace(
+        PROVIDERS["opencode-openai"],
+        success_pattern=re.compile(r"Successfully logged in"),
+    )
+
+    async def _raise(_provider, *, staged_output: bytes) -> bool:
+        assert staged_sentinel.encode() in staged_output
+        events.append("persist")
+        raise RuntimeError(f"persistence failed for {staged_sentinel}")
+
+    session = CLIAuthSession(
+        id="opencode-device-auth-persistence-exception",
+        provider=provider,
+        on_success=_raise,
+        sandbox=_RecordingDeviceAuthLauncher(
+            events,
+            staged_output=(
+                b'{"openai":{"type":"oauth","access":"' + staged_sentinel.encode() + b'"}}'
+            ),
+        ),
+    )
+    with caplog.at_level("INFO", logger="butlers.cli_auth.session"):
+        await session.start()
+        await session.wait()
+
+    assert session.state == "failed"
+    assert session.message == "Authentication was not saved to the credential authority."
+    assert events == ["launch", "finalize", "persist"]
+    assert staged_sentinel not in caplog.text
+    assert "on_success callback failed safely" in caplog.text
+
+
+async def test_device_auth_session_oversized_stdout_terminates_the_handle_and_marks_terminal() -> (
+    None
+):
+    """REQ-core-credentials-002: malformed provider stdout cannot leak a live domain."""
+    from butlers.cli_auth.session import CLIAuthSession
+
+    events: list[str] = []
+    on_success = AsyncMock(return_value=True)
+
+    class _OversizedOutputProcess:
+        def __init__(self) -> None:
+            self.stdout = asyncio.StreamReader(limit=64)
+            self.stdout.feed_data(b"x" * 65)
+            self.returncode: int | None = None
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+        def terminate(self) -> None:
+            self.returncode = 0
+
+        def kill(self) -> None:
+            self.returncode = 0
+
+    class _OversizedOutputHandle:
+        def __init__(self) -> None:
+            self.process = _OversizedOutputProcess()
+
+        async def finalize(self, *, succeeded: bool) -> bytes | None:
+            del succeeded
+            events.append("finalize")
+            return None
+
+        async def terminate(self) -> None:
+            events.append("terminate")
+
+    class _OversizedOutputLauncher:
+        async def launch_device_auth(self, _provider):
+            events.append("launch")
+            return _OversizedOutputHandle()
+
+    session = CLIAuthSession(
+        id="oversized-device-auth-output",
+        provider=PROVIDERS["codex"],
+        on_success=on_success,
+        sandbox=_OversizedOutputLauncher(),
+    )
+    await session.start()
+    await session.wait(timeout=1.0)
+    assert session._reader_task is not None
+    await session._reader_task
+
+    assert session.state == "failed"
+    assert session.message == "CLI authentication output was invalid."
+    assert session._done_event.is_set()
+    assert events == ["launch", "terminate"]
     on_success.assert_not_awaited()
 
 
@@ -943,6 +1585,152 @@ async def test_bubblewrap_launcher_opens_pidfd_before_releasing_payload_or_readi
         for fd in captured_block_fd:
             os.close(fd)
         await handle.terminate()
+
+
+async def test_pidfd_open_failure_after_pid1_receipt_retains_stage_and_identity(
+    tmp_path: Path,
+) -> None:
+    """REQ-core-credentials-002: no pidfd proof means no stage or UID reuse."""
+    from butlers.cli_auth.sandbox import SandboxUnavailableError
+    from butlers.cli_auth.sandbox_platform import (
+        BubblewrapDashboardCLIAuthSandbox,
+        DeviceAuthSandboxInvocation,
+        InvocationIdentityPool,
+        SandboxStage,
+    )
+
+    events: list[str] = []
+    process = _HandshakeProcess(events)
+    pool = InvocationIdentityPool(first_id=61000, last_id=61000)
+    stage_home = tmp_path / "stage-home"
+    stage_home.mkdir(mode=0o700)
+    stage_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    block_observer_fd: list[int] = []
+
+    async def _spawn(*argv: str, **_kwargs: object) -> _HandshakeProcess:
+        info_fd = int(argv[argv.index("--info-fd") + 1])
+        block_observer_fd.append(os.dup(int(argv[argv.index("--block-fd") + 1])))
+        os.write(info_fd, b'{"child-pid": 7123}\n')
+        return process
+
+    def _pidfd_open(_pid: int, _flags: int = 0) -> int:
+        events.append("pidfd_open")
+        raise OSError("synthetic pidfd-open failure")
+
+    sandbox = BubblewrapDashboardCLIAuthSandbox(
+        bwrap_path=tmp_path / "bwrap",
+        shim_path=tmp_path / "runtime-cli-sandbox-init",
+        identity_pool=pool,
+        exact_image_preflight=lambda: None,
+        invocation_resolver=lambda _provider: DeviceAuthSandboxInvocation(
+            command=("/usr/bin/true",),
+            readonly_inputs=(Path("/usr/bin/true"),),
+            relative_output_path=Path(".codex") / "auth.json",
+        ),
+        stage_factory=lambda _identity: SandboxStage(path=stage_home, root_fd=stage_fd),
+        spawn=_spawn,
+        pidfd_open=_pidfd_open,
+        release_payload=lambda _fd: events.append("block_release"),
+    )
+
+    try:
+        with pytest.raises(SandboxUnavailableError, match="startup failed safely"):
+            await sandbox.launch_device_auth(PROVIDERS["codex"])
+
+        assert events == ["pidfd_open"]
+        assert block_observer_fd
+        assert os.read(block_observer_fd[0], 1) == b""
+        assert process.wait_calls == 1
+        assert stage_home.exists(), "a PID1 without a pidfd can retain the stage bind"
+        with pytest.raises(SandboxUnavailableError, match="identity pool exhausted"):
+            await pool.acquire()
+    finally:
+        for fd in block_observer_fd:
+            os.close(fd)
+        try:
+            os.close(stage_fd)
+        except OSError:
+            pass
+        shutil.rmtree(stage_home, ignore_errors=True)
+
+
+async def test_bubblewrap_launcher_oversized_shim_ready_line_aborts_the_started_domain(
+    tmp_path: Path,
+) -> None:
+    """REQ-core-credentials-002: malformed shim stdout follows startup containment cleanup."""
+    from butlers.cli_auth.sandbox import SandboxUnavailableError
+    from butlers.cli_auth.sandbox_platform import (
+        BubblewrapDashboardCLIAuthSandbox,
+        DeviceAuthSandboxInvocation,
+        InvocationIdentityPool,
+        SandboxStage,
+    )
+
+    class _OversizedReadyProcess:
+        def __init__(self) -> None:
+            self.stdout = asyncio.StreamReader(limit=64)
+            self.stdout.feed_data(b"x" * 65)
+            self.returncode: int | None = None
+            self.wait_calls = 0
+
+        async def wait(self) -> int:
+            self.wait_calls += 1
+            self.returncode = 0
+            return 0
+
+        def terminate(self) -> None:
+            self.returncode = 0
+
+        def kill(self) -> None:
+            self.returncode = 0
+
+    process = _OversizedReadyProcess()
+    pool = InvocationIdentityPool(first_id=61000, last_id=61000)
+    stage_home = tmp_path / "stage-home"
+    stage_home.mkdir(mode=0o700)
+    stage_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    block_observer_fd: list[int] = []
+
+    async def _spawn(*argv: str, **_kwargs: object) -> _OversizedReadyProcess:
+        info_fd = int(argv[argv.index("--info-fd") + 1])
+        block_observer_fd.append(os.dup(int(argv[argv.index("--block-fd") + 1])))
+        os.write(info_fd, b'{"child-pid": 7123}\n')
+        return process
+
+    sandbox = BubblewrapDashboardCLIAuthSandbox(
+        bwrap_path=tmp_path / "bwrap",
+        shim_path=tmp_path / "runtime-cli-sandbox-init",
+        identity_pool=pool,
+        exact_image_preflight=lambda: None,
+        invocation_resolver=lambda _provider: DeviceAuthSandboxInvocation(
+            command=("/usr/bin/true",),
+            readonly_inputs=(Path("/usr/bin/true"),),
+            relative_output_path=Path(".codex") / "auth.json",
+        ),
+        stage_factory=lambda _identity: SandboxStage(path=stage_home, root_fd=stage_fd),
+        spawn=_spawn,
+        pidfd_open=lambda _pid, _flags=0: os.open("/dev/null", os.O_RDONLY | os.O_CLOEXEC),
+        pidfd_send_signal=lambda *_args: None,
+        pidfd_is_dead=lambda _pidfd, _timeout: True,
+    )
+
+    try:
+        with pytest.raises(SandboxUnavailableError, match="startup failed safely"):
+            await sandbox.launch_device_auth(PROVIDERS["codex"])
+
+        assert process.wait_calls == 1
+        assert not stage_home.exists()
+        reused = await pool.acquire()
+        assert reused.uid == 61000
+        await pool.release(reused)
+    finally:
+        for fd in block_observer_fd:
+            os.close(fd)
+        try:
+            os.close(stage_fd)
+        except OSError:
+            pass
+        shutil.rmtree(stage_home, ignore_errors=True)
 
 
 async def test_readonly_command_stages_authority_before_launch_and_discards_child_changes(
@@ -1555,23 +2343,104 @@ async def test_bubblewrap_handle_retains_the_identity_when_pid1_death_is_not_pro
         pidfd_is_dead=lambda _pidfd, _timeout: False,
     )
 
-    handle = await sandbox.launch_device_auth(PROVIDERS["codex"])
     try:
+        handle = await sandbox.launch_device_auth(PROVIDERS["codex"])
         with patch(
             "butlers.cli_auth.sandbox_platform.read_validated_staged_device_auth_output"
         ) as read_stage:
             assert await handle.finalize(succeeded=True) is None
+        read_stage.assert_not_called()
+        assert process.wait_calls == 1
+        assert events.count("pidfd_signal") == 2
+        assert process.returncode == 0
+        assert stage_home.exists(), "unproven PID1 death may retain the stage bind"
+        with pytest.raises(SandboxUnavailableError, match="identity pool exhausted"):
+            await pool.acquire()
     finally:
         for fd in block_observer_fd:
             os.close(fd)
+        try:
+            os.close(stage_fd)
+        except OSError:
+            pass
+        shutil.rmtree(stage_home, ignore_errors=True)
 
-    read_stage.assert_not_called()
-    assert process.wait_calls == 0
-    assert events.count("pidfd_signal") == 2
-    assert process.returncode == 0
-    assert not stage_home.exists()
-    with pytest.raises(SandboxUnavailableError, match="identity pool exhausted"):
-        await pool.acquire()
+
+async def test_pidfd_signal_error_kills_the_direct_child_and_retains_stage_until_death_is_proven(
+    tmp_path: Path,
+) -> None:
+    """REQ-core-credentials-002: a failed pidfd signal never permits unsafe stage removal."""
+    from butlers.cli_auth.sandbox import SandboxUnavailableError
+    from butlers.cli_auth.sandbox_platform import (
+        BubblewrapDashboardCLIAuthSandbox,
+        DeviceAuthSandboxInvocation,
+        InvocationIdentityPool,
+        SandboxStage,
+    )
+
+    events: list[str] = []
+
+    class _PidfdSignalErrorProcess(_HandshakeProcess):
+        def kill(self) -> None:
+            events.append("outer_kill")
+            self.returncode = 0
+
+    process = _PidfdSignalErrorProcess(events)
+    pool = InvocationIdentityPool(first_id=61000, last_id=61000)
+    stage_home = tmp_path / "stage-home"
+    stage_home.mkdir(mode=0o700)
+    stage_fd = os.open(stage_home, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    block_observer_fd: list[int] = []
+
+    async def _spawn(*argv: str, **_kwargs: object) -> _PidfdSignalErrorProcess:
+        info_fd = int(argv[argv.index("--info-fd") + 1])
+        block_observer_fd.append(os.dup(int(argv[argv.index("--block-fd") + 1])))
+        os.write(info_fd, b'{"child-pid": 7123}\n')
+        return process
+
+    def _pidfd_send_signal(*_args: object) -> None:
+        events.append("pidfd_signal")
+        raise OSError("synthetic pidfd failure")
+
+    def _pidfd_is_dead(_pidfd: int, _timeout: float) -> bool:
+        events.append("pidfd_death_check")
+        return False
+
+    sandbox = BubblewrapDashboardCLIAuthSandbox(
+        bwrap_path=tmp_path / "bwrap",
+        shim_path=tmp_path / "runtime-cli-sandbox-init",
+        identity_pool=pool,
+        exact_image_preflight=lambda: None,
+        invocation_resolver=lambda _provider: DeviceAuthSandboxInvocation(
+            command=("/usr/bin/true",),
+            readonly_inputs=(Path("/usr/bin/true"),),
+            relative_output_path=Path(".codex") / "auth.json",
+        ),
+        stage_factory=lambda _identity: SandboxStage(path=stage_home, root_fd=stage_fd),
+        spawn=_spawn,
+        pidfd_open=lambda _pid, _flags=0: os.open("/dev/null", os.O_RDONLY | os.O_CLOEXEC),
+        pidfd_send_signal=_pidfd_send_signal,
+        pidfd_is_dead=_pidfd_is_dead,
+    )
+
+    try:
+        handle = await sandbox.launch_device_auth(PROVIDERS["codex"])
+        await handle.terminate()
+
+        assert events.index("pidfd_signal") < events.index("outer_kill")
+        assert events.index("outer_kill") < events.index("pidfd_death_check")
+        assert process.wait_calls == 1
+        assert stage_home.exists(), "a live PID1 can retain the bind-mounted stage"
+        with pytest.raises(SandboxUnavailableError, match="identity pool exhausted"):
+            await pool.acquire()
+    finally:
+        for fd in block_observer_fd:
+            os.close(fd)
+        try:
+            os.close(stage_fd)
+        except OSError:
+            pass
+        shutil.rmtree(stage_home, ignore_errors=True)
 
 
 @pytest.mark.skipif(shutil.which("cc") is None, reason="C compiler is required for shim contract")

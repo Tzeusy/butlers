@@ -303,6 +303,42 @@ async def test_codex_device_auth_refuses_to_start_without_global_authority() -> 
     start.assert_not_awaited()
 
 
+async def test_device_auth_captures_its_authority_baseline_before_starting_the_child() -> None:
+    """REQ-core-credentials-002: a child never starts before its CAS baseline exists."""
+    from butlers.api.routers.cli_auth import start_auth
+
+    events: list[str] = []
+    store = MagicMock()
+
+    async def _capture(*_args, **_kwargs) -> str | None:
+        events.append("baseline")
+        return "authority-before-launch"
+
+    async def _start(session: CLIAuthSession) -> None:
+        assert session.on_success is not None
+        assert await session.on_success.prepare_for_device_auth(session.provider) is True
+        events.append("start")
+
+    with (
+        patch("butlers.api.routers.cli_auth._make_credential_store", return_value=store),
+        patch(
+            "butlers.api.routers.cli_auth.capture_device_auth_authority_baseline",
+            side_effect=_capture,
+        ) as capture,
+        patch("butlers.cli_auth.registry.shutil.which", return_value="/usr/bin/opencode"),
+        patch("butlers.api.routers.cli_auth.CLIAuthSession.start", new=_start),
+        patch("butlers.api.routers.cli_auth.CLIAuthSession.wait", new_callable=AsyncMock),
+    ):
+        await start_auth("opencode-openai", db_manager=MagicMock())
+
+    assert events == ["baseline", "start"]
+    capture.assert_awaited_once_with(
+        PROVIDERS["opencode-openai"],
+        store,
+        codex_authority=None,
+    )
+
+
 async def test_codex_provider_listing_does_not_trust_a_local_auth_file(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -356,7 +392,12 @@ async def test_session_timeout(tmp_path):
         runtime="test",
         timeout_seconds=1,
     )
-    session = CLIAuthSession(id="timeout-test", provider=provider, sandbox=_TestSandbox())
+    session = CLIAuthSession(
+        id="timeout-test",
+        provider=provider,
+        on_success=_test_persistence_callback,
+        sandbox=_TestSandbox(),
+    )
     await session.start()
     await asyncio.sleep(2)
 
@@ -376,9 +417,14 @@ async def test_codex_dashboard_success_never_launches_a_prewarm_child(tmp_path: 
     with (
         patch("butlers.api.routers.cli_auth._make_credential_store", return_value=store),
         patch(
+            "butlers.api.routers.cli_auth.capture_device_auth_authority_baseline",
+            new_callable=AsyncMock,
+            return_value="authority-before-launch",
+        ) as capture,
+        patch(
             "butlers.api.routers.cli_auth.persist_validated_staged_device_auth_bytes",
             side_effect=_persist,
-        ),
+        ) as persist,
         patch(
             "butlers.core.runtimes.codex.run_codex_pre_warm",
             new_callable=AsyncMock,
@@ -387,6 +433,7 @@ async def test_codex_dashboard_success_never_launches_a_prewarm_child(tmp_path: 
     ):
         on_success = _build_on_success(MagicMock())
         assert on_success is not None
+        assert await on_success.prepare_for_device_auth(provider) is True
         assert (
             await on_success(
                 provider,
@@ -396,6 +443,21 @@ async def test_codex_dashboard_success_never_launches_a_prewarm_child(tmp_path: 
         )
 
     prewarm.assert_not_awaited()
+    capture.assert_awaited_once_with(provider, store, codex_authority=store)
+    assert persist.await_args.kwargs["expected_authority_value"] == "authority-before-launch"
+
+
+def test_legacy_on_success_factory_remains_a_synchronous_callable_for_secrets_v2() -> None:
+    """REQ-core-credentials-002: the excluded secrets router never receives a coroutine."""
+    from butlers.api.routers.cli_auth import _build_on_success
+
+    store = MagicMock()
+    with patch("butlers.api.routers.cli_auth._make_credential_store", return_value=store):
+        on_success = _build_on_success(MagicMock())
+
+    assert callable(on_success)
+    assert not asyncio.iscoroutine(on_success)
+    assert callable(on_success.prepare_for_device_auth)
 
 
 # ---------------------------------------------------------------------------

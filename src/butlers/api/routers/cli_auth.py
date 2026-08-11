@@ -31,7 +31,10 @@ from butlers.api.models.cli_auth import (
     CLIAuthTestResponse,
 )
 from butlers.cli_auth.health import AuthHealthState, probe_all, probe_provider
-from butlers.cli_auth.persistence import persist_validated_staged_device_auth_bytes
+from butlers.cli_auth.persistence import (
+    capture_device_auth_authority_baseline,
+    persist_validated_staged_device_auth_bytes,
+)
 from butlers.cli_auth.registry import PROVIDERS, CLIAuthProviderDef
 from butlers.cli_auth.sandbox import (
     DashboardCLIAuthSandbox,
@@ -74,21 +77,61 @@ def _make_credential_store(db_manager: Any) -> CredentialStore | None:
     return CredentialStore(pool, system_global_pool=pool)
 
 
-def _build_on_success(db_manager: Any):
-    """Build an on_success callback that persists the token to DB."""
-    store = _make_credential_store(db_manager)
-    if store is None:
-        return None
+class _DeviceAuthAuthorityPersistence:
+    """Synchronous callback object with a prelaunch CAS-authority handshake.
 
-    async def _on_success(provider: CLIAuthProviderDef, *, staged_output: bytes) -> bool:
+    Both dashboard device-auth routes receive this same callable object.  The
+    session awaits :meth:`prepare_for_device_auth` before it starts the
+    Bubblewrap child, then invokes the object only after containment and
+    staged-output validation.  Keeping construction synchronous preserves the
+    ``secrets_v2`` handoff ABI without moving its route into this change.
+    """
+
+    requires_prelaunch_prepare = True
+
+    def __init__(self, store: CredentialStore) -> None:
+        self._store = store
+        self._provider_name: str | None = None
+        self._expected_authority_value: str | None = None
+
+    async def prepare_for_device_auth(self, provider: CLIAuthProviderDef) -> bool:
+        """Capture the authority version before this session can launch a child."""
+        if self._provider_name is not None:
+            return self._provider_name == provider.name
+        try:
+            expected_authority_value = await capture_device_auth_authority_baseline(
+                provider,
+                self._store,
+                codex_authority=self._store if provider.name == "codex" else None,
+            )
+        except Exception:
+            # Do not include DB context in logs because it can retain the
+            # credential value being fenced.
+            logger.warning("CLI auth: device-auth authority baseline is unavailable")
+            return False
+
+        self._provider_name = provider.name
+        self._expected_authority_value = expected_authority_value
+        return True
+
+    async def __call__(
+        self,
+        completed_provider: CLIAuthProviderDef,
+        *,
+        staged_output: bytes,
+    ) -> bool:
+        if completed_provider.name != self._provider_name:
+            logger.warning("CLI auth on_success: device-auth provider identity changed")
+            return False
         persisted = await persist_validated_staged_device_auth_bytes(
-            provider,
-            store,
+            completed_provider,
+            self._store,
             staged_output,
-            codex_authority=store if provider.name == "codex" else None,
+            expected_authority_value=self._expected_authority_value,
+            codex_authority=self._store if completed_provider.name == "codex" else None,
         )
 
-        if provider.name == "codex":
+        if completed_provider.name == "codex":
             if not persisted:
                 # Do not let a device-auth session report success when its
                 # local file could not be committed to the selected global
@@ -99,7 +142,18 @@ def _build_on_success(db_manager: Any):
             return True
         return persisted
 
-    return _on_success
+
+def _build_on_success(db_manager: Any):
+    """Return the synchronous compatibility factory consumed by ``secrets_v2``.
+
+    ``secrets_v2`` owns an older synchronous handoff and is deliberately out
+    of this slice.  Keep that public callable shape intact while returning an
+    object whose common prelaunch hook fences every session before child spawn.
+    """
+    store = _make_credential_store(db_manager)
+    if store is None:
+        return None
+    return _DeviceAuthAuthorityPersistence(store)
 
 
 # ---------------------------------------------------------------------------
@@ -180,16 +234,19 @@ async def start_auth(
         )
 
     on_success = _build_on_success(db_manager)
-    if provider_def.name == "codex" and on_success is None:
+    if on_success is None:
         # Starting device auth writes a local canonical auth file. Without the
         # explicitly selected global authority its result could only remain a
         # stale local credential, so refuse before spawning the CLI instead of
         # discovering the failure after the owner has completed the flow.
-        logger.warning("CLI auth: Codex device auth refused without system-global authority")
-        raise HTTPException(
-            status_code=503,
-            detail="System-global Codex credential authority unavailable.",
-        )
+        if provider_def.name == "codex":
+            logger.warning("CLI auth: Codex device auth refused without system-global authority")
+            raise HTTPException(
+                status_code=503,
+                detail="System-global Codex credential authority unavailable.",
+            )
+        logger.warning("CLI auth: device auth refused without a fenced credential authority")
+        raise HTTPException(status_code=503, detail="Credential authority unavailable.")
 
     session_id = secrets.token_urlsafe(16)
     session = CLIAuthSession(
