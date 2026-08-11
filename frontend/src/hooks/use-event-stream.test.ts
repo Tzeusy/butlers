@@ -143,9 +143,13 @@ describe("useEventStream", () => {
     expect(result.current.status).toBe("open");
   });
 
-  it("does not claim healthy before the first message", () => {
+  it("does not claim healthy before the first message, even after a clock tick", () => {
+    vi.useFakeTimers();
     const { result } = renderHook(() => useEventStream());
     act(() => getLastWsInstance()?.simulateOpen());
+
+    act(() => vi.advanceTimersByTime(1_000));
+
     expect(result.current.health).toBe("late");
   });
 

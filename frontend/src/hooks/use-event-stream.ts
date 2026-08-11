@@ -116,6 +116,7 @@ export function useEventStream({
   // ("reconnecting"), matching the shell's connected/reconnecting/down states.
   const everConnectedRef = useRef(false);
   const connectedAtRef = useRef<number | null>(null);
+  const currentSocketMessageAtRef = useRef<number | null>(null);
   const onEventRef = useRef(onEvent);
   const connectRef = useRef<() => void>(() => undefined);
   const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -175,6 +176,7 @@ export function useEventStream({
       retryDelayRef.current = 1000; // reset back-off on successful connect
       everConnectedRef.current = true;
       connectedAtRef.current = Date.now();
+      currentSocketMessageAtRef.current = null;
       setStatus("open");
       // An open transport alone does not prove that this socket is receiving
       // data. It becomes healthy only after the first valid envelope.
@@ -182,6 +184,7 @@ export function useEventStream({
     };
 
     ws.onmessage = (ev) => {
+      if (socketRef.current !== ws) return;
       let payload: FleetEvent | SnapshotMessage;
       try {
         payload = JSON.parse(ev.data);
@@ -191,7 +194,9 @@ export function useEventStream({
 
       // The backend emits heartbeats only after an idle queue timeout, so a
       // snapshot or ordinary event is equally valid evidence of freshness.
-      setLastEventAt(Date.now());
+      const receivedAt = Date.now();
+      currentSocketMessageAtRef.current = receivedAt;
+      setLastEventAt(receivedAt);
       setHealth("healthy");
 
       if (isSnapshot(payload)) {
@@ -252,16 +257,14 @@ export function useEventStream({
   useEffect(() => {
     if (!enabled || status !== "open") return;
     const refreshHealth = () => {
-      const freshnessAt =
-        lastEventAt !== null && lastEventAt >= (connectedAtRef.current ?? Infinity)
-          ? lastEventAt
-          : connectedAtRef.current;
+      const currentSocketMessageAt = currentSocketMessageAtRef.current;
+      const freshnessAt = currentSocketMessageAt ?? connectedAtRef.current;
       const freshnessAge = freshnessAt === null ? Infinity : Date.now() - freshnessAt;
       if (freshnessAge >= EVENT_HEARTBEAT_DEADLINE_MS) {
         setHealth("late");
         reconnectStaleSocket();
       } else {
-        setHealth("healthy");
+        setHealth(currentSocketMessageAt === null ? "late" : "healthy");
       }
     };
     heartbeatTimerRef.current = setInterval(refreshHealth, 1_000);
@@ -271,7 +274,7 @@ export function useEventStream({
         heartbeatTimerRef.current = null;
       }
     };
-  }, [enabled, lastEventAt, reconnectStaleSocket, status]);
+  }, [enabled, reconnectStaleSocket, status]);
 
   return { status, lastEventAt, health, disconnect };
 }
