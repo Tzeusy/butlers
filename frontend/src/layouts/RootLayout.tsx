@@ -12,7 +12,7 @@ import { ShortcutRegistryProvider } from '../hooks/use-register-shortcut'
 import { PageContextProvider } from '../lib/page-context'
 import { useKeyboardShortcuts } from '../hooks/use-keyboard-shortcuts'
 import { ShortcutHints } from '../components/ui/shortcut-hints'
-import { type EventStreamStatus } from '../hooks/use-event-stream'
+import { type EventBusHealth } from '../hooks/use-event-stream'
 import { EventBusProvider, useEventBus } from '../lib/event-bus'
 import { FloatingChatWidget } from '../components/chat/FloatingChatWidget'
 import { announce, useShellAnnouncement } from '../lib/shell-announcer'
@@ -25,9 +25,9 @@ const STREAM_EDGE_LABEL: Record<'connected' | 'reconnecting' | 'down', string> =
   down: 'Fleet event stream offline',
 }
 
-function toStreamEdge(status: EventStreamStatus): 'connected' | 'reconnecting' | 'down' {
-  if (status === 'open') return 'connected'
-  if (status === 'reconnecting') return 'reconnecting'
+function toStreamEdge(health: EventBusHealth): 'connected' | 'reconnecting' | 'down' {
+  if (health === 'healthy') return 'connected'
+  if (health === 'late') return 'reconnecting'
   return 'down'
 }
 
@@ -65,7 +65,7 @@ function RootLayoutInner() {
 
   // `status` is threaded down into PageHeader so the shell's Live indicator
   // reflects actual socket health.
-  const { status: eventStreamStatus } = useEventBus()
+  const { health: eventBusHealth } = useEventBus()
 
   // Announce stream-state EDGES only (not "connecting", the cold-start state
   // — a fresh page load reading as a fleet problem to a screen-reader user
@@ -74,12 +74,12 @@ function RootLayoutInner() {
   // changes after that do.
   const prevEdgeRef = useRef<'connected' | 'reconnecting' | 'down' | null>(null)
   useEffect(() => {
-    const edge = toStreamEdge(eventStreamStatus)
+    const edge = toStreamEdge(eventBusHealth)
     if (prevEdgeRef.current !== null && prevEdgeRef.current !== edge) {
       announce(STREAM_EDGE_LABEL[edge])
     }
     prevEdgeRef.current = edge
-  }, [eventStreamStatus])
+  }, [eventBusHealth])
 
   return (
     <BreadcrumbsControlProvider>
@@ -101,7 +101,7 @@ function RootLayoutInner() {
             >
               Skip to main content
             </a>
-            <Shell header={<PageHeader liveStatus={eventStreamStatus} />}>
+            <Shell header={<PageHeader liveStatus={eventBusHealth} />}>
               <ErrorBoundary>
                 <Outlet />
               </ErrorBoundary>

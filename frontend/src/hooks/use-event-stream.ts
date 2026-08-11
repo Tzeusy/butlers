@@ -22,6 +22,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { applyFleetEvent, type FleetEvent } from "@/hooks/event-cache-registry";
 
 export type EventStreamStatus = "connecting" | "open" | "reconnecting" | "closed";
+export type EventBusHealth = "healthy" | "late" | "down";
+
+/** The API emits a heartbeat every 20 seconds; allow one delayed beat. */
+export const EVENT_HEARTBEAT_DEADLINE_MS = 45_000;
 
 export interface UseEventStreamOptions {
   /** Optional DASHBOARD_API_KEY for query-param auth. Leave undefined when
@@ -47,6 +51,8 @@ export interface UseEventStreamResult {
    *  heartbeats), or null before the first message. Useful for staleness
    *  checks that must decay on a clock rather than freeze on last-fetch. */
   lastEventAt: number | null;
+  /** One clock-driven health value for every event-bus consumer. */
+  health: EventBusHealth;
   disconnect: () => void;
 }
 
@@ -99,6 +105,8 @@ export function useEventStream({
 
   const [status, setStatus] = useState<EventStreamStatus>("connecting");
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | null>(null);
+  const [health, setHealth] = useState<EventBusHealth>("down");
 
   const socketRef = useRef<WebSocket | null>(null);
   const retryDelayRef = useRef<number>(1000);
@@ -108,14 +116,20 @@ export function useEventStream({
   // first connection attempt ("connecting") from a retry after a drop
   // ("reconnecting"), matching the shell's connected/reconnecting/down states.
   const everConnectedRef = useRef(false);
+  const connectedAtRef = useRef<number | null>(null);
   const onEventRef = useRef(onEvent);
   const connectRef = useRef<() => void>(() => undefined);
+  const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const disconnect = useCallback(() => {
     mountedRef.current = false;
     if (retryTimerRef.current !== null) {
       clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
+    }
+    if (heartbeatTimerRef.current !== null) {
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
     }
     if (socketRef.current) {
       socketRef.current.onclose = null; // prevent reconnect loop
@@ -141,6 +155,8 @@ export function useEventStream({
     ws.onopen = () => {
       retryDelayRef.current = 1000; // reset back-off on successful connect
       everConnectedRef.current = true;
+      connectedAtRef.current = Date.now();
+      setLastHeartbeatAt(null);
       setStatus("open");
     };
 
@@ -153,6 +169,9 @@ export function useEventStream({
       }
 
       setLastEventAt(Date.now());
+      if (!isSnapshot(payload) && payload.type === "heartbeat") {
+        setLastHeartbeatAt(Date.now());
+      }
 
       if (isSnapshot(payload)) {
         // Replay each buffered event through the registry too — a reconnect's
@@ -202,5 +221,37 @@ export function useEventStream({
     };
   }, [connect, disconnect, enabled]);
 
-  return { status, lastEventAt, disconnect };
+  // Health must decay while the socket remains open. An interval is used
+  // instead of deriving from render time so a half-open socket cannot freeze
+  // at a falsely healthy value. The first heartbeat is required explicitly.
+  useEffect(() => {
+    if (!enabled || status !== "open") {
+      setHealth("down");
+      return;
+    }
+    const refreshHealth = () => {
+      const heartbeatAge = lastHeartbeatAt === null ? Infinity : Date.now() - lastHeartbeatAt;
+      const connectionAge = connectedAtRef.current === null ? Infinity : Date.now() - connectedAtRef.current;
+      if (heartbeatAge >= EVENT_HEARTBEAT_DEADLINE_MS) {
+        setHealth("late");
+        // Closing delegates backoff and reconnect scheduling to the single
+        // onclose path; no second retry timer is introduced here.
+        if (connectionAge > EVENT_HEARTBEAT_DEADLINE_MS && socketRef.current) {
+          socketRef.current.close();
+        }
+      } else {
+        setHealth("healthy");
+      }
+    };
+    refreshHealth();
+    heartbeatTimerRef.current = setInterval(refreshHealth, 1_000);
+    return () => {
+      if (heartbeatTimerRef.current !== null) {
+        clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = null;
+      }
+    };
+  }, [enabled, lastHeartbeatAt, status]);
+
+  return { status, lastEventAt, health, disconnect };
 }

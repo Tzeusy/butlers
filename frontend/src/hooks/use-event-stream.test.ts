@@ -102,6 +102,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -140,6 +141,40 @@ describe("useEventStream", () => {
       getLastWsInstance()?.simulateOpen();
     });
     expect(result.current.status).toBe("open");
+  });
+
+  it("does not claim healthy before the first heartbeat", () => {
+    const { result } = renderHook(() => useEventStream());
+    act(() => getLastWsInstance()?.simulateOpen());
+    expect(result.current.health).toBe("late");
+  });
+
+  it("becomes healthy on a heartbeat and reconnects after the heartbeat deadline", () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useEventStream());
+    const ws = getLastWsInstance();
+    act(() => {
+      ws?.simulateOpen();
+      ws?.simulateMessage({ type: "heartbeat", ts: 1, data: {} });
+    });
+    expect(result.current.health).toBe("healthy");
+
+    act(() => vi.advanceTimersByTime(46_001));
+    expect(result.current.health).toBe("late");
+    expect(ws?.close).toHaveBeenCalled();
+
+    act(() => ws?.simulateMessage({ type: "heartbeat", ts: 2, data: {} }));
+    expect(result.current.health).toBe("healthy");
+  });
+
+  it("cleans the freshness clock on unmount", () => {
+    vi.useFakeTimers();
+    const clearInterval = vi.spyOn(globalThis, "clearInterval");
+    const { unmount } = renderHook(() => useEventStream());
+    act(() => getLastWsInstance()?.simulateOpen());
+    unmount();
+    expect(clearInterval).toHaveBeenCalled();
+    clearInterval.mockRestore();
   });
 
   it("transitions open -> reconnecting on an unexpected close", () => {
