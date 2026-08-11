@@ -67,17 +67,21 @@ function RootLayoutInner() {
   // reflects actual socket health.
   const { health: eventBusHealth } = useEventBus()
 
-  // Announce stream-state EDGES only (not "connecting", the cold-start state
-  // — a fresh page load reading as a fleet problem to a screen-reader user
-  // would be worse than saying nothing). The ref starts null so the very
-  // first transition into a real state doesn't announce either; only actual
-  // changes after that do.
+  // Announce stream-state edges only after the first valid envelope has made
+  // the stream healthy. Before then, down -> late is the ordinary cold-start
+  // handshake, not a reconnecting fleet problem to announce.
   const prevEdgeRef = useRef<'connected' | 'reconnecting' | 'down' | null>(null)
+  const hasEstablishedStreamRef = useRef(false)
   useEffect(() => {
     const edge = toStreamEdge(eventBusHealth)
-    if (prevEdgeRef.current !== null && prevEdgeRef.current !== edge) {
+    if (
+      hasEstablishedStreamRef.current &&
+      prevEdgeRef.current !== null &&
+      prevEdgeRef.current !== edge
+    ) {
       announce(STREAM_EDGE_LABEL[edge])
     }
+    if (edge === 'connected') hasEstablishedStreamRef.current = true
     prevEdgeRef.current = edge
   }, [eventBusHealth])
 

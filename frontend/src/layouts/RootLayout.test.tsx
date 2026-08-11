@@ -80,4 +80,22 @@ describe("RootLayout", () => {
     expect(mockPageHeader).toHaveBeenLastCalledWith("late")
     expect(mockAnnounce).toHaveBeenCalledWith("Fleet event stream reconnecting")
   })
+
+  it("does not announce the cold-start late state but announces a later reconnect", () => {
+    mockHealth = "down"
+    const { rerender } = render(<RootLayout />)
+
+    mockHealth = "late"
+    rerender(<RootLayout />)
+    expect(mockAnnounce).not.toHaveBeenCalled()
+
+    mockHealth = "healthy"
+    rerender(<RootLayout />)
+    expect(mockAnnounce).not.toHaveBeenCalled()
+
+    mockHealth = "late"
+    rerender(<RootLayout />)
+    expect(mockAnnounce).toHaveBeenCalledOnce()
+    expect(mockAnnounce).toHaveBeenCalledWith("Fleet event stream reconnecting")
+  })
 })
