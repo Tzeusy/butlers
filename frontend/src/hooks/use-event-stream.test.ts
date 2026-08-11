@@ -110,7 +110,7 @@ afterEach(() => {
 // Import hook AFTER mocks are in place
 // ---------------------------------------------------------------------------
 
-import { useEventStream } from "./use-event-stream";
+import { EVENT_HEARTBEAT_DEADLINE_MS, useEventStream } from "./use-event-stream";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -143,27 +143,53 @@ describe("useEventStream", () => {
     expect(result.current.status).toBe("open");
   });
 
-  it("does not claim healthy before the first heartbeat", () => {
+  it("does not claim healthy before the first message", () => {
     const { result } = renderHook(() => useEventStream());
     act(() => getLastWsInstance()?.simulateOpen());
     expect(result.current.health).toBe("late");
   });
 
-  it("becomes healthy on a heartbeat and reconnects after the heartbeat deadline", () => {
+  it("refreshes health from snapshot and ordinary event traffic", () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useEventStream());
-    const ws = getLastWsInstance();
     act(() => {
-      ws?.simulateOpen();
-      ws?.simulateMessage({ type: "heartbeat", ts: 1, data: {} });
+      getLastWsInstance()?.simulateOpen();
+      getLastWsInstance()?.simulateMessage({ type: "snapshot", ts: 1, events: [] });
     });
     expect(result.current.health).toBe("healthy");
 
-    act(() => vi.advanceTimersByTime(46_001));
-    expect(result.current.health).toBe("late");
-    expect(ws?.close).toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(EVENT_HEARTBEAT_DEADLINE_MS - 1_000));
+    expect(result.current.health).toBe("healthy");
 
-    act(() => ws?.simulateMessage({ type: "heartbeat", ts: 2, data: {} }));
+    act(() => {
+      getLastWsInstance()?.simulateMessage({
+        type: "approval",
+        ts: 2,
+        data: { kind: "created", approval_id: "approval-1" },
+      });
+    });
+    act(() => vi.advanceTimersByTime(EVENT_HEARTBEAT_DEADLINE_MS - 1_000));
+    expect(result.current.health).toBe("healthy");
+  });
+
+  it("starts a replacement socket at the freshness deadline without waiting for onclose", () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useEventStream());
+    const staleSocket = getLastWsInstance();
+    act(() => {
+      staleSocket?.simulateOpen();
+      staleSocket?.simulateMessage({ type: "heartbeat", ts: 1, data: {} });
+    });
+    act(() => vi.advanceTimersByTime(EVENT_HEARTBEAT_DEADLINE_MS));
+
+    expect(result.current.health).toBe("late");
+    expect(staleSocket?.close).toHaveBeenCalledOnce();
+    expect(wsConstructorSpy).toHaveBeenCalledTimes(2);
+
+    act(() => {
+      getLastWsInstance()?.simulateOpen();
+      getLastWsInstance()?.simulateMessage({ type: "heartbeat", ts: 2, data: {} });
+    });
     expect(result.current.health).toBe("healthy");
   });
 

@@ -105,7 +105,6 @@ export function useEventStream({
 
   const [status, setStatus] = useState<EventStreamStatus>("connecting");
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
-  const [lastHeartbeatAt, setLastHeartbeatAt] = useState<number | null>(null);
   const [health, setHealth] = useState<EventBusHealth>("down");
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -137,6 +136,25 @@ export function useEventStream({
       socketRef.current = null;
     }
     setStatus("closed");
+    setHealth("down");
+  }, []);
+
+  const reconnectStaleSocket = useCallback(() => {
+    const staleSocket = socketRef.current;
+    if (!mountedRef.current || !staleSocket) return;
+
+    // A half-open socket can ignore close() and never emit onclose. Detach
+    // it before creating its successor so a delayed old callback cannot
+    // overwrite the new connection's state or schedule a second retry.
+    staleSocket.onopen = null;
+    staleSocket.onmessage = null;
+    staleSocket.onerror = null;
+    staleSocket.onclose = null;
+    socketRef.current = null;
+    staleSocket.close();
+
+    setStatus("reconnecting");
+    connectRef.current();
   }, []);
 
   const connect = useCallback(() => {
@@ -153,11 +171,14 @@ export function useEventStream({
     socketRef.current = ws;
 
     ws.onopen = () => {
+      if (socketRef.current !== ws) return;
       retryDelayRef.current = 1000; // reset back-off on successful connect
       everConnectedRef.current = true;
       connectedAtRef.current = Date.now();
-      setLastHeartbeatAt(null);
       setStatus("open");
+      // An open transport alone does not prove that this socket is receiving
+      // data. It becomes healthy only after the first valid envelope.
+      setHealth("late");
     };
 
     ws.onmessage = (ev) => {
@@ -168,10 +189,10 @@ export function useEventStream({
         return;
       }
 
+      // The backend emits heartbeats only after an idle queue timeout, so a
+      // snapshot or ordinary event is equally valid evidence of freshness.
       setLastEventAt(Date.now());
-      if (!isSnapshot(payload) && payload.type === "heartbeat") {
-        setLastHeartbeatAt(Date.now());
-      }
+      setHealth("healthy");
 
       if (isSnapshot(payload)) {
         // Replay each buffered event through the registry too — a reconnect's
@@ -192,11 +213,14 @@ export function useEventStream({
     };
 
     ws.onclose = () => {
+      if (socketRef.current !== ws) return;
       socketRef.current = null;
       if (!mountedRef.current) return;
       setStatus(everConnectedRef.current ? "reconnecting" : "connecting");
+      setHealth("down");
       // Exponential back-off: 1 s → 2 s → 4 s → … capped at 30 s
       retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
         if (mountedRef.current) connectRef.current();
       }, retryDelayRef.current);
       retryDelayRef.current = Math.min(retryDelayRef.current * 2, 30_000);
@@ -223,27 +247,23 @@ export function useEventStream({
 
   // Health must decay while the socket remains open. An interval is used
   // instead of deriving from render time so a half-open socket cannot freeze
-  // at a falsely healthy value. The first heartbeat is required explicitly.
+  // at a falsely healthy value. The first valid envelope is required
+  // explicitly, whether it is a heartbeat, snapshot, or ordinary event.
   useEffect(() => {
-    if (!enabled || status !== "open") {
-      setHealth("down");
-      return;
-    }
+    if (!enabled || status !== "open") return;
     const refreshHealth = () => {
-      const heartbeatAge = lastHeartbeatAt === null ? Infinity : Date.now() - lastHeartbeatAt;
-      const connectionAge = connectedAtRef.current === null ? Infinity : Date.now() - connectedAtRef.current;
-      if (heartbeatAge >= EVENT_HEARTBEAT_DEADLINE_MS) {
+      const freshnessAt =
+        lastEventAt !== null && lastEventAt >= (connectedAtRef.current ?? Infinity)
+          ? lastEventAt
+          : connectedAtRef.current;
+      const freshnessAge = freshnessAt === null ? Infinity : Date.now() - freshnessAt;
+      if (freshnessAge >= EVENT_HEARTBEAT_DEADLINE_MS) {
         setHealth("late");
-        // Closing delegates backoff and reconnect scheduling to the single
-        // onclose path; no second retry timer is introduced here.
-        if (connectionAge > EVENT_HEARTBEAT_DEADLINE_MS && socketRef.current) {
-          socketRef.current.close();
-        }
+        reconnectStaleSocket();
       } else {
         setHealth("healthy");
       }
     };
-    refreshHealth();
     heartbeatTimerRef.current = setInterval(refreshHealth, 1_000);
     return () => {
       if (heartbeatTimerRef.current !== null) {
@@ -251,7 +271,7 @@ export function useEventStream({
         heartbeatTimerRef.current = null;
       }
     };
-  }, [enabled, lastHeartbeatAt, status]);
+  }, [enabled, lastEventAt, reconnectStaleSocket, status]);
 
   return { status, lastEventAt, health, disconnect };
 }
