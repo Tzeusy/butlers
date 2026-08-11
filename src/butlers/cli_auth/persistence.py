@@ -41,6 +41,28 @@ def _is_valid_codex_auth_document(content: str) -> bool:
     return isinstance(parsed, dict) and bool(parsed)
 
 
+def _is_valid_staged_device_auth_document(provider: CLIAuthProviderDef, content: str) -> bool:
+    """Validate a device-auth document before it crosses the sandbox boundary.
+
+    This deliberately accepts only the two registered device-code providers.
+    A new provider must add its exact staged-output schema here rather than
+    receiving a permissive file-copy path by default.
+    """
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return False
+
+    if not isinstance(parsed, dict) or not parsed:
+        return False
+    if provider.name == "codex":
+        return _is_valid_codex_auth_document(content)
+    if provider.name == "opencode-openai":
+        openai = parsed.get("openai")
+        return isinstance(openai, dict) and openai.get("type") == "oauth"
+    return False
+
+
 def _require_codex_authority(codex_authority: CredentialStore | None) -> CredentialStore:
     """Return the selected Codex authority or fail closed without a local fallback."""
     if codex_authority is None:
@@ -86,6 +108,50 @@ async def _store_persisted_token(
         await _require_codex_authority(codex_authority).store_codex_cli_auth(content)
         return
     await store.store(key, content, **kwargs)
+
+
+async def persist_validated_staged_device_auth_bytes(
+    provider: CLIAuthProviderDef,
+    store: CredentialStore,
+    content: bytes,
+    *,
+    codex_authority: CredentialStore | None = None,
+) -> bool:
+    """Persist bytes already validated through the trusted sandbox root FD.
+
+    ``persist_token`` remains the legacy canonical-file reader until all
+    callers are routed through the sandbox.  Device-auth sandbox callers must
+    use this seam: it never receives a path and therefore cannot reopen a
+    canonical credential file after child containment has been verified.
+    """
+    try:
+        decoded = content.decode("utf-8")
+    except UnicodeDecodeError:
+        logger.warning("CLI auth persist: staged device-auth bytes are not UTF-8")
+        return False
+
+    if not _is_valid_staged_device_auth_document(provider, decoded):
+        logger.warning("CLI auth persist: refusing invalid staged device-auth document")
+        return False
+
+    try:
+        await _store_persisted_token(
+            provider,
+            store,
+            decoded,
+            codex_authority=codex_authority,
+        )
+    except Exception:
+        # Never log an exception from a credential-store write: database bind
+        # context can retain the raw staged document.  Codex retains its
+        # explicit system-global fail-closed posture below.
+        if provider.name == "codex":
+            logger.warning("CLI auth persist: Codex system-global authority unavailable")
+            return False
+        raise
+
+    logger.info("CLI auth persist: stored validated staged token for %s", provider.name)
+    return True
 
 
 def _write_token_file_atomically(token_path: Path, content: str) -> None:
