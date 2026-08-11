@@ -33,8 +33,8 @@ export interface UseEventStreamOptions {
   apiKey?: string;
   /** Disable the hook (no-op when false). Defaults to true. */
   enabled?: boolean;
-  /** Called for every incoming event, including snapshot-replayed ones and
-   *  heartbeats. Cache patching happens regardless of whether this is set.
+  /** Called for every valid incoming event, including snapshot-replayed ones
+   *  and heartbeats. Cache patching happens regardless of whether this is set.
    *  `meta.replayed` is true for events replayed from the server's
    *  ring-buffer snapshot on (re)connect rather than observed live -- see
    *  EventBusProvider (src/lib/event-bus.tsx), the primary consumer of this
@@ -47,9 +47,10 @@ export interface UseEventStreamResult {
    *  "reconnecting" (was connected, currently retrying), or "closed"
    *  (intentionally disabled/unmounted). */
   status: EventStreamStatus;
-  /** Wall-clock ms timestamp of the last message received (including
-   *  heartbeats), or null before the first message. Useful for staleness
-   *  checks that must decay on a clock rather than freeze on last-fetch. */
+  /** Wall-clock ms timestamp of the last valid envelope received (including
+   *  heartbeats), or null before the first valid envelope. Useful for
+   *  staleness checks that must decay on a clock rather than freeze on
+   *  last-fetch. */
   lastEventAt: number | null;
   /** One clock-driven health value for every event-bus consumer. */
   health: EventBusHealth;
@@ -88,8 +89,34 @@ interface SnapshotMessage {
   events: FleetEvent[];
 }
 
-function isSnapshot(payload: FleetEvent | SnapshotMessage): payload is SnapshotMessage {
-  return payload.type === "snapshot";
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFleetEvent(payload: unknown): payload is FleetEvent {
+  // `snapshot` is a reserved control envelope and cannot fall through as an
+  // otherwise unknown future event when its snapshot shape is malformed.
+  return (
+    isRecord(payload) &&
+    typeof payload.type === "string" &&
+    payload.type !== "snapshot" &&
+    typeof payload.ts === "number" &&
+    isRecord(payload.data)
+  );
+}
+
+function isSnapshot(payload: unknown): payload is SnapshotMessage {
+  return (
+    isRecord(payload) &&
+    payload.type === "snapshot" &&
+    typeof payload.ts === "number" &&
+    Array.isArray(payload.events) &&
+    payload.events.every(isFleetEvent)
+  );
+}
+
+function isFleetEnvelope(payload: unknown): payload is FleetEvent | SnapshotMessage {
+  return isSnapshot(payload) || isFleetEvent(payload);
 }
 
 // ---------------------------------------------------------------------------
@@ -185,12 +212,13 @@ export function useEventStream({
 
     ws.onmessage = (ev) => {
       if (socketRef.current !== ws) return;
-      let payload: FleetEvent | SnapshotMessage;
+      let payload: unknown;
       try {
         payload = JSON.parse(ev.data);
       } catch {
         return;
       }
+      if (!isFleetEnvelope(payload)) return;
 
       // The backend emits heartbeats only after an idle queue timeout, so a
       // snapshot or ordinary event is equally valid evidence of freshness.

@@ -153,6 +153,37 @@ describe("useEventStream", () => {
     expect(result.current.health).toBe("late");
   });
 
+  it("keeps parse-valid invalid frames from establishing freshness", () => {
+    vi.useFakeTimers();
+    const onEvent = vi.fn();
+    const { result } = renderHook(() => useEventStream({ onEvent }));
+    const ws = getLastWsInstance();
+    act(() => ws?.simulateOpen());
+
+    act(() => ws?.simulateMessage({}));
+
+    expect(result.current.lastEventAt).toBeNull();
+    expect(result.current.health).toBe("late");
+    expect(mockApplyFleetEvent).not.toHaveBeenCalled();
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
+  it("ignores malformed snapshots without establishing freshness", () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useEventStream());
+    const ws = getLastWsInstance();
+    act(() => ws?.simulateOpen());
+
+    expect(() => {
+      act(() => ws?.simulateMessage({ type: "snapshot", ts: 1, events: {} }));
+    }).not.toThrow();
+    act(() => ws?.simulateMessage({ type: "snapshot", ts: 1, data: {} }));
+
+    expect(result.current.lastEventAt).toBeNull();
+    expect(result.current.health).toBe("late");
+    expect(mockApplyFleetEvent).not.toHaveBeenCalled();
+  });
+
   it("refreshes health from snapshot and ordinary event traffic", () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useEventStream());
@@ -227,6 +258,19 @@ describe("useEventStream", () => {
     act(() => {
       getLastWsInstance()?.simulateMessage(event);
     });
+    expect(mockApplyFleetEvent).toHaveBeenCalledWith(mockQueryClient, event);
+    expect(onEvent).toHaveBeenCalledWith(event, { replayed: false });
+  });
+
+  it("accepts well-formed unknown event types", () => {
+    const onEvent = vi.fn();
+    const { result } = renderHook(() => useEventStream({ onEvent }));
+    const event = { type: "future_event", ts: 1, data: {} };
+    act(() => {
+      getLastWsInstance()?.simulateMessage(event);
+    });
+
+    expect(result.current.health).toBe("healthy");
     expect(mockApplyFleetEvent).toHaveBeenCalledWith(mockQueryClient, event);
     expect(onEvent).toHaveBeenCalledWith(event, { replayed: false });
   });
