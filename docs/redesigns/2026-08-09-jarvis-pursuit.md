@@ -32,6 +32,21 @@ Labels use `qc: ...`, `page: ...`, `cross: ...`, and `eco: ...`; root synthesis 
 so this canonical Markdown dossier is the readable artifact and the JSON is its machine-readable
 companion.
 
+The synthesis began with **59 distinct raw candidate titles**: 5 QC `candidate_moves` and 54
+non-QC `moves`. It then deduplicated and prioritized those candidates into the 15 ranked moves
+below. Recheck the machine-readable denominator with:
+
+```bash
+jq -e '
+  .synthesis.candidate_move_totals as $totals
+  | ([.audits[].candidate_moves[]?.title, .audits[].moves[]?.title] | unique) as $titles
+  | ($titles | length) == $totals.distinct_raw_titles
+  and $totals.distinct_raw_titles == 59
+  and $totals.qc_candidate_moves == 5
+  and $totals.non_qc_moves == 54
+' docs/redesigns/2026-08-09-jarvis-pursuit-data.json
+```
+
 ## North star
 
 Five-second fleet verification with earned calm: nothing fabricated, failure never

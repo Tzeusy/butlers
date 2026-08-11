@@ -2060,6 +2060,13 @@
       "regressed": 0,
       "note": "With-gaps: Chronicles voice provenance, notification recovery feedback, Chronicles point-event availability, InsightDeliveryTile owner-time rendering, and live Travel-to-Finance domain-event delivery. Move 14 remains the known blocked not-landed item."
     },
+    "candidate_move_totals": {
+      "distinct_raw_titles": 59,
+      "qc_candidate_moves": 5,
+      "non_qc_moves": 54,
+      "ranked_moves": 15,
+      "method": "Distinct titles across every audit candidate_moves and moves array before synthesis; QC candidates and non-QC moves are both included."
+    },
     "tier_summary": {
       "page_surfaces": {
         "solid": 9,
