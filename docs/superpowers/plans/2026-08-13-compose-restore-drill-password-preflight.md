@@ -35,7 +35,7 @@
 - [ ] **Step 1: Write the failing bootstrap regression tests**
 
 ```python
-@pytest.mark.parametrize("kind", ("unset", "missing", "directory", "empty"))
+@pytest.mark.parametrize("kind", ("unset", "missing", "directory", "empty", "unreadable"))
 def test_restore_drill_launcher_requires_private_password_file_before_lifecycle(
     tmp_path: Path, kind: str
 ) -> None:
@@ -61,6 +61,12 @@ def test_restore_drill_launcher_requires_private_password_file_before_lifecycle(
     elif kind == "empty":
         configured_path.touch()
         env["RESTORE_DRILL_EXECUTOR_PASSWORD_FILE"] = str(configured_path)
+    elif kind == "unreadable":
+        if os.geteuid() == 0:
+            pytest.skip("root can read permissionless files, so Bash -r cannot be observed")
+        configured_path.write_text("test-only-password-marker\\n", encoding="utf-8")
+        configured_path.chmod(0o000)
+        env["RESTORE_DRILL_EXECUTOR_PASSWORD_FILE"] = str(configured_path)
 
     completed = subprocess.run(
         ["bash", "-c", "set -euo pipefail\\n" + bootstrap_boundary],
@@ -70,7 +76,7 @@ def test_restore_drill_launcher_requires_private_password_file_before_lifecycle(
         text=True,
     )
 
-    assert completed.returncode != 0
+    assert completed.returncode == 1
     assert "RESTORE_DRILL_EXECUTOR_PASSWORD_FILE" in completed.stderr
     assert str(configured_path) not in completed.stdout + completed.stderr
     assert launcher.index("# Restore-drill executor password-file preflight") < launcher.index(
