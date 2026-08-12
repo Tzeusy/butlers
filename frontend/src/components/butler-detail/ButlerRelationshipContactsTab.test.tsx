@@ -627,6 +627,32 @@ describe("ButlerRelationshipContactsTab — selected thread", () => {
     fireEvent.click(aliceRow!);
     expect(screen.getByText("Hey, how are you doing?")).toBeDefined();
   });
+
+  it("renders interaction dates in the owner timezone", () => {
+    setupWithInteractions();
+    vi.mocked(useContactInteractions).mockReturnValue({
+      data: {
+        ...INTERACTIONS_DATA,
+        interactions: [
+          {
+            ts: "2026-05-01T17:00:00Z",
+            direction: "in" as const,
+            text: "Boundary interaction",
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useContactInteractions>);
+
+    renderTab();
+    const rows = screen.getAllByTestId("watchlist-row");
+    fireEvent.click(rows.find((r) => r.textContent?.includes("Alice Smith"))!);
+
+    const boundaryDate = screen.getByText("May 2");
+    expect(boundaryDate.tagName).toBe("TIME");
+    expect(boundaryDate.getAttribute("datetime")).toBe("2026-05-01T17:00:00.000Z");
+  });
 });
 
 // ---------------------------------------------------------------------------

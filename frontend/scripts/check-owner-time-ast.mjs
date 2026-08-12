@@ -10,16 +10,15 @@
  */
 import fs from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import ts from "typescript"
 
-const ROOT = path.resolve(new URL("..", import.meta.url).pathname)
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const SRC = path.join(ROOT, "src")
 const DISPLAY_EXCEPTIONS = new Set([
   "components/costs/CostStripeChart.tsx",
   "components/chronicles/RecentDaysIndex.tsx",
   "components/health/MealTracker.tsx",
-  "components/ingestion/filters/PrioritySendersBlock.tsx",
-  "components/butler-detail/ButlerRelationshipContactsTab.tsx",
   "components/dashboard/session-stripe-utils.ts",
 ])
 const CALENDAR_EXCEPTIONS = new Set([
@@ -48,19 +47,37 @@ function rel(file) {
   return path.relative(SRC, file).split(path.sep).join("/")
 }
 
-const violations = []
-for (const file of filesUnder(SRC)) {
-  const relative = rel(file)
-  const source = fs.readFileSync(file, "utf8")
-  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
+function isNewDateExpression(node) {
+  return ts.isNewExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "Date"
+}
+
+export function findOwnerTimeViolations(source, relative) {
+  const tree = ts.createSourceFile(relative, source, ts.ScriptTarget.Latest, true)
+  const dateBindings = new Set()
+
+  function collectDateBindings(node) {
+    if (ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      isNewDateExpression(node.initializer)) {
+      dateBindings.add(node.name.text)
+    }
+    ts.forEachChild(node, collectDateBindings)
+  }
+  collectDateBindings(tree)
+
+  const violations = []
   function visit(node) {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       const name = node.expression.name.text
-      const directDate = ts.isNewExpression(node.expression.expression) &&
-        ts.isIdentifier(node.expression.expression.expression) &&
-        node.expression.expression.expression.text === "Date"
-      if ((name === "toLocaleDateString" || name === "toLocaleTimeString" ||
-        (name === "toLocaleString" && directDate)) && !DISPLAY_EXCEPTIONS.has(relative)) {
+      const receiver = node.expression.expression
+      const dateReceiver = isNewDateExpression(receiver) ||
+        (ts.isIdentifier(receiver) && dateBindings.has(receiver.text))
+      const localeDateMethod = name === "toLocaleDateString" || name === "toLocaleTimeString"
+      const localeStringMethod = name === "toLocaleString" && dateReceiver
+      if ((localeDateMethod || localeStringMethod) && !DISPLAY_EXCEPTIONS.has(relative)) {
         const pos = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
         violations.push(`${relative}:${pos}: use <Time> or formatOwnerDateTime instead of ${name}()`)
       }
@@ -83,9 +100,16 @@ for (const file of filesUnder(SRC)) {
     ts.forEachChild(node, visit)
   }
   visit(tree)
+  return violations
 }
 
-if (violations.length) {
+const violations = filesUnder(SRC).flatMap((file) =>
+  findOwnerTimeViolations(fs.readFileSync(file, "utf8"), rel(file)),
+)
+
+if (path.resolve(process.argv[1] ?? "") !== fileURLToPath(import.meta.url)) {
+  // Imported by tests; leave the scan result available without exiting.
+} else if (violations.length) {
   console.error("Owner-time AST gate failed:")
   for (const violation of violations) console.error(`- ${violation}`)
   process.exitCode = 1
