@@ -32,7 +32,7 @@
 - Consumes: `RESTORE_DRILL_EXECUTOR_PASSWORD_FILE` from the selected environment or caller environment.
 - Produces: exit status 1 and one generic `stderr` configuration error when the setting is absent, not a regular file, unreadable, or empty; exit status 0 from the bootstrap boundary for a valid file.
 
-- [ ] **Step 1: Write the failing bootstrap regression tests**
+- [x] **Step 1: Write the failing bootstrap regression tests**
 
 ```python
 @pytest.mark.parametrize("kind", ("unset", "missing", "directory", "empty", "unreadable"))
@@ -117,13 +117,13 @@ def test_restore_drill_launcher_accepts_valid_private_password_file(tmp_path: Pa
     assert password_marker not in completed.stdout + completed.stderr
 ```
 
-- [ ] **Step 2: Run the focused test before the implementation**
+- [x] **Step 2: Run the focused test before the implementation**
 
 Run: `uv run pytest tests/config/test_restore_drill_executor_compose.py -q --tb=short`
 
 Expected: FAIL because the bootstrap boundary currently allows missing, non-file, and empty settings to pass through to later Compose interpolation.
 
-- [ ] **Step 3: Add the minimal launcher-owned validation**
+- [x] **Step 3: Add the minimal launcher-owned validation**
 
 ```bash
 # Restore-drill executor password-file preflight: Compose interpolates this
@@ -141,7 +141,7 @@ fi
 
 Add one concise `AGENTS.md` note stating that the protected overlay must preflight this setting before `down`, because Compose interpolation can otherwise report an arbitrary missing service.
 
-- [ ] **Step 4: Run the focused regression and syntax/lint gates**
+- [x] **Step 4: Run the focused regression and syntax/lint gates**
 
 Run:
 
@@ -154,7 +154,7 @@ uv run ruff format --check tests/config/test_restore_drill_executor_compose.py
 
 Expected: all commands exit 0.
 
-- [ ] **Step 5: Commit the coherent fix**
+- [x] **Step 5: Commit the coherent fix**
 
 ```bash
 git add AGENTS.md \
