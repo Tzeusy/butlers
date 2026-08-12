@@ -425,7 +425,8 @@ describe("GoogleHealthPassportStatusCard: token expiry + rate-limit headroom [bu
 
     expect(html).toContain('data-testid="health-token-expiry"');
     expect(html).toContain("token expiry");
-    expect(html).toContain(new Date("2026-06-13T10:00:00Z").toLocaleDateString());
+    // Date-only passport labels use the configured owner timezone through <Time>.
+    expect(html).toContain("Jun 13");
   });
 
   it("renders a placeholder for token expiry when no estimate is available", () => {
