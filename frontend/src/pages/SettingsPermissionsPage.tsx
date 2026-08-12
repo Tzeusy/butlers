@@ -1168,7 +1168,7 @@ function WebhooksSection() {
                           />
                         )}
                         <span className="font-mono tabular-nums text-muted-foreground">
-                          <Time value={wh.last_test_at} mode="absolute" precision="minute" compact />
+                          <Time value={wh.last_test_at} mode="absolute" precision="minute" />
                         </span>
                       </span>
                     ) : (
