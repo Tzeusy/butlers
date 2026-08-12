@@ -34,7 +34,7 @@ export interface ShellQueryWarmup {
   staleTime: number;
 }
 
-export type ShellPageLoader = () => Promise<{ default: ComponentType<any> }>;
+export type ShellPageLoader = () => Promise<{ default: ComponentType }>;
 
 export interface ShellCapability {
   path: string;
@@ -115,7 +115,7 @@ const ingestionEventWarmup: ShellCapability["queryWarmup"] = (to) => {
   };
 };
 
-const page = (loader: () => Promise<{ default: ComponentType<any> }>) => loader;
+const page = (loader: () => Promise<{ default: ComponentType }>) => loader;
 
 /** One typed source for all shell projections. */
 export const SHELL_CAPABILITIES: readonly ShellCapability[] = [
