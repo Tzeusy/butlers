@@ -221,7 +221,7 @@ export function PrioritySendersBlock({
 
                 {/* Added */}
                 <span className="font-mono text-[10px] text-muted-foreground">
-                  <Time value={entry.added_at} mode="absolute" precision="day" compact />
+                  <Time value={entry.added_at} mode="absolute" precision="day-short-year" />
                 </span>
 
                 {/* Remove */}

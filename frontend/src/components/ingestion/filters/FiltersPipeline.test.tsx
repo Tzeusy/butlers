@@ -891,7 +891,7 @@ describe('AC3: priority senders read + mutation (public.priority_contacts)', () 
   it('renders added dates in the owner timezone', () => {
     const entry = makePriorityContact({
       contact_id: 'contact-boundary',
-      added_at: '2026-05-01T17:00:00Z',
+      added_at: '2025-12-31T17:00:00Z',
     })
 
     renderComponent(container, root, (
@@ -904,8 +904,8 @@ describe('AC3: priority senders read + mutation (public.priority_contacts)', () 
     ))
 
     const row = container.querySelector('[data-testid="priority-sender-row-contact-boundary"]')
-    expect(row?.textContent).toContain('May 2')
-    expect(row?.querySelector('time')?.getAttribute('datetime')).toBe('2026-05-01T17:00:00.000Z')
+    expect(row?.textContent).toContain('Jan 1, 26')
+    expect(row?.querySelector('time')?.getAttribute('datetime')).toBe('2025-12-31T17:00:00.000Z')
   })
 
   it('renders mutation error when API fails', () => {

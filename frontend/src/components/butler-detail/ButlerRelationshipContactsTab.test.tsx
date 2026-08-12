@@ -559,6 +559,28 @@ describe("ButlerRelationshipContactsTab — watchlist", () => {
     expect(aliceCell).toBeDefined();
   });
 
+  it("preserves the year for owner-time fallback dates", () => {
+    vi.mocked(useDunbarRanking).mockReturnValue({
+      data: {
+        ...DUNBAR_DATA,
+        entries: DUNBAR_DATA.entries.map((entry) =>
+          entry.contact_id === "c-1"
+            ? { ...entry, last_interaction_at: "2024-12-31T17:00:00Z" }
+            : entry,
+        ),
+      },
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useDunbarRanking>);
+
+    renderTab();
+
+    const aliceCell = screen
+      .getAllByTestId("watchlist-last-contact")
+      .find((cell) => cell.closest("tr")?.textContent?.includes("Alice Smith"));
+    expect(aliceCell?.textContent).toContain("Jan 1, 2025");
+  });
+
   it("shows dash in Last contact cell for contacts with no interactions (never-contacted)", () => {
     // Bob Jones has last_interaction_at: null → should render "—"
     renderTab();
@@ -635,7 +657,7 @@ describe("ButlerRelationshipContactsTab — selected thread", () => {
         ...INTERACTIONS_DATA,
         interactions: [
           {
-            ts: "2026-05-01T17:00:00Z",
+            ts: "2025-12-31T17:00:00Z",
             direction: "in" as const,
             text: "Boundary interaction",
           },
@@ -649,9 +671,9 @@ describe("ButlerRelationshipContactsTab — selected thread", () => {
     const rows = screen.getAllByTestId("watchlist-row");
     fireEvent.click(rows.find((r) => r.textContent?.includes("Alice Smith"))!);
 
-    const boundaryDate = screen.getByText("May 2");
+    const boundaryDate = screen.getByText(/Jan 1, 2026/);
     expect(boundaryDate.tagName).toBe("TIME");
-    expect(boundaryDate.getAttribute("datetime")).toBe("2026-05-01T17:00:00.000Z");
+    expect(boundaryDate.getAttribute("datetime")).toBe("2025-12-31T17:00:00.000Z");
   });
 });
 

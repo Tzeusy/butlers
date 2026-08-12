@@ -95,7 +95,7 @@ function relativeDate(isoStr: string | null | undefined, timezone: string): stri
   if (diffDays === 0) return "today";
   if (diffDays === 1) return "1d ago";
   if (diffDays < 365) return `${diffDays}d ago`;
-  return formatOwnerDateTime(isoStr, timezone, "day", true);
+  return formatOwnerDateTime(isoStr, timezone, "day", false);
 }
 
 /** Clamp a number to [0, 1] and format as a percentage bar width. */
@@ -474,7 +474,7 @@ function ThreadPanel({ contactId, contactName, isLoading, isError, interactions 
             </span>
             <div className="min-w-0">
               <p className="text-xs text-muted-foreground tnum">
-                <Time value={ix.ts} mode="absolute" precision="day" compact className="tnum" />
+                <Time value={ix.ts} mode="absolute" precision="day" className="tnum" />
               </p>
               <p className="truncate text-sm leading-snug">{ix.text}</p>
             </div>

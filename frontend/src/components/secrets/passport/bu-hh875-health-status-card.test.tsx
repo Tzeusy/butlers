@@ -415,10 +415,21 @@ describe("TestModeExpiryBanner: red variant past 5d6h refresh age [bu-bxu50]", (
 // ── g. Token expiry + rate-limit headroom rows [bu-zv881] ────────────────────
 
 describe("GoogleHealthPassportStatusCard: token expiry + rate-limit headroom [bu-zv881]", () => {
+  it("preserves the year for a cross-year last-ingest date", () => {
+    mockPrimaryWithHealth();
+    mockHealthStatus(
+      makeHealthStatus({ last_ingest_at: "2025-12-31T17:00:00Z" }),
+    );
+
+    const html = renderInRouter(<PageGoogleAccounts />);
+
+    expect(html).toContain("Jan 1, 2026");
+  });
+
   it("renders the token expiry estimate when the backend supplies one", () => {
     mockPrimaryWithHealth();
     mockHealthStatus(
-      makeHealthStatus({ token_expiry_estimate_at: "2026-06-13T10:00:00Z" }),
+      makeHealthStatus({ token_expiry_estimate_at: "2025-12-31T17:00:00Z" }),
     );
 
     const html = renderInRouter(<PageGoogleAccounts />);
@@ -426,7 +437,7 @@ describe("GoogleHealthPassportStatusCard: token expiry + rate-limit headroom [bu
     expect(html).toContain('data-testid="health-token-expiry"');
     expect(html).toContain("token expiry");
     // Date-only passport labels use the configured owner timezone through <Time>.
-    expect(html).toContain("Jun 13");
+    expect(html).toContain("Jan 1, 2026");
   });
 
   it("renders a placeholder for token expiry when no estimate is available", () => {

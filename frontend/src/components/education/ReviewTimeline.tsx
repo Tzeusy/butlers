@@ -85,7 +85,7 @@ function ReviewEntryRow({
           </Badge>
         )}
         <span className="text-xs text-muted-foreground">
-          <Time value={entry.next_review_at} mode="absolute" precision="day" compact />
+          <Time value={entry.next_review_at} mode="absolute" precision="day" />
         </span>
       </span>
     </Button>

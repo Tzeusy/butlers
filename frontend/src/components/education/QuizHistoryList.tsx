@@ -148,7 +148,7 @@ export default function QuizHistoryList({
                 <Badge className={q.className}>{q.label}</Badge>
                 {!compact && (
                   <span className="text-xs text-muted-foreground">
-                    <Time value={r.responded_at} mode="absolute" precision="day" compact />
+                    <Time value={r.responded_at} mode="absolute" precision="day" />
                   </span>
                 )}
               </div>

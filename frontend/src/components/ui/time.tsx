@@ -78,6 +78,7 @@ export type TimePrecision =
   | "minute"
   | "hour"
   | "day"
+  | "day-short-year"
   | "weekday"
   | "time"
   | "short-date"
@@ -125,6 +126,7 @@ export interface TimeProps {
    *   - minute:     "May 3, 2026 at 4:42 PM SGT"  (default)
    *   - hour:       "May 3, 2026 at 4 PM SGT"
    *   - day:        "May 3, 2026 SGT"
+   *   - day-short-year: "May 3, 26" (two-digit year, no timezone label)
    *   - weekday:    "Sunday, May 3, 2026"  (compact: "Sunday, May 3"; no tz label)
    *   - time:       "08:30"  (24-hour clock, time-only; compact has no effect; no tz label)
    *   - short-date: "Sun 3 May 2026"  (3-letter weekday + day + 3-letter month + year;
@@ -183,6 +185,7 @@ const ABSOLUTE_FORMAT: Record<TimePrecision, string> = {
   minute:     "MMM d, yyyy 'at' h:mm a zzz",
   hour:       "MMM d, yyyy 'at' h a zzz",
   day:        "MMM d, yyyy zzz",
+  "day-short-year": "MMM d, yy",
   weekday:    "EEEE, MMMM d, yyyy",
   time:       "HH:mm",
   "short-date": "EEE d MMM yyyy",
@@ -196,6 +199,7 @@ const COMPACT_FORMAT: Record<TimePrecision, string> = {
   minute:     "MMM d, h:mm a",
   hour:       "MMM d, h a",
   day:        "MMM d",
+  "day-short-year": "MMM d, yy",
   weekday:    "EEEE, MMMM d",
   time:       "HH:mm",      // compact has no effect, same format
   "short-date": "EEE d MMM", // compact omits year: "Sun 3 May"
