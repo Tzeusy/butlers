@@ -8,7 +8,9 @@ stale source from a real empty queue, but it needs compose bind mounts and has
 no transactional relation between issues, dependency edges, and the strict
 unlabeled-marker lint result.
 
-Beads/Dolt is authoritative and remains reachable only on the tracker host.
+Beads/Dolt is the sole authoritative tracker and remains reachable only on the
+tracker host. The selected JSONL file is a derived compatibility and rollback
+path only, never a second tracker authority.
 Normal application workloads must not gain a Dolt network route, `bd`, tracker
 credentials, or an unbounded Beads API. RFC 0006 requires an explicit schema
 and role boundary for a new PostgreSQL surface; RFC 0008 requires the narrowest
@@ -59,6 +61,15 @@ into private, mode-restricted staging storage, validates the candidate in
 memory, and opens only a TLS-authenticated PostgreSQL connection with its
 dedicated writer identity. It is neither a butler nor an LLM task.
 
+For a networked writer, the future configuration requires
+`sslmode=verify-full`, a trusted CA bundle, server peer-certificate validation,
+hostname verification against the configured DNS endpoint, and TLS 1.2 or
+newer. The dry-run preflight fails closed before export, connection, or write
+on missing, unreadable, empty, untrusted, expired, hostname-mismatched, or
+below-floor TLS configuration, and on every unverified TLS mode; it never uses
+system trust, a different hostname, an unverified peer, or plaintext. CA and
+writer-credential provisioning remain separately owner-gated.
+
 The exporter has no need for application secrets, application schema grants,
 or a listener. Runtime containers retain no `bd` executable, tracker credential,
 Dolt port, tracker-host route, or whole `.beads/` directory mount. Until a
@@ -93,7 +104,21 @@ default search path. The exporter accepts only active source statuses
 
 The exporter validates unique issue identifiers; parseable timestamps; bounded
 string, label, option, and edge counts; active dependency endpoints; and valid
-typed decision details before a candidate can publish. It derives structured
+typed decision details before a candidate can publish. Normative bounds are
+`MAX_BEAD_ID_CHARS = 128`, `MAX_ISSUE_TITLE_CHARS = 512`,
+`MAX_STATUS_CHARS = 16`, `MAX_ISSUE_TYPE_CHARS = 64`,
+`MAX_TIMESTAMP_CHARS = 64`, `MAX_LABELS_PER_ISSUE = 32`,
+`MAX_LABEL_CHARS = 128`, `MAX_DECISION_DESCRIPTION_CHARS = 16_384`,
+`MAX_OPTIONS_PER_DECISION = 16`, `MAX_DECISION_OPTION_CHARS = 512`,
+`MAX_DEPENDENCY_TYPE_CHARS = 64`, `MAX_LINT_CATEGORY_CODE_CHARS = 64`,
+`MAX_CATEGORICAL_REASON_CHARS = 128`, `MAX_PRODUCER_VERSION_CHARS = 64`,
+`MAX_SNAPSHOT_ISSUES = 10_000`, `MAX_SNAPSHOT_DEPENDENCY_EDGES = 25_000`, and
+`MAX_SNAPSHOT_LINT_VIOLATIONS = 1_000`; priority is `0..4`, timestamps are
+valid RFC 3339 within the timestamp bound, and source digests are 64 lowercase
+hex characters. Any field or snapshot overflow rejects the entire candidate
+without truncation, row skipping, partial publication, or source fallback,
+records categorical `validation_failed` / `field_bound_exceeded`, and leaves
+the active pointer unchanged. It derives structured
 decision fields and lint observations at export time, then discards raw
 metadata. A malformed decision remains a readable decision with a named
 structured-detail reason, exactly as today; it does not invalidate an otherwise

@@ -62,5 +62,6 @@ or cut consumers over.
 - Future platform work: an operator-authorized tracker-host workload, TLS
   writer credential, migration execution, shadow observation, and explicit
   cutover/rollback procedure.
-- This PR makes none of those operational changes and keeps Beads/Dolt and
-  the JSONL compatibility path authoritative and intact.
+- This PR makes none of those operational changes. Beads/Dolt remains the sole
+  authoritative tracker; the selected JSONL file remains a derived compatibility
+  and rollback path, never a second tracker authority, and stays intact.

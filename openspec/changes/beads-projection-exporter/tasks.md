@@ -2,7 +2,8 @@
 
 - [ ] 1.1 Add canonical active-Beads fixtures covering eligible decisions,
   malformed/missing decision details, title-marker unlabeled decisions,
-  P1/deploy blockers, inactive rows, and bounded-field violations.
+  P1/deploy blockers, inactive rows, and every named bounded-field violation,
+  including at-limit acceptance and bound-plus-one rejection.
 - [ ] 1.2 Extract pure decision/lint comparison fixtures and add RED parity
   tests proving the existing JSONL calculation and a typed provider snapshot
   produce identical decision order, structured-detail state, escalation rows,
@@ -19,11 +20,12 @@
   constraints/indexes for the allowlisted fields.
 - [ ] 2.2 Implement the writer-only advisory-lock/publication transaction and
   retention SQL so candidate rows, complete state, and active pointer commit
-  together; retain active plus two prior completed snapshots and prune only
+  together; reject `field_bound_exceeded` candidates without truncation or
+  partial rows; retain active plus two prior completed snapshots and prune only
   failed-run categories older than 30 days.
 - [ ] 2.3 Add migrated-PostgreSQL integration tests for crash/rollback safety,
-  pointer uniqueness, no mixed active rows, failed-run categorization,
-  retention, and a fresh/core-only database.
+  pointer uniqueness, no mixed active rows, deterministic bound rejection,
+  failed-run categorization, retention, and a fresh/core-only database.
 - [ ] 2.4 Add actual-role `SET ROLE` tests proving the exporter identity can
   write only the projection surface, runtime reader roles can select only the
   bounded active views, and neither side can access the other application's
@@ -40,12 +42,20 @@
   bounded categorical failures, and strict lint-result normalization without
   retaining raw metadata or subprocess output.
 - [ ] 3.3 Add focused exporter tests for malformed JSON, duplicate ids,
-  endpoint/timestamp/bound validation, advisory-lock contention, database
-  failure, safe retry, and no-pointer-move behavior.
+  endpoint/timestamp/bound validation, at-limit acceptance and bound-plus-one
+  rejection for every named field and snapshot limit, advisory-lock contention,
+  database failure, safe retry, categorical `field_bound_exceeded`, and
+  no-pointer-move behavior.
 - [ ] 3.4 Add a dry-run-only operator configuration validator that rejects a
-  missing TLS writer configuration or a non-tracker-host invocation before any
-  export/write attempt; do not install a service or provision a credential in
-  the code change.
+  missing TLS writer configuration, an unverified TLS mode, or a non-tracker-host
+  invocation before any export/write attempt. It SHALL require
+  `sslmode=verify-full`, a trusted CA bundle, server peer-certificate and
+  hostname verification for the configured DNS endpoint, and TLS 1.2 or newer;
+  it fails closed for a missing/unreadable/empty/untrusted/expired CA,
+  hostname mismatch, protocol-floor failure, or any unverified TLS mode. Add
+  planning regression tests for each rejection and prove no export, connection,
+  candidate row, or active-pointer movement occurs. Do not install a service or
+  provision a credential in the code change.
 
 ## 4. Bounded provider and pure decision calculation
 

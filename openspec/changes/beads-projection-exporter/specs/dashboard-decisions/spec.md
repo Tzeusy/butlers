@@ -11,6 +11,10 @@ degraded note when a known timestamp exists and SHALL be omitted only when no
 source timestamp exists. A warning source remains readable but MUST NOT be
 styled or labelled as current.
 
+ID: REQ-dashboard-decisions-001
+Source: RFC 0023 §§5-8; RFC 0007
+Scope: v1-mandatory
+
 #### Scenario: Projection warning is visible with current rows
 
 - **WHEN** `decisions_available` is `true`, `beads_source` is `projection`,

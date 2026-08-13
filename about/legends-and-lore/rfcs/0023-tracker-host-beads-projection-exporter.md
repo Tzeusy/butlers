@@ -40,13 +40,26 @@ existing runtime plane.
 
 ### 1. Boundary and authority
 
-- Beads/Dolt remains the sole authoritative tracker.
+- Beads/Dolt remains the sole authoritative tracker. The selected JSONL file is
+  a derived compatibility and rollback path only; it is never a second source
+  of tracker authority.
 - The future exporter runs only on the tracker host in an
   operator-authorized management workload. It is not a butler, connector, LLM
   task, dashboard endpoint, or general bridge.
 - The exporter reads Beads only locally, publishes only to PostgreSQL over TLS
   using a dedicated least-privilege writer identity, and has no public
   listener.
+- Any networked writer connection MUST use `sslmode=verify-full`, validate the
+  server peer certificate chain against an operator-provided trusted CA bundle,
+  and perform hostname verification against the configured DNS endpoint. The
+  approved client/server configuration MUST enforce TLS 1.2 or newer; missing,
+  unreadable, empty, untrusted, expired, hostname-mismatched, or below-floor
+  TLS material/configuration, and every unverified mode (`disable`, `allow`,
+  `prefer`, `require`, or `verify-ca`), are rejected before export, connection,
+  or publication. The dry-run preflight fails closed with only a categorical
+  result and never falls back to a system trust store, an unverified peer, a
+  different hostname, or plaintext. CA and writer-credential provisioning
+  remain a separately owner-authorized activation operation.
 - Runtime consumers use the selected source only through `BeadReadProvider`.
   They MUST NOT receive a tracker host route, Dolt port, `bd`, tracker
   credential, or a whole `.beads` directory mount. Until separately authorized
@@ -78,6 +91,41 @@ attachments, raw export blobs, credentials, host paths, raw linter output, or
 raw exception text. A new field requires a new approved specification and
 security review; the fact that an exporter can see a field is never authority
 to persist it.
+
+### Fixed input and snapshot bounds
+
+The following values are normative and apply before any candidate row can be
+inserted:
+
+```text
+MAX_BEAD_ID_CHARS = 128
+MAX_ISSUE_TITLE_CHARS = 512
+MAX_STATUS_CHARS = 16
+MAX_ISSUE_TYPE_CHARS = 64
+MAX_TIMESTAMP_CHARS = 64
+MAX_LABELS_PER_ISSUE = 32
+MAX_LABEL_CHARS = 128
+MAX_DECISION_DESCRIPTION_CHARS = 16_384
+MAX_OPTIONS_PER_DECISION = 16
+MAX_DECISION_OPTION_CHARS = 512
+MAX_DEPENDENCY_TYPE_CHARS = 64
+MAX_LINT_CATEGORY_CODE_CHARS = 64
+MAX_CATEGORICAL_REASON_CHARS = 128
+MAX_PRODUCER_VERSION_CHARS = 64
+MAX_SNAPSHOT_ISSUES = 10_000
+MAX_SNAPSHOT_DEPENDENCY_EDGES = 25_000
+MAX_SNAPSHOT_LINT_VIOLATIONS = 1_000
+```
+
+`priority` is an integer in `0..4`; every timestamp is a valid RFC 3339 value
+within `MAX_TIMESTAMP_CHARS`; a source digest is exactly 64 lowercase
+hexadecimal characters; snapshot/run ids are UUIDs; a lint-violation title uses
+`MAX_ISSUE_TITLE_CHARS`; and a decision default exactly matches one bounded
+option. Any violation of a field or snapshot bound MUST reject the entire
+candidate snapshot before any candidate row is inserted. The exporter MUST NOT
+truncate, split, skip a row, publish a partial snapshot, or select another
+source. It records only categorical `validation_failed` /
+`field_bound_exceeded` metadata and leaves the active pointer unchanged.
 
 ### 3. Publication protocol
 

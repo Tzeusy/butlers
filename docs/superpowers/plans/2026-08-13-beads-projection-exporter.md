@@ -21,17 +21,37 @@ Beads JSONL export/linter, FastAPI, React/Vite/Vitest, Docker/testcontainers.
 
 ## Global Constraints
 
-- Beads/Dolt remains authoritative. Runtime code must never call `bd`, Dolt,
-  GitHub, or expose a general tracker API.
+- Beads/Dolt remains the sole authoritative tracker. The selected JSONL file is
+  a derived compatibility and rollback path only, never a second tracker
+  authority. Runtime code must never call `bd`, Dolt, GitHub, or expose a
+  general tracker API.
 - Project only active `open`, `in_progress`, and `blocked` records; retain no
   raw notes, comments, history, metadata, attachments, export bytes,
   credentials, host paths, raw linter output, or raw error text.
 - Retain a decision description only for an eligible non-epic `decision`-
   labeled record. Retain typed normalized options/default and a categorical
   structured-detail result, never raw metadata.
-- Writer transport is TLS and least privilege. Runtime reader roles receive
-  only bounded active-view access. Prove all grants using actual `SET ROLE`
-  tests; do not rely on an administrator test pass.
+- Writer transport requires `sslmode=verify-full`, a trusted CA bundle, server
+  peer-certificate and configured-hostname verification, and TLS 1.2 or newer;
+  missing or unverifiable configuration fails closed before export, connection,
+  or publication and never falls back to plaintext, system trust, another
+  hostname, or an unverified peer. Runtime reader roles receive only bounded
+  active-view access. Prove all grants using actual `SET ROLE` tests; do not
+  rely on an administrator test pass. CA and credential provisioning remain
+  separately owner-gated.
+- Enforce `MAX_BEAD_ID_CHARS = 128`, `MAX_ISSUE_TITLE_CHARS = 512`,
+  `MAX_STATUS_CHARS = 16`, `MAX_ISSUE_TYPE_CHARS = 64`,
+  `MAX_TIMESTAMP_CHARS = 64`, `MAX_LABELS_PER_ISSUE = 32`,
+  `MAX_LABEL_CHARS = 128`, `MAX_DECISION_DESCRIPTION_CHARS = 16_384`,
+  `MAX_OPTIONS_PER_DECISION = 16`, `MAX_DECISION_OPTION_CHARS = 512`,
+  `MAX_DEPENDENCY_TYPE_CHARS = 64`, `MAX_LINT_CATEGORY_CODE_CHARS = 64`,
+  `MAX_CATEGORICAL_REASON_CHARS = 128`, `MAX_PRODUCER_VERSION_CHARS = 64`,
+  `MAX_SNAPSHOT_ISSUES = 10_000`, `MAX_SNAPSHOT_DEPENDENCY_EDGES = 25_000`,
+  and `MAX_SNAPSHOT_LINT_VIOLATIONS = 1_000`; priority is `0..4`, timestamps
+  are valid RFC 3339 within their bound, and a digest is 64 lowercase hex
+  characters. Any overflow rejects the entire candidate with categorical
+  `validation_failed` / `field_bound_exceeded`, no truncation or partial rows,
+  and the active pointer unchanged.
 - Publish pointer and candidate rows atomically. Read them in one
   `REPEATABLE READ, READ ONLY` transaction and fail closed on a mixed snapshot.
 - Freshness: target `<=5m`, observable target miss `>5m..<=10m`, warning
@@ -307,7 +327,8 @@ observable freshness signal.
 - [ ] **Step 1: Write exporter RED tests**
 
   Cover valid normalization; duplicate identifiers; malformed JSON/timestamps;
-  inactive rows; unknown active endpoints; overly long values; lint clean,
+  inactive rows; unknown active endpoints; every at-limit acceptance and
+  bound-plus-one rejection for the named limits; lint clean,
   violations, and unavailable; advisory-lock loss; transaction failure; retry;
   and no raw field materialization.
 
@@ -327,8 +348,9 @@ observable freshness signal.
   the tracker-host entry point. Pass its staged file through a parser that
   creates the Task 1 typed values, runs the strict lint semantics against the
   candidate, and converts exceptions to fixed categories such as
-  `source_unavailable`, `parse_failed`, `validation_failed`, `lock_unavailable`,
-  and `database_write_failed`.
+  `source_unavailable`, `parse_failed`, `validation_failed`,
+  `field_bound_exceeded`, `tls_verification_failed`, `lock_unavailable`, and
+  `database_write_failed`.
 
   ```python
   async with pool.acquire() as conn:
@@ -346,9 +368,14 @@ observable freshness signal.
 - [ ] **Step 3: Add a non-mutating preflight mode**
 
   `--check-config` validates a tracker-host marker and a TLS PostgreSQL writer
-  configuration before export/write work. It must report a categorical failure
-  for absent/malformed configuration and never print credential material. It
-  must not install a service or create a credential.
+  configuration before export/write work. It accepts only `sslmode=verify-full`
+  with a trusted CA bundle, server peer-certificate validation, configured DNS
+  hostname verification, and TLS 1.2 or newer. It must fail closed for every
+  unverified mode and any missing, unreadable, empty, untrusted, expired,
+  hostname-mismatched, or below-floor configuration, with no export, connection,
+  candidate row, or pointer movement. Add regression cases for every rejection;
+  never print credential material. It must not install a service or create a
+  credential.
 
 - [ ] **Step 4: Run focused tests and commit**
 
@@ -527,12 +554,14 @@ observable freshness signal.
 - [ ] **Step 3: Write the operational runbook**
 
   Document the explicit owner gates, required TLS/role/network evidence,
-  staging and preflight command, failure signals, fourteen-day shadow audit,
-  synchronized projection cutover, seven-day JSONL rollback selection, and
-  prohibition on JSONL retirement without a separate decision. The later
-  retirement packet must contain a complete JSONL consumer inventory; every
-  consumer must be either migrated with contract and regression proof or
-  explicitly retained with its mount/parser/materialization rationale. It must
+  including `verify-full`, trusted CA, peer certificate, configured-hostname,
+  and TLS 1.2+ proof; staging and preflight command; failure signals;
+  fourteen-day shadow audit; synchronized projection cutover; seven-day JSONL
+  rollback selection; and prohibition on JSONL retirement without a separate
+  decision. The later retirement packet must contain a complete JSONL consumer
+  inventory; every consumer must be either migrated with contract and regression
+  proof or explicitly retained with its mount/parser/materialization rationale.
+  It must
   name `GET /api/beads/{id}` and `BeadSnapshotReader` as an explicitly retained
   consumer unless a separately scoped security review approves its own
   migration. Document only variable names/locations, never a credential value.

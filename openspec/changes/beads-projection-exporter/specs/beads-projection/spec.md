@@ -7,9 +7,9 @@ operator-authorized tracker-host management workload. The exporter SHALL read
 the tracker locally, publish only through a TLS-authenticated,
 least-privilege PostgreSQL writer identity, and expose no listener or tracker
 operation to a normal runtime container, dashboard request, or prompted LLM.
-Beads/Dolt SHALL remain authoritative.
-
-The exporter SHALL project only active `open`, `in_progress`, and `blocked`
+Beads/Dolt SHALL remain the sole authoritative tracker. The selected JSONL
+compatibility mode SHALL be a derived compatibility and rollback path only,
+never a second tracker authority. The exporter SHALL project only active `open`, `in_progress`, and `blocked`
 issues and their active dependency edges. It SHALL allowlist issue id, title,
 status, issue type, priority, created/updated/deadline timestamps, labels, and
 the dependency endpoint/type/timestamp fields required by the decision
@@ -18,6 +18,37 @@ decision-labeled issue and only normalized decision options/default plus a
 structured-detail availability/reason. It SHALL NOT persist Beads notes,
 comments, history, raw metadata, attachments, raw export blobs, tracker
 credentials, host paths, or raw failures.
+For any networked writer connection, the exporter SHALL require
+`sslmode=verify-full`, validate the server peer certificate chain against an
+operator-provided trusted CA bundle, perform hostname verification against the
+configured DNS endpoint, and enforce TLS 1.2 or newer. A missing, unreadable,
+empty, untrusted, expired, hostname-mismatched, or below-floor configuration,
+and every unverified TLS mode, fails closed before export, connection, or
+publication with only a categorical outcome; it SHALL NOT fall back to system
+trust, an unverified peer, a different hostname, or plaintext. CA and
+writer-credential provisioning remain separately owner-gated.
+The exporter SHALL enforce these fixed bounds before candidate publication:
+`MAX_BEAD_ID_CHARS = 128`, `MAX_ISSUE_TITLE_CHARS = 512`,
+`MAX_STATUS_CHARS = 16`, `MAX_ISSUE_TYPE_CHARS = 64`,
+`MAX_TIMESTAMP_CHARS = 64`, `MAX_LABELS_PER_ISSUE = 32`,
+`MAX_LABEL_CHARS = 128`, `MAX_DECISION_DESCRIPTION_CHARS = 16_384`,
+`MAX_OPTIONS_PER_DECISION = 16`, `MAX_DECISION_OPTION_CHARS = 512`,
+`MAX_DEPENDENCY_TYPE_CHARS = 64`, `MAX_LINT_CATEGORY_CODE_CHARS = 64`,
+`MAX_CATEGORICAL_REASON_CHARS = 128`, `MAX_PRODUCER_VERSION_CHARS = 64`,
+`MAX_SNAPSHOT_ISSUES = 10_000`, `MAX_SNAPSHOT_DEPENDENCY_EDGES = 25_000`,
+and `MAX_SNAPSHOT_LINT_VIOLATIONS = 1_000`; priority SHALL be an integer in
+`0..4`, timestamps SHALL be valid RFC 3339 strings within the timestamp bound,
+and source digests SHALL be exactly 64 lowercase hexadecimal characters. The
+issue-title bound also applies to a copied lint-violation title, and a decision
+default SHALL exactly match one bounded option. If any field or snapshot bound
+is exceeded, the exporter SHALL reject the entire candidate snapshot without
+truncation, partial row publication, row skipping, or source fallback; it SHALL
+record only categorical `validation_failed` / `field_bound_exceeded` outcome
+metadata and leave the active pointer unchanged.
+
+ID: REQ-beads-projection-001
+Source: RFC 0023 §§1-2, 10
+Scope: v1-mandatory
 
 #### Scenario: Runtime has no tracker capability
 
@@ -56,11 +87,14 @@ hold a dedicated PostgreSQL advisory lock and SHALL insert candidate rows,
 mark the snapshot complete, and update the active pointer in one transaction.
 A failed export, parse, validation, lock, or database write SHALL NOT move the
 pointer.
-
 The system SHALL retain the active completed snapshot plus exactly two prior
 completed snapshots. It SHALL retain categorical metadata for failed runs for
 30 days, without raw export content or raw error text, and SHALL prune older
 failed-run metadata safely.
+
+ID: REQ-beads-projection-002
+Source: RFC 0023 §§3-4
+Scope: v1-mandatory
 
 #### Scenario: Publisher crash preserves the previous snapshot
 
@@ -96,13 +130,11 @@ unavailable reason, active allowlisted issues, dependency edges, and normalized
 lint state. Runtime roles SHALL have `USAGE` plus `SELECT` only on the bounded
 active-snapshot views; they SHALL NOT receive direct table, history, pointer,
 failed-run, sequence, or writer privileges.
-
 The provider SHALL use one `REPEATABLE READ, READ ONLY` transaction and
 runtime-facing views rooted at the active pointer. It SHALL verify that every
 selected row carries the chosen snapshot id and SHALL fail closed if the
 pointer is absent/non-singleton, a required view is unavailable, or a row
 belongs to another snapshot.
-
 The provider SHALL classify a completed snapshot age at or below five minutes
 as target-fresh, over five through ten minutes as readable-but-target-missed,
 over ten through fifteen minutes as `warning`, and over fifteen minutes as
@@ -112,6 +144,10 @@ readable but SHALL be observable to consumers. The provider SHALL expose
 whether the five-minute target is met separately from warning freshness, so a
 readable five-to-ten-minute target miss is observable; unavailable data SHALL
 never be represented as an empty snapshot.
+
+ID: REQ-beads-projection-003
+Source: RFC 0023 §§5-6
+Scope: v1-mandatory
 
 #### Scenario: Pointer flip cannot create a mixed snapshot
 
@@ -154,12 +190,15 @@ unlabeled legacy title markers. It SHALL store a normalized lint result as
 `clean`, `violations`, or `unavailable`; it SHALL preserve bounded violation
 ids, titles, and category codes and SHALL never normalize an unavailable lint
 into a clean result.
-
 The normalized dependency projection SHALL preserve every active edge needed
 to identify an open P1 bug or deploy-marked issue blocked by an eligible
 decision. `decision_review` SHALL retain ownership of label-only classification,
 structured-detail state, and escalation ordering as pure deterministic logic
 over the provider snapshot.
+
+ID: REQ-beads-projection-004
+Source: RFC 0023 §7
+Scope: v1-mandatory
 
 #### Scenario: Lint violation remains an owner-visible finding
 
@@ -194,13 +233,16 @@ successful shadow cycle SHALL compare legacy JSONL and projection semantic
 results for decision order, structured-detail availability/reason, ordered
 dependency escalations, and lint state. A mismatch or unavailable source SHALL
 emit a bounded operator signal and reset the consecutive-clean counter.
-
 After the fourteen-day parity gate and separate owner authorization, both the
 Switchboard and Decisions dashboard SHALL change source mode together to
 projection. For those Decisions consumers, JSONL SHALL remain available for
 seven calendar days only as an explicit deployment-level rollback selection.
 The system SHALL NOT silently fall back between sources or retire JSONL
 automatically.
+
+ID: REQ-beads-projection-006
+Source: RFC 0023 §8
+Scope: v1-mandatory
 
 #### Scenario: Shadow mismatch prevents cutover
 

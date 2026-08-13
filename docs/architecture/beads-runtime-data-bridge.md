@@ -55,8 +55,10 @@ the projection is a cache with explicit freshness and failure semantics.
 
 ### Non-negotiable invariants
 
-1. **Beads/Dolt stays authoritative.** PostgreSQL stores an explicitly
-   labelled projection, never a second writable tracker.
+1. **Beads/Dolt stays the sole authoritative tracker.** PostgreSQL stores an
+   explicitly labelled projection, never a second writable tracker. The
+   selected JSONL file is a derived compatibility and rollback path only, never
+   a second tracker authority.
 2. **Runtime is read-only.** A runtime container, dashboard request, or
    prompted LLM cannot write Beads through this bridge.
 3. **No tracker credentials in application containers.** In particular, never
@@ -161,6 +163,24 @@ eligible non-epic decision-labeled issue; the normalized decision fields above
 are an explicit bounded exception, not permission to replicate the source
 metadata object wholesale. This avoids silently creating a broad governance-
 data replica merely because the exporter can read it.
+
+Before publishing, the parser enforces exactly these bounds:
+`MAX_BEAD_ID_CHARS = 128`, `MAX_ISSUE_TITLE_CHARS = 512`,
+`MAX_STATUS_CHARS = 16`, `MAX_ISSUE_TYPE_CHARS = 64`,
+`MAX_TIMESTAMP_CHARS = 64`, `MAX_LABELS_PER_ISSUE = 32`, and
+`MAX_LABEL_CHARS = 128`; decision fields use
+`MAX_DECISION_DESCRIPTION_CHARS = 16_384`, `MAX_OPTIONS_PER_DECISION = 16`,
+and `MAX_DECISION_OPTION_CHARS = 512`; dependency/lint/provenance fields use
+`MAX_DEPENDENCY_TYPE_CHARS = 64`, `MAX_LINT_CATEGORY_CODE_CHARS = 64`,
+`MAX_CATEGORICAL_REASON_CHARS = 128`, and `MAX_PRODUCER_VERSION_CHARS = 64`;
+snapshots use `MAX_SNAPSHOT_ISSUES = 10_000`,
+`MAX_SNAPSHOT_DEPENDENCY_EDGES = 25_000`, and
+`MAX_SNAPSHOT_LINT_VIOLATIONS = 1_000`. Priority is `0..4`, timestamps are
+valid RFC 3339 within their bound, and source digests are 64 lowercase hex
+characters. A field or aggregate limit overflow rejects the entire candidate;
+it never truncates, skips a row, publishes partial rows, or falls back to a
+different source. It records categorical `validation_failed` /
+`field_bound_exceeded` metadata and leaves the active pointer unchanged.
 
 ### Snapshot publication protocol
 
@@ -282,9 +302,16 @@ alone supplies that review.
   existing read-only `issues.export.jsonl` file mount. Their only new
   dependency is the existing PostgreSQL endpoint they already need.
 - If the sync process uses a networked PostgreSQL endpoint, it uses TLS and a
-  narrowly provisioned credential. If it is containerized, its egress policy
-  admits only that endpoint; it never adds the tracker/Dolt host to the normal
-  application egress allowlist.
+  narrowly provisioned credential. It requires `sslmode=verify-full`, a
+  trusted CA bundle, server peer-certificate validation, hostname verification
+  for the configured DNS endpoint, and TLS 1.2 or newer. Missing, unreadable,
+  empty, untrusted, expired, hostname-mismatched, below-floor, or unverified
+  TLS configuration fails closed before export, connection, or publication;
+  preflight never falls back to system trust, plaintext, an unverified peer, or
+  a different hostname. If it is containerized, its egress policy admits only
+  that endpoint; it never adds the tracker/Dolt host to the normal application
+  egress allowlist. Provisioning the CA and credential remains separately
+  owner-gated.
 - No dashboard endpoint exposes arbitrary raw projection queries. The first
   surface remains the existing bounded decision digest.
 
@@ -294,7 +321,7 @@ alone supplies that review.
 |---|---|---|
 | Compromised runtime container or prompted LLM | No tracker route, no `bd` credential, no raw `.beads` mount, and projection grants are read-only | It may read only the bounded data its assigned runtime role can query; unexpected query/permission failures are logged and alerted |
 | Compromised sync process | Separate service identity, least-privilege PostgreSQL writer, dedicated host/workload boundary, no application secrets, and local-only tracker access | The process can read tracker export data and write its projection; audit each run, rotate its credential, and treat host compromise as a management-plane incident |
-| Network interception or unintended lateral access | TLS/authenticated PostgreSQL connection, minimal egress allowlist, no new Dolt listener exposed to app networks | Firewall/configuration drift must be checked in deployment validation |
+| Network interception or unintended lateral access | `sslmode=verify-full`, trusted CA, peer-certificate and configured-hostname verification, TLS 1.2+ only, minimal egress allowlist, no new Dolt listener exposed to app networks | Missing or unverifiable trust configuration fails closed before source access; firewall/configuration drift must be checked in deployment validation |
 | Malformed, oversized, or adversarial export record | Strict parser/schema validation, bounded fields, no shell interpolation from record content, and no publishing on validation failure | Failed run is visible; last complete snapshot remains active |
 | Partial write, crash, or two writers | One-writer lease/advisory lock plus transactional candidate-and-pointer publication | Readers retain the previous complete snapshot; duplicate-writer detection is an alert |
 | Stale, rolled-back, or unexpectedly empty data | Source/projection timestamps, digest recording, warning and hard TTLs, comparison against prior counts, and explicit rollback validation | Consumers become unavailable at hard TTL; stale data is never an all-clear or escalation trigger |
@@ -369,8 +396,8 @@ its operational steps.
 ### Proposed validation gates
 
 - Parser fixtures: valid data, malformed JSON, duplicate ids, unknown
-  dependency endpoints, timestamp errors, oversized fields, and an empty
-  source.
+  dependency endpoints, timestamp errors, at-limit acceptance and bound-plus-one
+  rejection for every named field/snapshot bound, and an empty source.
 - PostgreSQL integration tests: one complete snapshot is visible; a crash or
   rejected candidate never replaces it; retention and idempotent retry work.
 - Role tests using the actual `SET ROLE` model: reader roles can select only
@@ -389,6 +416,11 @@ its operational steps.
   projection results propagate as degraded envelopes rather than empty queues.
 - Deployment test: no application container mount or egress path reaches
   Beads/Dolt; only the chosen management-plane process has tracker access.
+- TLS preflight regression tests: accept only `sslmode=verify-full` with a
+  trusted CA, valid peer certificate, configured-hostname match, and TLS 1.2+;
+  reject every unverified mode and each absent, unreadable, empty, untrusted,
+  expired, hostname-mismatched, or below-floor configuration before export,
+  connection, candidate-row insertion, or pointer movement.
 - Operational drill: stop the sync process, corrupt a candidate, revoke its
   database grant, and restore it; each branch must produce a named status and
   leave the last valid snapshot intact.

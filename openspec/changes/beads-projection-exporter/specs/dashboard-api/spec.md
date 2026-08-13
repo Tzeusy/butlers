@@ -10,31 +10,23 @@ reader, JSONL parser, or convention linter; it MUST NOT call `bd`, Dolt,
 GitHub, or any decision mutation/default-application path. An open decision is
 a non-epic bead with the `decision` label, and title text alone MUST NOT include
 a record.
-
 Each summary SHALL retain the existing `id`, `title`, `priority`, `created_at`,
-`age_hours`, and escalation fields, and SHALL additionally project:
-
-- `description`: the allowlisted source description of an eligible decision or
-  `null` when it is absent or not a string;
-- `options`: the ordered normalized decision options or `null` when they
-  cannot be trusted;
-- `default`: the normalized decision default or `null` when it cannot be
-  trusted;
-- `due_at`: the native Beads deadline timestamp or `null` when it is absent or
-  invalid;
-- `structured_details_available`: whether the governed decision fields and
-  native deadline are valid; and
-- `structured_details_unavailable_reason`: `null` when details are available,
-  otherwise a named missing or malformed source reason.
-
-The calculation SHALL preserve option order. It SHALL mark structured details
+`age_hours`, and escalation fields. It SHALL additionally project
+`description` as the allowlisted source description of an eligible decision or
+`null` when it is absent or not a string; `options` as the ordered normalized
+decision options or `null` when they cannot be trusted; `default` as the
+normalized decision default or `null` when it cannot be trusted; `due_at` as
+the native Beads deadline timestamp or `null` when it is absent or invalid;
+`structured_details_available` as whether the governed decision fields and
+native deadline are valid; and `structured_details_unavailable_reason` as
+`null` when details are available or a named missing or malformed source reason
+otherwise. The calculation SHALL preserve option order. It SHALL mark structured details
 available only when decision options are a non-empty ordered list of distinct
 non-blank strings, the default is a non-blank string that exactly matches an
 option, and `due_at` is a valid native timestamp. It MUST NOT sort, infer,
 apply, silently replace, or expose raw source metadata, notes, history, or
 arbitrary issue descriptions. Missing decision metadata and malformed decision
 metadata SHALL remain distinguishable through the unavailable reason.
-
 The response `meta` SHALL retain `decisions_available: boolean`,
 `unavailable_reason`, and `export_as_of` for explicit JSONL mode or a known
 source export time. It SHALL add `beads_source` (`jsonl` or `projection`),
@@ -46,6 +38,10 @@ readable source with zero decisions SHALL return
 `decisions_available: true` and an empty list. A warning snapshot remains
 readable but SHALL name `warning` freshness. Open decisions SHALL remain
 oldest-first.
+
+ID: REQ-dashboard-api-001
+Source: RFC 0023 §§5-8; RFC 0007
+Scope: v1-mandatory
 
 #### Scenario: Valid structured context preserves order and the native deadline
 
