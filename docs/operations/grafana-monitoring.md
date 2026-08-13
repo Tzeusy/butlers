@@ -233,6 +233,22 @@ increase(ingestion_bulk_replay_errors_total{code="503"}[1h])
 rate(ingestion_bulk_replay_errors_total{code="503"}[5m])
 ```
 
+### Durable domain-event delivery failures
+
+`butlers.domain_event.delivery_failed_permanent_total` is an OTel counter for a
+newly durable `failed_permanent` domain-event delivery. It has only
+`source_butler`, `destination_butler`, and `reason` (`non_retryable` or
+`attempts_exhausted`) labels; it deliberately excludes event IDs, payloads,
+exception text, and timestamps.
+
+The Switchboard dashboard displays it with a reset-safe
+`increase(...)` query. The provisioned warning rule evaluates a new transition
+over 15 minutes for 5 minutes, but it is explicitly paused and ships no contact
+point or notification policy. Its no-data state remains `NoData`, never a
+healthy zero, so a missing telemetry series stays diagnosable. Enabling
+notification delivery, changing a route, or exercising an alert requires a
+separate owner-approved operational change.
+
 ## Related Pages
 
 - [Deployment Posture](deployment-posture.md) -- Dev vs hardened posture, Grafana anon-viewer gating

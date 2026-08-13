@@ -73,6 +73,7 @@ from butlers.core.domain_events import (
     select_stale_pending_deliveries,
     upsert_subscription,
 )
+from butlers.core.metrics import record_domain_event_delivery_failed_permanent
 from butlers.core.telemetry import tool_span
 from butlers.core_tools._base import ToolContext
 from butlers.core_tools._switchboard_route_dispatch import dispatch_via_switchboard_route
@@ -180,6 +181,36 @@ def _unwrap_route_result(raw: Any) -> tuple[dict[str, Any] | None, str | None, b
     return (data if isinstance(data, dict) else None), None, False
 
 
+def _record_failed_permanent_delivery_metric(
+    *,
+    source_butler: str,
+    destination_butler: str,
+    retryable: bool,
+) -> None:
+    """Best-effort telemetry after the ledger committed a terminal transition.
+
+    This hook intentionally sits outside the durable write. An OTel exporter
+    outage must not change a successfully committed delivery outcome or cause
+    a reconciliation retry to fabricate a second transition.
+    """
+    reason = "attempts_exhausted" if retryable else "non_retryable"
+    try:
+        record_domain_event_delivery_failed_permanent(
+            source_butler=source_butler,
+            destination_butler=destination_butler,
+            reason=reason,
+        )
+    except Exception:
+        logger.warning(
+            "domain-event failed-permanent metric emission failed: "
+            "source_butler=%s destination_butler=%s reason=%s",
+            source_butler,
+            destination_butler,
+            reason,
+            exc_info=True,
+        )
+
+
 async def _dispatch_and_record_delivery(
     pool: Any,
     switchboard_client: Any,
@@ -250,6 +281,12 @@ async def _dispatch_and_record_delivery(
                 subscriber_butler,
                 exc_info=True,
             )
+        if resulting_status == "failed_permanent":
+            _record_failed_permanent_delivery_metric(
+                source_butler=source_butler,
+                destination_butler=subscriber_butler,
+                retryable=retryable,
+            )
         status = resulting_status or "failed"
         outcome: dict[str, Any] = {
             "subscriber_butler": subscriber_butler,
@@ -300,6 +337,12 @@ async def _dispatch_and_record_delivery(
                 event_id,
                 subscriber_butler,
                 exc_info=True,
+            )
+        if resulting_status == "failed_permanent":
+            _record_failed_permanent_delivery_metric(
+                source_butler=source_butler,
+                destination_butler=subscriber_butler,
+                retryable=False,
             )
         return {
             "subscriber_butler": subscriber_butler,
