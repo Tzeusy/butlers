@@ -9,10 +9,12 @@ projection snapshot timestamp, identify `meta.beads_source`, and use
 snapshot, and an unavailable source. The plaque SHALL remain visible beside a
 degraded note when a known timestamp exists and SHALL be omitted only when no
 source timestamp exists. A warning source remains readable but MUST NOT be
-styled or labelled as current.
+styled or labelled as current. Any `meta.unavailable_reason`, including
+`source_completeness_unverified`, SHALL retain the named degraded note rather
+than render the empty state as a calm all-clear.
 
 ID: REQ-dashboard-decisions-001
-Source: RFC 0023 §§5-8; RFC 0007
+Source: RFC 0023 §§3, 5-8; RFC 0007
 Scope: v1-mandatory
 
 #### Scenario: Projection warning is visible with current rows
@@ -28,6 +30,13 @@ Scope: v1-mandatory
   source and either `snapshot_as_of` or `export_as_of` is known
 - **THEN** the page renders both the named degraded note and the source-as-of
   plaque
+
+#### Scenario: Source-completeness failure remains visibly unavailable
+
+- **WHEN** `meta.decisions_available` is `false` and
+  `meta.unavailable_reason` is `source_completeness_unverified`
+- **THEN** the page renders the named degraded note rather than a no-decisions
+  all-clear
 
 #### Scenario: Explicit JSONL mode remains identifiable
 

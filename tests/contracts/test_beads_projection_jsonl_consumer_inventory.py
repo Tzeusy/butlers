@@ -104,7 +104,7 @@ def test_projection_requirement_traceability_is_contiguous() -> None:
         (
             "Tracker-Host Export Boundary and Minimal Active Projection",
             "REQ-beads-projection-001",
-            "RFC 0023 §§1-2, 10",
+            "RFC 0023 §§1-3, 10",
         ),
         (
             "Atomic Complete Snapshot Publication and Retention",
@@ -114,7 +114,7 @@ def test_projection_requirement_traceability_is_contiguous() -> None:
         (
             "Bounded Atomic BeadReadProvider and Freshness Classification",
             "REQ-beads-projection-003",
-            "RFC 0023 §§5-6",
+            "RFC 0023 §§3, 5-6",
         ),
         (
             "Preserved Decision Lint and Dependency Semantics",
@@ -148,13 +148,13 @@ def test_modified_dashboard_requirements_have_contiguous_traceability() -> None:
         _read("openspec/changes/beads-projection-exporter/specs/dashboard-api/spec.md"),
         title="Decisions Digest Endpoint",
         requirement_id="REQ-dashboard-api-001",
-        source="RFC 0023 §§5-8; RFC 0007",
+        source="RFC 0023 §§3, 5-8; RFC 0007",
     )
     _assert_contiguous_traceability(
         _read("openspec/changes/beads-projection-exporter/specs/dashboard-decisions/spec.md"),
         title="Export As-Of Plaque",
         requirement_id="REQ-dashboard-decisions-001",
-        source="RFC 0023 §§5-8; RFC 0007",
+        source="RFC 0023 §§3, 5-8; RFC 0007",
     )
 
 
@@ -224,3 +224,44 @@ def test_projection_tls_policy_and_bounds_fail_closed_in_the_plan() -> None:
     assert "migrated-PostgreSQL integration tests" in tasks
     assert "planning regression tests for each rejection" in tasks
     assert "unverified TLS mode" in tasks
+
+
+def test_suspicious_empty_or_regressed_candidate_requires_source_completeness_evidence() -> None:
+    """REQ-beads-projection-001: an unproven smaller source cannot create an all-clear."""
+    rfc = _read("about/legends-and-lore/rfcs/0023-tracker-host-beads-projection-exporter.md")
+    projection_spec = _read(
+        "openspec/changes/beads-projection-exporter/specs/beads-projection/spec.md"
+    )
+    architecture = _read("docs/architecture/beads-runtime-data-bridge.md")
+    design = _read("openspec/changes/beads-projection-exporter/design.md")
+    tasks = _read("openspec/changes/beads-projection-exporter/tasks.md")
+    implementation_plan = _read("docs/superpowers/plans/2026-08-13-beads-projection-exporter.md")
+    dashboard_api_spec = _read(
+        "openspec/changes/beads-projection-exporter/specs/dashboard-api/spec.md"
+    )
+    dashboard_decisions_spec = _read(
+        "openspec/changes/beads-projection-exporter/specs/dashboard-decisions/spec.md"
+    )
+
+    for text in map(_normalise, (rfc, projection_spec)):
+        for requirement in (
+            "same source watermark",
+            "authoritative active count",
+            "candidate active count",
+            "source_completeness_unverified",
+            "active pointer unchanged",
+            "staged candidate itself",
+            "availability override",
+            "only a later source-complete publication clears it",
+        ):
+            assert requirement in text
+
+    for text in map(_normalise, (architecture, design, tasks, implementation_plan)):
+        assert "source_completeness_unverified" in text
+        assert "availability override" in text
+        assert "regression" in text
+
+    dashboard_contract = _normalise(dashboard_api_spec)
+    assert "source_completeness_unverified" in dashboard_contract
+    assert "decisions_available: false" in dashboard_contract
+    assert "source_completeness_unverified" in _normalise(dashboard_decisions_spec)

@@ -21,6 +21,10 @@ or cut consumers over.
 - Define the `beads_projection` storage, role, retention, and atomic
   publication/read contracts: one active snapshot plus two prior complete
   snapshots, and 30 days of categorical failed-run metadata.
+- Require source-completeness evidence from the same source watermark before a
+  candidate can publish, so an empty, partial, or count-regressed candidate
+  without matching authoritative count/digest evidence becomes the categorical
+  unavailable state `source_completeness_unverified`, never an all-clear.
 - Define a bounded asynchronous `BeadReadProvider` that returns one coherent
   active snapshot with target/warning/hard freshness semantics of five, ten,
   and fifteen minutes respectively.

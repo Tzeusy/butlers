@@ -64,8 +64,8 @@ the projection is a cache with explicit freshness and failure semantics.
 3. **No tracker credentials in application containers.** In particular, never
    mount `.beads/` or `.beads-credential-key` into them.
 4. **No fabricated all-clear.** An absent, malformed, partially published, or
-   over-age projection reports unavailable/stale rather than `0` open
-   decisions.
+   source-completeness-unverified or over-age projection reports
+   unavailable/stale rather than `0` open decisions.
 5. **No broad egress exception.** Normal runtime containers do not receive a
    route to Dolt or the tracker host merely to read issue data.
 6. **One completed snapshot at a time.** Readers either see the previously
@@ -153,9 +153,10 @@ digest and its escalation query:
   `metadata.decision.default`, plus per-record structured-details
   availability and unavailable reason;
 - dependency edges and their timestamps/type;
-- an export/projection provenance record, content digest, completion time,
-  producer version, validation result, and the strict decision-convention
-  lint outcome required by the weekly digest.
+- an export/projection provenance record, content digest, bounded
+  source-watermark digest, authoritative and candidate active counts,
+  completion time, producer version, validation result, and the strict
+  decision-convention lint outcome required by the weekly digest.
 
 Raw notes, comments, history, arbitrary metadata, attachments, and raw export
 blobs are intentionally excluded. A source description is retained only for an
@@ -182,6 +183,18 @@ it never truncates, skips a row, publishes partial rows, or falls back to a
 different source. It records categorical `validation_failed` /
 `field_bound_exceeded` metadata and leaves the active pointer unchanged.
 
+Every candidate must also carry source-completeness evidence from the same
+source watermark: a source-complete tracker snapshot identity, its authoritative
+active count, and a canonical active-record digest. The candidate active count
+and digest must match the evidence exactly. The projection retains only a
+bounded digest of the watermark; an observed timestamp or content digest alone
+does not prove source completeness. An empty candidate, or one with fewer active
+records than the prior completed snapshot, may publish only when this same-source
+evidence proves it. This is an exact consistency policy, not an arbitrary
+numerical regression threshold. The source-side read, rather than a recount or
+digest of the staged candidate itself, must bind the watermark, authoritative
+count, and canonical digest at one consistency point.
+
 ### Snapshot publication protocol
 
 The schema name is `beads_projection` rather than `public`. It keeps this
@@ -193,7 +206,8 @@ targeted grants. The implementation must provide at least:
 - `snapshots`: completed candidate snapshots and their lifecycle;
 - `issues` and `dependencies`, keyed by snapshot id;
 - a singleton `publication_state` that identifies the one active completed
-  snapshot and records last success/last failure.
+  snapshot, records last success/last failure, and carries the sticky current
+  availability override.
 
 For each run, the service must:
 
@@ -201,7 +215,8 @@ For each run, the service must:
    staging file is never bind-mounted into application containers.
 2. Parse and validate all records before publishing: JSON structure, unique
    issue ids, known dependency endpoints, timestamp parseability, bounded
-   record sizes, and the fields required by the selected consumers.
+   record sizes, the fields required by the selected consumers, and matching
+   source-completeness evidence from the same source watermark.
 3. Preserve the scheduled decision-convention lint contract against the
    candidate's live issues, including unlabeled-marker detection, explicit
    distinction between a clean result and an unavailable/malformed lint
@@ -210,18 +225,25 @@ For each run, the service must:
    logic, but publication and readers must not turn lint failure into a calm
    successful audit.
 4. Insert the run and its candidate rows in PostgreSQL, then atomically mark
-   the snapshot current in the same transaction. A crash or database error
-   leaves the previously completed snapshot current.
+   the snapshot current and clear its availability override in the same
+   transaction. A crash or database error leaves the previously completed
+   snapshot current. A source-completeness failure records its categorical run
+   and sets the sticky `source_completeness_unverified` availability override
+   without moving the pointer; only a later source-complete publication clears
+   it.
 5. Retain the active completed snapshot and exactly two prior complete
    snapshots. Retain only categorical failed-run metadata for 30 days; no raw
    export or error payload survives with a failed run.
 
 The source does not currently provide a documented, portable export sequence
-number. The service should store a content digest and observed export time, but
-it must **not** claim strict source monotonicity until a prototype identifies a
-reliable Dolt/`bd` watermark. Until then, an apparent rollback or unexpectedly
-empty result is an alerted validation condition, not a silently accepted new
-truth.
+number. The implementation must therefore prototype and prove a reliable
+Dolt/`bd` source watermark that identifies one source-complete read and yields
+its authoritative active count plus canonical active-record digest. It must not
+substitute a content digest or observed export time for that proof. Until then,
+the exporter records `source_completeness_unverified`, retains the active
+pointer, and sets the sticky availability override so the provider is
+unavailable rather than silently accepting an empty, partial, or count-regressed
+candidate as new truth. Only a later source-complete publication clears it.
 
 ### Reader contract
 
@@ -251,7 +273,8 @@ Every result must carry at least:
 - `target_met`: whether the age is at or below the five-minute target when the
   selected source is readable;
 - `unavailable_reason`: a stable reason such as `projection_missing`,
-  `projection_stale`, `projection_read_error`, or `projection_schema_mismatch`.
+  `projection_stale`, `projection_read_error`, `projection_schema_mismatch`, or
+  `source_completeness_unverified`.
 
 Freshness is fixed: age at or below five minutes meets target; over five
 through ten minutes is readable but misses target; over ten through fifteen
@@ -261,8 +284,12 @@ repeatable-read, read-only transaction and fails closed if any returned row
 belongs to another snapshot id.
 
 `GET /api/decisions` and the Switchboard scheduled jobs must use this same
-provider. A healthy empty snapshot can produce a genuine all-clear; an
-unhealthy source cannot. After cutover, there should be no silent automatic
+provider. A healthy empty snapshot can produce a genuine all-clear only after
+the source-completeness evidence passes; an unhealthy or unverified source
+cannot. The sticky `source_completeness_unverified` availability override
+overrides a retained pointer with an unavailable envelope until a later
+source-complete publication clears it.
+After cutover, there should be no silent automatic
 fallback from projection to JSONL: an automatic fallback can hide a broken
 control plane behind different freshness semantics. Migration mode may select
 one source explicitly and report it in status/telemetry.
@@ -347,9 +374,11 @@ The following failure rules are mandatory for the implementation change:
 2. A PostgreSQL transaction failure publishes nothing; retrying must be safe.
 3. A failed reader lookup or a snapshot older than the hard TTL becomes
    unavailable even if a prior snapshot is still retained for diagnosis.
-4. A suspicious empty or older-than-current candidate is not treated as a
-   normal all-clear until the validated source-watermark policy says it is
-   safe. It generates an operator-visible signal.
+4. An empty, partial, or count-regressed candidate is not treated as a normal
+   all-clear unless its authoritative active count and canonical digest match
+   the same source watermark. Otherwise it retains the pointer, emits only
+   `source_completeness_unverified`, and the provider returns unavailable until
+   a later source-complete candidate publishes.
 5. A consumer must not use an unavailable snapshot to send a weekly "no
    decisions" message or an escalation conclusion.
 
@@ -397,7 +426,8 @@ its operational steps.
 
 - Parser fixtures: valid data, malformed JSON, duplicate ids, unknown
   dependency endpoints, timestamp errors, at-limit acceptance and bound-plus-one
-  rejection for every named field/snapshot bound, and an empty source.
+  rejection for every named field/snapshot bound, and empty/count-regressed
+  candidates both with and without same-source-watermark completeness evidence.
 - PostgreSQL integration tests: one complete snapshot is visible; a crash or
   rejected candidate never replaces it; retention and idempotent retry work.
 - Role tests using the actual `SET ROLE` model: reader roles can select only
@@ -412,8 +442,10 @@ its operational steps.
   pointer with rows or lint results from another snapshot, including during a
   concurrent pointer flip; runtime reader roles cannot query raw candidate or
   history tables.
-- Freshness/failure tests: missing, stale, schema-mismatched, and read-error
-  projection results propagate as degraded envelopes rather than empty queues.
+- Freshness/failure tests: missing, stale, schema-mismatched, read-error, and
+  `source_completeness_unverified` projection results propagate as degraded
+  envelopes rather than empty queues; regression coverage must prove a retained
+  pointer cannot make that category look healthy.
 - Deployment test: no application container mount or egress path reaches
   Beads/Dolt; only the chosen management-plane process has tracker access.
 - TLS preflight regression tests: accept only `sslmode=verify-full` with a

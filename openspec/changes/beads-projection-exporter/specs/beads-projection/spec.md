@@ -45,9 +45,29 @@ is exceeded, the exporter SHALL reject the entire candidate snapshot without
 truncation, partial row publication, row skipping, or source fallback; it SHALL
 record only categorical `validation_failed` / `field_bound_exceeded` outcome
 metadata and leave the active pointer unchanged.
+Every candidate SHALL carry source-completeness evidence from the same source
+watermark: a source-complete tracker snapshot identity, its authoritative active
+count, and a canonical active-record digest. The candidate active count and
+canonical active-record digest SHALL exactly match that evidence. The projection
+SHALL retain only a bounded digest of the source watermark, never the raw
+tracker snapshot identifier or raw export; a content digest or observed export
+time alone is not source-completeness evidence. The source-complete read SHALL
+bind the watermark, authoritative active count, and canonical digest at one
+source-side consistency point; recounting or re-digesting the staged candidate
+itself SHALL NOT satisfy this policy. An empty candidate, including a
+first candidate, is publishable only when the same source watermark proves an
+authoritative active count of zero and a matching empty-set digest. A candidate
+active count lower than the active completed snapshot's count is publishable
+only under that same evidence rule; no arbitrary numerical regression threshold
+is permitted. If the evidence is absent, mismatched, or unverified, the
+exporter SHALL reject the entire candidate without candidate rows or pointer
+movement, record only `source_completeness_unverified`, set the singleton
+availability override to that category, and make the provider return unavailable
+with that categorical reason. The availability override is sticky: only a later
+source-complete publication clears it, and a later failed run cannot.
 
 ID: REQ-beads-projection-001
-Source: RFC 0023 §§1-2, 10
+Source: RFC 0023 §§1-3, 10
 Scope: v1-mandatory
 
 #### Scenario: Runtime has no tracker capability
@@ -78,15 +98,30 @@ Scope: v1-mandatory
 - **AND** it persists neither the raw export nor the invalid candidate rows
 - **AND** it leaves the active snapshot unchanged
 
+#### Scenario: Unverified empty or count-regressed candidate cannot clear decisions
+
+- **WHEN** a candidate is empty or its candidate active count is lower than the
+  active completed snapshot's count and it lacks matching authoritative active
+  count plus canonical active-record digest evidence from the same source
+  watermark
+- **THEN** the exporter records only `source_completeness_unverified`, persists
+  no candidate rows, and leaves the active pointer unchanged
+- **AND** the provider returns `available=false` with
+  `unavailable_reason=source_completeness_unverified`
+- **AND** neither a retained snapshot nor a synthetic empty list is presented
+  as a current all-clear
+
 ### Requirement: Atomic Complete Snapshot Publication and Retention
 
 The projection SHALL use a dedicated `beads_projection` schema with completed
 snapshot metadata, snapshot-keyed issue/dependency/lint rows, a singleton
-active-snapshot pointer, and categorical sync-run metadata. A publisher SHALL
-hold a dedicated PostgreSQL advisory lock and SHALL insert candidate rows,
-mark the snapshot complete, and update the active pointer in one transaction.
-A failed export, parse, validation, lock, or database write SHALL NOT move the
-pointer.
+active-snapshot pointer with its sticky availability override, and categorical
+sync-run metadata. A publisher SHALL hold a dedicated PostgreSQL advisory lock
+and SHALL insert candidate rows, mark the snapshot complete, update the active
+pointer, and clear the availability override in one transaction. A failed
+export, parse, validation, lock, or database write SHALL NOT move the pointer;
+a source-completeness failure SHALL set its sticky availability override without
+moving the pointer.
 The system SHALL retain the active completed snapshot plus exactly two prior
 completed snapshots. It SHALL retain categorical metadata for failed runs for
 30 days, without raw export content or raw error text, and SHALL prune older
@@ -130,6 +165,10 @@ unavailable reason, active allowlisted issues, dependency edges, and normalized
 lint state. Runtime roles SHALL have `USAGE` plus `SELECT` only on the bounded
 active-snapshot views; they SHALL NOT receive direct table, history, pointer,
 failed-run, sequence, or writer privileges.
+The bounded reader metadata view SHALL expose only the current stable
+availability override from the singleton publication state, including
+`source_completeness_unverified`, so the provider can fail closed without direct
+failed-run access.
 The provider SHALL use one `REPEATABLE READ, READ ONLY` transaction and
 runtime-facing views rooted at the active pointer. It SHALL verify that every
 selected row carries the chosen snapshot id and SHALL fail closed if the
@@ -144,9 +183,13 @@ readable but SHALL be observable to consumers. The provider SHALL expose
 whether the five-minute target is met separately from warning freshness, so a
 readable five-to-ten-minute target miss is observable; unavailable data SHALL
 never be represented as an empty snapshot.
+A current `source_completeness_unverified` availability override SHALL override
+an otherwise readable retained pointer: the provider SHALL return
+`available=false`, no successful issue list, and that stable categorical
+unavailable reason until a later source-complete candidate publishes.
 
 ID: REQ-beads-projection-003
-Source: RFC 0023 §§5-6
+Source: RFC 0023 §§3, 5-6
 Scope: v1-mandatory
 
 #### Scenario: Pointer flip cannot create a mixed snapshot
@@ -181,6 +224,15 @@ Scope: v1-mandatory
 - **WHEN** the active snapshot is more than fifteen minutes old
 - **THEN** the provider returns `available=false` with a stable stale reason
 - **AND** it returns no synthetic empty issue list as a successful snapshot
+
+#### Scenario: Source-completeness failure overrides a retained pointer
+
+- **WHEN** the active pointer still names a complete snapshot but the latest
+  source-completeness failure has set the sticky availability override
+- **THEN** the provider returns `available=false` with
+  `unavailable_reason=source_completeness_unverified`
+- **AND** it does not represent the retained rows as a healthy snapshot or an
+  empty all-clear
 
 ### Requirement: Preserved Decision Lint and Dependency Semantics
 

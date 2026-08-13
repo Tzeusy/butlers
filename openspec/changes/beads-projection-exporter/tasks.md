@@ -3,7 +3,9 @@
 - [ ] 1.1 Add canonical active-Beads fixtures covering eligible decisions,
   malformed/missing decision details, title-marker unlabeled decisions,
   P1/deploy blockers, inactive rows, and every named bounded-field violation,
-  including at-limit acceptance and bound-plus-one rejection.
+  including at-limit acceptance and bound-plus-one rejection. Include
+  same-source-watermark authoritative active-count/canonical-digest evidence
+  plus empty and count-regressed candidates with absent or mismatched evidence.
 - [ ] 1.2 Extract pure decision/lint comparison fixtures and add RED parity
   tests proving the existing JSONL calculation and a typed provider snapshot
   produce identical decision order, structured-detail state, escalation rows,
@@ -21,11 +23,18 @@
 - [ ] 2.2 Implement the writer-only advisory-lock/publication transaction and
   retention SQL so candidate rows, complete state, and active pointer commit
   together; reject `field_bound_exceeded` candidates without truncation or
-  partial rows; retain active plus two prior completed snapshots and prune only
-  failed-run categories older than 30 days.
+  partial rows; require exact source-completeness evidence from the same source
+  watermark before publication, from one source-side consistency point rather
+  than a recount/digest of the candidate; record
+  `source_completeness_unverified` without moving the pointer when evidence is
+  absent/mismatched; set a sticky singleton availability override that only a
+  later source-complete publication clears; expose only that current override
+  through a bounded reader view; retain active plus two prior completed snapshots
+  and prune only failed-run categories older than 30 days.
 - [ ] 2.3 Add migrated-PostgreSQL integration tests for crash/rollback safety,
   pointer uniqueness, no mixed active rows, deterministic bound rejection,
-  failed-run categorization, retention, and a fresh/core-only database.
+  failed-run categorization, retained-pointer source-completeness failure,
+  retention, and a fresh/core-only database.
 - [ ] 2.4 Add actual-role `SET ROLE` tests proving the exporter identity can
   write only the projection surface, runtime reader roles can select only the
   bounded active views, and neither side can access the other application's
@@ -39,13 +48,16 @@
   writer connection.
 - [ ] 3.2 Implement active-status filtering, allowlisted issue/dependency
   normalization, decision-only description/options/default derivation,
-  bounded categorical failures, and strict lint-result normalization without
-  retaining raw metadata or subprocess output.
+  bounded categorical failures, exact same-source-watermark completeness
+  validation, and strict lint-result normalization without retaining raw
+  metadata or subprocess output.
 - [ ] 3.3 Add focused exporter tests for malformed JSON, duplicate ids,
   endpoint/timestamp/bound validation, at-limit acceptance and bound-plus-one
   rejection for every named field and snapshot limit, advisory-lock contention,
-  database failure, safe retry, categorical `field_bound_exceeded`, and
-  no-pointer-move behavior.
+  database failure, safe retry, categorical `field_bound_exceeded` and
+  `source_completeness_unverified`, source-complete empty/count-regressed
+  acceptance, absent/mismatched-evidence rejection, and no-pointer-move
+  behavior.
 - [ ] 3.4 Add a dry-run-only operator configuration validator that rejects a
   missing TLS writer configuration, an unverified TLS mode, or a non-tracker-host
   invocation before any export/write attempt. It SHALL require
@@ -61,7 +73,9 @@
 
 - [ ] 4.1 Add `BeadReadProvider` typed models and a repeatable-read,
   read-only active-view implementation that verifies one pointer/snapshot id
-  across metadata, issues, dependencies, and lint rows.
+  across metadata, issues, dependencies, and lint rows and makes the sticky
+  `source_completeness_unverified` availability override unavailable despite a
+  retained pointer.
 - [ ] 4.2 Implement provider freshness classification at five-minute target,
   ten-minute warning, and fifteen-minute hard-unavailable boundaries with
   stable categorical unavailable reasons; expose whether the five-minute
@@ -72,8 +86,8 @@
   selected compatibility provider only.
 - [ ] 4.4 Add provider and pure-calculation tests for pointer flips, views with
   mismatched snapshot ids, missing/schema-error data, every freshness boundary,
-  warning visibility, hard-unavailable no-all-clear behavior, and JSONL
-  semantic parity.
+  warning visibility, hard-unavailable and source-completeness no-all-clear
+  behavior, and JSONL semantic parity.
 
 ## 5. Shared consumer migration
 
@@ -83,13 +97,16 @@
 - [ ] 5.2 Wire `GET /api/decisions` to the same provider/calculation and add
   `beads_source`, `snapshot_as_of`, `beads_freshness`, and
   `beads_target_met` metadata while preserving all existing summary, order,
-  structured-detail, and degradation fields.
+  structured-detail, and degradation fields; a current
+  `source_completeness_unverified` result returns the existing degraded shape
+  with `decisions_available=false` and that categorical reason.
 - [ ] 5.3 Update the Decisions API/page types and source-as-of plaque so
   projection warning is visible, hard unavailable cannot render an all-clear,
   and explicit JSONL rollback remains identifiable.
 - [ ] 5.4 Add focused job, API, frontend, and accessibility regressions for
   JSONL and projection modes, warning/hard-unavailable states, lint outcomes,
-  explicit source provenance, and no new decision mutation affordance.
+  explicit source provenance, retained-pointer source-completeness failure, and
+  no new decision mutation affordance.
 
 ## 6. Shadow parity and owner-gated activation
 

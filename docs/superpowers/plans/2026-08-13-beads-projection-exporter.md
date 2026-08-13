@@ -54,6 +54,18 @@ Beads JSONL export/linter, FastAPI, React/Vite/Vitest, Docker/testcontainers.
   and the active pointer unchanged.
 - Publish pointer and candidate rows atomically. Read them in one
   `REPEATABLE READ, READ ONLY` transaction and fail closed on a mixed snapshot.
+- Require source-completeness evidence from the same source watermark for every
+  candidate: a source-complete tracker snapshot identity, authoritative active
+  count, and canonical active-record digest must exactly match the candidate
+  active count/digest. Retain only a bounded watermark digest. An empty or
+  count-regressed candidate without that evidence records
+  `source_completeness_unverified`, leaves the pointer unchanged, and returns an
+  unavailable envelope rather than an all-clear. Its singleton availability
+  override remains sticky until a later source-complete publication clears it;
+  a later failed run cannot clear it. This is exact consistency, not an
+  arbitrary numerical regression threshold; regression coverage must prove it.
+  The source-side read, not a recount/digest of the staged candidate, must bind
+  the watermark/count/digest at one consistency point.
 - Freshness: target `<=5m`, observable target miss `>5m..<=10m`, warning
   `>10m..<=15m`, hard unavailable `>15m`.
 - Retain active plus two prior complete snapshots; retain categorical failed
@@ -176,6 +188,9 @@ observable freshness signal.
   title-marker unlabeled record, one P1 bug and one deploy record with
   `blocks` edges, inactive rows, and fields that must be excluded. Keep source
   data in a test-local dictionary/JSONL fixture; do not use the live tracker.
+  Add a source-complete watermark fixture with authoritative active
+  count/canonical digest, plus empty and count-regressed candidates with absent
+  or mismatched evidence.
 
   ```python
   def _active_source() -> list[dict[str, object]]:
@@ -248,7 +263,9 @@ observable freshness signal.
 
   Provision through `migrated_core_postgres_pool`, not hand-written fixture
   DDL. Test the singleton pointer, snapshot foreign keys, status/category
-  constraints, bounded views, and actual-role access.
+  constraints, bounded views, source-watermark digest/authoritative-count
+  provenance, a bounded current availability-override category, and actual-role
+  access.
 
   ```python
   async with migrated_core_postgres_pool() as pool:
@@ -328,7 +345,9 @@ observable freshness signal.
 
   Cover valid normalization; duplicate identifiers; malformed JSON/timestamps;
   inactive rows; unknown active endpoints; every at-limit acceptance and
-  bound-plus-one rejection for the named limits; lint clean,
+  bound-plus-one rejection for the named limits; source-complete empty and
+  count-regressed acceptance; absent or mismatched source-completeness evidence
+  returning `source_completeness_unverified` with no pointer move; lint clean,
   violations, and unavailable; advisory-lock loss; transaction failure; retry;
   and no raw field materialization.
 
@@ -346,11 +365,14 @@ observable freshness signal.
 
   Give the script PEP 723 metadata. Keep `bd export` invocation confined to
   the tracker-host entry point. Pass its staged file through a parser that
-  creates the Task 1 typed values, runs the strict lint semantics against the
-  candidate, and converts exceptions to fixed categories such as
+  creates the Task 1 typed values. Before accepting a candidate, obtain the
+  source-side watermark/count/canonical-digest proof from one source-consistent
+  read; never derive that proof by recounting the staged candidate. Run the
+  strict lint semantics against the candidate, and convert exceptions to fixed
+  categories such as
   `source_unavailable`, `parse_failed`, `validation_failed`,
-  `field_bound_exceeded`, `tls_verification_failed`, `lock_unavailable`, and
-  `database_write_failed`.
+  `field_bound_exceeded`, `source_completeness_unverified`,
+  `tls_verification_failed`, `lock_unavailable`, and `database_write_failed`.
 
   ```python
   async with pool.acquire() as conn:
@@ -426,9 +448,11 @@ observable freshness signal.
 - [ ] **Step 2: Add RED atomic-read tests**
 
   Test one repeatable-read transaction, pointer/row snapshot-id agreement,
-  missing/non-singleton pointer, view error, schema mismatch, and a concurrent
-  pointer flip. Assert an inconsistency produces
-  `available=False`, not an empty available snapshot.
+  missing/non-singleton pointer, view error, schema mismatch, a current
+  sticky `source_completeness_unverified` availability override with a retained
+  pointer (including a subsequent non-completeness failure), and a concurrent
+  pointer flip. Assert each inconsistency produces `available=False`, not an
+  empty available snapshot or normal retained all-clear.
 
 - [ ] **Step 3: Refactor decision review to pure source-independent logic**
 
@@ -478,8 +502,10 @@ observable freshness signal.
 - [ ] **Step 1: Add API RED tests**
 
   Test projection source metadata, snapshot timestamp, warning at
-  `10m < age <= 15m`, hard unavailable above fifteen minutes, JSONL export
-  time compatibility, unchanged summary shape, and no mutation/`bd` call.
+  `10m < age <= 15m`, hard unavailable above fifteen minutes, a retained
+  pointer after `source_completeness_unverified` yielding
+  `decisions_available=False`, JSONL export time compatibility, unchanged
+  summary shape, and no mutation/`bd` call.
 
   ```python
   assert body["meta"] == {

@@ -35,12 +35,15 @@ and `beads_target_met` (`true`, `false`, or `null` for an unavailable source).
 Missing, unreadable, schema-mismatched, or hard-stale provider data SHALL
 return `data: []` with `decisions_available: false` and a named reason; a
 readable source with zero decisions SHALL return
-`decisions_available: true` and an empty list. A warning snapshot remains
-readable but SHALL name `warning` freshness. Open decisions SHALL remain
-oldest-first.
+`decisions_available: true` and an empty list only after the selected source has
+passed the source-completeness policy. A current
+`source_completeness_unverified` outcome SHALL return `data: []` with
+`decisions_available: false` and that named reason, even when a retained
+snapshot exists. A warning snapshot remains readable but SHALL name `warning`
+freshness. Open decisions SHALL remain oldest-first.
 
 ID: REQ-dashboard-api-001
-Source: RFC 0023 §§5-8; RFC 0007
+Source: RFC 0023 §§3, 5-8; RFC 0007
 Scope: v1-mandatory
 
 #### Scenario: Valid structured context preserves order and the native deadline
@@ -80,6 +83,15 @@ Scope: v1-mandatory
 - **THEN** `GET /api/decisions` returns HTTP 200 with `data: []`
 - **AND** `meta.decisions_available` is `false`
 - **AND** `meta.unavailable_reason` names the source failure
+- **AND** `meta.beads_freshness` is `unavailable`
+
+#### Scenario: Unverified source completeness cannot render an empty all-clear
+
+- **WHEN** the selected projection retains its prior pointer after an empty or
+  count-regressed candidate fails source-completeness validation
+- **THEN** `GET /api/decisions` returns HTTP 200 with `data: []`
+- **AND** `meta.decisions_available` is `false`
+- **AND** `meta.unavailable_reason` is `source_completeness_unverified`
 - **AND** `meta.beads_freshness` is `unavailable`
 
 #### Scenario: Warning projection keeps data and provenance visible

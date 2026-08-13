@@ -79,7 +79,7 @@ The exporter includes only Beads records with status `open`, `in_progress`, or
 | Eligible decision detail | source description, validated ordered options/default, structured-detail availability and categorical reason |
 | Dependency | issue id, depends-on id, type, created timestamp |
 | Lint | clean/violations/unavailable state; bounded violation id, title, and category code |
-| Provenance | snapshot/run ids, source digest, completion/source times, schema/producer version, bounded counts, categorical outcome/reason |
+| Provenance | snapshot/run ids, source digest, bounded source-watermark digest, completion/source times, authoritative and candidate active counts, schema/producer version, categorical outcome/reason |
 
 An eligible decision is an active, non-epic issue carrying the `decision`
 label. Its description may be stored only for that decision row. The exporter
@@ -127,29 +127,67 @@ truncate, split, skip a row, publish a partial snapshot, or select another
 source. It records only categorical `validation_failed` /
 `field_bound_exceeded` metadata and leaves the active pointer unchanged.
 
+### Source completeness and count-regression policy
+
+Every candidate MUST carry source-completeness evidence from the same source
+watermark: a source-complete tracker snapshot identity, its authoritative active
+count, and a canonical active-record digest. The candidate active count and
+canonical active-record digest MUST exactly match that evidence. The projection
+may retain only a bounded digest of the source watermark, never the raw tracker
+snapshot identifier or raw export. A content digest or observed export time
+alone is not source-completeness evidence. The source-complete read must bind
+the watermark, authoritative active count, and canonical digest at one
+source-side consistency point; recounting or re-digesting the staged candidate
+itself is not source-completeness evidence.
+
+An empty candidate, including the first candidate, is publishable only when the
+same source watermark proves an authoritative active count of zero and the
+candidate's canonical active-record digest is the corresponding empty-set
+digest. A candidate active count lower than the active completed snapshot's
+count is publishable only under the same evidence rule. This policy deliberately
+uses exact source consistency rather than an arbitrary numerical regression
+threshold.
+
+If the tracker-host exporter cannot obtain or validate this evidence, it MUST
+reject the entire candidate, publish no candidate rows, leave the active pointer
+unchanged, and record only the categorical outcome
+`source_completeness_unverified`. It MUST set the singleton availability
+override to that category. While the override is set, the provider MUST return
+unavailable with `unavailable_reason=source_completeness_unverified` rather than
+treating the retained pointer as a normal or empty all-clear. The availability
+override is sticky: only a later source-complete publication clears it, and a
+later failed run cannot. The implementation must prove the source-complete-read
+mechanism before activation; the current lack of a documented portable Dolt/`bd`
+watermark is never permission to substitute a heuristic.
+
 ### 3. Publication protocol
 
 The core migration will create a `beads_projection` schema outside all
 butler-default search paths. Its private storage has completed snapshots,
 snapshot-keyed issue/dependency/lint rows, a singleton active-pointer row, and
-categorical sync-run outcomes.
+its sticky availability override, plus categorical sync-run outcomes.
 
 Before export staging or database work, the publisher holds a dedicated
 PostgreSQL advisory lock. It performs the following sequence:
 
 1. Generate/read a local staged export in tracker-host-only storage.
-2. Validate record shape, unique identifiers, allowed bounds, timestamps, and
-   active dependency endpoints. Normalize allowlisted fields and evaluate the
-   strict decision lint.
+2. Validate record shape, unique identifiers, allowed bounds, timestamps,
+   active dependency endpoints, and the source-completeness evidence for the
+   same source watermark. Normalize allowlisted fields and evaluate the strict
+   decision lint.
 3. In one PostgreSQL transaction, insert the candidate rows, mark the
    candidate complete, update the singleton active pointer, and record the
    success outcome.
-4. On any lock, source, parse, validation, or database failure, record only a
-   categorical failed run. Do not publish candidate rows or change the active
-   pointer.
+4. On any lock, source, parse, validation, source-completeness, or database
+   failure, record only a categorical failed run. Do not publish candidate rows
+   or change the active pointer. A source-completeness failure also sets the
+   sticky `source_completeness_unverified` availability override. Only a later
+   source-complete publication clears it; another failed run does not.
 
 A reader therefore sees the preceding complete snapshot until a new complete
-snapshot and its pointer are committed together. A candidate with a lint
+snapshot and its pointer are committed together, except that a current
+source-completeness availability override is surfaced as unavailable rather
+than a normal retained snapshot. A candidate with a lint
 violation remains publishable as a valid tracker snapshot, but its normalized
 `violations` state is preserved. A candidate whose lint execution is
 unavailable also preserves that fact; it is never represented as a clean audit.
@@ -176,12 +214,16 @@ freshness, target_met, unavailable_reason, issues, dependencies, lint
 Reader roles receive only `USAGE` on `beads_projection` and `SELECT` on
 bounded active-snapshot views. They receive no direct privilege on private
 tables, the active pointer, snapshot history, failed runs, sequences, or writer
-functions. The writer has no privilege on application schemas.
+functions. The bounded reader metadata surface includes only the current stable
+availability override from the singleton publication state, so it can expose
+`source_completeness_unverified` without granting readers failed-run history.
+The writer has no privilege on application schemas.
 
 The provider starts one `REPEATABLE READ, READ ONLY` transaction, selects the
 active snapshot metadata and each active view, and verifies every returned row
 has the selected snapshot id. A missing/non-singleton pointer, unavailable
-view, schema mismatch, query error, or mismatched row fails closed as an
+view, schema mismatch, query error, mismatched row, or current
+`source_completeness_unverified` availability override fails closed as an
 unavailable provider result. The provider MUST NOT combine data from different
 snapshots and MUST NOT synthesize an empty successful snapshot.
 
@@ -196,8 +238,8 @@ Snapshot age is measured from completed publication time:
 | `> 10` and `<= 15 minutes` | warning | readable result plus visible warning provenance |
 | `> 15 minutes` | unavailable | degraded response; never all-clear |
 
-Missing, unreadable, or schema-mismatched data is also unavailable with a
-stable categorical reason. `GET /api/decisions` retains
+Missing, unreadable, schema-mismatched, or source-completeness-unverified data
+is also unavailable with a stable categorical reason. `GET /api/decisions` retains
 `decisions_available`, `unavailable_reason`, and the legacy `export_as_of`
 when applicable, and adds source, snapshot-as-of, freshness, and target-met
 metadata.

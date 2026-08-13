@@ -124,27 +124,46 @@ metadata. A malformed decision remains a readable decision with a named
 structured-detail reason, exactly as today; it does not invalidate an otherwise
 valid snapshot.
 
+Every candidate also carries source-completeness evidence from the same source
+watermark: a source-complete tracker snapshot identity, its authoritative active
+count, and a canonical active-record digest. The candidate active count and
+digest must match the evidence exactly. Only a bounded source-watermark digest
+may be retained; export time or a content digest alone is not sufficient. Thus
+an empty candidate or a lower active count than the prior completed snapshot can
+publish only with that evidence, not a heuristic or arbitrary numerical
+regression threshold. If the evidence is absent or mismatched, the exporter
+records `source_completeness_unverified`, retains the pointer, and sets its
+sticky availability override so the provider returns unavailable rather than
+treating the retained data as a calm all-clear. Only a later source-complete
+publication clears that override; a later failed run cannot. The source-side
+read, rather than the staged candidate itself, must bind the watermark,
+authoritative count, and canonical digest at one consistency point.
+
 ### D3 — Publish candidate rows and the active pointer in one transaction
 
 The future core migration creates these implementation-facing relations:
 
 - `beads_projection.snapshots`: one row per complete candidate, including
-  `snapshot_id`, `completed_at`, source digest, schema version, and bounded
-  counts.
+  `snapshot_id`, `completed_at`, source digest, bounded source-watermark digest,
+  authoritative/candidate active counts, canonical active-record digest, schema
+  version, and bounded counts.
 - `beads_projection.snapshot_issues`, `snapshot_dependencies`, and
   `snapshot_decision_lint`: rows keyed by `snapshot_id`.
 - `beads_projection.publication_state`: exactly one row pointing to the active
-  completed snapshot.
+  completed snapshot and carrying its sticky availability override.
 - `beads_projection.sync_runs`: categorical attempt outcomes. Non-published
-  rows retain no raw error or export content and expire after 30 days.
+  rows retain no raw error or export content and expire after 30 days. The
+  reader metadata view exposes only the current availability override from
+  `publication_state`; it exposes no failed-run history.
 
 The exporter takes a dedicated PostgreSQL advisory lock before staging or
 writing. It records a categorical failed run for lock, source, parse,
 validation, and database failures, but never moves the active pointer for a
-failed candidate. On success it inserts the candidate rows, marks the snapshot
-complete, updates `publication_state`, and records its success in one database
-transaction. A crash or rollback leaves the prior active snapshot and all of
-its rows readable.
+failed candidate. A source-completeness failure also sets the sticky availability
+override without moving that pointer. On success it inserts the candidate rows,
+marks the snapshot complete, updates `publication_state`, clears the override,
+and records its success in one database transaction. A crash or rollback leaves
+the prior active snapshot and all of its rows readable.
 
 After a successful pointer flip, retention deletes only completed snapshots
 older than the active-plus-two-prior window. The cleanup query must never
@@ -255,10 +274,12 @@ hardened-role posture.
 
 ## Risks / Trade-offs
 
-- **[A valid export is suspiciously empty or regresses in count]** → Treat the
-  candidate as a validation failure unless it satisfies the explicitly tested
-  source-watermark/empty-data policy; retain the prior pointer and record only
-  a categorical failure.
+- **[A valid export is suspiciously empty or regresses in count]** → Require
+  same-source-watermark authoritative-count and canonical-digest evidence;
+  otherwise retain the prior pointer, record
+  `source_completeness_unverified`, and return unavailable rather than an
+  all-clear. Regression coverage must prove the policy without an arbitrary
+  numerical threshold.
 - **[A writer crashes midway through a publish]** → Candidate insertion and
   pointer update share one transaction; readers retain the prior complete
   snapshot.
