@@ -359,6 +359,13 @@ export default function ChroniclesPage() {
       }
     },
   });
+  const isCurrentDayCloseRegeneration =
+    regenerateDayClose.variables?.date === selectedDate &&
+    regenerateDayClose.variables?.tz === ownerTz;
+  const isCurrentDayCloseRegenerationPending =
+    isCurrentDayCloseRegeneration && regenerateDayClose.isPending;
+  const isCurrentDayCloseRegenerationError =
+    isCurrentDayCloseRegeneration && regenerateDayClose.isError;
   const attentionItems = adaptAttention(
     isUnknownState ? [] : (briefing?.attention_items ?? []),
     () => void refetch(),
@@ -424,16 +431,16 @@ export default function ChroniclesPage() {
                   variant="outline"
                   size="sm"
                   className="h-7 text-xs"
-                  disabled={regenerateDayClose.isPending}
-                  aria-busy={regenerateDayClose.isPending}
+                  disabled={isCurrentDayCloseRegenerationPending}
+                  aria-busy={isCurrentDayCloseRegenerationPending}
                   aria-label="Regenerate day-close summary"
                   onClick={() =>
                     regenerateDayClose.mutate({ date: selectedDate, tz: ownerTz })
                   }
                 >
-                  {regenerateDayClose.isPending ? "Regenerating" : "Regenerate"}
+                  {isCurrentDayCloseRegenerationPending ? "Regenerating" : "Regenerate"}
                 </Button>
-                {regenerateDayClose.isError ? (
+                {isCurrentDayCloseRegenerationError ? (
                   <span role="alert" style={{ ...EYEBROW_STYLE, color: "var(--destructive)" }}>
                     Regeneration failed.
                   </span>
