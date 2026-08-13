@@ -16,11 +16,7 @@ pytestmark = pytest.mark.unit
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _INIT_DB = _REPO_ROOT / "scripts" / "init-db.sql"
 _MIGRATION = (
-    _REPO_ROOT
-    / "alembic"
-    / "versions"
-    / "core"
-    / "core_197_canonical_dnd_generation_guard.py"
+    _REPO_ROOT / "alembic" / "versions" / "core" / "core_197_canonical_dnd_generation_guard.py"
 )
 
 
@@ -39,7 +35,9 @@ def test_dnd_boundary_uses_trusted_installer_not_migration_owned_ddl() -> None:
     assert "idx_user_context_active_signals" in source
     assert source.count("LOCK TABLE public.user_context IN ACCESS EXCLUSIVE MODE") == 2
     assert "CREATE ROLE dnd_generation_owner" in source
-    assert "NOLOGIN NOINHERIT NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS" in source
+    assert (
+        "NOLOGIN NOINHERIT NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS" in source
+    )
     assert "roleid = v_owner OR member = v_owner" in source
     assert "DND generation owner role is untrusted or has memberships" in source
     assert "ALTER TABLE public.user_context OWNER TO dnd_generation_owner" in source
@@ -65,7 +63,7 @@ def test_dnd_gateway_checks_active_role_before_private_definer() -> None:
     assert "CREATE FUNCTION dnd_generation_private.canonical_json(p_document JSONB)" in source
     assert "SECURITY DEFINER" in source
     assert "current_setting('role', true)" in source
-    assert '"normalize"(p_value, \'NFC\')' in source
+    assert "\"normalize\"(p_value, 'NFC')" in source
     assert "DND metadata has duplicate NFC-normalized keys" in source
     assert "RETURN trim_scale((p_document #>> '{}')::numeric)::text" in source
     assert "DND writer does not match the active runtime role" in source
@@ -79,7 +77,9 @@ def test_dnd_receipt_schema_is_content_minimizing_and_role_catalog_gated() -> No
     migration = _MIGRATION.read_text(encoding="utf-8")
 
     audit_start = source.index("CREATE TABLE public.dnd_generation_mutations")
-    audit_end = source.index("CREATE UNIQUE INDEX dnd_generation_mutations_generation_key", audit_start)
+    audit_end = source.index(
+        "CREATE UNIQUE INDEX dnd_generation_mutations_generation_key", audit_start
+    )
     audit = source[audit_start:audit_end]
     assert "mutation_id UUID PRIMARY KEY" in audit
     assert "semantic_fingerprint_version" in audit

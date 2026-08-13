@@ -155,7 +155,9 @@ def test_dnd_bootstrap_rejects_any_preexisting_user_context_policy(postgres_cont
                 text("SELECT to_regclass('public.dnd_generation_guard') IS NULL")
             ).scalar_one()
             assert conn.execute(
-                text("SELECT to_regprocedure('public.context_dnd_mutate(uuid,text,text,text,timestamptz,text,real,jsonb)') IS NULL")
+                text(
+                    "SELECT to_regprocedure('public.context_dnd_mutate(uuid,text,text,text,timestamptz,text,real,jsonb)') IS NULL"
+                )
             ).scalar_one()
     finally:
         engine.dispose()
