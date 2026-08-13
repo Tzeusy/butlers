@@ -20,10 +20,13 @@ Covers:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
 
 import pytest
+from fastmcp import FastMCP
 
 from butlers.modules._roster_general import GeneralModule
 
@@ -72,6 +75,25 @@ async def registered_tools() -> dict[str, Any]:
 async def test_context_tools_registered(registered_tools: dict[str, Any]) -> None:
     for name in ["check_context", "set_context", "clear_context"]:
         assert name in registered_tools
+
+
+async def test_dnd_request_context_is_injected_not_a_user_tool_argument() -> None:
+    """FastMCP injects request context while exposing the explicit replay fields."""
+    from butlers.modules._roster_general.tools import register_tools
+
+    mcp = FastMCP("general-dnd-context-test")
+    register_tools(mcp, SimpleNamespace(_get_pool=lambda: MagicMock()))
+
+    set_tool = await mcp.get_tool("set_context")
+    clear_tool = await mcp.get_tool("clear_context")
+
+    assert set_tool is not None
+    assert clear_tool is not None
+    assert "ctx" not in set_tool.parameters["properties"]
+    assert "ctx" not in clear_tool.parameters["properties"]
+    assert {"mutation_id", "correlation_id", "requested_expires_at"} <= set(
+        set_tool.parameters["properties"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -134,14 +156,16 @@ async def test_set_context_converts_hours_to_expires_at(
     monkeypatch.setattr(ctx, "set_context", mock_set)
 
     before = datetime.now(UTC)
-    result = await registered_tools["set_context"](signal_type="dnd", value="focus time", hours=2)
+    result = await registered_tools["set_context"](
+        signal_type="focused", value="focus time", hours=2
+    )
     after = datetime.now(UTC)
 
-    assert result == {"status": "set", "signal_type": "dnd", "value": "focus time"}
+    assert result == {"status": "set", "signal_type": "focused", "value": "focus time"}
     mock_set.assert_awaited_once()
     kwargs = mock_set.await_args.kwargs
     assert kwargs["butler_name"] == "general"
-    assert kwargs["signal_type"] == "dnd"
+    assert kwargs["signal_type"] == "focused"
     assert kwargs["value"] == "focus time"
     assert kwargs["confidence"] == 1.0
     expires_at = kwargs["expires_at"]
@@ -163,6 +187,155 @@ async def test_set_context_no_hours_passes_none_expiry(
     assert kwargs["expires_at"] is None
     assert kwargs["butler_name"] == "general"
     assert kwargs["signal_type"] == "sick"
+
+
+async def test_dnd_set_forwards_stable_action_identity(
+    monkeypatch: pytest.MonkeyPatch, registered_tools: dict[str, Any]
+) -> None:
+    """The explicit tool must not generate a retry key from DND content or time."""
+    from butlers import context_bus as ctx
+
+    mock_set = AsyncMock()
+    monkeypatch.setattr(ctx, "set_context", mock_set)
+    mutation_id = UUID("33333333-3333-3333-3333-333333333333")
+
+    await registered_tools["set_context"](
+        signal_type="dnd",
+        value="focus time",
+        mutation_id=mutation_id,
+        correlation_id="request:stable-action",
+    )
+
+    kwargs = mock_set.await_args.kwargs
+    assert kwargs["mutation_id"] == mutation_id
+    assert kwargs["correlation_id"] == "request:stable-action"
+
+
+async def test_dnd_set_requires_stable_absolute_expiry_for_custom_ttl(
+    monkeypatch: pytest.MonkeyPatch, registered_tools: dict[str, Any]
+) -> None:
+    """A retry must not regenerate its DND expiry from a relative duration."""
+    from butlers import context_bus as ctx
+
+    mock_set = AsyncMock()
+    monkeypatch.setattr(ctx, "set_context", mock_set)
+
+    with pytest.raises(ValueError, match="requested_expires_at"):
+        await registered_tools["set_context"](
+            signal_type="dnd",
+            hours=2,
+            mutation_id=UUID("12121212-1212-1212-1212-121212121212"),
+            correlation_id="request:custom-ttl",
+        )
+
+    mock_set.assert_not_awaited()
+
+
+async def test_dnd_set_forwards_stable_requested_expiry(
+    monkeypatch: pytest.MonkeyPatch, registered_tools: dict[str, Any]
+) -> None:
+    from butlers import context_bus as ctx
+
+    mock_set = AsyncMock()
+    monkeypatch.setattr(ctx, "set_context", mock_set)
+    requested_expires_at = datetime(2026, 8, 13, 14, 0, tzinfo=UTC)
+
+    await registered_tools["set_context"](
+        signal_type="dnd",
+        requested_expires_at=requested_expires_at,
+        mutation_id=UUID("13131313-1313-1313-1313-131313131313"),
+        correlation_id="request:stable-expiry",
+    )
+
+    assert mock_set.await_args.kwargs["expires_at"] == requested_expires_at
+
+
+async def test_dnd_set_derives_identity_from_the_mcp_request_not_dnd_content(
+    monkeypatch: pytest.MonkeyPatch, registered_tools: dict[str, Any]
+) -> None:
+    from butlers import context_bus as ctx
+
+    mock_set = AsyncMock()
+    monkeypatch.setattr(ctx, "set_context", mock_set)
+
+    class RequestContext:
+        origin_request_id = "mcp-request-987"
+
+    await registered_tools["set_context"](
+        signal_type="dnd",
+        value="the same raw payload must not choose the ID",
+        ctx=RequestContext(),
+    )
+
+    kwargs = mock_set.await_args.kwargs
+    assert kwargs["mutation_id"] == UUID("503275c1-fb50-5390-a862-d9f40efac976")
+    assert kwargs["correlation_id"] == "mcp-request:mcp-request-987"
+
+
+async def test_dnd_clear_forwards_stable_action_identity(
+    monkeypatch: pytest.MonkeyPatch, registered_tools: dict[str, Any]
+) -> None:
+    from butlers import context_bus as ctx
+
+    mock_clear = AsyncMock()
+    monkeypatch.setattr(ctx, "clear_context", mock_clear)
+    mutation_id = UUID("44444444-4444-4444-4444-444444444444")
+
+    await registered_tools["clear_context"](
+        signal_type="dnd",
+        mutation_id=mutation_id,
+        correlation_id="request:stable-clear",
+    )
+
+    kwargs = mock_clear.await_args.kwargs
+    assert kwargs["mutation_id"] == mutation_id
+    assert kwargs["correlation_id"] == "request:stable-clear"
+
+
+async def test_dnd_tool_returns_content_minimizing_durable_receipt(
+    monkeypatch: pytest.MonkeyPatch, registered_tools: dict[str, Any]
+) -> None:
+    from butlers import context_bus as ctx
+
+    mutation_id = UUID("55555555-5555-5555-5555-555555555555")
+    committed_at = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(
+        ctx,
+        "set_context",
+        AsyncMock(
+            return_value=ctx.DndMutationReceipt(
+                mutation_id=mutation_id,
+                generation=9,
+                writer="general",
+                operation="set",
+                correlation_id="request:receipt",
+                requested_expires_at=None,
+                effective_expires_at=committed_at + timedelta(hours=2),
+                committed_at=committed_at,
+            )
+        ),
+    )
+
+    result = await registered_tools["set_context"](
+        signal_type="dnd",
+        value="do not echo this DND payload",
+        mutation_id=mutation_id,
+        correlation_id="request:receipt",
+    )
+
+    assert result["mutation"] == {
+        "mutation_id": str(mutation_id),
+        "generation": 9,
+        "writer": "general",
+        "operation": "set",
+        "correlation_id": "request:receipt",
+        "requested_expires_at": None,
+        "effective_expires_at": (committed_at + timedelta(hours=2)).isoformat(),
+        "committed_at": committed_at.isoformat(),
+    }
+    assert "value" not in result["mutation"]
+    assert "metadata" not in result["mutation"]
+    assert "value" not in result
 
 
 async def test_set_context_propagates_invalid_signal_type(

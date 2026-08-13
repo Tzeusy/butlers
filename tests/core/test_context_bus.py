@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import json
 import shutil
+import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import asyncpg
 import pytest
@@ -125,6 +126,100 @@ async def test_set_context_validation():
         await set_context(MagicMock(), butler_name="general", signal_type="partying")
     with pytest.raises(PermissionError):
         await set_context(MagicMock(), butler_name="finance", signal_type="exercising")
+
+
+@pytest.mark.asyncio
+async def test_dnd_set_requires_stable_mutation_and_correlation_identity() -> None:
+    """DND cannot silently fall back to the generic unversioned upsert."""
+    pool = MagicMock()
+
+    with pytest.raises(ValueError, match="mutation_id"):
+        await set_context(pool, butler_name="general", signal_type="dnd")
+    with pytest.raises(ValueError, match="correlation"):
+        await set_context(
+            pool,
+            butler_name="general",
+            signal_type="dnd",
+            mutation_id=uuid.uuid4(),
+        )
+
+    pool.execute.assert_not_called()
+    pool.fetchrow.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dnd_set_uses_atomic_gateway_and_returns_durable_receipt() -> None:
+    """Canonical DND writes are delegated to the database receipt boundary."""
+    mutation_id = uuid.UUID("11111111-1111-1111-1111-111111111111")
+    committed_at = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    pool = MagicMock()
+    pool.fetchrow = AsyncMock(
+        return_value={
+            "mutation_id": mutation_id,
+            "generation": 7,
+            "writer": "general",
+            "operation": "set",
+            "correlation": "request:abc",
+            "requested_expires_at": None,
+            "effective_expires_at": committed_at + timedelta(hours=2),
+            "committed_at": committed_at,
+        }
+    )
+
+    receipt = await set_context(
+        pool,
+        butler_name="general",
+        signal_type="dnd",
+        value="focus time",
+        mutation_id=mutation_id,
+        correlation_id="request:abc",
+    )
+
+    assert receipt is not None
+    assert receipt.mutation_id == mutation_id
+    assert receipt.generation == 7
+    assert receipt.operation == "set"
+    pool.execute.assert_not_called()
+    pool.fetchrow.assert_awaited_once()
+    query = pool.fetchrow.await_args.args[0]
+    assert "public.context_dnd_mutate" in query
+    assert pool.fetchrow.await_args.args[1:5] == (
+        mutation_id,
+        "general",
+        "set",
+        "request:abc",
+    )
+
+
+@pytest.mark.asyncio
+async def test_dnd_clear_uses_same_stable_mutation_boundary() -> None:
+    mutation_id = uuid.UUID("22222222-2222-2222-2222-222222222222")
+    pool = MagicMock()
+    pool.fetchrow = AsyncMock(
+        return_value={
+            "mutation_id": mutation_id,
+            "generation": 8,
+            "writer": "general",
+            "operation": "clear",
+            "correlation": "request:def",
+            "requested_expires_at": None,
+            "effective_expires_at": None,
+            "committed_at": _NOW,
+        }
+    )
+
+    receipt = await clear_context(
+        pool,
+        "general",
+        "dnd",
+        mutation_id=mutation_id,
+        correlation_id="request:def",
+    )
+
+    assert receipt is not None
+    assert receipt.operation == "clear"
+    pool.execute.assert_not_called()
+    assert pool.fetchrow.await_args.args[2:5] == ("general", "clear", "request:def")
 
 
 @pytest.fixture(scope="module")
