@@ -2621,7 +2621,19 @@ async def get_day_close_cache(
         end_at = cache_row["end_at"]
         cache_built_at = cache_row["cache_built_at"]
 
-        # ── Step 1b: admission precedes staleness ────────────────────────────
+        # ── Step 1b: local-day binding and admission precede staleness ───────
+        # A cache key alone cannot prove the row's persisted UTC window belongs
+        # to this requested local day. Contain a malformed row before prose
+        # admission or staleness can expose it as fresh/stale.
+        expected_start_at, expected_end_at = day_window_utc(parsed_date, timezone_name)
+        if start_at != expected_start_at or end_at != expected_end_at:
+            span.set_attribute("chronicler.day_close.cache_state", "invalid")
+            return DayCloseInvalidResponse(
+                invalid=True,
+                invalid_reason="date_mismatch",
+                cache_built_at=cache_built_at,
+            )
+
         # A row that failed the deterministic day-close admission predicate is
         # contained regardless of its staleness state (design.md decision 4).
         invalid_reason = cache_row.get("invalid_reason") or classify_day_close_candidate(

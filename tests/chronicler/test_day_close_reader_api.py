@@ -3,6 +3,7 @@
 Covers:
 - Cache miss returns 404.
 - Fresh cache (no staleness signals) returns DayCloseFreshResponse.
+- Tuple-keyed cache row with a wrong local-day window is contained.
 - Stale due to episodes.tombstone_at > cache_built_at.
 - Stale due to episodes.updated_at > cache_built_at.
 - Stale due to point_events.tombstone_at > cache_built_at.
@@ -219,6 +220,49 @@ class TestDayCloseReaderInvalid:
         assert body["invalid"] is True
         assert body["invalid_reason"] == "date_mismatch"
         assert "stale" not in body
+
+    async def test_tuple_keyed_row_with_wrong_timezone_window_is_contained(self):
+        """A malformed tuple-keyed row cannot cross a local-day boundary.
+
+        The row's key and date label claim the requested Singapore local day,
+        but its UTC-midnight window actually describes a different local day.
+        Direct GET must contain it before querying staleness, just as the
+        editorial cache reader does.
+        """
+        cr = _row(
+            {
+                "cache_key": "day_close:2026-04-23:tz:Asia/Singapore",
+                "start_at": _CACHE_START,
+                "end_at": _CACHE_END,
+                "cache_built_at": _T_CACHE_BUILT,
+                "prose": "This prose must not cross the timezone boundary.",
+                "provenance_refs": ["core.sessions:abc123"],
+                "date_label": "2026-04-23",
+                "invalid_reason": None,
+            }
+        )
+        pool = _mock_pool(
+            fetchrow_side_effect=[
+                cr,
+                _row({"last_invalidating_event_at": None}),
+            ]
+        )
+        app = _make_app(pool)
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(
+                "/api/chronicler/aggregate/day-close?date=2026-04-23&tz=Asia/Singapore"
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["invalid"] is True
+        assert body["invalid_reason"] == "date_mismatch"
+        assert "prose" not in body
+        assert "provenance_refs" not in body
+        assert pool.fetchrow.await_count == 1
 
     @pytest.mark.parametrize(
         ("prose", "date_label", "expected_reason"),
