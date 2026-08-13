@@ -52,11 +52,12 @@ def _execute_as_role(
     params: dict | None = None,
     *,
     fetch_one: bool = False,
+    return_rowcount: bool = False,
 ):
     """Execute one statement as an actual runtime role, not a setup owner.
 
-    Receipt queries opt into ``fetch_one`` so their SQLAlchemy result is
-    materialized before the role-bound connection is reset and disposed.
+    Receipt and DML-rowcount queries opt into a result so it is materialized
+    before the role-bound connection is reset and disposed.
     """
     engine = create_engine(db_url, isolation_level="AUTOCOMMIT")
     try:
@@ -64,7 +65,11 @@ def _execute_as_role(
             conn.execute(text(f"SET ROLE {_quote_ident(role_name)}"))
             try:
                 result = conn.execute(text(statement), params or {})
-                return result.one() if fetch_one else None
+                if fetch_one:
+                    return result.one()
+                if return_rowcount:
+                    return result.rowcount
+                return None
             finally:
                 conn.execute(text("RESET ROLE"))
     finally:
@@ -591,16 +596,30 @@ def test_dnd_gateway_replay_and_real_role_denials(migrated_db_url: str) -> None:
             """,
         )
 
-    with pytest.raises(DBAPIError):
-        _execute_as_role(
-            migrated_db_url,
-            "butler_general_rw",
-            """
-            UPDATE public.user_context
-            SET value = 'direct canonical-writer DML denied'
-            WHERE signal_type = 'dnd' AND set_by_butler = 'general'
-            """,
-        )
+    direct_dnd_update_rowcount = _execute_as_role(
+        migrated_db_url,
+        "butler_general_rw",
+        """
+        UPDATE public.user_context
+        SET value = 'direct canonical-writer DML denied'
+        WHERE signal_type = 'dnd' AND set_by_butler = 'general'
+        """,
+        return_rowcount=True,
+    )
+    # PostgreSQL RLS filters an inaccessible UPDATE target rather than raising;
+    # zero affected rows is the direct-DML denial proof for this existing DND row.
+    assert direct_dnd_update_rowcount == 0
+    unchanged_dnd_row = _execute_as_role(
+        migrated_db_url,
+        "butler_general_rw",
+        """
+        SELECT value
+        FROM public.user_context
+        WHERE signal_type = 'dnd' AND set_by_butler = 'general'
+        """,
+        fetch_one=True,
+    )
+    assert unchanged_dnd_row.value == parameters["value"]
 
     with pytest.raises(DBAPIError):
         _execute_as_role(

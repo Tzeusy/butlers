@@ -248,6 +248,17 @@ async def test_dnd_rejects_a_nonopaque_correlation_returned_by_the_gateway() -> 
         )
 
 
+async def _clear_non_dnd_context(pool: asyncpg.Pool) -> None:
+    """Reset fixture-owned context without bypassing the DND table ACL."""
+    await pool.execute(
+        """
+        UPDATE public.user_context
+        SET superseded_at = now()
+        WHERE signal_type <> 'dnd' AND superseded_at IS NULL
+        """
+    )
+
+
 @pytest.fixture(scope="module")
 def migrated_db_url(postgres_container) -> str:
     """Provision a DB with core migrations applied once per module."""
@@ -270,7 +281,7 @@ class TestContextBusIntegration:
         p = await asyncpg.create_pool(
             migrated_db_url, min_size=1, max_size=5, init=register_jsonb_codec
         )
-        await p.execute("TRUNCATE public.user_context CASCADE")
+        await _clear_non_dnd_context(p)
         yield p
         await p.close()
 
@@ -327,7 +338,7 @@ class TestContextBusIntegration:
         )["superseded_at"] is not None
 
         # get_active_context: excludes expired; is_user_in_context checks confidence
-        await pool.execute("TRUNCATE public.user_context")
+        await _clear_non_dnd_context(pool)
         await set_context(pool, butler_name="general", signal_type="meeting")
         await set_context(pool, butler_name="travel", signal_type="traveling", confidence=0.9)
 

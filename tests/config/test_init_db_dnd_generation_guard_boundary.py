@@ -26,6 +26,7 @@ _POSTGRES_INTEGRATION_TEST = (
     _REPO_ROOT / "tests" / "config" / "test_dnd_generation_guard_postgres.py"
 )
 _CONTEXT_PRODUCERS_INTEGRATION_TEST = _REPO_ROOT / "tests" / "jobs" / "test_context_producers.py"
+_CONTEXT_BUS_INTEGRATION_TEST = _REPO_ROOT / "tests" / "core" / "test_context_bus.py"
 
 
 def _load_core_197():
@@ -407,8 +408,17 @@ def test_dnd_finalizer_preserves_the_existing_optional_calendar_permission_matri
     assert "GRANT SELECT ON TABLE public.dnd_generation_guard TO %I" in finalizer
 
 
-def test_dnd_role_receipts_materialize_before_connection_teardown() -> None:
-    """A real-role receipt cannot outlive the SQLAlchemy connection that owns it."""
+@pytest.mark.parametrize(
+    ("result_kwargs", "expected_result", "materialization_event"),
+    [
+        ({"fetch_one": True}, "receipt", "receipt-one"),
+        ({"return_rowcount": True}, 0, "rowcount"),
+    ],
+)
+def test_dnd_role_results_materialize_before_connection_teardown(
+    result_kwargs: dict[str, bool], expected_result: str | int, materialization_event: str
+) -> None:
+    """A real-role result cannot outlive the SQLAlchemy connection that owns it."""
     integration_test = _load_dnd_postgres_integration_test()
     events: list[str] = []
 
@@ -417,6 +427,12 @@ def test_dnd_role_receipts_materialize_before_connection_teardown() -> None:
             events.append("receipt-one")
             assert connection.open
             return "receipt"
+
+        @property
+        def rowcount(self) -> int:
+            events.append("rowcount")
+            assert connection.open
+            return 0
 
     class Connection:
         open = False
@@ -454,20 +470,22 @@ def test_dnd_role_receipts_materialize_before_connection_teardown() -> None:
 
     connection = Connection()
     with patch.object(integration_test, "create_engine", return_value=Engine()):
-        receipt = integration_test._execute_as_role(
+        result = integration_test._execute_as_role(
             "postgresql://example.invalid/test",
             "butler_general_rw",
-            "SELECT receipt",
-            fetch_one=True,
+            "SELECT receipt"
+            if result_kwargs.get("fetch_one", False)
+            else "UPDATE user_context SET value = 'ignored'",
+            **result_kwargs,
         )
 
-    assert receipt == "receipt"
+    assert result == expected_result
     assert events == [
         "connect",
         "connection-enter",
         "set-role",
         "query",
-        "receipt-one",
+        materialization_event,
         "reset-role",
         "connection-exit",
         "dispose",
@@ -511,3 +529,42 @@ def test_context_producer_fixture_resets_only_non_dnd_rows_without_truncate() ->
     assert "await _clear_non_dnd_context(p)" in source
     assert "await _clear_non_dnd_context(pool)" in source
     assert "REVOKE TRUNCATE, REFERENCES, TRIGGER ON TABLE public.user_context FROM %I" in finalizer
+
+
+def test_context_bus_fixture_resets_only_non_dnd_rows_without_truncate() -> None:
+    """A fresh context-bus test DB still must not bypass the finalizer ACL."""
+    source = _CONTEXT_BUS_INTEGRATION_TEST.read_text(encoding="utf-8")
+    init_db = _INIT_DB.read_text(encoding="utf-8")
+    finalizer_start = init_db.index(
+        "CREATE OR REPLACE FUNCTION dnd_generation_admin.finalize_interface()"
+    )
+    installer_start = init_db.index(
+        "CREATE OR REPLACE FUNCTION dnd_generation_admin.install_interface()", finalizer_start
+    )
+    finalizer = init_db[finalizer_start:installer_start]
+
+    assert "TRUNCATE public.user_context" not in source
+    assert "async def _clear_non_dnd_context" in source
+    assert "UPDATE public.user_context" in source
+    assert "SET superseded_at = now()" in source
+    assert "WHERE signal_type <> 'dnd'" in source
+    assert "await _clear_non_dnd_context(p)" in source
+    assert "await _clear_non_dnd_context(pool)" in source
+    assert "REVOKE TRUNCATE, REFERENCES, TRIGGER ON TABLE public.user_context FROM %I" in finalizer
+
+
+def test_dnd_postgres_suite_treats_a_filtered_direct_update_as_no_effect() -> None:
+    """RLS can deny UPDATE by filtering its target rows instead of raising an error."""
+    gateway_test = _function_source(
+        _POSTGRES_INTEGRATION_TEST.read_text(encoding="utf-8"),
+        "test_dnd_gateway_replay_and_real_role_denials",
+    )
+
+    direct_update_start = gateway_test.index("UPDATE public.user_context")
+    direct_update_end = gateway_test.index(
+        "\n\n    with pytest.raises(DBAPIError):", direct_update_start
+    )
+    direct_update = gateway_test[direct_update_start:direct_update_end]
+
+    assert "return_rowcount=True" in direct_update
+    assert "assert direct_dnd_update_rowcount == 0" in gateway_test
