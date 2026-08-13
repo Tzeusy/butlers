@@ -54,6 +54,12 @@ from butlers.chronicler.balance import (
     compute_lane_streak,
     is_lane_anomalous,
 )
+from butlers.chronicler.day_close_cache import (
+    InvalidDayCloseTimezoneError,
+    MissingDayCloseTimezoneError,
+    day_close_cache_key,
+    resolve_day_close_timezone,
+)
 from butlers.chronicler.day_close_writer import DAY_CLOSE_TASK_NAME, write_day_close_cache
 from butlers.chronicler.editorial import WAKING_HOUR_END, WAKING_HOUR_START, day_window_utc
 from butlers.chronicler.models import RoutineOrigin
@@ -2490,16 +2496,33 @@ async def get_who_you_were_with(
         DayCloseFreshResponse | DayCloseStaleResponse | DayCloseInvalidResponse,
         "Fresh prose, stale marker, or invalid-without-prose marker",
     ],
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "tz",
+                "in": "query",
+                "required": True,
+                "description": "Exact non-empty IANA timezone for the requested local day.",
+                "schema": {"type": "string", "minLength": 1},
+            }
+        ]
+    },
 )
 async def get_day_close_cache(
     date_param: str | None = Query(
         None, alias="date", description="YYYY-MM-DD date for day-close window"
     ),
+    tz: str | None = Query(
+        None,
+        description="Required exact IANA timezone for the requested local day",
+        include_in_schema=False,
+    ),
     db: DatabaseManager = Depends(_get_db_manager),
-) -> DayCloseFreshResponse | DayCloseStaleResponse | DayCloseInvalidResponse:
+) -> DayCloseFreshResponse | DayCloseStaleResponse | DayCloseInvalidResponse | JSONResponse:
     """Return cached day-close prose, a stale marker, or an invalid marker.
 
-    Looks up ``tier2_cache`` by ``cache_key=day_close:{YYYY-MM-DD}``.
+    Looks up ``tier2_cache`` by the exact
+    ``cache_key=day_close:{YYYY-MM-DD}:tz:{IANA-timezone}`` tuple.
     Returns 404 if no cache entry exists.
 
     Admission validation precedes staleness: a row that failed the
@@ -2544,11 +2567,36 @@ async def get_day_close_cache(
             ).model_dump(exclude_none=True),
         )
 
+    try:
+        timezone_name, _timezone = resolve_day_close_timezone(tz)
+    except MissingDayCloseTimezoneError:
+        return JSONResponse(
+            status_code=400,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    code="missing_parameter",
+                    message="tz is required",
+                    butler="chronicler",
+                )
+            ).model_dump(exclude_none=True),
+        )
+    except InvalidDayCloseTimezoneError:
+        return JSONResponse(
+            status_code=400,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    code="invalid_timezone",
+                    message=f"Unrecognized IANA timezone: {tz!r}",
+                    butler="chronicler",
+                )
+            ).model_dump(exclude_none=True),
+        )
+
     _tracer = trace.get_tracer("butlers.chronicler")
     with _tracer.start_as_current_span("chronicler.aggregate.day_close") as span:
         pool = _pool(db)
 
-        cache_key = f"day_close:{parsed_date.isoformat()}"
+        cache_key = day_close_cache_key(parsed_date, timezone_name)
 
         # ── Step 1: fetch the cache row ──────────────────────────────────────
         t0 = time.perf_counter()
@@ -2796,11 +2844,11 @@ async def refresh_day_close(
     db: DatabaseManager = Depends(_get_db_manager),
     dispatch_fn: DayCloseDispatchCallable | None = Depends(_get_day_close_dispatch_fn),
 ) -> DayCloseRefreshResponse | DayCloseRefreshQuietResponse | JSONResponse:
-    """Re-invoke the day-close Tier-2 path on demand (rate-limited: 1 per 24 h per date).
+    """Re-invoke the day-close Tier-2 path on demand (rate-limited per local-day tuple).
 
-    Checks whether a ``tier2_cache`` row for ``day_close:{date}`` was built within
-    the last 24 hours.  If so, returns 429 with ``code=day_close_rate_limited`` and
-    ``details.retry_after_seconds``.
+    Checks whether a ``tier2_cache`` row for the exact requested ``(date, tz)``
+    tuple was built within the last 24 hours. If so, returns 429 with
+    ``code=day_close_rate_limited`` and ``details.retry_after_seconds``.
 
     Otherwise, re-dispatches the ``chronicler_day_close`` scheduled prompt via the
     injected dispatch callable and writes a fresh ``tier2_cache`` row via
@@ -2810,8 +2858,19 @@ async def refresh_day_close(
     """
     # ── Validate timezone ─────────────────────────────────────────────────────
     try:
-        timezone = zoneinfo.ZoneInfo(body.tz)
-    except (zoneinfo.ZoneInfoNotFoundError, KeyError):
+        timezone_name, timezone = resolve_day_close_timezone(body.tz)
+    except MissingDayCloseTimezoneError:
+        return JSONResponse(
+            status_code=400,
+            content=ErrorResponse(
+                error=ErrorDetail(
+                    code="missing_parameter",
+                    message="tz is required",
+                    butler="chronicler",
+                )
+            ).model_dump(exclude_none=True),
+        )
+    except InvalidDayCloseTimezoneError:
         return JSONResponse(
             status_code=400,
             content=ErrorResponse(
@@ -2835,14 +2894,14 @@ async def refresh_day_close(
                     details={
                         "date": body.date.isoformat(),
                         "today": today_local.isoformat(),
-                        "tz": body.tz,
+                        "tz": timezone_name,
                     },
                 )
             ).model_dump(exclude_none=True),
         )
 
     pool = _pool(db)
-    cache_key = f"day_close:{body.date.isoformat()}"
+    cache_key = day_close_cache_key(body.date, timezone_name)
     now = datetime.now(UTC)
 
     # ── Rate-limit check ──────────────────────────────────────────────────────
@@ -2913,7 +2972,7 @@ async def refresh_day_close(
     refresh_prompt = (
         f"{task_row['prompt']}\n\n"
         "Trusted refresh target: call chronicler_day_close_bundle exactly once "
-        f"with date_label={body.date.isoformat()} and timezone={body.tz}. "
+        f"with date_label={body.date.isoformat()} and timezone={timezone_name}. "
         "Use this exact closed local day; do not substitute another date or timezone."
     )
     result = await dispatch_fn(
@@ -2924,19 +2983,19 @@ async def refresh_day_close(
     # ── Write the fresh cache row ─────────────────────────────────────────────
     # Anchor run_at to the requested date so _compute_day_window targets body.date.
     # _compute_day_window closes yesterday-in-tz, so we pass local noon of
-    # body.date + 1 day (in body.tz) to ensure the computed local window covers
+    # body.date + 1 day (in the validated timezone) to ensure the computed local window covers
     # body.date regardless of the timezone's UTC offset (#2681).
     run_at = datetime.combine(
         body.date + timedelta(days=1),
         datetime.min.time().replace(hour=12),
-        tzinfo=zoneinfo.ZoneInfo(body.tz),
+        tzinfo=timezone,
     ).astimezone(UTC)
     write_outcome = await write_day_close_cache(
         pool,
         task_name=DAY_CLOSE_TASK_NAME,
         result=result,
         run_at=run_at,
-        tz=body.tz,
+        tz=timezone_name,
         target_date=body.date,
     )
 
@@ -2981,7 +3040,7 @@ async def refresh_day_close(
         operation="day_close_refresh_invoke",
         method="POST",
         path="/api/chronicler/aggregate/day-close/refresh",
-        body={"date": body.date.isoformat(), "tz": body.tz},
+        body={"date": body.date.isoformat(), "tz": timezone_name},
         response_status=200,
         request=request,
     )
@@ -3087,7 +3146,7 @@ async def _voice_paragraph_from_cache(
     rule ``GET /aggregate/day-close`` applies), paragraph is None and the
     caller must produce a templated fallback.
     """
-    cache_key = f"day_close:{target.isoformat()}"
+    cache_key = day_close_cache_key(target, tz_name)
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """

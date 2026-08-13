@@ -27,6 +27,10 @@ import type { ChroniclesBriefing } from "@/api/types";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
+const { postChroniclerDayCloseRefresh } = vi.hoisted(() => ({
+  postChroniclerDayCloseRefresh: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -57,6 +61,8 @@ vi.mock("@/hooks/use-chronicles-briefing", () => ({
     };
   },
 }));
+
+vi.mock("@/api/client.ts", () => ({ postChroniclerDayCloseRefresh }));
 
 // The drilldown panel pulls in heavy modules (Gantt, Map, Scrubber). For these
 // editorial smoke tests we stub it out; content visibility is tested in its
@@ -178,6 +184,7 @@ describe("ChroniclesPage editorial archetype", () => {
     _drilldownArgs = undefined;
     _navigate = undefined;
     _timezone = "Asia/Singapore";
+    postChroniclerDayCloseRefresh.mockReset();
   });
 
   afterEach(() => {
@@ -239,6 +246,35 @@ describe("ChroniclesPage editorial archetype", () => {
     _briefing = buildBriefing({ voice_source: "stale" });
     const html = renderPage();
     expect(html).toContain("stale");
+  });
+
+  it("regenerates a stale summary for the selected exact date and timezone", async () => {
+    _briefing = buildBriefing({ voice_source: "stale" });
+    postChroniclerDayCloseRefresh.mockResolvedValue({
+      cache_key: "day_close:2026-05-08:tz:Asia/Singapore",
+      quiet: true,
+    });
+
+    const { container, unmount } = mountPage("/chronicles?date=2026-05-08");
+    try {
+      const regenerate = container.querySelector(
+        'button[aria-label="Regenerate day-close summary"]',
+      ) as HTMLButtonElement;
+      expect(regenerate).toBeTruthy();
+
+      await act(async () => {
+        regenerate.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+      });
+
+      expect(postChroniclerDayCloseRefresh).toHaveBeenCalledWith({
+        date: "2026-05-08",
+        tz: "Asia/Singapore",
+      });
+      expect(_refetch).toHaveBeenCalledOnce();
+    } finally {
+      unmount();
+    }
   });
 
   it("voice rules: no em-dashes or exclamation marks in headline or voice paragraph copy", () => {
