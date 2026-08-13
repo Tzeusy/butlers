@@ -36,6 +36,13 @@ so the boundary cannot silently re-diverge.
   them to property facts, reject registry-relational edges before lower-level
   memory storage, and align the consolidation skill examples with the single-home
   boundary.
+- [x] B6 — For newly consolidated facts only, enforce the owner-approved exact
+  local narrative-edge allowlist (`planned_dinner_with`, `wake_coordination`,
+  `social_exchange_with`) at the storage boundary before persistence. Reject
+  unavailable classification and every other `object_entity_id` predicate;
+  preserve generic writer behavior, relationship isolation, evidence/lifecycle,
+  tenant, cardinality, retry, lease, and idempotence behavior. Add focused
+  storage, executor, parser, and consolidation-skill contract tests.
 
 ## Track C — Backfill (blocked by A1, B2)
 
