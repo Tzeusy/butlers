@@ -1,12 +1,16 @@
 ## 1. Guarded public-state migration
 
 - [x] 1.1 Add the trusted cluster-superuser bootstrap source in
-  `scripts/init-db.sql`: a fixed no-argument installer/finalizer pair owns the
-  creation and final handoff of the singleton DND guard, replay audit, private
-  definer, forced RLS policies, and dedicated NOLOGIN owner. It must reject
-  untrusted pre-existing authority objects rather than adopting them.
+  `scripts/init-db.sql`: fixed no-argument installer/finalizer operations own
+  the creation and final handoff of the singleton DND guard, replay audit,
+  private definer, forced RLS policies, and dedicated NOLOGIN owner. A separate
+  privileged rollback may remove only an unused generation-0 boundary while
+  preserving `public.user_context` rows and restoring the known pre-guard
+  handoff; it must reject untrusted pre-existing authority objects rather than
+  adopting them.
 - [x] 1.2 Add a guarded core migration that only catalog-validates the trusted
-  finalized interface or invokes the fixed installer. It must not create,
+  finalized interface, invokes the fixed installer, or delegates a bounded
+  superuser rollback to the trusted bootstrap routine. It must not create,
   re-own, repair, or otherwise acquire authority over DND boundary objects;
   source it with the durable requested/effective expiry and versioned
   privacy-preserving semantic fingerprint fields, seeded at generation `0`

@@ -14,11 +14,25 @@ installer. The ordinary migration SHALL NOT create, own, re-own, repair, or
 adopt the DND table, guard, audit, owner role, policy, gateway, or private
 definer.
 
+A planned core downgrade MAY invoke only a separately catalog-proven,
+no-argument bootstrap rollback routine. It SHALL require a trusted superuser,
+an empty durable mutation audit, and a singleton guard at generation `0`; it
+SHALL otherwise fail before destructive DDL. The routine SHALL preserve
+`public.user_context` rows, restore the recorded migration-role ownership and
+ordinary non-DND RLS posture, and re-grant only the fixed installer handoff. It
+SHALL NOT drop/reseed a receipt-bearing or advanced generation boundary.
+
+A managed trusted-superuser down/up MAY then invoke the same catalog-proven
+installer. This does not grant the ordinary migration role finalizer or rollback
+authority.
+
 Before it transfers the existing shared table, the installer SHALL prove the
-complete known `public.user_context` column/key shape and reject every
+complete known `public.user_context` column/key shape, the recorded migration
+role as its owner, and an ordinary disabled-RLS posture; it SHALL reject every
 pre-existing user policy, trigger, or rewrite rule. It SHALL not accept an
 arbitrary permissive RLS policy beside the guarded set, because permissive
-policies compose with OR and could reopen direct DND DML.
+policies compose with OR and could reopen direct DND DML, nor an ambiguous
+pre-guard state that the bounded rollback could not restore.
 It SHALL hold an `ACCESS EXCLUSIVE` lock through this validation and final
 ownership handoff so the former shared-table owner cannot race a policy,
 trigger, or shape change.
@@ -91,6 +105,14 @@ any direct Health/Messenger access to another butler's records.
   absent case and otherwise fails closed
 - **AND** it never creates, adopts, re-owns, repairs, or grants authority to the
   observed DND objects
+
+#### Scenario: Privileged pre-consumer rollback is bounded
+- **WHEN** a trusted-superuser core downgrade finds an empty mutation audit and
+  guard generation `0`
+- **THEN** it invokes only the catalog-proven bootstrap rollback routine, which
+  preserves `public.user_context` rows and restores the pre-guard handoff
+- **AND** any durable receipt or nonzero generation fails before it removes the
+  DND authority objects
 
 #### Scenario: Real PostgreSQL catalog proof establishes the final boundary
 - **WHEN** the authorized role/catalog integration suite runs against actual

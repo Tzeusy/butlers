@@ -44,7 +44,7 @@ def test_dnd_boundary_uses_trusted_installer_not_migration_owned_ddl() -> None:
     assert "constraint_row.conname = 'user_context_confidence_check'" in source
     assert "index_row.indexprs IS NOT NULL" in source
     assert "idx_user_context_active_signals" in source
-    assert source.count("LOCK TABLE public.user_context IN ACCESS EXCLUSIVE MODE") == 2
+    assert source.count("LOCK TABLE public.user_context IN ACCESS EXCLUSIVE MODE") == 3
     assert "CREATE ROLE dnd_generation_owner" in source
     assert (
         "NOLOGIN NOINHERIT NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS" in source
@@ -69,9 +69,7 @@ def test_dnd_installer_compares_the_index_catalog_with_int2vector_safe_shape_che
     installer_start = source.index(
         "CREATE OR REPLACE FUNCTION dnd_generation_admin.install_interface()"
     )
-    installer_end = source.index(
-        "REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin", installer_start
-    )
+    installer_end = source.index("$dnd_installer$;", installer_start)
     installer = source[installer_start:installer_end]
 
     assert "index_row.indnkeyatts = 1" in installer
@@ -103,6 +101,116 @@ def test_core_197_catalog_probes_use_sqlalchemy_text_for_literal_like_patterns()
     assert "LIKE '%signal_type%'" in statements[0].text
     assert len(statements) == 2
     bind.exec_driver_sql.assert_not_called()
+
+
+def test_core_197_downgrade_delegates_to_a_trusted_privileged_bootstrap_rollback() -> None:
+    """A core downgrade must not replace a managed rollback with an unconditional raise."""
+    migration = _load_core_197()
+    rollback = MagicMock()
+    rollback.scalar_one.return_value = True
+    bind = MagicMock()
+    bind.execute.return_value = rollback
+    op = MagicMock()
+    op.get_bind.return_value = bind
+
+    with patch.object(migration, "op", op):
+        migration.downgrade()
+
+    statements = [call.args[0] for call in bind.execute.call_args_list]
+    assert len(statements) == 1
+    assert isinstance(statements[0], TextClause)
+    assert "dnd_generation_admin" in statements[0].text
+    assert "rollback_interface" in statements[0].text
+    assert "rolsuper" in statements[0].text
+    op.execute.assert_called_once_with(f"SELECT {migration._ADMIN_ROLLBACK}()")
+
+
+def test_core_197_rollback_catalog_proof_requires_exclusive_trusted_admin_control() -> None:
+    """The delegating migration proves the rollback dependency chain before calling it."""
+    migration = _load_core_197()
+    rollback_proof = migration._TRUSTED_BOOTSTRAP_ROLLBACK_SQL
+
+    assert "JOIN pg_roles AS configured_bootstrap_owner" in rollback_proof
+    assert "configured_bootstrap_owner.oid = bootstrap_owner.oid" in rollback_proof
+    assert "JOIN pg_proc AS finalizer" in rollback_proof
+    assert "finalizer.prosecdef" in rollback_proof
+    assert "acl.grantee <> bootstrap_owner.oid" in rollback_proof
+
+
+def test_core_197_treats_the_privileged_rollback_as_part_of_the_trusted_interface() -> None:
+    """A missing rollback function must not look like a complete DND boundary."""
+    migration = _load_core_197()
+
+    assert "rollback_interface.proname = 'rollback_interface'" in (
+        migration._TRUSTED_FINALIZED_INTERFACE_SQL
+    )
+    assert "rollback_interface.proname = 'rollback_interface'" in (
+        migration._TRUSTED_BOOTSTRAP_INSTALLER_SQL
+    )
+
+
+def test_core_197_installer_allows_only_catalog_proven_trusted_bootstrap_reapply() -> None:
+    """A managed superuser down/up uses the same fixed installer, not a test exception."""
+    migration = _load_core_197()
+    installer_proof = migration._TRUSTED_BOOTSTRAP_INSTALLER_SQL
+
+    assert "JOIN pg_roles AS installer_operator" in installer_proof
+    assert "installer_operator.rolname = current_user" in installer_proof
+    assert "installer_operator.rolsuper" in installer_proof
+    assert "NOT has_function_privilege(current_user, finalizer.oid, 'EXECUTE')" in installer_proof
+
+
+def test_dnd_installer_requires_the_known_pre_guard_handoff_for_reversible_rollback() -> None:
+    """Rollback can restore only a source-validated owner and ordinary RLS posture."""
+    source = _INIT_DB.read_text(encoding="utf-8")
+    installer_start = source.index(
+        "CREATE OR REPLACE FUNCTION dnd_generation_admin.install_interface()"
+    )
+    installer_end = source.index("$dnd_installer$;", installer_start)
+    installer = source[installer_start:installer_end]
+
+    assert "SELECT migration_role, bootstrap_role" in installer
+    assert "migration_role.rolname = v_migration_role" in installer
+    assert "relation.relrowsecurity OR relation.relforcerowsecurity" in installer
+    assert "recorded pre-guard ownership and ordinary RLS posture" in installer
+    assert installer.index(
+        "LOCK TABLE public.user_context IN ACCESS EXCLUSIVE MODE"
+    ) < installer.index("recorded pre-guard ownership and ordinary RLS posture")
+
+
+def test_dnd_privileged_rollback_refuses_receipts_and_restores_the_pre_guard_handoff() -> None:
+    """Only an unused guard may be removed; receipt-bearing state remains fail-closed."""
+    source = _INIT_DB.read_text(encoding="utf-8")
+    rollback_start = source.index(
+        "CREATE OR REPLACE FUNCTION dnd_generation_admin.rollback_interface()"
+    )
+    rollback_end = source.index(
+        "REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.rollback_interface() FROM PUBLIC;",
+        rollback_start,
+    )
+    rollback = source[rollback_start:rollback_end]
+
+    assert "SECURITY DEFINER" in rollback
+    assert "WHERE rolname = session_user" in rollback
+    assert "IF EXISTS (SELECT 1 FROM public.dnd_generation_mutations)" in rollback
+    assert "v_generation <> 0" in rollback
+    assert "LOCK TABLE public.user_context IN ACCESS EXCLUSIVE MODE" in rollback
+    assert "ALTER TABLE public.user_context NO FORCE ROW LEVEL SECURITY" in rollback
+    assert "ALTER TABLE public.user_context DISABLE ROW LEVEL SECURITY" in rollback
+    assert "DROP TABLE public.dnd_generation_mutations" in rollback
+    assert "DROP TABLE public.dnd_generation_guard" in rollback
+    assert "DROP TABLE public.user_context" not in rollback
+    assert "DELETE FROM public.user_context" not in rollback
+    assert "TRUNCATE TABLE public.user_context" not in rollback
+    assert "DROP ROLE dnd_generation_owner" not in rollback
+    assert "ALTER TABLE public.user_context OWNER TO %I" in rollback
+    assert "GRANT EXECUTE ON FUNCTION dnd_generation_admin.install_interface() TO %I" in rollback
+    first_receipt_check = rollback.index(
+        "IF EXISTS (SELECT 1 FROM public.dnd_generation_mutations)"
+    )
+    trusted_finalize = rollback.index("PERFORM dnd_generation_admin.finalize_interface()")
+    first_destructive_ddl = rollback.index("DROP FUNCTION public.context_dnd_mutate")
+    assert first_receipt_check < trusted_finalize < first_destructive_ddl
 
 
 def test_dnd_gateway_checks_active_role_before_private_definer() -> None:

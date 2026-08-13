@@ -62,7 +62,7 @@ record.
 The DND guard is security infrastructure, so a normally privileged migration
 role must not be able to create, take ownership of, or repair its own authority
 boundary. A cluster-superuser-owned bootstrap schema in `scripts/init-db.sql`
-therefore supplies two fixed, no-argument, pinned-search-path operations:
+therefore supplies three fixed, no-argument, pinned-search-path operations:
 
 1. an installer that rejects untrusted pre-existing DND authority objects,
    creates the complete interface only from the trusted bootstrap state, and
@@ -70,6 +70,13 @@ therefore supplies two fixed, no-argument, pinned-search-path operations:
 2. a finalizer that proves the exact object, ownership, ACL, RLS, and function
    interface before handing all DND boundary objects to a dedicated NOLOGIN
    owner role.
+3. a rollback routine for a planned core downgrade. It is callable only by a
+   trusted superuser and may proceed only while the durable mutation audit is
+   empty and the singleton remains at generation `0`; it holds the shared-table
+   lock, preserves every `public.user_context` row, restores the recorded
+   migration-role ownership/RLS posture, and re-exposes only the fixed installer
+   handoff. Any receipt or nonzero generation fails closed and requires the
+   separately planned, audited recovery path.
 
 The ordinary `core_197` migration is deliberately weak: it may catalog-validate
 an already-finalized trusted interface and return, or catalog-validate the
@@ -77,14 +84,21 @@ trusted bootstrap interface and invoke that fixed installer. It MUST NOT issue
 authority-bearing DDL for the DND table, guard, audit, policies, owner role,
 gateway, private definer, or their grants/revokes; it MUST fail closed rather
 than adopting an object that merely has a familiar name. The bootstrap remains
-the only installer/finalizer authority, and the migration role receives only
-the minimum execute/usage grant needed to invoke the installer.
+the only installer/finalizer/rollback authority, and the migration role receives
+only the minimum execute/usage grant needed to invoke the installer.
+
+A managed trusted-superuser one-step rollback/reapply may use that same
+catalog-proven installer after the bounded rollback has restored the pre-guard
+handoff. It does not create a migration-owned repair path or widen the ordinary
+migration role's authority.
 
 Before the ownership handoff, the installer also proves the complete known
-`public.user_context` column/key shape and rejects every pre-existing user RLS
+`public.user_context` column/key shape, the recorded migration-role owner, and
+the ordinary disabled-RLS posture; it rejects every pre-existing user RLS
 policy, user trigger, or rewrite rule. Permissive RLS policies compose with OR,
 so accepting an arbitrary policy beside the DND policies would silently reopen
-direct DND DML. It takes an `ACCESS EXCLUSIVE` table lock through the
+direct DND DML, and accepting an ambiguous predecessor posture would make a
+bounded rollback unsafe. It takes an `ACCESS EXCLUSIVE` table lock through the
 installer/finalizer handoff so the former shared-table owner cannot race a
 policy, trigger, or shape change between validation and ownership transfer.
 
@@ -395,6 +409,7 @@ property is transactional.
 | Restart / audit recovery | Restart after committed mutation and after rolled-back mutation | Committed state reconstructs from tables; rollback leaves no receipt, row change, or generation advance. |
 | Authorized non-DND path | A non-owner test session executes `SET ROLE butler_health_rw` or another real runtime role and writes an authorized non-DND signal through the normal context path | The normal application-level permission check and non-DND RLS policy permit the write; the test is not run as the migration owner or a privileged setup session. |
 | Trusted bootstrap/finalizer | A clean trusted cluster-superuser bootstrap installs the interface, then a normal core migration observes it | The ordinary migration only catalog-validates/invokes; the final catalog proves dedicated NOLOGIN ownership, `ENABLE` + `FORCE RLS`, pinned gateway/definer, and no authority retained by the migration role. |
+| Privileged pre-consumer rollback | A trusted-superuser core downgrade observes an empty mutation audit and generation `0` | The fixed bootstrap rollback preserves `public.user_context` rows, restores the pre-guard ownership/RLS posture, and re-exposes only the installer handoff; any receipt or nonzero generation fails before destructive DDL. |
 | Authority spoof | A familiar DND table, role, policy, function, or bootstrap entry point exists with untrusted ownership/ACL/path | Installer, finalizer, and ordinary migration fail closed; none adopts, repairs, or escalates the object. |
 | Unauthorized DND path | Health, Messenger, connector, migration role, direct generic DND DML, or a General/Switchboard cross-writer attempt mutates DND from a real runtime role | RLS/ACL denies the operation before any DND row/guard/audit mutation; a missing or unverifiable `SET ROLE` makes canonical DND mutation and DND-based admission fail closed. |
 | Counter exhaustion | Seed guard at `BIGINT` maximum and attempt a new mutation | Fails closed; no wrap, no context mutation, and an observable error is produced. |
@@ -443,9 +458,11 @@ deployment. In an authorized environment it must:
    role-enforced non-DND regression, ownership/catalog provenance, direct and
    cross-role denial, replay, refresh/reactivation, and lock-order coverage;
 6. deploy the guard before enabling any Health/Messenger wake admission; and
-7. roll back only before a consumer depends on it. Once a durable mutation or
-   admission record references a generation, rollback requires a planned,
-   audited migration rather than dropping/reseeding the counter.
+7. use the fixed privileged rollback only before a consumer depends on it and
+   only while the durable mutation audit is empty at generation `0`. Once a
+   durable mutation or admission record references a generation, rollback
+   requires a separately planned, audited migration rather than
+   dropping/reseeding the counter.
 
 ## Open Questions
 

@@ -1227,9 +1227,11 @@ $$;
 -- ``public.user_context`` is an existing shared-awareness table, but DND now
 -- carries a safety-critical generation/replay boundary.  The ordinary Alembic
 -- login must never create or take ownership of that boundary.  This
--- cluster-superuser bootstrap exposes exactly one fixed no-argument installer;
--- core_197 can only catalog-validate it and invoke it.  The installer rejects
--- partial or familiar-looking authority objects rather than adopting them.
+-- cluster-superuser bootstrap exposes fixed no-argument installer, finalizer,
+-- and restricted rollback operations; core_197 can only catalog-validate and
+-- invoke them. The installer rejects partial or familiar-looking authority
+-- objects rather than adopting them, while rollback accepts only an unused
+-- generation boundary before restoring the pre-guard handoff.
 
 DO $$
 DECLARE
@@ -1302,7 +1304,11 @@ BEGIN
         JOIN pg_namespace AS admin_schema
             ON admin_schema.oid = admin_function.pronamespace
         WHERE admin_schema.nspname = 'dnd_generation_admin'
-          AND admin_function.proname IN ('finalize_interface', 'install_interface')
+          AND admin_function.proname IN (
+              'finalize_interface',
+              'install_interface',
+              'rollback_interface'
+          )
           AND admin_function.pronargs = 0
           AND admin_function.proowner <> v_bootstrap_owner
     ) THEN
@@ -1660,6 +1666,7 @@ BEGIN
     EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_private.mutate(uuid, text, text, timestamptz, text, real, jsonb) FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.finalize_interface() FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.install_interface() FROM PUBLIC';
+    EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.rollback_interface() FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.user_context FROM PUBLIC';
 
     -- Keep the existing development/non-DND fallback usable by the shared
@@ -1705,6 +1712,10 @@ BEGIN
         'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.install_interface() FROM %I',
         v_migration_role
     );
+    EXECUTE format(
+        'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.rollback_interface() FROM %I',
+        v_migration_role
+    );
 
     FOREACH v_runtime_role IN ARRAY ARRAY[
         'butler_chronicler_rw',
@@ -1748,6 +1759,10 @@ BEGIN
             );
             EXECUTE format(
                 'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.install_interface() FROM %I',
+                v_runtime_role
+            );
+            EXECUTE format(
+                'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.rollback_interface() FROM %I',
                 v_runtime_role
             );
             -- Keep the existing public context read/non-DND write matrix.
@@ -1910,7 +1925,8 @@ BEGIN
              ) AS acl
         WHERE admin_function.oid IN (
             'dnd_generation_admin.install_interface()'::regprocedure,
-            'dnd_generation_admin.finalize_interface()'::regprocedure
+            'dnd_generation_admin.finalize_interface()'::regprocedure,
+            'dnd_generation_admin.rollback_interface()'::regprocedure
         )
           AND acl.privilege_type = 'EXECUTE'
           AND acl.grantee <> v_bootstrap_owner
@@ -1932,12 +1948,14 @@ SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $dnd_installer$
 DECLARE
+    v_migration_role NAME;
     v_bootstrap_owner NAME;
 BEGIN
-    SELECT bootstrap_role INTO v_bootstrap_owner
+    SELECT migration_role, bootstrap_role
+    INTO v_migration_role, v_bootstrap_owner
     FROM dnd_generation_admin.bootstrap_configuration
     WHERE singleton;
-    IF v_bootstrap_owner IS NULL THEN
+    IF v_migration_role IS NULL OR v_bootstrap_owner IS NULL THEN
         RAISE EXCEPTION 'DND generation bootstrap configuration is missing';
     END IF;
 
@@ -1951,6 +1969,23 @@ BEGIN
     -- the former shared table owner could race a policy/trigger/shape change
     -- between the preflight and final ownership transfer.
     LOCK TABLE public.user_context IN ACCESS EXCLUSIVE MODE;
+    -- The bounded rollback returns exactly this known ordinary posture. Do not
+    -- harden a table whose owner/RLS state would make that reversal ambiguous.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_class AS relation
+        JOIN pg_roles AS migration_role ON migration_role.oid = relation.relowner
+        WHERE relation.oid = 'public.user_context'::regclass
+          AND migration_role.rolname = v_migration_role
+    ) OR EXISTS (
+        SELECT 1
+        FROM pg_class AS relation
+        WHERE relation.oid = 'public.user_context'::regclass
+          AND (relation.relrowsecurity OR relation.relforcerowsecurity)
+    ) THEN
+        RAISE EXCEPTION
+            'DND generation requires the recorded pre-guard ownership and ordinary RLS posture';
+    END IF;
     IF to_regclass('public.dnd_generation_guard') IS NOT NULL
        OR to_regclass('public.dnd_generation_mutations') IS NOT NULL
        OR to_regnamespace('dnd_generation_private') IS NOT NULL
@@ -2569,8 +2604,112 @@ BEGIN
 END;
 $dnd_installer$;
 
+CREATE OR REPLACE FUNCTION dnd_generation_admin.rollback_interface()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $dnd_rollback$
+DECLARE
+    v_migration_role NAME;
+    v_generation BIGINT;
+    v_session_is_superuser BOOLEAN;
+BEGIN
+    SELECT rolsuper
+    INTO v_session_is_superuser
+    FROM pg_roles
+    WHERE rolname = session_user;
+    IF NOT COALESCE(v_session_is_superuser, false) THEN
+        RAISE EXCEPTION 'core_197 downgrade requires the managed privileged bootstrap owner';
+    END IF;
+
+    IF to_regclass('public.user_context') IS NULL
+       OR to_regclass('public.dnd_generation_guard') IS NULL
+       OR to_regclass('public.dnd_generation_mutations') IS NULL
+       OR to_regnamespace('dnd_generation_private') IS NULL
+       OR to_regprocedure(
+            'public.context_dnd_mutate(uuid,text,text,timestamptz,text,real,jsonb)'
+       ) IS NULL
+       OR to_regprocedure(
+            'dnd_generation_private.mutate(uuid,text,text,timestamptz,text,real,jsonb)'
+       ) IS NULL
+       OR to_regprocedure('dnd_generation_private.canonical_json(jsonb)') IS NULL THEN
+        RAISE EXCEPTION 'core_197 rollback requires the complete trusted DND interface';
+    END IF;
+
+    -- A durable replay receipt or any advanced generation proves that a
+    -- consumer may depend on this boundary.  That state needs an explicitly
+    -- planned, audited recovery migration rather than destructive reseeding.
+    IF EXISTS (SELECT 1 FROM public.dnd_generation_mutations) THEN
+        RAISE EXCEPTION
+            'core_197 rollback refuses durable DND replay receipts; use a planned audited rollback';
+    END IF;
+    SELECT generation
+    INTO v_generation
+    FROM public.dnd_generation_guard
+    WHERE guard_id = 1;
+    IF NOT FOUND OR v_generation IS NULL OR v_generation <> 0 THEN
+        RAISE EXCEPTION
+            'core_197 rollback refuses a nonzero DND generation; use a planned audited rollback';
+    END IF;
+
+    -- This only accepts the bootstrap-produced shape.  It cannot adopt an
+    -- attacker-shaped authority boundary before reopening the ordinary path.
+    PERFORM dnd_generation_admin.finalize_interface();
+    LOCK TABLE public.user_context IN ACCESS EXCLUSIVE MODE;
+
+    SELECT generation
+    INTO v_generation
+    FROM public.dnd_generation_guard
+    WHERE guard_id = 1
+    FOR UPDATE;
+    IF NOT FOUND OR v_generation IS NULL OR v_generation <> 0 THEN
+        RAISE EXCEPTION
+            'core_197 rollback refuses a nonzero DND generation; use a planned audited rollback';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.dnd_generation_mutations) THEN
+        RAISE EXCEPTION
+            'core_197 rollback refuses durable DND replay receipts; use a planned audited rollback';
+    END IF;
+
+    SELECT migration_role
+    INTO v_migration_role
+    FROM dnd_generation_admin.bootstrap_configuration
+    WHERE singleton;
+    IF v_migration_role IS NULL
+       OR NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_migration_role) THEN
+        RAISE EXCEPTION 'core_197 rollback has no trusted migration-role handoff';
+    END IF;
+
+    DROP FUNCTION public.context_dnd_mutate(uuid, text, text, timestamptz, text, real, jsonb);
+    DROP FUNCTION dnd_generation_private.mutate(uuid, text, text, timestamptz, text, real, jsonb);
+    DROP FUNCTION dnd_generation_private.canonical_json(jsonb);
+    DROP SCHEMA dnd_generation_private;
+    DROP TABLE public.dnd_generation_mutations;
+    DROP TABLE public.dnd_generation_guard;
+
+    ALTER TABLE public.user_context NO FORCE ROW LEVEL SECURITY;
+    ALTER TABLE public.user_context DISABLE ROW LEVEL SECURITY;
+    DROP POLICY dnd_user_context_delete ON public.user_context;
+    DROP POLICY dnd_user_context_update ON public.user_context;
+    DROP POLICY dnd_user_context_insert ON public.user_context;
+    DROP POLICY dnd_user_context_select ON public.user_context;
+    EXECUTE format('ALTER TABLE public.user_context OWNER TO %I', v_migration_role);
+
+    -- Re-upgrade is still possible, but only through the same fixed bootstrap
+    -- installer.  The ordinary migration role never receives rollback access.
+    EXECUTE format('REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.rollback_interface() FROM %I', v_migration_role);
+    EXECUTE format('GRANT USAGE ON SCHEMA dnd_generation_admin TO %I', v_migration_role);
+    EXECUTE format(
+        'GRANT EXECUTE ON FUNCTION dnd_generation_admin.install_interface() TO %I',
+        v_migration_role
+    );
+END;
+$dnd_rollback$;
+
 REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.finalize_interface() FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.install_interface() FROM PUBLIC;
+REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.rollback_interface() FROM PUBLIC;
 
 DO $$
 DECLARE
@@ -2588,6 +2727,10 @@ BEGIN
     );
     EXECUTE format(
         'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.install_interface() FROM %I',
+        v_migration_role
+    );
+    EXECUTE format(
+        'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.rollback_interface() FROM %I',
         v_migration_role
     );
 

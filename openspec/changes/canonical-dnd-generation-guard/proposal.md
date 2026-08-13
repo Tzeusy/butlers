@@ -27,8 +27,8 @@ cross-schema shortcut from becoming an accidental alternative authority.
   generation exhaustion explicit. The change introduces no wake release,
   scheduler cancellation admission, provider egress, or live-data backfill.
 - Amend RFC 0009 with the shared DND-generation contract, including the
-  trusted cluster-superuser installer/finalizer handoff that establishes the
-  DND authority boundary before an ordinary core migration may invoke it.
+  trusted cluster-superuser installer/finalizer handoff and its restricted
+  pre-consumer rollback route.
 - Add an executable downstream contract-test matrix to the change design/tasks,
   including the required real-PostgreSQL role/catalog proofs. This source-only
   change does not execute that bootstrap, migration, or test environment.
@@ -52,10 +52,12 @@ This PR implements the repository-owned prerequisite only: the canonical
 OpenSpec/RFC contract, the trusted bootstrap source and ordinary core migration
 source, the context-bus DND mutation path, and focused source/unit checks. The
 cluster-superuser bootstrap installer/finalizer is the only component permitted
-to create or hand off the authority objects; the ordinary migration merely
-catalog-validates a trusted interface and invokes that fixed installer when
-needed. The PR does not execute `scripts/init-db.sql`, Alembic, a database or
-testcontainer, Compose, a deployment, a restart, a live DND mutation, a
-provider call, or a data backfill. Real-PostgreSQL role/catalog and concurrency
-proofs remain explicit execution gates before any wake-recovery consumer is
-enabled.
+to create or hand off the authority objects; a separate fixed rollback route is
+limited to a planned superuser downgrade before any durable mutation exists. The
+ordinary upgrade merely catalog-validates a trusted interface and invokes the
+fixed installer; only its planned privileged downgrade invokes the restricted
+rollback route. The PR does not execute `scripts/init-db.sql`, Alembic, a
+database or testcontainer, Compose, a deployment, a restart, a live DND
+mutation, a provider call, or a data backfill. Real-PostgreSQL role/catalog and
+concurrency proofs remain explicit execution gates before any wake-recovery
+consumer is enabled.

@@ -351,13 +351,23 @@ interface or invoke that fixed installer. It MUST NOT create, adopt, re-own,
 repair, or grant authority to a similarly named DND role, table, policy,
 gateway, or definer.
 
+A planned `core_197` downgrade may invoke only a separately catalog-proven,
+fixed no-argument bootstrap rollback routine as a trusted superuser. That route
+first requires an empty mutation audit and singleton generation `0`, then keeps
+all `public.user_context` rows while restoring the recorded migration-role
+ownership/RLS posture and only the installer handoff. Any durable receipt or
+advanced generation fails closed before destructive DDL; it requires a separate
+audited recovery migration rather than dropping or reseeding the guard.
+
 Before it transfers the legacy shared table, the installer verifies its complete
-known column/key shape and rejects any pre-existing user policy, trigger, or
+known column/key shape, recorded migration-role ownership, and ordinary
+disabled-RLS posture; it rejects any pre-existing user policy, trigger, or
 rewrite rule. In particular, it cannot accept an arbitrary permissive RLS
 policy: policies combine permissively, and such a policy could otherwise reopen
-direct DND DML alongside the guarded policy set. It holds an `ACCESS EXCLUSIVE`
-lock through validation and final ownership transfer so the former shared-table
-owner cannot race those checks.
+direct DND DML alongside the guarded policy set. Nor can it accept a predecessor
+posture that the bounded rollback could not restore. It holds an `ACCESS
+EXCLUSIVE` lock through validation and final ownership transfer so the former
+shared-table owner cannot race those checks.
 
 The finalizer hands ownership of `public.user_context`, the singleton guard,
 the mutation audit, DND policies, and private definer to one dedicated NOLOGIN,

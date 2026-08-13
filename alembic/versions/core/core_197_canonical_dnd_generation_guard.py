@@ -9,7 +9,8 @@ or take ownership of the RLS-protected ``public.user_context`` boundary, guard,
 audit, gateway, or private definer.  ``scripts/init-db.sql`` installs the fixed
 cluster-superuser-owned bootstrap interface; this revision only verifies its
 catalog provenance and invokes its no-argument installer when the finalized
-interface is absent.
+interface is absent, or its restricted rollback during a planned privileged
+downgrade.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ branch_labels = None
 depends_on = None
 
 _ADMIN_INSTALLER = "dnd_generation_admin.install_interface"
+_ADMIN_ROLLBACK = "dnd_generation_admin.rollback_interface"
 
 _TRUSTED_FINALIZED_INTERFACE_SQL = """
     SELECT EXISTS (
@@ -84,6 +86,11 @@ _TRUSTED_FINALIZED_INTERFACE_SQL = """
            AND finalizer.proname = 'finalize_interface'
            AND finalizer.pronargs = 0
            AND finalizer.prorettype = 'void'::regtype
+        JOIN pg_proc AS rollback_interface
+            ON rollback_interface.pronamespace = admin_schema.oid
+           AND rollback_interface.proname = 'rollback_interface'
+           AND rollback_interface.pronargs = 0
+           AND rollback_interface.prorettype = 'void'::regtype
         WHERE dnd_owner.rolname = 'dnd_generation_owner'
           AND NOT dnd_owner.rolcanlogin
           AND NOT dnd_owner.rolsuper
@@ -306,14 +313,25 @@ _TRUSTED_FINALIZED_INTERFACE_SQL = """
               WHERE acl.privilege_type = 'EXECUTE'
                 AND acl.grantee <> bootstrap_owner.oid
           )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM aclexplode(
+                  COALESCE(rollback_interface.proacl, acldefault('f', rollback_interface.proowner))
+              ) AS acl
+              WHERE acl.privilege_type = 'EXECUTE'
+                AND acl.grantee <> bootstrap_owner.oid
+          )
           AND bootstrap_owner.rolsuper
           AND bootstrap_configuration.relowner = bootstrap_owner.oid
           AND installer.proowner = admin_schema.nspowner
           AND finalizer.proowner = admin_schema.nspowner
+          AND rollback_interface.proowner = admin_schema.nspowner
           AND installer.prosecdef
           AND finalizer.prosecdef
+          AND rollback_interface.prosecdef
           AND installer.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
           AND finalizer.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
+          AND rollback_interface.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
           -- The shared connecting user inherits ordinary runtime-role grants.
           -- Prove it has no *direct* DND ACL: effective inherited gateway
           -- visibility is not sufficient authority because the invoker and
@@ -375,6 +393,14 @@ _TRUSTED_FINALIZED_INTERFACE_SQL = """
               WHERE acl.grantee = migration_role.oid
                 AND acl.privilege_type = 'EXECUTE'
           )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM aclexplode(
+                  COALESCE(rollback_interface.proacl, acldefault('f', rollback_interface.proowner))
+              ) AS acl
+              WHERE acl.grantee = migration_role.oid
+                AND acl.privilege_type = 'EXECUTE'
+          )
     )
 """
 
@@ -384,6 +410,8 @@ _TRUSTED_BOOTSTRAP_INSTALLER_SQL = """
         FROM pg_namespace AS admin_schema
         JOIN pg_roles AS bootstrap_owner
             ON bootstrap_owner.oid = admin_schema.nspowner
+        JOIN pg_roles AS installer_operator
+            ON installer_operator.rolname = current_user
         JOIN pg_class AS bootstrap_configuration
             ON bootstrap_configuration.relnamespace = admin_schema.oid
            AND bootstrap_configuration.relname = 'bootstrap_configuration'
@@ -398,15 +426,23 @@ _TRUSTED_BOOTSTRAP_INSTALLER_SQL = """
            AND finalizer.proname = 'finalize_interface'
            AND finalizer.pronargs = 0
            AND finalizer.prorettype = 'void'::regtype
+        JOIN pg_proc AS rollback_interface
+            ON rollback_interface.pronamespace = admin_schema.oid
+           AND rollback_interface.proname = 'rollback_interface'
+           AND rollback_interface.pronargs = 0
+           AND rollback_interface.prorettype = 'void'::regtype
         WHERE admin_schema.nspname = 'dnd_generation_admin'
           AND bootstrap_owner.rolsuper
           AND bootstrap_configuration.relowner = bootstrap_owner.oid
           AND installer.proowner = admin_schema.nspowner
           AND finalizer.proowner = admin_schema.nspowner
+          AND rollback_interface.proowner = admin_schema.nspowner
           AND installer.prosecdef
           AND finalizer.prosecdef
+          AND rollback_interface.prosecdef
           AND installer.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
           AND finalizer.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
+          AND rollback_interface.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
           AND NOT EXISTS (
               SELECT 1
               FROM aclexplode(COALESCE(admin_schema.nspacl, acldefault('n', admin_schema.nspowner)))
@@ -425,9 +461,99 @@ _TRUSTED_BOOTSTRAP_INSTALLER_SQL = """
                   AS acl
               WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'
           )
-          AND has_schema_privilege(current_user, admin_schema.oid, 'USAGE')
-          AND has_function_privilege(current_user, installer.oid, 'EXECUTE')
-          AND NOT has_function_privilege(current_user, finalizer.oid, 'EXECUTE')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM aclexplode(
+                  COALESCE(rollback_interface.proacl, acldefault('f', rollback_interface.proowner))
+              ) AS acl
+              WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'
+          )
+          AND (
+              (
+                  has_schema_privilege(current_user, admin_schema.oid, 'USAGE')
+                  AND has_function_privilege(current_user, installer.oid, 'EXECUTE')
+                  AND NOT has_function_privilege(current_user, finalizer.oid, 'EXECUTE')
+                  AND NOT has_function_privilege(current_user, rollback_interface.oid, 'EXECUTE')
+              )
+              -- A controlled one-step core rollback/reapply uses the same
+              -- catalog-proven interface under trusted cluster-superuser
+              -- authority; it is not a migration-owned fallback.
+              OR installer_operator.rolsuper
+          )
+    )
+"""
+
+_TRUSTED_BOOTSTRAP_ROLLBACK_SQL = """
+    SELECT EXISTS (
+        SELECT 1
+        FROM pg_roles AS rollback_operator
+        JOIN pg_namespace AS admin_schema
+            ON admin_schema.nspname = 'dnd_generation_admin'
+        JOIN pg_roles AS bootstrap_owner
+            ON bootstrap_owner.oid = admin_schema.nspowner
+        JOIN pg_class AS bootstrap_configuration
+            ON bootstrap_configuration.relnamespace = admin_schema.oid
+           AND bootstrap_configuration.relname = 'bootstrap_configuration'
+           AND bootstrap_configuration.relkind = 'r'
+        JOIN pg_roles AS configured_bootstrap_owner
+            ON configured_bootstrap_owner.rolname = bootstrap_configuration.bootstrap_role
+        JOIN pg_roles AS migration_role
+            ON migration_role.rolname = bootstrap_configuration.migration_role
+        JOIN pg_proc AS finalizer
+            ON finalizer.pronamespace = admin_schema.oid
+           AND finalizer.proname = 'finalize_interface'
+           AND finalizer.pronargs = 0
+           AND finalizer.prorettype = 'void'::regtype
+        JOIN pg_proc AS rollback_interface
+            ON rollback_interface.pronamespace = admin_schema.oid
+           AND rollback_interface.proname = 'rollback_interface'
+           AND rollback_interface.pronargs = 0
+           AND rollback_interface.prorettype = 'void'::regtype
+        WHERE rollback_operator.rolname = current_user
+          AND rollback_operator.rolsuper
+          AND bootstrap_owner.rolsuper
+          AND bootstrap_configuration.relowner = bootstrap_owner.oid
+          AND configured_bootstrap_owner.oid = bootstrap_owner.oid
+          AND configured_bootstrap_owner.rolsuper
+          AND NOT migration_role.rolsuper
+          AND finalizer.proowner = admin_schema.nspowner
+          AND finalizer.prosecdef
+          AND finalizer.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
+          AND rollback_interface.proowner = admin_schema.nspowner
+          AND rollback_interface.prosecdef
+          AND rollback_interface.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[]
+          AND NOT has_function_privilege(migration_role.oid, rollback_interface.oid, 'EXECUTE')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM aclexplode(COALESCE(admin_schema.nspacl, acldefault('n', admin_schema.nspowner)))
+                  AS acl
+              WHERE acl.grantee <> bootstrap_owner.oid
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM aclexplode(
+                  COALESCE(
+                      bootstrap_configuration.relacl,
+                      acldefault('r', bootstrap_configuration.relowner)
+                  )
+              ) AS acl
+              WHERE acl.grantee <> bootstrap_owner.oid
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM aclexplode(COALESCE(finalizer.proacl, acldefault('f', finalizer.proowner)))
+                  AS acl
+              WHERE acl.privilege_type = 'EXECUTE'
+                AND acl.grantee <> bootstrap_owner.oid
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM aclexplode(
+                  COALESCE(rollback_interface.proacl, acldefault('f', rollback_interface.proowner))
+              ) AS acl
+              WHERE acl.privilege_type = 'EXECUTE'
+                AND acl.grantee <> bootstrap_owner.oid
+          )
     )
 """
 
@@ -464,21 +590,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Fail closed: rollback requires the managed privileged bootstrap owner."""
-    op.execute(
-        """
-        DO $$
-        BEGIN
-            IF NOT COALESCE(
-                (SELECT rolsuper FROM pg_roles WHERE rolname = current_user),
-                false
-            ) THEN
+    """Delegate only an unused boundary rollback to trusted bootstrap authority."""
+    bind = op.get_bind()
+    if not bool(bind.execute(sa.text(_TRUSTED_BOOTSTRAP_ROLLBACK_SQL)).scalar_one()):
+        op.execute(
+            """
+            DO $$
+            BEGIN
                 RAISE EXCEPTION
-                    'core_197 downgrade requires the managed privileged bootstrap owner';
-            END IF;
-            RAISE EXCEPTION
-                'core_197 owns durable DND replay receipts; use a planned privileged rollback';
-        END;
-        $$;
-        """
-    )
+                    'core_197 downgrade requires trusted bootstrap rollback interface';
+            END;
+            $$;
+            """
+        )
+
+    # The bootstrap-owned routine rejects durable receipts/nonzero generations,
+    # restores the pre-guard ownership and RLS shape, and re-exposes only the
+    # fixed installer handoff for a subsequent upgrade.
+    op.execute(f"SELECT {_ADMIN_ROLLBACK}()")
