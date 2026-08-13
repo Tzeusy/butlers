@@ -21,6 +21,9 @@ _INIT_DB = _REPO_ROOT / "scripts" / "init-db.sql"
 _MIGRATION = (
     _REPO_ROOT / "alembic" / "versions" / "core" / "core_197_canonical_dnd_generation_guard.py"
 )
+_POSTGRES_INTEGRATION_TEST = (
+    _REPO_ROOT / "tests" / "config" / "test_dnd_generation_guard_postgres.py"
+)
 
 
 def _load_core_197():
@@ -29,6 +32,12 @@ def _load_core_197():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _function_source(source: str, function_name: str) -> str:
+    start = source.index(f"def {function_name}(")
+    next_function = source.find("\ndef ", start + 1)
+    return source[start:] if next_function == -1 else source[start:next_function]
 
 
 def test_dnd_boundary_uses_trusted_installer_not_migration_owned_ddl() -> None:
@@ -101,6 +110,42 @@ def test_core_197_catalog_probes_use_sqlalchemy_text_for_literal_like_patterns()
     assert "LIKE '%signal_type%'" in statements[0].text
     assert len(statements) == 2
     bind.exec_driver_sql.assert_not_called()
+
+
+def test_dnd_catalog_test_reads_sealed_functions_from_pg_proc_not_regprocedure() -> None:
+    """Catalog assertions must not require USAGE on sealed DND schemas."""
+    integration_test = _function_source(
+        _POSTGRES_INTEGRATION_TEST.read_text(encoding="utf-8"),
+        "test_dnd_final_catalog_has_no_login_owner_force_rls_and_no_public_execute",
+    )
+
+    assert (
+        "dnd_generation_private.mutate(uuid,text,text,timestamptz,text,real,jsonb)'::regprocedure"
+        not in integration_test
+    )
+    assert "dnd_generation_private.canonical_json(jsonb)'::regprocedure" not in integration_test
+    assert "dnd_generation_admin.install_interface()'::regprocedure" not in integration_test
+    assert "dnd_generation_admin.finalize_interface()'::regprocedure" not in integration_test
+    assert "private_mutation.pronamespace = private_schema.oid" in integration_test
+    assert "canonical_json.pronamespace = private_schema.oid" in integration_test
+    assert "installer.pronamespace = admin_schema.oid" in integration_test
+    assert "finalizer.pronamespace = admin_schema.oid" in integration_test
+    assert "admin_function.pronamespace = admin_schema.oid" in integration_test
+
+
+def test_dnd_mutation_replay_lookup_qualifies_the_receipt_column() -> None:
+    """A PL/pgSQL result column must not collide with the receipt lookup column."""
+    source = _INIT_DB.read_text(encoding="utf-8")
+    private_start = source.index("CREATE FUNCTION dnd_generation_private.mutate(")
+    gateway_start = source.index("CREATE FUNCTION public.context_dnd_mutate(", private_start)
+    private_mutation = source[private_start:gateway_start]
+
+    assert "FROM public.dnd_generation_mutations AS receipt" in private_mutation
+    assert "WHERE receipt.mutation_id = p_mutation_id" in private_mutation
+    assert "WHERE mutation_id = p_mutation_id" not in private_mutation
+    assert "UPDATE public.dnd_generation_guard AS guard" in private_mutation
+    assert "SET generation = guard.generation + 1" in private_mutation
+    assert "RETURNING guard.generation INTO v_guard_generation" in private_mutation
 
 
 def test_core_197_downgrade_delegates_to_a_trusted_privileged_bootstrap_rollback() -> None:

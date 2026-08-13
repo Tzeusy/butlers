@@ -254,20 +254,32 @@ def test_dnd_final_catalog_has_no_login_owner_force_rls_and_no_public_execute(
                         ON gateway.oid = (
                             'public.context_dnd_mutate(uuid,text,text,timestamptz,text,real,jsonb)'
                         )::regprocedure
+                    JOIN pg_namespace AS private_schema
+                        ON private_schema.nspname = 'dnd_generation_private'
                     JOIN pg_proc AS private_mutation
-                        ON private_mutation.oid = (
-                            'dnd_generation_private.mutate(uuid,text,text,timestamptz,text,real,jsonb)'
-                        )::regprocedure
+                        ON private_mutation.pronamespace = private_schema.oid
+                       AND private_mutation.proname = 'mutate'
+                       AND private_mutation.pronargs = 7
+                       AND private_mutation.proargtypes = '2950 25 25 1184 25 700 3802'::oidvector
                     JOIN pg_proc AS canonical_json
-                        ON canonical_json.oid = 'dnd_generation_private.canonical_json(jsonb)'::regprocedure
+                        ON canonical_json.pronamespace = private_schema.oid
+                       AND canonical_json.proname = 'canonical_json'
+                       AND canonical_json.pronargs = 1
+                       AND canonical_json.proargtypes = '3802'::oidvector
                     JOIN pg_namespace AS admin_schema
                         ON admin_schema.nspname = 'dnd_generation_admin'
                     JOIN pg_roles AS bootstrap_owner
                         ON bootstrap_owner.oid = admin_schema.nspowner
                     JOIN pg_proc AS installer
-                        ON installer.oid = 'dnd_generation_admin.install_interface()'::regprocedure
+                        ON installer.pronamespace = admin_schema.oid
+                       AND installer.proname = 'install_interface'
+                       AND installer.pronargs = 0
+                       AND installer.prorettype = 'void'::regtype
                     JOIN pg_proc AS finalizer
-                        ON finalizer.oid = 'dnd_generation_admin.finalize_interface()'::regprocedure
+                        ON finalizer.pronamespace = admin_schema.oid
+                       AND finalizer.proname = 'finalize_interface'
+                       AND finalizer.pronargs = 0
+                       AND finalizer.prorettype = 'void'::regtype
                     WHERE owner_role.rolname = 'dnd_generation_owner'
                     """
                 )
@@ -385,10 +397,10 @@ def test_dnd_final_catalog_has_no_login_owner_force_rls_and_no_public_execute(
                                             acldefault('f', admin_function.proowner)
                                         )
                                     ) AS acl
-                               WHERE admin_function.oid IN (
-                                   'dnd_generation_admin.install_interface()'::regprocedure,
-                                   'dnd_generation_admin.finalize_interface()'::regprocedure
-                               )
+                               WHERE admin_function.pronamespace = admin_schema.oid
+                                 AND admin_function.proname IN ('install_interface', 'finalize_interface')
+                                 AND admin_function.pronargs = 0
+                                 AND admin_function.prorettype = 'void'::regtype
                                  AND acl.privilege_type = 'EXECUTE'
                                  AND acl.grantee <> bootstrap_owner.oid
                            ),

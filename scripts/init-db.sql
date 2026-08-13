@@ -2387,8 +2387,8 @@ BEGIN
         END IF;
 
         SELECT * INTO v_existing
-        FROM public.dnd_generation_mutations
-        WHERE mutation_id = p_mutation_id;
+        FROM public.dnd_generation_mutations AS receipt
+        WHERE receipt.mutation_id = p_mutation_id;
         v_has_existing := FOUND;
 
         IF v_has_existing THEN
@@ -2532,11 +2532,11 @@ BEGIN
               AND superseded_at IS NULL;
         END IF;
 
-        UPDATE public.dnd_generation_guard
-        SET generation = generation + 1,
+        UPDATE public.dnd_generation_guard AS guard
+        SET generation = guard.generation + 1,
             updated_at = v_now
-        WHERE guard_id = 1
-        RETURNING generation INTO v_guard_generation;
+        WHERE guard.guard_id = 1
+        RETURNING guard.generation INTO v_guard_generation;
 
         INSERT INTO public.dnd_generation_mutations (
             mutation_id, generation, writer, operation, correlation,
