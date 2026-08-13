@@ -13,6 +13,10 @@ Spec: REQ-memory-retention-policy-009
 import re
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.contract
+
 _ROOT = Path(__file__).resolve().parents[2]
 _CHANGES = _ROOT / "openspec" / "changes"
 _ARCHIVE = _CHANGES / "archive"
