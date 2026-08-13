@@ -479,7 +479,14 @@ class TestFanOutEvent:
             AsyncMock(return_value=(None, "boom", True)),
         )
         mark_failed_mock = AsyncMock(return_value="failed")
+        metric_record_mock = Mock()
         monkeypatch.setattr(_domain_events, "mark_delivery_failed", mark_failed_mock)
+        monkeypatch.setattr(
+            _domain_events,
+            "record_domain_event_delivery_failed_permanent",
+            metric_record_mock,
+            raising=False,
+        )
 
         result = await fan_out_event(
             pool,
@@ -505,6 +512,7 @@ class TestFanOutEvent:
             retryable=True,
             max_attempts=_domain_events._MAX_DELIVERY_RETRY_ATTEMPTS,
         )
+        metric_record_mock.assert_not_called()
 
     async def test_permanent_route_error_marks_delivery_failed_permanent(self, monkeypatch):
         """A route error classified permanent (retryable=False) must land on the
@@ -1165,8 +1173,8 @@ class TestRunDomainEventReconciliationSweep:
             "event_id": "event-1",
             "subscriber_butler": "health",
             "status": "failed",
-            "attempt_count": 1,
-            "error_message": "RuntimeError: Unknown tool",
+            "attempt_count": _domain_events._MAX_DELIVERY_RETRY_ATTEMPTS - 1,
+            "error_message": "TimeoutError: route timed out",
             "event_type": "travel.trip_active",
             "source_butler": "travel",
             "payload": {},
@@ -1178,14 +1186,17 @@ class TestRunDomainEventReconciliationSweep:
             _domain_events, "select_retryable_failed_deliveries", AsyncMock(return_value=[row])
         )
         monkeypatch.setattr(_domain_events, "claim_delivery", AsyncMock(return_value=dict(row)))
-        dispatch_mock = AsyncMock(
-            return_value={
-                "subscriber_butler": "health",
-                "status": "failed_permanent",
-                "error": "RuntimeError: Unknown tool",
-            }
+        route_mock = AsyncMock(return_value=(None, "TimeoutError: route timed out", True))
+        mark_failed_mock = AsyncMock(return_value="failed_permanent")
+        metric_record_mock = Mock()
+        monkeypatch.setattr(_domain_events, "_dispatch_receive_via_switchboard", route_mock)
+        monkeypatch.setattr(_domain_events, "mark_delivery_failed", mark_failed_mock)
+        monkeypatch.setattr(
+            _domain_events,
+            "record_domain_event_delivery_failed_permanent",
+            metric_record_mock,
+            raising=False,
         )
-        monkeypatch.setattr(_domain_events, "_dispatch_and_record_delivery", dispatch_mock)
 
         with caplog.at_level("ERROR"):
             result = await run_domain_event_reconciliation_sweep(pool)
@@ -1193,6 +1204,19 @@ class TestRunDomainEventReconciliationSweep:
         assert result["failed_retried"] == 1
         assert result["newly_permanently_failed"] == 1
         assert any("permanently failed" in message for message in caplog.messages)
+        route_mock.assert_awaited_once()
+        mark_failed_mock.assert_awaited_once_with(
+            pool.connection,
+            "d1",
+            "TimeoutError: route timed out",
+            retryable=True,
+            max_attempts=_domain_events._MAX_DELIVERY_RETRY_ATTEMPTS,
+        )
+        metric_record_mock.assert_called_once_with(
+            source_butler="travel",
+            destination_butler="health",
+            reason="attempts_exhausted",
+        )
 
     async def test_active_sweep_is_observably_skipped(self, monkeypatch):
         pool = _SweepLockPool(lock_acquired=False)
