@@ -97,7 +97,8 @@
 - [ ] 6.4 After separate cutover authorization, switch both consumers together
   to projection and retain explicit JSONL rollback selection for seven days;
   do not retire JSONL mounts, parser code, or export materialization in this
-  change.
+  change. `GET /api/beads/{id}` and its `BeadSnapshotReader` remain an
+  explicitly retained JSONL consumer outside the Decisions-only cutover.
 
 ## 7. Verification, review, and later retirement gate
 
@@ -109,4 +110,9 @@
   network/deployment evidence before any activation approval is consumed.
 - [ ] 7.3 File or update the separate owner-gated follow-up for JSONL
   retirement after the seven-day rollback window; it must include fresh
-  parity/operational evidence and may not be inferred from this change.
+  parity/operational evidence, a complete JSONL consumer inventory, and a
+  disposition for every consumer. Each consumer must be either migrated with
+  contract and regression proof or explicitly retained with its
+  mount/parser/materialization rationale. Any expansion or migration of
+  `GET /api/beads/{id}` and `BeadSnapshotReader` requires separately scoped
+  security review and may not be inferred from this change.

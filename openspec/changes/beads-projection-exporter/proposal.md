@@ -29,7 +29,9 @@ or cut consumers over.
   callers to parse JSONL or inspect raw Beads metadata.
 - Specify a 14-day JSONL-versus-projection shadow parity gate and an explicit,
   seven-day JSONL rollback selection after cutover. No automatic fallback or
-  JSONL retirement is introduced.
+  JSONL retirement is introduced; the cutover remains Decisions-only and
+  retains `GET /api/beads/{id}` with `BeadSnapshotReader` until a separately
+  scoped security-reviewed migration.
 - Add RFC and architecture documentation plus a test-first implementation and
   activation plan. The only changes in this planning packet are documents and
   OpenSpec artifacts.

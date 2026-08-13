@@ -444,6 +444,9 @@ observable freshness signal.
 
 - Consumes: Task 4 `BeadSnapshot` and pure digest.
 - Produces: one additive Decisions metadata envelope used by API and UI.
+- Explicitly excludes: `GET /api/beads/{id}`. Its `BeadSnapshotReader` JSONL
+  detail contract includes `design` and `acceptance_criteria`, so it remains an
+  explicitly retained consumer outside this Decisions-only cutover.
 
 - [ ] **Step 1: Add API RED tests**
 
@@ -526,8 +529,13 @@ observable freshness signal.
   Document the explicit owner gates, required TLS/role/network evidence,
   staging and preflight command, failure signals, fourteen-day shadow audit,
   synchronized projection cutover, seven-day JSONL rollback selection, and
-  prohibition on JSONL retirement without a separate decision. Document only
-  variable names/locations, never a credential value.
+  prohibition on JSONL retirement without a separate decision. The later
+  retirement packet must contain a complete JSONL consumer inventory; every
+  consumer must be either migrated with contract and regression proof or
+  explicitly retained with its mount/parser/materialization rationale. It must
+  name `GET /api/beads/{id}` and `BeadSnapshotReader` as an explicitly retained
+  consumer unless a separately scoped security review approves its own
+  migration. Document only variable names/locations, never a credential value.
 
 - [ ] **Step 4: Run focused documentation and shadow tests, then commit**
 

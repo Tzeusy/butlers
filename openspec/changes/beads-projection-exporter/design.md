@@ -45,6 +45,9 @@ rule, or cutover is authorized by this change.
 - Automatic source fallback, automatic JSONL retirement, service installation,
   credential creation/use, firewall/network changes, migration execution,
   deployment, or cutover in this planning change.
+- Migration or expansion of `GET /api/beads/{id}`. That separately shipped
+  `BeadSnapshotReader` JSONL detail contract has data needs outside this
+  Decisions-only projection and requires its own scoped security review.
 
 ## Decisions
 
@@ -185,7 +188,7 @@ must not deliver a no-decisions digest or a conclusion based on stale data. At
 warning freshness, consumers retain data but visibly name the source age rather
 than presenting it as current.
 
-### D7 — Shadow first, explicit cutover second, explicit rollback only
+### D7 — Shadow first, explicit Decisions cutover second, explicit rollback only
 
 For fourteen full days, the exporter publishes projection candidates while
 runtime consumers remain in explicit JSONL mode. Every successful cycle
@@ -195,12 +198,24 @@ failure emits a bounded operator signal and resets the consecutive clean-day
 counter; it does not change reader mode.
 
 After fourteen clean shadow days and separate owner authorization, one
-deployment selects projection mode for both scheduled jobs and the dashboard.
-The JSONL mount/parser path remains available only as an explicit rollback
-selection for seven calendar days. Rollback changes the configured source
-selection as one deployment action and names `jsonl` in all provenance; it is
-never an in-process fallback. JSONL mount and parser retirement require a
-separate owner authorization after that window and are not part of this change.
+deployment selects projection mode for both scheduled jobs and the Decisions
+dashboard. `GET /api/beads/{id}` is not in that cutover: its
+`BeadSnapshotReader` remains an explicitly retained JSONL consumer because its
+bounded detail allowlist includes `design` and `acceptance_criteria`, which the
+selected Decisions projection intentionally excludes. For the Decisions
+consumers, the JSONL source selection remains available only as an explicit
+rollback selection for seven calendar days. Rollback changes the configured
+source selection as one deployment action and names `jsonl` in all provenance;
+it is never an in-process fallback.
+
+A later JSONL-retirement packet MUST first create a complete JSONL consumer
+inventory. Every consumer must be either migrated with contract and regression
+proof for its exact source/data contract or explicitly retained with its
+continued mount/parser/materialization rationale. In particular, any expansion
+or migration of `GET /api/beads/{id}` requires separately scoped security review
+and is not authorized by this packet. JSONL mount and parser retirement require
+a separate owner authorization after that window and are not part of this
+change.
 
 ### D8 — Privilege proof is an implementation gate, not prose
 

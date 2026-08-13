@@ -247,6 +247,24 @@ fallback from projection to JSONL: an automatic fallback can hide a broken
 control plane behind different freshness semantics. Migration mode may select
 one source explicitly and report it in status/telemetry.
 
+### Consumer inventory and retirement boundary
+
+The selected projection is Decisions-only. Its cutover moves only the
+Switchboard decision-review jobs and `GET /api/decisions`; it does not migrate
+the separately shipped `GET /api/beads/{id}` route. That route currently uses
+`BeadSnapshotReader` over the read-only JSONL mount and its bounded detail
+allowlist includes `design` and `acceptance_criteria`, fields intentionally
+outside the Decisions projection. It is therefore explicitly retained through
+this cutover and its seven-day rollback window.
+
+Before any later JSONL mount, parser, or export-materialization retirement, the
+retirement packet must produce a complete JSONL consumer inventory. Every
+consumer must be either migrated with contract and regression proof for its
+bounded source/data needs or explicitly retained with its rationale. Any
+expansion or migration of `GET /api/beads/{id}` requires separately scoped
+security review; neither this projection packet nor an owner authorization
+alone supplies that review.
+
 ### Access and network model
 
 - The sync process receives a dedicated PostgreSQL writer identity with access
@@ -341,11 +359,12 @@ its operational steps.
    the normal application egress firewall still cannot reach the tracker/Dolt
    address and that the sync identity cannot access unrelated application
    schemas.
-7. **Keep the local mount for the explicit rollback window.** For seven calendar
-   days after a separately authorized cutover, JSONL remains a documented,
-   explicit configuration rollback mode. Do not remove compose mounts,
-   deploy-time materialization, or legacy parser branches without a later,
-   separate owner authorization.
+7. **Keep the local mount for the explicit rollback window.** For the Decisions
+   consumers, JSONL remains a documented, explicit configuration rollback mode
+   for seven calendar days after a separately authorized cutover. Do not remove
+   compose mounts, deploy-time materialization, or legacy parser branches
+   without a later, separate owner authorization plus the complete JSONL
+   consumer inventory and per-consumer disposition described above.
 
 ### Proposed validation gates
 

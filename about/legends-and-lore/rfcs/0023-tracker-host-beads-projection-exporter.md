@@ -177,14 +177,39 @@ job mutates the Beads source to correct a result.
    clean-day counter and emits a bounded operator signal.
 3. Only after the fourteen-day gate and separate cutover authorization, switch
    both the Switchboard jobs and dashboard to explicit projection mode.
-4. Retain an explicit JSONL source selection for exactly seven calendar days
-   after cutover. It is a deployment/configuration rollback, not an automatic
-   in-process fallback; provenance must name the selected source.
+4. For the Decisions consumers, retain an explicit JSONL source selection for
+   exactly seven calendar days after cutover. It is a deployment/configuration
+   rollback, not an automatic in-process fallback; provenance must name the
+   selected source.
 5. JSONL mount/parser/export-materialization retirement requires a separate
    owner authorization after the rollback window. It is not implied by this
    RFC, parity success, or a green CI run.
 
-### 9. Security and operational proof
+### 9. JSONL consumer inventory and retirement boundary
+
+This RFC's active projection and its cutover are **Decisions-only**. The
+currently known selected consumers are the Switchboard decision-review jobs and
+`GET /api/decisions`. They are the only consumers whose semantic parity the
+fourteen-day gate proves.
+
+`GET /api/beads/{id}` is a separately shipped JSONL consumer under RFC 0007
+Amendment 2. It constructs `BeadSnapshotReader` and exposes the bounded detail
+allowlist, including `design` and `acceptance_criteria`, which the
+Decisions-only active projection deliberately does not store. The Decisions
+cutover SHALL leave that route, its read-only JSONL mount, parser, and export
+materialization explicitly retained; the seven-day rollback window is not
+authority to remove or migrate it.
+
+A later JSONL-retirement packet MUST start with a complete JSONL consumer
+inventory. Every inventory entry MUST be either migrated with contract and
+regression proof for its bounded source/data needs or explicitly retained with
+its continued mount/parser/materialization rationale. JSONL mounts, parser
+code, or export materialization MUST NOT be retired until that inventory is
+complete and its disposition evidence is reviewed. Any expansion or migration
+of `GET /api/beads/{id}` is a new API/data-scope change and requires separately
+scoped security review; it is not authorized by this RFC.
+
+### 10. Security and operational proof
 
 Before activation, implementation must demonstrate all of the following against
 real role/network topology:

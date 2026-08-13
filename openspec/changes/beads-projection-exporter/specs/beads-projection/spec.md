@@ -196,10 +196,11 @@ dependency escalations, and lint state. A mismatch or unavailable source SHALL
 emit a bounded operator signal and reset the consecutive-clean counter.
 
 After the fourteen-day parity gate and separate owner authorization, both the
-Switchboard and dashboard SHALL change source mode together to projection. For
-seven calendar days after that cutover, JSONL SHALL remain available only as an
-explicit deployment-level rollback selection. The system SHALL NOT silently
-fall back between sources or retire JSONL automatically.
+Switchboard and Decisions dashboard SHALL change source mode together to
+projection. For those Decisions consumers, JSONL SHALL remain available for
+seven calendar days only as an explicit deployment-level rollback selection.
+The system SHALL NOT silently fall back between sources or retire JSONL
+automatically.
 
 #### Scenario: Shadow mismatch prevents cutover
 
@@ -222,3 +223,46 @@ fall back between sources or retire JSONL automatically.
 - **WHEN** the seven-day rollback window expires
 - **THEN** JSONL mounts, parser code, and export materialization remain intact
   until a separate owner authorization explicitly retires them
+
+### Requirement: JSONL Consumer Inventory Gates Retirement
+
+The system SHALL treat the selected projection and its cutover as
+Decisions-only. `GET /api/beads/{id}` SHALL remain an explicitly retained JSONL
+consumer: RFC 0007 Amendment 2's `BeadSnapshotReader` detail contract requires
+bounded data including `design` and `acceptance_criteria` that the
+Decisions-only active projection does not store. A future retirement packet
+SHALL begin with a complete JSONL consumer inventory, and every entry SHALL be
+either migrated with contract and regression proof or explicitly retained with
+its mount/parser/materialization rationale. Any expansion or migration of
+`GET /api/beads/{id}` SHALL require separately scoped security review and is
+outside this change.
+
+ID: REQ-beads-projection-005
+Source: RFC 0023 §9; RFC 0007 Amendment 2
+Scope: v1-mandatory
+
+#### Scenario: Decisions cutover retains the current Bead detail reader
+
+- **WHEN** the fourteen-day Decisions parity gate passes and an authorized
+  deployment selects projection mode for the decision consumers
+- **THEN** only the Switchboard decision-review jobs and `GET /api/decisions`
+  change their selected source
+- **AND** `GET /api/beads/{id}` continues through its existing
+  `BeadSnapshotReader` JSONL mount/parser/materialization path
+
+#### Scenario: Later retirement packet proves every consumer disposition
+
+- **WHEN** a later packet proposes retirement of a JSONL mount, parser, or
+  export materialization path
+- **THEN** it includes a complete JSONL consumer inventory
+- **AND** every inventory entry is either migrated with contract and regression
+  proof or explicitly retained with a documented rationale
+- **AND** the proposal cannot treat owner authorization, parity success, or a
+  green CI run as a substitute for that evidence
+
+#### Scenario: Bead detail expansion remains separately reviewed
+
+- **WHEN** a later change proposes expanding or migrating
+  `GET /api/beads/{id}` beyond RFC 0007 Amendment 2's JSONL contract
+- **THEN** it is separately scoped and receives separately scoped security
+  review before any detail field, reader, mount, or parser changes
