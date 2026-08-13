@@ -7,6 +7,7 @@ an explicitly authorized database environment.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -38,6 +39,27 @@ def _function_source(source: str, function_name: str) -> str:
     start = source.index(f"def {function_name}(")
     next_function = source.find("\ndef ", start + 1)
     return source[start:] if next_function == -1 else source[start:next_function]
+
+
+def _catalog_expectation_values(source: str) -> list[bool]:
+    module = ast.parse(source)
+    catalog_test = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "test_dnd_final_catalog_has_no_login_owner_force_rls_and_no_public_execute"
+    )
+    catalog_assertion = next(
+        node
+        for node in ast.walk(catalog_test)
+        if isinstance(node, ast.Assert)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name)
+        and node.test.left.id == "catalog"
+    )
+    expected = catalog_assertion.test.comparators[0]
+    assert isinstance(expected, ast.Tuple)
+    return [ast.literal_eval(value) for value in expected.elts]
 
 
 def test_dnd_boundary_uses_trusted_installer_not_migration_owned_ddl() -> None:
@@ -131,6 +153,16 @@ def test_dnd_catalog_test_reads_sealed_functions_from_pg_proc_not_regprocedure()
     assert "installer.pronamespace = admin_schema.oid" in integration_test
     assert "finalizer.pronamespace = admin_schema.oid" in integration_test
     assert "admin_function.pronamespace = admin_schema.oid" in integration_test
+
+
+def test_dnd_catalog_expectation_includes_the_trusted_bootstrap_owner_proof() -> None:
+    """The catalog tuple must retain the bootstrap owner's superuser assertion."""
+    integration_test = _POSTGRES_INTEGRATION_TEST.read_text(encoding="utf-8")
+
+    assert "bootstrap_owner.rolsuper" in integration_test
+    expected = _catalog_expectation_values(integration_test)
+    assert len(expected) == 27
+    assert expected[16] is True
 
 
 def test_dnd_mutation_replay_lookup_qualifies_the_receipt_column() -> None:

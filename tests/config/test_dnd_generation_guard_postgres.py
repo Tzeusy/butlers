@@ -450,6 +450,7 @@ def test_dnd_final_catalog_has_no_login_owner_force_rls_and_no_public_execute(
         True,
         False,  # canonical JSON helper is explicitly SECURITY INVOKER
         True,
+        True,  # trusted bootstrap owner is a superuser
         True,
         True,
         True,
