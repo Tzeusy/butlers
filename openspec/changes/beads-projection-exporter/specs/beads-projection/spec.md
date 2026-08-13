@@ -67,7 +67,7 @@ with that categorical reason. The availability override is sticky: only a later
 source-complete publication clears it, and a later failed run cannot.
 
 ID: REQ-beads-projection-001
-Source: RFC 0023 §§1-3, 10
+Source: RFC 0024 §§1-3, 10
 Scope: v1-mandatory
 
 #### Scenario: Runtime has no tracker capability
@@ -128,7 +128,7 @@ completed snapshots. It SHALL retain categorical metadata for failed runs for
 failed-run metadata safely.
 
 ID: REQ-beads-projection-002
-Source: RFC 0023 §§3-4
+Source: RFC 0024 §§3-4
 Scope: v1-mandatory
 
 #### Scenario: Publisher crash preserves the previous snapshot
@@ -189,7 +189,7 @@ an otherwise readable retained pointer: the provider SHALL return
 unavailable reason until a later source-complete candidate publishes.
 
 ID: REQ-beads-projection-003
-Source: RFC 0023 §§3, 5-6
+Source: RFC 0024 §§3, 5-6
 Scope: v1-mandatory
 
 #### Scenario: Pointer flip cannot create a mixed snapshot
@@ -249,7 +249,7 @@ structured-detail state, and escalation ordering as pure deterministic logic
 over the provider snapshot.
 
 ID: REQ-beads-projection-004
-Source: RFC 0023 §7
+Source: RFC 0024 §7
 Scope: v1-mandatory
 
 #### Scenario: Lint violation remains an owner-visible finding
@@ -293,7 +293,7 @@ The system SHALL NOT silently fall back between sources or retire JSONL
 automatically.
 
 ID: REQ-beads-projection-006
-Source: RFC 0023 §8
+Source: RFC 0024 §8
 Scope: v1-mandatory
 
 #### Scenario: Shadow mismatch prevents cutover
@@ -332,7 +332,7 @@ its mount/parser/materialization rationale. Any expansion or migration of
 outside this change.
 
 ID: REQ-beads-projection-005
-Source: RFC 0023 §9; RFC 0007 Amendment 2
+Source: RFC 0024 §9; RFC 0007 Amendment 2
 Scope: v1-mandatory
 
 #### Scenario: Decisions cutover retains the current Bead detail reader

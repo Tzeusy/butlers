@@ -1,4 +1,4 @@
-# RFC 0023: Tracker-Host Beads Projection Exporter
+# RFC 0024: Tracker-Host Beads Projection Exporter
 
 **Status:** Draft — Option A planning contract approved; implementation and
 activation remain owner-gated

@@ -14,7 +14,7 @@ styled or labelled as current. Any `meta.unavailable_reason`, including
 than render the empty state as a calm all-clear.
 
 ID: REQ-dashboard-decisions-001
-Source: RFC 0023 §§3, 5-8; RFC 0007
+Source: RFC 0024 §§3, 5-8; RFC 0007
 Scope: v1-mandatory
 
 #### Scenario: Projection warning is visible with current rows
