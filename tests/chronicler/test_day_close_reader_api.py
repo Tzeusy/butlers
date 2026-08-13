@@ -357,8 +357,8 @@ class TestDayCloseReaderValidation:
         assert body["error"]["butler"] == "chronicler"
         pool.fetchrow.assert_not_awaited()
 
-    async def test_missing_date_returns_400_envelope(self):
-        """Omitting the required date param → 400 with missing_parameter envelope."""
+    async def test_missing_date_returns_the_custom_400_envelope_before_cache_lookup(self):
+        """A documented-required date still reaches the route's custom 400, not FastAPI 422."""
         pool = _mock_pool(fetchrow_side_effect=[None])
         app = _make_app(pool)
         async with httpx.AsyncClient(
@@ -371,6 +371,7 @@ class TestDayCloseReaderValidation:
         assert body["error"]["code"] == "missing_parameter"
         assert body["error"]["butler"] == "chronicler"
         assert "data" not in body
+        pool.fetchrow.assert_not_awaited()
 
     async def test_invalid_date_format_returns_400_envelope(self):
         """Supplying a non-YYYY-MM-DD date string → 400 with invalid_date_format envelope."""

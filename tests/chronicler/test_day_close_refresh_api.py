@@ -668,16 +668,26 @@ class TestDayCloseRefreshValidation:
         assert resp.status_code == 503
 
 
-def test_day_close_openapi_requires_a_nonnullable_timezone() -> None:
+def test_day_close_openapi_requires_a_nonnullable_query_tuple() -> None:
     """OpenAPI must describe the same valid-call contract as the API boundary."""
     schema = create_app(api_key="").openapi()
     day_close_path = schema["paths"]["/api/chronicler/aggregate/day-close"]
+    date_parameter = next(
+        parameter
+        for parameter in day_close_path["get"]["parameters"]
+        if parameter["name"] == "date"
+    )
     tz_parameter = next(
         parameter for parameter in day_close_path["get"]["parameters"] if parameter["name"] == "tz"
     )
 
+    assert date_parameter["required"] is True
+    assert date_parameter["schema"] == {"type": "string", "format": "date", "minLength": 1}
     assert tz_parameter["required"] is True
     assert tz_parameter["schema"] == {"type": "string", "minLength": 1}
+    assert [parameter["name"] for parameter in day_close_path["get"]["parameters"]].count(
+        "date"
+    ) == 1
 
     refresh_path = schema["paths"]["/api/chronicler/aggregate/day-close/refresh"]
     request_schema = refresh_path["post"]["requestBody"]["content"]["application/json"]["schema"]

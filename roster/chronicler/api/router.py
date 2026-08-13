@@ -2499,18 +2499,28 @@ async def get_who_you_were_with(
     openapi_extra={
         "parameters": [
             {
+                "name": "date",
+                "in": "query",
+                "required": True,
+                "description": "Required non-empty YYYY-MM-DD date for the day-close window.",
+                "schema": {"type": "string", "format": "date", "minLength": 1},
+            },
+            {
                 "name": "tz",
                 "in": "query",
                 "required": True,
                 "description": "Exact non-empty IANA timezone for the requested local day.",
                 "schema": {"type": "string", "minLength": 1},
-            }
+            },
         ]
     },
 )
 async def get_day_close_cache(
     date_param: str | None = Query(
-        None, alias="date", description="YYYY-MM-DD date for day-close window"
+        None,
+        alias="date",
+        description="YYYY-MM-DD date for day-close window",
+        include_in_schema=False,
     ),
     tz: str | None = Query(
         None,
