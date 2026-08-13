@@ -14,4 +14,4 @@
 
 - [x] 3.1 Add red-first privacy, bounded-reader, API availability, and 404/503 sentinel coverage.
 - [x] 3.2 Add red-first UI, accessibility, routing, inert-reference, and degraded-state coverage.
-- [ ] 3.3 Run targeted and final quality gates, reconcile OpenSpec tasks, and publish the isolated branch PR.
+- [x] 3.3 Run targeted and final quality gates, reconcile OpenSpec tasks, and publish the isolated branch PR.

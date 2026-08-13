@@ -162,7 +162,10 @@ async def test_bead_detail_caps_direct_dependency_summaries_in_source_order(app,
                     for dependency_id in dependency_ids
                 ],
             ),
-            *[_bead(dependency_id, title=f"Dependency {index}") for index, dependency_id in enumerate(dependency_ids)],
+            *[
+                _bead(dependency_id, title=f"Dependency {index}")
+                for index, dependency_id in enumerate(dependency_ids)
+            ],
         ],
     )
 
@@ -171,7 +174,10 @@ async def test_bead_detail_caps_direct_dependency_summaries_in_source_order(app,
     assert response.status_code == 200
     dependencies = response.json()["data"]["dependencies"]
     assert [dependency["id"] for dependency in dependencies] == dependency_ids[:20]
-    assert all(set(dependency) == {"id", "title", "status", "priority", "type"} for dependency in dependencies)
+    assert all(
+        set(dependency) == {"id", "title", "status", "priority", "type"}
+        for dependency in dependencies
+    )
 
 
 async def test_bead_detail_exposes_only_timezone_aware_iso_timestamps(app, tmp_path):
