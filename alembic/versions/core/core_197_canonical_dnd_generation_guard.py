@@ -14,6 +14,8 @@ interface is absent.
 
 from __future__ import annotations
 
+import sqlalchemy as sa
+
 from alembic import op
 
 revision = "core_197"
@@ -52,13 +54,13 @@ _TRUSTED_FINALIZED_INTERFACE_SQL = """
         JOIN pg_proc AS gateway
             ON gateway.pronamespace = public_schema.oid
            AND gateway.proname = 'context_dnd_mutate'
-           AND gateway.pronargs = 8
-           AND gateway.proargtypes = '2950 25 25 25 1184 25 700 3802'::oidvector
+           AND gateway.pronargs = 7
+           AND gateway.proargtypes = '2950 25 25 1184 25 700 3802'::oidvector
         JOIN pg_proc AS private_mutation
             ON private_mutation.pronamespace = private_schema.oid
            AND private_mutation.proname = 'mutate'
-           AND private_mutation.pronargs = 8
-           AND private_mutation.proargtypes = '2950 25 25 25 1184 25 700 3802'::oidvector
+           AND private_mutation.pronargs = 7
+           AND private_mutation.proargtypes = '2950 25 25 1184 25 700 3802'::oidvector
         JOIN pg_proc AS canonical_json
             ON canonical_json.pronamespace = private_schema.oid
            AND canonical_json.proname = 'canonical_json'
@@ -439,10 +441,10 @@ def upgrade() -> None:
     catalog; a missing or spoofed shape never becomes migration-owned DDL.
     """
     bind = op.get_bind()
-    if bool(bind.exec_driver_sql(_TRUSTED_FINALIZED_INTERFACE_SQL).scalar_one()):
+    if bool(bind.execute(sa.text(_TRUSTED_FINALIZED_INTERFACE_SQL)).scalar_one()):
         return
 
-    if not bool(bind.exec_driver_sql(_TRUSTED_BOOTSTRAP_INSTALLER_SQL).scalar_one()):
+    if not bool(bind.execute(sa.text(_TRUSTED_BOOTSTRAP_INSTALLER_SQL)).scalar_one()):
         op.execute(
             """
             DO $$

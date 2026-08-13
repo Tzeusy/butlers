@@ -7,9 +7,12 @@ an explicitly authorized database environment.
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy.sql.elements import TextClause
 
 pytestmark = pytest.mark.unit
 
@@ -18,6 +21,14 @@ _INIT_DB = _REPO_ROOT / "scripts" / "init-db.sql"
 _MIGRATION = (
     _REPO_ROOT / "alembic" / "versions" / "core" / "core_197_canonical_dnd_generation_guard.py"
 )
+
+
+def _load_core_197():
+    spec = importlib.util.spec_from_file_location("core_197_dnd_boundary", _MIGRATION)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_dnd_boundary_uses_trusted_installer_not_migration_owned_ddl() -> None:
@@ -50,6 +61,31 @@ def test_dnd_boundary_uses_trusted_installer_not_migration_owned_ddl() -> None:
     assert "CREATE TABLE" not in migration
     assert "CREATE FUNCTION" not in migration
     assert "ALTER TABLE" not in migration
+
+
+def test_core_197_catalog_probes_use_sqlalchemy_text_for_literal_like_patterns() -> None:
+    """Migration catalog probes must not hand literal ``%`` patterns to DBAPI directly."""
+    migration = _load_core_197()
+    finalized = MagicMock()
+    finalized.scalar_one.return_value = False
+    installer = MagicMock()
+    installer.scalar_one.return_value = True
+    bind = MagicMock()
+    bind.execute.side_effect = [finalized, installer]
+    bind.exec_driver_sql.side_effect = AssertionError(
+        "DBAPI-direct SQL is unsafe for LIKE patterns"
+    )
+    op = MagicMock()
+    op.get_bind.return_value = bind
+
+    with patch.object(migration, "op", op):
+        migration.upgrade()
+
+    statements = [call.args[0] for call in bind.execute.call_args_list]
+    assert all(isinstance(statement, TextClause) for statement in statements)
+    assert "LIKE '%signal_type%'" in statements[0].text
+    assert len(statements) == 2
+    bind.exec_driver_sql.assert_not_called()
 
 
 def test_dnd_gateway_checks_active_role_before_private_definer() -> None:
@@ -98,3 +134,41 @@ def test_dnd_receipt_schema_is_content_minimizing_and_role_catalog_gated() -> No
     assert "switchboard_runtime.rolname = 'butler_switchboard_rw'" in migration
     assert "DND authority ACL finalization is incomplete" in source
     assert "REVOKE DELETE ON TABLE public.user_context" in source
+
+
+def test_dnd_correlation_is_derived_from_its_opaque_mutation_identity() -> None:
+    """Neither audit nor SQL mutation API may accept free-form correlation text."""
+    source = _INIT_DB.read_text(encoding="utf-8")
+    audit_start = source.index("CREATE TABLE public.dnd_generation_mutations")
+    audit_end = source.index(
+        "CREATE UNIQUE INDEX dnd_generation_mutations_generation_key", audit_start
+    )
+    audit = source[audit_start:audit_end]
+    private_start = source.index("CREATE FUNCTION dnd_generation_private.mutate(")
+    gateway_start = source.index("CREATE FUNCTION public.context_dnd_mutate(", private_start)
+    private_mutation = source[private_start:gateway_start]
+    installer_end = source.index(
+        "REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin", gateway_start
+    )
+    dnd_gateway = source[gateway_start:installer_end]
+
+    assert "correlation ~ '^dnd-action:" in audit
+    assert "p_correlation" not in private_mutation
+    assert "p_correlation" not in dnd_gateway
+    assert "v_correlation := 'dnd-action:' || p_mutation_id::text" in private_mutation
+
+
+def test_dnd_finalizer_preserves_the_existing_optional_calendar_permission_matrix() -> None:
+    """DND finalization must not widen calendar's pre-existing read-only role."""
+    source = _INIT_DB.read_text(encoding="utf-8")
+    finalizer_start = source.index(
+        "CREATE OR REPLACE FUNCTION dnd_generation_admin.finalize_interface()"
+    )
+    installer_start = source.index(
+        "CREATE OR REPLACE FUNCTION dnd_generation_admin.install_interface()", finalizer_start
+    )
+    finalizer = source[finalizer_start:installer_start]
+
+    assert "'butler_calendar_rw'" not in finalizer
+    assert "GRANT SELECT, INSERT, UPDATE ON TABLE public.user_context TO %I" in finalizer
+    assert "GRANT SELECT ON TABLE public.dnd_generation_guard TO %I" in finalizer

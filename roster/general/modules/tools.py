@@ -14,13 +14,12 @@ from fastmcp import Context
 _DND_ACTION_NAMESPACE = uuid.UUID("6c2b0e6a-0aa5-4eaa-9adf-3c6ed29c9a0f")
 
 
-def _ambient_dnd_action_identity(ctx: Context | None) -> tuple[uuid.UUID, str] | None:
-    """Derive a stable DND identity from the MCP action, never its content.
+def _ambient_dnd_action_identity(ctx: Context | None) -> uuid.UUID | None:
+    """Derive a stable DND action UUID from the MCP request, never its content.
 
     FastMCP's originating request ID is stable for an exact transport retry and
-    is unique per tool action.  A caller that retries through a new transport
-    request must carry the original explicit identity instead; this helper does
-    not incorrectly turn a new request into an old action.
+    is unique per tool action.  The durable boundary receives only the derived
+    UUID, never this request ID or user-controlled tool text.
     """
     if ctx is None:
         return None
@@ -31,13 +30,7 @@ def _ambient_dnd_action_identity(ctx: Context | None) -> tuple[uuid.UUID, str] |
     if not isinstance(request_id, str) or not request_id.strip():
         return None
     normalized_request_id = request_id.strip()
-    correlation_id = f"mcp-request:{normalized_request_id}"
-    if len(correlation_id) > 256:
-        return None
-    return (
-        uuid.uuid5(_DND_ACTION_NAMESPACE, f"general.context.dnd.v1:{normalized_request_id}"),
-        correlation_id,
-    )
+    return uuid.uuid5(_DND_ACTION_NAMESPACE, f"general.context.dnd.v1:{normalized_request_id}")
 
 
 def _dnd_receipt_payload(receipt: Any) -> dict[str, Any]:
@@ -107,7 +100,6 @@ def register_tools(mcp: Any, module: Any) -> None:
         hours: float | None = None,
         requested_expires_at: datetime | None = None,
         mutation_id: uuid.UUID | None = None,
-        correlation_id: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Assert a situational context signal on the owner's behalf.
@@ -120,9 +112,11 @@ def register_tools(mcp: Any, module: Any) -> None:
         DND TTL, pass a stable absolute ``requested_expires_at`` from the
         routed action and carry it unchanged on retry; relative ``hours`` would
         silently regenerate an expiry on retry and is rejected. Confidence is
-        1.0 (explicit). DND additionally requires a stable per-action
-        ``mutation_id`` and opaque ``correlation_id``; reuse both unchanged for
-        a retry. Raises on an invalid or unauthorized signal type.
+        1.0 (explicit). DND requires a stable opaque UUID ``mutation_id`` for
+        replay; when omitted, it is derived from the injected MCP request
+        context. The durable correlation is derived only from that UUID, so
+        callers cannot put user text into its receipt/audit. Raises on an
+        invalid or unauthorized signal type.
         """
         if signal_type == "dnd":
             if hours is not None:
@@ -142,14 +136,12 @@ def register_tools(mcp: Any, module: Any) -> None:
             "confidence": 1.0,
         }
         if signal_type == "dnd":
-            ambient_identity = _ambient_dnd_action_identity(ctx)
-            if ambient_identity is not None:
-                mutation_id = mutation_id or ambient_identity[0]
-                correlation_id = correlation_id or ambient_identity[1]
-            set_kwargs.update(
-                mutation_id=mutation_id,
-                correlation_id=correlation_id,
-            )
+            mutation_id = mutation_id or _ambient_dnd_action_identity(ctx)
+            if mutation_id is None:
+                raise ValueError(
+                    "DND requires a stable opaque mutation_id or originating MCP request"
+                )
+            set_kwargs.update(mutation_id=mutation_id)
         receipt = await _ctx.set_context(module._get_pool(), **set_kwargs)
         result: dict[str, Any] = {"status": "set", "signal_type": signal_type}
         if signal_type != "dnd":
@@ -162,27 +154,25 @@ def register_tools(mcp: Any, module: Any) -> None:
     async def clear_context(
         signal_type: str,
         mutation_id: uuid.UUID | None = None,
-        correlation_id: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Clear a context signal the general butler previously set (e.g. dnd).
 
-        DND requires a stable per-action ``mutation_id`` and opaque
-        ``correlation_id`` that a retry reuses unchanged.
+        DND requires a stable opaque UUID ``mutation_id`` for replay; when it
+        is omitted, it is derived from the injected MCP request context. The
+        durable correlation is always derived from that UUID.
         """
         clear_kwargs: dict[str, Any] = {
             "butler_name": "general",
             "signal_type": signal_type,
         }
         if signal_type == "dnd":
-            ambient_identity = _ambient_dnd_action_identity(ctx)
-            if ambient_identity is not None:
-                mutation_id = mutation_id or ambient_identity[0]
-                correlation_id = correlation_id or ambient_identity[1]
-            clear_kwargs.update(
-                mutation_id=mutation_id,
-                correlation_id=correlation_id,
-            )
+            mutation_id = mutation_id or _ambient_dnd_action_identity(ctx)
+            if mutation_id is None:
+                raise ValueError(
+                    "DND requires a stable opaque mutation_id or originating MCP request"
+                )
+            clear_kwargs.update(mutation_id=mutation_id)
         receipt = await _ctx.clear_context(module._get_pool(), **clear_kwargs)
         result: dict[str, Any] = {"status": "cleared", "signal_type": signal_type}
         if signal_type == "dnd" and isinstance(receipt, _ctx.DndMutationReceipt):

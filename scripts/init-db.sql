@@ -1469,10 +1469,10 @@ BEGIN
        OR to_regclass('public.dnd_generation_mutations') IS NULL
        OR to_regnamespace('dnd_generation_private') IS NULL
        OR to_regprocedure(
-            'public.context_dnd_mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'
+            'public.context_dnd_mutate(uuid,text,text,timestamptz,text,real,jsonb)'
        ) IS NULL
        OR to_regprocedure(
-            'dnd_generation_private.mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'
+            'dnd_generation_private.mutate(uuid,text,text,timestamptz,text,real,jsonb)'
        ) IS NULL
        OR to_regprocedure(
             'dnd_generation_private.canonical_json(jsonb)'
@@ -1517,13 +1517,13 @@ BEGIN
     FROM pg_namespace WHERE nspname = 'dnd_generation_private';
     SELECT proowner INTO v_gateway_owner
     FROM pg_proc
-    WHERE oid = 'public.context_dnd_mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'::regprocedure;
+    WHERE oid = 'public.context_dnd_mutate(uuid,text,text,timestamptz,text,real,jsonb)'::regprocedure;
     SELECT proowner INTO v_canonical_json_owner
     FROM pg_proc
     WHERE oid = 'dnd_generation_private.canonical_json(jsonb)'::regprocedure;
     SELECT proowner INTO v_private_mutation_owner
     FROM pg_proc
-    WHERE oid = 'dnd_generation_private.mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'::regprocedure;
+    WHERE oid = 'dnd_generation_private.mutate(uuid,text,text,timestamptz,text,real,jsonb)'::regprocedure;
 
     v_is_bootstrap_staged := COALESCE(
         v_user_context_owner = v_bootstrap_owner
@@ -1614,12 +1614,12 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM pg_proc
-        WHERE oid = 'public.context_dnd_mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'::regprocedure
+        WHERE oid = 'public.context_dnd_mutate(uuid,text,text,timestamptz,text,real,jsonb)'::regprocedure
           AND prosecdef
     ) OR EXISTS (
         SELECT 1
         FROM pg_proc
-        WHERE oid = 'dnd_generation_private.mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'::regprocedure
+        WHERE oid = 'dnd_generation_private.mutate(uuid,text,text,timestamptz,text,real,jsonb)'::regprocedure
           AND NOT prosecdef
     ) OR EXISTS (
         SELECT 1
@@ -1629,11 +1629,11 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'DND authority function security attributes are untrusted';
     END IF;
-    EXECUTE 'ALTER FUNCTION public.context_dnd_mutate(uuid, text, text, text, timestamptz, text, real, jsonb) '
+    EXECUTE 'ALTER FUNCTION public.context_dnd_mutate(uuid, text, text, timestamptz, text, real, jsonb) '
         || 'SET search_path = pg_catalog, public, dnd_generation_private, pg_temp';
     EXECUTE 'ALTER FUNCTION dnd_generation_private.canonical_json(jsonb) '
         || 'SET search_path = pg_catalog, pg_temp';
-    EXECUTE 'ALTER FUNCTION dnd_generation_private.mutate(uuid, text, text, text, timestamptz, text, real, jsonb) '
+    EXECUTE 'ALTER FUNCTION dnd_generation_private.mutate(uuid, text, text, timestamptz, text, real, jsonb) '
         || 'SET search_path = pg_catalog, public, pg_temp';
 
     IF v_is_bootstrap_staged THEN
@@ -1641,9 +1641,9 @@ BEGIN
         EXECUTE 'ALTER TABLE public.dnd_generation_guard OWNER TO dnd_generation_owner';
         EXECUTE 'ALTER TABLE public.dnd_generation_mutations OWNER TO dnd_generation_owner';
         EXECUTE 'ALTER SCHEMA dnd_generation_private OWNER TO dnd_generation_owner';
-        EXECUTE 'ALTER FUNCTION public.context_dnd_mutate(uuid, text, text, text, timestamptz, text, real, jsonb) OWNER TO dnd_generation_owner';
+        EXECUTE 'ALTER FUNCTION public.context_dnd_mutate(uuid, text, text, timestamptz, text, real, jsonb) OWNER TO dnd_generation_owner';
         EXECUTE 'ALTER FUNCTION dnd_generation_private.canonical_json(jsonb) OWNER TO dnd_generation_owner';
-        EXECUTE 'ALTER FUNCTION dnd_generation_private.mutate(uuid, text, text, text, timestamptz, text, real, jsonb) OWNER TO dnd_generation_owner';
+        EXECUTE 'ALTER FUNCTION dnd_generation_private.mutate(uuid, text, text, timestamptz, text, real, jsonb) OWNER TO dnd_generation_owner';
     END IF;
 
     EXECUTE 'REVOKE CREATE ON SCHEMA public FROM dnd_generation_owner';
@@ -1655,9 +1655,9 @@ BEGIN
     EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE dnd_generation_admin.bootstrap_configuration FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.dnd_generation_guard FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.dnd_generation_mutations FROM PUBLIC';
-    EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION public.context_dnd_mutate(uuid, text, text, text, timestamptz, text, real, jsonb) FROM PUBLIC';
+    EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION public.context_dnd_mutate(uuid, text, text, timestamptz, text, real, jsonb) FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_private.canonical_json(jsonb) FROM PUBLIC';
-    EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_private.mutate(uuid, text, text, text, timestamptz, text, real, jsonb) FROM PUBLIC';
+    EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_private.mutate(uuid, text, text, timestamptz, text, real, jsonb) FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.finalize_interface() FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin.install_interface() FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE public.user_context FROM PUBLIC';
@@ -1686,7 +1686,7 @@ BEGIN
     EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE public.dnd_generation_guard FROM %I', v_migration_role);
     EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE public.dnd_generation_mutations FROM %I', v_migration_role);
     EXECUTE format(
-        'REVOKE ALL PRIVILEGES ON FUNCTION public.context_dnd_mutate(uuid, text, text, text, timestamptz, text, real, jsonb) FROM %I',
+        'REVOKE ALL PRIVILEGES ON FUNCTION public.context_dnd_mutate(uuid, text, text, timestamptz, text, real, jsonb) FROM %I',
         v_migration_role
     );
     EXECUTE format(
@@ -1694,7 +1694,7 @@ BEGIN
         v_migration_role
     );
     EXECUTE format(
-        'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_private.mutate(uuid, text, text, text, timestamptz, text, real, jsonb) FROM %I',
+        'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_private.mutate(uuid, text, text, timestamptz, text, real, jsonb) FROM %I',
         v_migration_role
     );
     EXECUTE format(
@@ -1719,8 +1719,7 @@ BEGIN
         'butler_relationship_rw',
         'butler_switchboard_rw',
         'butler_travel_rw',
-        'connector_writer',
-        'butler_calendar_rw'
+        'connector_writer'
     ]::name[] LOOP
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = v_runtime_role) THEN
             EXECUTE format('REVOKE ALL PRIVILEGES ON SCHEMA dnd_generation_admin FROM %I', v_runtime_role);
@@ -1732,7 +1731,7 @@ BEGIN
             EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE public.dnd_generation_guard FROM %I', v_runtime_role);
             EXECUTE format('REVOKE ALL PRIVILEGES ON TABLE public.dnd_generation_mutations FROM %I', v_runtime_role);
             EXECUTE format(
-                'REVOKE ALL PRIVILEGES ON FUNCTION public.context_dnd_mutate(uuid, text, text, text, timestamptz, text, real, jsonb) FROM %I',
+                'REVOKE ALL PRIVILEGES ON FUNCTION public.context_dnd_mutate(uuid, text, text, timestamptz, text, real, jsonb) FROM %I',
                 v_runtime_role
             );
             EXECUTE format(
@@ -1740,7 +1739,7 @@ BEGIN
                 v_runtime_role
             );
             EXECUTE format(
-                'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_private.mutate(uuid, text, text, text, timestamptz, text, real, jsonb) FROM %I',
+                'REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_private.mutate(uuid, text, text, timestamptz, text, real, jsonb) FROM %I',
                 v_runtime_role
             );
             EXECUTE format(
@@ -1772,11 +1771,11 @@ BEGIN
         END IF;
         EXECUTE format('GRANT USAGE ON SCHEMA dnd_generation_private TO %I', v_runtime_role);
         EXECUTE format(
-            'GRANT EXECUTE ON FUNCTION public.context_dnd_mutate(uuid, text, text, text, timestamptz, text, real, jsonb) TO %I',
+            'GRANT EXECUTE ON FUNCTION public.context_dnd_mutate(uuid, text, text, timestamptz, text, real, jsonb) TO %I',
             v_runtime_role
         );
         EXECUTE format(
-            'GRANT EXECUTE ON FUNCTION dnd_generation_private.mutate(uuid, text, text, text, timestamptz, text, real, jsonb) TO %I',
+            'GRANT EXECUTE ON FUNCTION dnd_generation_private.mutate(uuid, text, text, timestamptz, text, real, jsonb) TO %I',
             v_runtime_role
         );
     END LOOP;
@@ -1786,19 +1785,19 @@ BEGIN
     -- finalization so an unlisted runtime/group grant cannot survive a rerun.
     IF NOT has_function_privilege(
         v_general_runtime_role,
-        'public.context_dnd_mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'::regprocedure,
+        'public.context_dnd_mutate(uuid,text,text,timestamptz,text,real,jsonb)'::regprocedure,
         'EXECUTE'
     ) OR NOT has_function_privilege(
         v_switchboard_runtime_role,
-        'public.context_dnd_mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'::regprocedure,
+        'public.context_dnd_mutate(uuid,text,text,timestamptz,text,real,jsonb)'::regprocedure,
         'EXECUTE'
     ) OR NOT has_function_privilege(
         v_general_runtime_role,
-        'dnd_generation_private.mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'::regprocedure,
+        'dnd_generation_private.mutate(uuid,text,text,timestamptz,text,real,jsonb)'::regprocedure,
         'EXECUTE'
     ) OR NOT has_function_privilege(
         v_switchboard_runtime_role,
-        'dnd_generation_private.mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'::regprocedure,
+        'dnd_generation_private.mutate(uuid,text,text,timestamptz,text,real,jsonb)'::regprocedure,
         'EXECUTE'
     ) OR NOT has_schema_privilege(
         v_general_runtime_role,
@@ -1849,7 +1848,7 @@ BEGIN
                  )
              ) AS acl
         WHERE interface_function.oid =
-                  'public.context_dnd_mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'::regprocedure
+                  'public.context_dnd_mutate(uuid,text,text,timestamptz,text,real,jsonb)'::regprocedure
           AND acl.privilege_type = 'EXECUTE'
           AND acl.grantee NOT IN (
               v_dnd_owner, v_general_runtime_role, v_switchboard_runtime_role
@@ -1864,7 +1863,7 @@ BEGIN
                  )
              ) AS acl
         WHERE interface_function.oid =
-                  'dnd_generation_private.mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'::regprocedure
+                  'dnd_generation_private.mutate(uuid,text,text,timestamptz,text,real,jsonb)'::regprocedure
           AND acl.privilege_type = 'EXECUTE'
           AND acl.grantee NOT IN (
               v_dnd_owner, v_general_runtime_role, v_switchboard_runtime_role
@@ -1956,10 +1955,10 @@ BEGIN
        OR to_regclass('public.dnd_generation_mutations') IS NOT NULL
        OR to_regnamespace('dnd_generation_private') IS NOT NULL
        OR to_regprocedure(
-            'public.context_dnd_mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'
+            'public.context_dnd_mutate(uuid,text,text,timestamptz,text,real,jsonb)'
        ) IS NOT NULL
        OR to_regprocedure(
-            'dnd_generation_private.mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'
+            'dnd_generation_private.mutate(uuid,text,text,timestamptz,text,real,jsonb)'
        ) IS NOT NULL
        -- RLS permissive policies compose with OR. Do not permit an
        -- attacker-created broad policy to survive beside the DND policies we
@@ -2174,7 +2173,9 @@ BEGIN
         generation BIGINT NOT NULL CHECK (generation >= 0),
         writer TEXT NOT NULL CHECK (writer IN ('general', 'switchboard')),
         operation TEXT NOT NULL CHECK (operation IN ('set', 'clear')),
-        correlation TEXT NOT NULL CHECK (length(correlation) BETWEEN 1 AND 256),
+        correlation TEXT NOT NULL CHECK (
+            correlation ~ '^dnd-action:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        ),
         requested_expires_at TIMESTAMPTZ,
         effective_expires_at TIMESTAMPTZ,
         semantic_fingerprint_version SMALLINT NOT NULL,
@@ -2274,7 +2275,6 @@ BEGIN
         p_mutation_id UUID,
         p_writer TEXT,
         p_operation TEXT,
-        p_correlation TEXT,
         p_requested_expires_at TIMESTAMPTZ,
         p_value TEXT,
         p_confidence REAL,
@@ -2321,14 +2321,10 @@ BEGIN
         IF p_writer IS DISTINCT FROM v_effective_writer THEN
             RAISE EXCEPTION 'DND writer does not match the active runtime role';
         END IF;
-        v_correlation := CASE
-            WHEN p_correlation IS NULL THEN NULL
-            ELSE "normalize"(btrim(p_correlation), 'NFC')
-        END;
-        IF p_mutation_id IS NULL OR v_correlation IS NULL
-           OR v_correlation = '' OR length(v_correlation) > 256 THEN
-            RAISE EXCEPTION 'DND mutation requires stable mutation_id and correlation';
+        IF p_mutation_id IS NULL THEN
+            RAISE EXCEPTION 'DND mutation requires stable mutation_id';
         END IF;
+        v_correlation := 'dnd-action:' || p_mutation_id::text;
         IF p_operation NOT IN ('set', 'clear') THEN
             RAISE EXCEPTION 'DND operation must be set or clear';
         END IF;
@@ -2524,7 +2520,6 @@ BEGIN
         p_mutation_id UUID,
         p_writer TEXT,
         p_operation TEXT,
-        p_correlation TEXT,
         p_requested_expires_at TIMESTAMPTZ,
         p_value TEXT,
         p_confidence REAL,
@@ -2559,7 +2554,7 @@ BEGIN
         END IF;
         RETURN QUERY
         SELECT * FROM dnd_generation_private.mutate(
-            p_mutation_id, p_writer, p_operation, p_correlation,
+            p_mutation_id, p_writer, p_operation,
             p_requested_expires_at, p_value, p_confidence, p_metadata
         );
     END;
@@ -2595,10 +2590,10 @@ BEGIN
        OR to_regclass('public.dnd_generation_mutations') IS NOT NULL
        OR to_regnamespace('dnd_generation_private') IS NOT NULL
        OR to_regprocedure(
-            'public.context_dnd_mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'
+            'public.context_dnd_mutate(uuid,text,text,timestamptz,text,real,jsonb)'
        ) IS NOT NULL
        OR to_regprocedure(
-            'dnd_generation_private.mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'
+            'dnd_generation_private.mutate(uuid,text,text,timestamptz,text,real,jsonb)'
        ) IS NOT NULL THEN
         PERFORM dnd_generation_admin.finalize_interface();
     ELSE

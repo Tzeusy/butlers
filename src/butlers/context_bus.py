@@ -176,26 +176,16 @@ def _clamp_ttl(signal_type: str, set_at: datetime, expires_at: datetime) -> date
     return expires_at
 
 
-def _validate_dnd_mutation_identity(
-    mutation_id: UUID | None,
-    correlation_id: str | None,
-) -> tuple[UUID, str]:
+def _validate_dnd_mutation_identity(mutation_id: UUID | None) -> UUID:
     """Validate the stable replay identity required by the DND SQL boundary.
 
-    A caller must provide this identity from routed action/session/tool-call
-    evidence.  Generating it from payload, wall-clock time, or retry attempt
-    here would turn a transient retry into a second safety-critical mutation.
+    The caller supplies only the opaque action UUID.  The correlation retained
+    in the receipt/audit is derived from that UUID instead of accepting text
+    which might be copied from a user message or raw DND payload.
     """
     if not isinstance(mutation_id, UUID):
         raise ValueError("DND mutation_id must be a stable UUID from the routed action")
-    if not isinstance(correlation_id, str):
-        raise ValueError("DND correlation_id must be a stable opaque action reference")
-    normalized_correlation = correlation_id.strip()
-    if not normalized_correlation:
-        raise ValueError("DND correlation_id must not be empty")
-    if len(normalized_correlation) > 256:
-        raise ValueError("DND correlation_id must be at most 256 characters")
-    return mutation_id, normalized_correlation
+    return mutation_id
 
 
 def _dnd_receipt_from_row(row: Any) -> DndMutationReceipt:
@@ -204,12 +194,15 @@ def _dnd_receipt_from_row(row: Any) -> DndMutationReceipt:
         mutation_id = row["mutation_id"]
         if not isinstance(mutation_id, UUID):
             mutation_id = UUID(str(mutation_id))
+        correlation_id = str(row["correlation"])
+        if correlation_id != f"dnd-action:{mutation_id}":
+            raise ValueError("DND receipt correlation does not match its opaque mutation identity")
         return DndMutationReceipt(
             mutation_id=mutation_id,
             generation=int(row["generation"]),
             writer=str(row["writer"]),
             operation=str(row["operation"]),
-            correlation_id=str(row["correlation"]),
+            correlation_id=correlation_id,
             requested_expires_at=row["requested_expires_at"],
             effective_expires_at=row["effective_expires_at"],
             committed_at=row["committed_at"],
@@ -224,7 +217,6 @@ async def _mutate_dnd(
     butler_name: str,
     operation: str,
     mutation_id: UUID | None,
-    correlation_id: str | None,
     expires_at: datetime | None = None,
     value: str | None = None,
     confidence: float | None = None,
@@ -236,10 +228,7 @@ async def _mutate_dnd(
     replay comparison deliberately live in PostgreSQL.  Python must neither
     pre-upsert a DND row nor synthesize a receipt when the boundary is absent.
     """
-    stable_mutation_id, stable_correlation_id = _validate_dnd_mutation_identity(
-        mutation_id,
-        correlation_id,
-    )
+    stable_mutation_id = _validate_dnd_mutation_identity(mutation_id)
     if operation not in {"set", "clear"}:
         raise ValueError(f"Invalid DND operation {operation!r}")
     if operation == "set" and expires_at is not None and expires_at.tzinfo is None:
@@ -263,17 +252,15 @@ async def _mutate_dnd(
             $1::uuid,
             $2::text,
             $3::text,
-            $4::text,
-            $5::timestamptz,
-            $6::text,
-            $7::real,
-            $8::jsonb
+            $4::timestamptz,
+            $5::text,
+            $6::real,
+            $7::jsonb
         )
         """,
         stable_mutation_id,
         butler_name,
         operation,
-        stable_correlation_id,
         expires_at,
         value,
         confidence,
@@ -380,7 +367,6 @@ async def set_context(
     confidence: float = 1.0,
     metadata: dict[str, Any] | None = None,
     mutation_id: UUID | None = None,
-    correlation_id: str | None = None,
 ) -> DndMutationReceipt | None:
     """Write or update a context signal.
 
@@ -412,9 +398,6 @@ async def set_context(
         Optional JSONB metadata dict.
     mutation_id:
         Stable UUID created once for the routed DND action. Required for DND.
-    correlation_id:
-        Stable opaque correlation reference for the routed DND action. Required
-        for DND and never copied into a raw DND audit payload.
 
     Raises
     ------
@@ -446,7 +429,6 @@ async def set_context(
             butler_name=butler_name,
             operation="set",
             mutation_id=mutation_id,
-            correlation_id=correlation_id,
             expires_at=expires_at,
             value=value,
             confidence=confidence,
@@ -494,7 +476,6 @@ async def clear_context(
     signal_type: str,
     *,
     mutation_id: UUID | None = None,
-    correlation_id: str | None = None,
 ) -> DndMutationReceipt | None:
     """Explicitly clear a signal before its TTL expires.
 
@@ -514,8 +495,6 @@ async def clear_context(
     mutation_id:
         Stable UUID created once for the routed DND clear action. Required only
         for DND.
-    correlation_id:
-        Stable opaque correlation reference for the routed DND clear action.
     """
     if signal_type == ContextSignal.dnd:
         _check_write_permission(butler_name, signal_type)
@@ -524,7 +503,6 @@ async def clear_context(
             butler_name=butler_name,
             operation="clear",
             mutation_id=mutation_id,
-            correlation_id=correlation_id,
         )
 
     await pool.execute(

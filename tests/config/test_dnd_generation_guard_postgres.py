@@ -85,7 +85,6 @@ def _dnd_set_statement(writer: str = "general") -> str:
             CAST(:mutation_id AS uuid),
             '{writer}',
             'set',
-            :correlation,
             :expires_at,
             :value,
             CAST(:confidence AS real),
@@ -105,7 +104,6 @@ def _dnd_clear_statement(writer: str) -> str:
             CAST(:mutation_id AS uuid),
             '{writer}',
             'clear',
-            :correlation,
             NULL,
             NULL,
             NULL,
@@ -156,7 +154,7 @@ def test_dnd_bootstrap_rejects_any_preexisting_user_context_policy(postgres_cont
             ).scalar_one()
             assert conn.execute(
                 text(
-                    "SELECT to_regprocedure('public.context_dnd_mutate(uuid,text,text,text,timestamptz,text,real,jsonb)') IS NULL"
+                    "SELECT to_regprocedure('public.context_dnd_mutate(uuid,text,text,timestamptz,text,real,jsonb)') IS NULL"
                 )
             ).scalar_one()
     finally:
@@ -254,11 +252,11 @@ def test_dnd_final_catalog_has_no_login_owner_force_rls_and_no_public_execute(
                         ON audit_table.oid = 'public.dnd_generation_mutations'::regclass
                     JOIN pg_proc AS gateway
                         ON gateway.oid = (
-                            'public.context_dnd_mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'
+                            'public.context_dnd_mutate(uuid,text,text,timestamptz,text,real,jsonb)'
                         )::regprocedure
                     JOIN pg_proc AS private_mutation
                         ON private_mutation.oid = (
-                            'dnd_generation_private.mutate(uuid,text,text,text,timestamptz,text,real,jsonb)'
+                            'dnd_generation_private.mutate(uuid,text,text,timestamptz,text,real,jsonb)'
                         )::regprocedure
                     JOIN pg_proc AS canonical_json
                         ON canonical_json.oid = 'dnd_generation_private.canonical_json(jsonb)'::regprocedure
@@ -485,7 +483,6 @@ def test_dnd_gateway_replay_and_real_role_denials(migrated_db_url: str) -> None:
     parameters = {
         "mutation_id": mutation_id,
         "expires_at": expires_at,
-        "correlation": "postgres-role-proof:general-set",
         "value": "private input must not be persisted in receipt",
         "confidence": 1.0,
         "metadata": '{"proof":"role"}',
@@ -497,6 +494,7 @@ def test_dnd_gateway_replay_and_real_role_denials(migrated_db_url: str) -> None:
     assert replay == first
     assert first.writer == "general"
     assert first.operation == "set"
+    assert first.correlation == f"dnd-action:{mutation_id}"
 
     changed_replays = (
         {"value": "same mutation ID, changed payload"},
@@ -524,7 +522,6 @@ def test_dnd_gateway_replay_and_real_role_denials(migrated_db_url: str) -> None:
                 CAST(:mutation_id AS uuid),
                 'general',
                 'set',
-                :correlation,
                 :expires_at,
                 :value,
                 CAST(:confidence AS real),
@@ -593,7 +590,6 @@ def test_dnd_gateway_replay_and_real_role_denials(migrated_db_url: str) -> None:
                 CAST(:mutation_id AS uuid),
                 'switchboard',
                 'clear',
-                'postgres-role-proof:cross-writer',
                 NULL,
                 NULL,
                 NULL,
@@ -639,7 +635,6 @@ def test_switchboard_can_mutate_only_its_own_dnd_row(migrated_db_url: str) -> No
     set_parameters = {
         "mutation_id": str(uuid.uuid4()),
         "expires_at": datetime.now(UTC) + timedelta(hours=1),
-        "correlation": "postgres-role-proof:switchboard-set",
         "value": "switchboard-owned DND",
         "confidence": 1.0,
         "metadata": '{"proof":"switchboard"}',
@@ -656,7 +651,6 @@ def test_switchboard_can_mutate_only_its_own_dnd_row(migrated_db_url: str) -> No
         _dnd_clear_statement("switchboard"),
         {
             "mutation_id": str(uuid.uuid4()),
-            "correlation": "postgres-role-proof:switchboard-clear",
         },
     ).one()
 
@@ -675,7 +669,6 @@ def test_dnd_default_ttl_and_normalized_metadata_replay_are_durable(
     parameters = {
         "mutation_id": str(uuid.uuid4()),
         "expires_at": None,
-        "correlation": "postgres-normalized-replay:general-set",
         "value": "normalization proof",
         "confidence": 1.0,
         "metadata": '{"accent":"\\u00e9","count":1}',
@@ -715,7 +708,6 @@ def test_dnd_concurrent_identical_retry_advances_generation_once(migrated_db_url
     parameters = {
         "mutation_id": mutation_id,
         "expires_at": datetime.now(UTC) + timedelta(hours=1),
-        "correlation": "postgres-concurrent-retry:general-set",
         "value": "same durable action",
         "confidence": 1.0,
         "metadata": '{"proof":"concurrent-replay"}',
