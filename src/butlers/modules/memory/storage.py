@@ -175,13 +175,17 @@ _CONSOLIDATION_NARRATIVE_EDGE_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
-def classify_consolidation_narrative_edge(predicate: str) -> str | None:
+def classify_consolidation_narrative_edge(predicate: object) -> str | None:
     """Classify an exact owner-approved consolidation edge, or return ``None``.
 
     This intentionally performs no database or relationship-registry read. A
     newly introduced narrative edge needs an explicit owner-approved change
-    before it can carry ``object_entity_id`` during consolidation.
+    before it can carry ``object_entity_id`` during consolidation. Non-string
+    values remain unclassified so the storage boundary rejects them before any
+    persistence work begins.
     """
+    if not isinstance(predicate, str):
+        return None
     if predicate in _CONSOLIDATION_NARRATIVE_EDGE_ALLOWLIST:
         return predicate
     return None
