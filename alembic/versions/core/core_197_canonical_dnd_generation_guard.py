@@ -491,10 +491,12 @@ _TRUSTED_BOOTSTRAP_ROLLBACK_SQL = """
             ON admin_schema.nspname = 'dnd_generation_admin'
         JOIN pg_roles AS bootstrap_owner
             ON bootstrap_owner.oid = admin_schema.nspowner
-        JOIN pg_class AS bootstrap_configuration
-            ON bootstrap_configuration.relnamespace = admin_schema.oid
-           AND bootstrap_configuration.relname = 'bootstrap_configuration'
-           AND bootstrap_configuration.relkind = 'r'
+        JOIN pg_class AS bootstrap_configuration_relation
+            ON bootstrap_configuration_relation.relnamespace = admin_schema.oid
+           AND bootstrap_configuration_relation.relname = 'bootstrap_configuration'
+           AND bootstrap_configuration_relation.relkind = 'r'
+        JOIN dnd_generation_admin.bootstrap_configuration AS bootstrap_configuration
+            ON bootstrap_configuration.singleton
         JOIN pg_roles AS configured_bootstrap_owner
             ON configured_bootstrap_owner.rolname = bootstrap_configuration.bootstrap_role
         JOIN pg_roles AS migration_role
@@ -512,7 +514,7 @@ _TRUSTED_BOOTSTRAP_ROLLBACK_SQL = """
         WHERE rollback_operator.rolname = current_user
           AND rollback_operator.rolsuper
           AND bootstrap_owner.rolsuper
-          AND bootstrap_configuration.relowner = bootstrap_owner.oid
+          AND bootstrap_configuration_relation.relowner = bootstrap_owner.oid
           AND configured_bootstrap_owner.oid = bootstrap_owner.oid
           AND configured_bootstrap_owner.rolsuper
           AND NOT migration_role.rolsuper
@@ -533,8 +535,8 @@ _TRUSTED_BOOTSTRAP_ROLLBACK_SQL = """
               SELECT 1
               FROM aclexplode(
                   COALESCE(
-                      bootstrap_configuration.relacl,
-                      acldefault('r', bootstrap_configuration.relowner)
+                      bootstrap_configuration_relation.relacl,
+                      acldefault('r', bootstrap_configuration_relation.relowner)
                   )
               ) AS acl
               WHERE acl.grantee <> bootstrap_owner.oid

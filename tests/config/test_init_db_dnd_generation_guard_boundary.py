@@ -137,6 +137,26 @@ def test_core_197_rollback_catalog_proof_requires_exclusive_trusted_admin_contro
     assert "acl.grantee <> bootstrap_owner.oid" in rollback_proof
 
 
+def test_core_197_rollback_catalog_proof_reads_roles_from_bootstrap_configuration_row() -> None:
+    """Catalog metadata and stored bootstrap roles must remain distinct."""
+    migration = _load_core_197()
+    rollback_proof = migration._TRUSTED_BOOTSTRAP_ROLLBACK_SQL
+
+    assert "JOIN pg_class AS bootstrap_configuration_relation" in rollback_proof
+    assert (
+        "JOIN dnd_generation_admin.bootstrap_configuration AS bootstrap_configuration"
+        in rollback_proof
+    )
+    assert "ON bootstrap_configuration.singleton" in rollback_proof
+    assert (
+        "configured_bootstrap_owner.rolname = bootstrap_configuration.bootstrap_role"
+        in rollback_proof
+    )
+    assert "migration_role.rolname = bootstrap_configuration.migration_role" in rollback_proof
+    assert "bootstrap_configuration_relation.relowner = bootstrap_owner.oid" in rollback_proof
+    assert "bootstrap_configuration_relation.relacl" in rollback_proof
+
+
 def test_core_197_treats_the_privileged_rollback_as_part_of_the_trusted_interface() -> None:
     """A missing rollback function must not look like a complete DND boundary."""
     migration = _load_core_197()
