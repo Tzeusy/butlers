@@ -2135,12 +2135,17 @@ BEGIN
               AND index_relation.relname = 'idx_user_context_active_signals'
               AND NOT index_row.indisprimary
               AND NOT index_row.indisunique
-              AND index_row.indkey = ARRAY[
-                  (SELECT attribute.attnum
-                   FROM pg_attribute AS attribute
-                   WHERE attribute.attrelid = 'public.user_context'::regclass
-                     AND attribute.attname = 'signal_type')
-              ]::smallint[]
+              -- pg_index.indkey is an int2vector, not a smallint[] like
+              -- pg_constraint.conkey. Compare its single key directly while
+              -- proving no included or additional index attributes exist.
+              AND index_row.indnkeyatts = 1
+              AND index_row.indnatts = 1
+              AND index_row.indkey[0] = (
+                  SELECT attribute.attnum
+                  FROM pg_attribute AS attribute
+                  WHERE attribute.attrelid = 'public.user_context'::regclass
+                    AND attribute.attname = 'signal_type'
+              )
               AND pg_get_expr(index_row.indpred, index_row.indrelid)
                     = '(superseded_at IS NULL)'
        )

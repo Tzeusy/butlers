@@ -63,6 +63,23 @@ def test_dnd_boundary_uses_trusted_installer_not_migration_owned_ddl() -> None:
     assert "ALTER TABLE" not in migration
 
 
+def test_dnd_installer_compares_the_index_catalog_with_int2vector_safe_shape_checks() -> None:
+    """The pg_index key vector is not interchangeable with a smallint array."""
+    source = _INIT_DB.read_text(encoding="utf-8")
+    installer_start = source.index(
+        "CREATE OR REPLACE FUNCTION dnd_generation_admin.install_interface()"
+    )
+    installer_end = source.index(
+        "REVOKE ALL PRIVILEGES ON FUNCTION dnd_generation_admin", installer_start
+    )
+    installer = source[installer_start:installer_end]
+
+    assert "index_row.indnkeyatts = 1" in installer
+    assert "index_row.indnatts = 1" in installer
+    assert "index_row.indkey[0] = (" in installer
+    assert "index_row.indkey = ARRAY[" not in installer
+
+
 def test_core_197_catalog_probes_use_sqlalchemy_text_for_literal_like_patterns() -> None:
     """Migration catalog probes must not hand literal ``%`` patterns to DBAPI directly."""
     migration = _load_core_197()
