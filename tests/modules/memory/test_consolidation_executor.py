@@ -223,7 +223,11 @@ async def test_execute_consolidation_forwards_new_narrative_edge_target(monkeypa
 async def test_execute_consolidation_defers_unapproved_edge_to_storage_boundary(
     monkeypatch,
 ) -> None:
+    object_entity_id = uuid.uuid4()
+
     async def _store_fact(*args, **kwargs):
+        assert kwargs["predicate"] == "works_at"
+        assert kwargs["object_entity_id"] == object_entity_id
         assert kwargs["enforce_consolidation_edge_allowlist"] is True
         assert kwargs["consolidation_edge_classification"] is None
         raise ValueError("consolidation edge predicate is not owner-approved")
@@ -243,7 +247,7 @@ async def test_execute_consolidation_defers_unapproved_edge_to_storage_boundary(
                 predicate="works_at",
                 content="engineer",
                 entity_id=str(uuid.uuid4()),
-                object_entity_id=str(uuid.uuid4()),
+                object_entity_id=str(object_entity_id),
             )
         ],
     )

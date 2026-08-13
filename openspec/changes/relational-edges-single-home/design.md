@@ -104,10 +104,11 @@ New script under `src/butlers/scripts/` mirroring the safety posture of
   `relationship_assert_fact()` (same shape as the existing identity-contact
   rejection).
 - **Consolidation producer guard** (`memory/skills/consolidate/SKILL.md` and
-  `consolidation_executor.py`): emit and persist `object_entity_id` only for
-  narrative edges. Reject registry-relational edge output before the executor
-  reaches the lower-level memory storage function, and reject malformed target
-  UUIDs rather than silently downgrading an edge to a property fact.
+  `consolidation_executor.py`): retain well-formed `object_entity_id` output
+  and reject malformed target UUIDs rather than silently downgrading an edge to
+  a property fact. The executor forwards every well-formed edge to the storage
+  boundary, where B6's exact local narrative allowlist is the authoritative
+  admission decision before persistence.
 - **Contract test**: every edge predicate used in the skill is a subset of the
   relational registry (or on an explicit narrative allowlist). This is the
   guard that would have caught the original drift.
