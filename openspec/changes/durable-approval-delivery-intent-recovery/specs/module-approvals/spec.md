@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Pending Actions Queue
-The `pending_actions` table SHALL provide a durable queue and audit log for approval-gated tool invocations, storing `id`, `tool_name`, `tool_args` (JSONB), `status`, `requested_at`, and optional `agent_summary`, `session_id`, `expires_at`, `decided_by`, `decided_at`, `execution_result`, `approval_rule_id`, `why`, `evidence`, and producer-opt-in `deduplication_key`; every newly admitted `pending` row SHALL commit in the same transaction as one unique, schema-local approval delivery intent whose immutable action key is safe for end-to-end notification recovery.
+The `pending_actions` table SHALL provide a durable queue and audit log for approval-gated tool invocations, storing `id`, `tool_name`, `tool_args` (JSONB), `status`, `requested_at`, and optional `agent_summary`, `session_id`, `expires_at`, `decided_by`, `decided_at`, `execution_result`, `approval_rule_id`, `why`, `evidence`, and producer-opt-in `deduplication_key`; every newly admitted `pending` row SHALL commit in the same transaction as one unique, schema-local approval delivery-intent root whose immutable logical action key and admission classification are safe for end-to-end notification recovery. The first three actions receive direct presentations; the fourth `cohort_anchor` joins and creates the cohort-owned digest; later `collapsed` actions record a terminal non-sendable local presentation and join that cohort.
 
 ID: REQ-module-approvals-001
 Source: RFC-0021,RFC-0023
@@ -19,7 +19,7 @@ Scope: v1-mandatory
 
 #### Scenario: Atomic pending admission creates one intent
 - **WHEN** a producer admits a new action with status `pending`
-- **THEN** the pending row and one foreign-keyed intent with the action's immutable key commit together or both roll back
+- **THEN** the pending row and one foreign-keyed intent with the action's immutable logical key plus its required direct presentation, cohort anchor/digest, or collapsed terminal presentation and membership commit together or both roll back
 - **AND** an unavailable notification runtime does not permit a pending row without its intent
 
 #### Scenario: List pending actions with status filter
@@ -38,7 +38,7 @@ Scope: v1-mandatory
 - **AND** delivery backlog metrics remain a separate safe aggregation rather than action payload data
 
 ### Requirement: Status Transition Contract
-The approval lifecycle SHALL allow `pending -> approved|rejected|expired` and `approved -> executed|abandoned`, with `rejected|expired|executed|abandoned` terminal and invalid transitions raising `InvalidTransitionError`; every transition out of `pending` SHALL atomically fence or cancel its nonterminal approval-delivery intent without granting the notification worker domain-action mutation authority.
+The approval lifecycle SHALL allow `pending -> approved|rejected|expired` and `approved -> executed|abandoned`, with `rejected|expired|executed|abandoned` terminal and invalid transitions raising `InvalidTransitionError`; every transition out of `pending` SHALL atomically fence or cancel its nonterminal approval-delivery presentations without granting the notification worker domain-action mutation authority. Each authenticated dashboard defer remains a pending-state operation and appends exactly one bounded successor presentation generation through its own shared transaction path.
 
 ID: REQ-module-approvals-002
 Source: RFC-0021,RFC-0023
@@ -46,13 +46,13 @@ Scope: v1-mandatory
 
 #### Scenario: Approve a pending action
 - **WHEN** `approve_action` is called with a valid action_id and authenticated human actor context
-- **THEN** a compare-and-set update transitions status from `pending` to `approved`, records `action_approved`, and atomically cancels its sendable delivery intent
+- **THEN** a compare-and-set update transitions status from `pending` to `approved`, records `action_approved`, and atomically cancels its sendable delivery presentations
 - **AND** an available owning executor may then run the original tool function and advances to `executed` only after its result persists
 
 #### Scenario: Approve with concurrent race
 - **WHEN** two concurrent approve calls target the same pending action
 - **THEN** the compare-and-set ensures only one succeeds with `WHERE status = 'pending'`
-- **AND** the losing call receives a transition error with the current status and cannot revive a cancelled intent
+- **AND** the losing call receives a transition error with the current status and cannot revive a cancelled presentation
 
 #### Scenario: Dashboard abandons a stalled approved action
 - **WHEN** a dashboard actor supplies a non-blank reason for an action whose status is `approved` and whose `execution_result` is null
@@ -66,13 +66,18 @@ Scope: v1-mandatory
 
 #### Scenario: Expire stale actions
 - **WHEN** the canonical stale-expiry operation finds a pending action whose `expires_at < now()`
-- **THEN** it transitions the action to `expired`, records `action_expired`, and cancels the matching intent in the same transaction
+- **THEN** it transitions the action to `expired`, records `action_expired`, cancels its sendable action presentations, and atomically marks its cohort membership ineligible without cancelling a shared eligible cohort digest
 - **AND** a worker that merely observes an expired action cannot perform the domain expiry transition itself
 
 #### Scenario: Send-start and decision race
 - **WHEN** a worker and a terminal decision contend for the same pending action
-- **THEN** the committed fenced handoff-start marker is the final cancellation-safe boundary under a fixed action-then-intent lock order
+- **THEN** the committed fenced handoff-start marker is the final cancellation-safe boundary under a fixed action-then-intent-presentation lock order
 - **AND** whichever transaction loses cannot send or revive future recovery, while a decision after send-start stops only future recovery
+
+#### Scenario: Dashboard defer schedules a guarded re-presentation
+- **WHEN** an authenticated dashboard actor defers a still-pending action for `1 ≤ hours ≤ 168`
+- **THEN** the same action/intent transaction extends expiry, supersedes an unstarted current presentation, and appends the next presentation generation for `now + hours`
+- **AND** it keeps the logical action key, cannot route through generic notifications, and does not grant the worker ability to defer or schedule future presentations
 
 #### Scenario: Already-executed action is replayed
 - **WHEN** the executor is called for an action that is already `executed`

@@ -9,27 +9,38 @@ or otherwise mutate the parked domain action.
 
 ## What Changes
 
-- Add a schema-local, one-to-one durable approval-delivery intent created in
-  the same transaction as every new pending action, with a stable action key,
-  resolved RFC 0021 admission result, and no provider credential or raw
-  provider error persisted.
+- Add a schema-local, one-to-one durable approval-delivery intent root created
+  in the same transaction as every new pending action, with a stable logical
+  action key, resolved RFC 0021 admission result, fenced presentation
+  generations, and no provider credential or raw provider error persisted.
 - Add a deterministic notification-only worker with leased, fenced claims,
   bounded at-least-once retries/backoff, stale-claim recovery, and a
   pre-provider durable handoff marker.
-- Extend the notification boundary to classify a handoff as confirmed,
-  definitively safe to retry, or ambiguous. Reuse one stable idempotency key
-  when the provider can prove duplicate safety; otherwise quarantine an
-  uncertain post-start handoff instead of sending speculatively again.
-- Atomically cancel outstanding delivery intents when an action is decided or
-  expires, while preserving the immutable action decision semantics. The
-  worker changes intent and attempt records only; it never approves, rejects,
-  expires, executes, or mutates a parked action.
-- Preserve RFC 0021's one-notification-per-action, quiet-hours exact-release,
+- Preserve the canonical dashboard defer verb by atomically scheduling the
+  next presentation generation for `now + hours`; the logical action key stays
+  stable, while provider idempotency is scoped to a deterministic presentation
+  key and a worker can never reschedule it.
+- Make burst digest delivery cohort-owned so a terminal fourth action cannot
+  strand fifth-or-later collapsed actions; the digest uses the cohort's own
+  recovery subject rather than the fourth action's key.
+- Extend the notification boundary to classify a trusted presentation handoff
+  as confirmed, definitively safe to retry, or ambiguous. Bind every
+  non-secret key to the transport-authenticated issuer/owning schema/mode and
+  quarantine an uncertain post-start handoff instead of sending speculatively
+  again.
+- Atomically cancel outstanding action presentations when an action is decided
+  or expires, while preserving the immutable action decision semantics. The
+  worker changes presentation and attempt records only; it never approves,
+  rejects, expires, executes, or mutates a parked action.
+- Preserve RFC 0021's ordinary one-notification-per-action rule, explicit
+  authenticated-defer re-presentation exception, quiet-hours exact-release,
   control-plane budget exemption, and burst-digest/collapse semantics without
   reusing or changing the generic deferred-notification queue.
 - Add safe state/reason vocabularies, retention rules, API/dashboard truth,
-  and stuck/ambiguous observability. Existing push-emission rows remain legacy
-  evidence; there is no historical-intent backfill or replay.
+  and stuck/ambiguous observability. Recovery records are excluded from generic
+  notification history, retry, escalation, acknowledgement, and stored-envelope
+  reconstruction. Existing push-emission rows remain legacy evidence; there is
+  no historical-intent backfill or replay.
 
 ## Capabilities
 
@@ -43,14 +54,15 @@ or otherwise mutate the parked domain action.
 
 - `module-approvals`: Every pending-action admission atomically creates its
   delivery intent and every terminal action transition fences or cancels it.
-- `core-notify`: `notify.v1` carries a stable delivery idempotency key and
-  returns a normalized, safe handoff classification for recovery callers.
-- `butler-messenger`: The actual provider boundary durably reconciles an
-  approval egress key; it does not resurrect the retired, unwired generic
-  delivery-tracking tables.
+- `core-notify`: `notify.v1` carries a trusted recovery presentation shape,
+  derives issuer/schema identity from the authenticated transport, returns a
+  normalized safe handoff classification, and fences generic controls/history.
+- `butler-messenger`: The actual provider boundary durably reconciles a
+  trusted approval presentation tuple; it does not resurrect the retired,
+  unwired generic delivery-tracking tables.
 - `dashboard-approvals`: Approval API and UI expose delivery recovery state
-  without leaking secrets, recipients, raw provider responses, or implying
-  that an ambiguous handoff was never sent.
+  and defer's scheduled presentation truth without leaking secrets, recipients,
+  raw provider responses, or implying that an ambiguous handoff was never sent.
 
 ## Impact
 
