@@ -214,6 +214,18 @@ escalation, acknowledgement, or envelope reconstruction paths. Any protected
 handoff audit stores only bounded safe result metadata; the raw envelope and
 callback material remain egress-local.
 
+The recovery-only `notify.v1` branch SHALL bypass generic notification
+persistence, including `log_notification()` and `_write_outbound_message_inbox()`.
+It SHALL NOT insert an outbound `switchboard.message_inbox` row, including a
+redacted substitute: that table's outbound rows are generic conversation
+history and feed generic LLM-history loaders. Therefore a recovery presentation
+cannot persist rendered text, a recipient-derived thread identity, or callback
+material in `switchboard.message_inbox`, and generic history readers cannot
+recover it. The narrowly wired Messenger handoff ledger and the approval safe
+projection are the only permitted recovery records. A distinct redacted
+non-history record, if ever needed, requires a separately reviewed contract;
+this RFC selects no such record.
+
 Before a provider call, Messenger durably records a handoff attempt. It returns
 one normalized class, with a safe code and optional opaque receipt reference:
 
@@ -394,8 +406,13 @@ decision/expiry and defer versus handoff races, provider-confirmed idempotent
 same-presentation replay, ambiguous no-resend, quiet-hours exact release/no
 re-gate, budget isolation, retention guard, authenticated
 issuer/schema/key/mode rejection before ledger/provider, generic notification
-surface exclusion/redaction, API redaction, and the complete producer
-inventory. A source-only static test must reject any new direct
+surface exclusion/redaction, `switchboard.message_inbox` absence, generic
+conversation/LLM-history absence, API redaction, and the complete producer
+inventory. The real-PostgreSQL negative integration test uses a rendered-text
+sentinel, recipient-derived thread-identity sentinel, and callback-material
+sentinel; it proves no `switchboard.message_inbox` row is created and that the
+generic history loaders cannot read any sentinel. A source-only static test
+must reject any new direct
 `pending_actions(status='pending')` write outside the shared admission helper.
 
 ## Rejected alternatives

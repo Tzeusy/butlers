@@ -39,8 +39,10 @@ or otherwise mutate the parked domain action.
 - Add safe state/reason vocabularies, retention rules, API/dashboard truth,
   and stuck/ambiguous observability. Recovery records are excluded from generic
   notification history, retry, escalation, acknowledgement, and stored-envelope
-  reconstruction. Existing push-emission rows remain legacy evidence; there is
-  no historical-intent backfill or replay.
+  reconstruction. Recovery-mode delivery also bypasses outbound
+  `switchboard.message_inbox` persistence, so it cannot enter generic
+  conversation or LLM history. Existing push-emission rows remain legacy
+  evidence; there is no historical-intent backfill or replay.
 
 ## Capabilities
 

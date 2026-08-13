@@ -339,22 +339,35 @@ tests show no calls to approval decision/execution/domain mutation APIs.
    Messenger accepts that context only from Switchboard, writes its durable
    pre-call handoff before adapter invocation, and exposes same-tuple
    reconciliation through the existing trusted boundary.
-4. Keep recovery envelope/callback material out of generic notification
-   persistence. Exclude or reject recovery traffic in generic list, history,
+4. Branch recovery-mode `notify.v1` before generic `log_notification()` and
+   `_write_outbound_message_inbox()` persistence. Insert no outbound
+   `switchboard.message_inbox` row, including a redacted substitute: this is
+   required to keep rendered text, recipient-derived thread identity, and
+   callback material out of generic conversation/LLM history.
+5. Exclude or reject recovery traffic in generic notification list, history,
    read, stats, acknowledge, retry, escalate, and stored-envelope
    reconstruction paths; only the approval safe projection may report it.
-5. Define exact adapter capabilities. Only an adapter that demonstrates
+6. Add a real-PostgreSQL negative integration test for a recovery presentation
+   containing a rendered-text sentinel, recipient-derived thread-identity
+   sentinel, and callback-material sentinel. Prove no
+   `switchboard.message_inbox` row is created; invoke `_load_realtime_history`,
+   `_load_email_history`, and `_load_conversation_history` for the relevant
+   thread identities; and prove neither the generic outbound conversation nor
+   LLM-history result contains any sentinel.
+7. Define exact adapter capabilities. Only an adapter that demonstrates
    duplicate-safe key reuse or receipt lookup may classify post-start work
    `safe_retry`; otherwise return `ambiguous`.
-6. Ensure source result processing cannot create a fresh presentation key,
+8. Ensure source result processing cannot create a fresh presentation key,
    mutate the action, or use a generic retry after an ambiguous response.
 
 **Acceptance / tests:** Confirmed receipt replay triggers one provider call;
 pre-start validation failure backoffs safely; timeout after start with no
 provider proof becomes ambiguous and survives restart without a second call;
 spoofed issuer/schema/mode/key combinations fail before all persistence and
-egress; generic read/control paths cannot disclose or replay recovery data; all
-approval projections are redacted/safe.
+egress; the negative integration test proves no `switchboard.message_inbox`
+row or generic conversation/LLM-history result contains recovery data; generic
+read/control paths cannot disclose or replay recovery data; all approval
+projections are redacted/safe.
 
 ### Packet E — Terminal transition fencing, retention, and safe UI truth
 
@@ -446,7 +459,7 @@ drill.
 | Crash/restart | Stop at claim, marker, Messenger handoff record, provider accepted before source response, result persistence. | Safe retry only before/proven-safe start; otherwise reconcile/ambiguous; no duplicate provider call per presentation. |
 | Provider classes / authority | Fake proof-bearing provider and Telegram-like no-proof adapter; spoof issuer/schema/mode/key fields. | Same-tuple confirmed dedup; unknown post-start no resend; mismatches fail before generic persistence/egress. |
 | Decision/defer race | Approve/reject/expiry before marker and marker before each decision; defer before and after handoff start, including a cohort anchor or later collapsed member. | Domain transaction cancels when it wins; each successful defer appends exactly one fenced now+hours generation and leaves other eligible digest members intact; worker never mutates action; late result cannot revive. |
-| Generic notification isolation | Attempt generic list/history/read/stats/ack/retry/escalate and stored-envelope reconstruction for recovery traffic. | No recovery envelope/callback material is disclosed or replayed; only safe approval projection is available. |
+| Generic notification isolation | Use a recovery presentation with rendered-text, recipient-derived thread-identity, and callback-material sentinels; assert no `switchboard.message_inbox` row; then call `_load_realtime_history`, `_load_email_history`, and `_load_conversation_history` plus generic list/history/read/stats/ack/retry/escalate and stored-envelope reconstruction. | No rendered text, recipient-derived identity, callback material, recovery envelope, or sentinel is persisted, disclosed, replayed, or readable through generic outbound conversation/LLM-history; only safe approval projection is available. |
 | Retention / rollback | Pending/ambiguous and terminal rows; binary rollback; migration downgrade. | Unresolved data retained; downgrade fails closed; no replay/delete. |
 | API/UI | New, delayed/retry/collapsed/ambiguous/cancelled, and legacy rows. | Truthful safe state; no secret/recipient/raw error leakage or “never attempted” fabrication. |
 

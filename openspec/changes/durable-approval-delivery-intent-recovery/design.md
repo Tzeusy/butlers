@@ -254,6 +254,15 @@ The approval API may expose only the safe delivery projection. Provider-specific
 adapters may add true idempotency or lookup support later, but they may not
 label an unknown post-start outcome safe merely to increase retries.
 
+The recovery-mode path must branch before generic `log_notification()` and
+`_write_outbound_message_inbox()` persistence. It creates no outbound
+`switchboard.message_inbox` row, including a redacted placeholder, because that
+table is the source for generic conversation and LLM history. The protected
+handoff ledger therefore records only its bounded safe metadata; rendered text,
+recipient-derived thread identity, and callback material remain egress-local.
+Any future redacted non-history record must have a separate contract proving it
+cannot be joined into a generic reader.
+
 **Alternative considered:** authenticate recovery from the action-key prefix or
 a caller-supplied origin. Rejected because both are forgeable correlation data
 at a cross-schema boundary. A generic retry path was also rejected because it

@@ -64,7 +64,19 @@ Scope: v1-mandatory
 - **AND** no generic deferred-notification row, flush claim, or wake cohort is created for that action
 
 ### Requirement: Recovery isolation from generic notification controls and history
-The generic Switchboard notification table, history/list/read models, aggregate counts, acknowledgement, retry, escalation, and stored-envelope reconstruction SHALL exclude recovery-keyed approval presentations. The protected recovery path SHALL expose only the approvals read model's safe projection and SHALL never persist callback material or a full recovery envelope in generic notification metadata.
+The generic Switchboard notification table SHALL exclude recovery-keyed
+approval presentations. `switchboard.message_inbox` SHALL exclude them from
+persistence and history. Their history/list/read models, aggregate counts,
+acknowledgement, retry, escalation, and stored-envelope reconstruction SHALL do
+the same. The recovery-only `notify.v1` branch MUST NOT call
+`_write_outbound_message_inbox()` and MUST NOT insert an outbound
+`switchboard.message_inbox` row, including a redacted substitute. It SHALL
+bypass generic notification persistence as well. The protected recovery path
+SHALL expose only the approvals read model's safe projection and SHALL never
+persist rendered message text, recipient-derived thread identity, callback
+material, or a full recovery envelope in generic notification metadata. All
+generic conversation/LLM-history readers SHALL be unable to retrieve recovery
+presentation data, including any current or successor pipeline history loader.
 
 ID: REQ-core-notify-031
 Source: RFC-0023
@@ -79,3 +91,20 @@ Scope: v1-mandatory
 - **WHEN** a generic notification list, butler-scoped history, detail/read projection, or stats query encounters recovery delivery evidence
 - **THEN** the recovery record is excluded from that generic surface and aggregate
 - **AND** no response includes its recipient, message, action/cohort subject or presentation key, callback token, callback secret, raw provider response, or stored recovery envelope
+
+#### Scenario: Recovery delivery bypasses outbound conversation persistence
+- **WHEN** a trusted recovery-mode `notify.v1` approval presentation reaches a
+  confirmed, safe-retry, or ambiguous handoff outcome
+- **THEN** Switchboard does not call `_write_outbound_message_inbox()` and no
+  outbound `switchboard.message_inbox` row exists for that presentation
+- **AND** neither a rendered message, recipient-derived thread identity, nor
+  callback material is persisted in a generic notification or conversation
+  record
+
+#### Scenario: Generic conversation-history and LLM-history readers cannot read recovery data
+- **WHEN** a generic conversation-history or LLM-history reader loads outbound
+  history for a recovery presentation's explicit or recipient-derived thread
+  identity
+- **THEN** the result contains no recovery presentation data
+- **AND** only the approval safe projection and the protected handoff ledger
+  remain available to their authorized readers
