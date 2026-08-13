@@ -65,6 +65,30 @@ def test_packet_distinguishes_read_only_observation_from_mutation_authority() ->
     assert "not permission to bypass ordinary access control" in normalized
 
 
+def test_packet_preserves_the_recorded_certificate_data_plane_boundary() -> None:
+    """Known-good mappings and targets must not become a repair target."""
+    text = _packet_text()
+    normalized = " ".join(text.casefold().split())
+
+    for category in (
+        "tailscale status",
+        "serve mappings",
+        "listener ownership",
+        "certificate chain",
+        "local targets",
+    ):
+        assert category in normalized, f"Missing sanitized capture category: {category}"
+
+    assert "recorded diagnosis" in normalized
+    assert "healthy serve mappings and local targets" in normalized
+    assert "port 443 presented the default certificate" in normalized
+    assert "narrow certificate/data-plane hypothesis" in normalized
+    assert "preserve existing serve mappings and local targets" in normalized
+    assert "one reversible mapping-level correction" not in normalized
+    assert "full serve reconstruction" in normalized
+    assert "separately reviewed" in normalized
+
+
 def test_packet_requires_strict_tls_for_the_supported_route_set() -> None:
     """Every in-scope route must be verified without a TLS bypass."""
     text = _packet_text()

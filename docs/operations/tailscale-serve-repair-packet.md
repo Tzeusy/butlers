@@ -49,6 +49,20 @@ Live evidence must be time-stamped, attributable to `[AUTHORIZED_OPERATOR]` or
 route fault from an application fault. Do not promote a repository fact to a
 live conclusion without that evidence.
 
+### Recorded Diagnosis, Not Present-Tense Evidence
+
+The recorded diagnosis for the source case was that its healthy Serve mappings
+and local targets were intact, but port 443 presented the default certificate
+and strict TLS validation failed. This is a recorded diagnosis, not current
+live evidence: it must be recaptured under section 3 before it can influence a
+live decision.
+
+It supports only a narrow certificate/data-plane hypothesis. It neither names
+a current cause nor authorizes a mapping or local-target alteration. Preserve
+existing Serve mappings and local targets throughout this packet; a capture
+that contradicts their recorded state is an abort-and-escalate result, not a
+reason to guess at a mapping repair.
+
 ## 3. Unauthorized Read-Only Capture
 
 "Unauthorized" means no mutation authority. It is not permission to bypass
@@ -57,36 +71,41 @@ ordinary access control. This category begins only when
 `[MUTATION_AUTHORIZATION]` is not issued. It must remain read-only and must
 not be expanded into a configuration, service, or certificate action.
 
-Record only these sanitized fields:
+Record only the authority fields from section 1, the observation timestamp,
+the affected route label, and these sanitized capture categories:
 
-1. The authority fields from section 1, the observation timestamp, and the
-   affected route label.
-2. The observed outcome class for the route: reachable, unavailable,
-   redirected, wrong service, or indeterminate.
-3. The TLS outcome class: hostname match, trusted chain, current validity, or
-   the specific failed category. Do not save certificate contents.
-4. A redacted mapping summary sufficient to tell whether exactly one expected
-   path is absent or misdirected. Do not save host internals or full state.
-5. The off-host verifier's independently observed result when that verifier is
-   already authorized to observe the route.
+| Category | Sanitized record |
+|---|---|
+| Tailscale status | The status outcome class needed to identify whether the observed endpoint is available; omit device identifiers and full status output. |
+| Serve mappings | Whether the recorded mappings appear intact for the affected route; omit raw configuration and unrelated paths. |
+| Listener ownership | The listener-owner outcome class needed to distinguish the expected ingress from an unexpected owner; omit process identifiers and host internals. |
+| Certificate chain | Hostname, trust, validity, and default-versus-expected outcome classes; do not save certificate contents. |
+| Local targets | Whether the recorded local targets remain healthy for the observed route; omit addresses, ports, and full local state. |
 
-Stop this category when the evidence is ambiguous, when it spans more than one
-route, or when it suggests an application, identity, or certificate problem.
-Those outcomes do not justify a guessed repair.
+Record the off-host verifier's independently observed result only when that
+verifier is already authorized to observe the route. Stop this category when
+the evidence is ambiguous, spans more than one route, fails to preserve the
+recorded Serve mappings or local targets, or refutes the narrow
+certificate/data-plane hypothesis. Those outcomes do not justify a guessed
+repair.
 
 ## 4. Narrow Authorized Mutation
 
-This category begins only when all section 1 fields are complete, the evidence
-identifies one affected route, and the approved authorization names that route.
-The authorized operator may make one reversible mapping-level correction for
-that route only. The operator must preserve a sanitized before-state summary
-and the exact expected after-state for the same route.
+This category is a change-control boundary, not a repair instruction. This
+packet itself authorizes no host action. It can be considered only when all
+section 1 fields are complete, the live capture isolates one affected route,
+and the capture preserves the existing Serve mappings and local targets.
 
-The following remain outside this category: other route prefixes, host
-identity, firewall policy, certificates, application images, container or
-process lifecycle, deployment state, and credential material. This packet
-intentionally supplies no action syntax. A change that needs any excluded
-surface must abort and receive a separately reviewed procedure.
+Any live change requires `[MUTATION_AUTHORIZATION]` to name a separately
+reviewed procedure for one evidence-supported certificate/data-plane repair.
+That procedure is outside this packet, and this packet supplies no action
+syntax. It must preserve existing Serve mappings and local targets; a mapping
+or local-target mutation, recreation, or replacement is outside this category.
+
+Other route prefixes, host identity, firewall policy, application images,
+container or process lifecycle, deployment state, and credential material also
+remain outside this category. A change that needs any excluded surface must
+abort and receive its own separately reviewed procedure.
 
 ## 5. Strict-TLS Verification
 
@@ -115,38 +134,42 @@ true:
 - `[HOST]`, `[APPROVED_WINDOW]`, `[AUTHORIZED_OPERATOR]`, or
   `[OFF_HOST_VERIFIER]` is missing, conflicting, expired, or cannot be
   independently identified.
-- The evidence does not isolate one route and one mapping-level discrepancy.
-- The baseline required for a reversible correction is absent or ambiguous.
+- The evidence does not isolate one route or cannot preserve the recorded
+  healthy Serve mappings and local targets.
+- The narrow certificate/data-plane hypothesis is absent, contradicted, or too
+  ambiguous for a separately reviewed procedure.
 - Strict TLS cannot be verified without a certificate validation bypass.
-- The proposed change affects any route or surface outside section 4.
+- The proposed change affects a Serve mapping or local target, any unrelated
+  route, or another surface outside section 4.
 - The off-host verifier cannot perform the acceptance check within the approved
   window.
-- The observed result points to application readiness, host identity, or
-  certificate issuance rather than a single route mapping.
+- The observed result points to application readiness, host identity, or a
+  certificate lifecycle issue that is outside the separately reviewed scope.
 
 Do not stack speculative corrections. A failed narrow correction is evidence
 for escalation, not permission for a second guess.
 
 ## 7. Rollback
 
-Rollback is an authorized, single-route restoration of the captured
-last-known-good mapping summary. It is available only while the operator can
-identify the exact change made in section 4 and the same approved window and
-off-host verification are still available.
+Rollback is defined only by the separately reviewed certificate/data-plane
+procedure named in `[MUTATION_AUTHORIZATION]`. It must preserve existing Serve
+mappings and local targets, remain within the same approved window, and leave
+the failed-change evidence intact. This packet defines no mapping restoration
+or global reset.
 
 After rollback, `[OFF_HOST_VERIFIER]` repeats the strict-TLS matrix in section
-5 and records the result as rollback evidence. Do not broaden rollback into a
-global reset, alter unrelated prefixes, or erase the failed-change evidence.
-If the prior mapping cannot be established safely, abort and escalate instead.
+5 and records the result as rollback evidence. If rollback would alter a
+mapping, local target, unrelated prefix, or any other excluded surface, abort
+and escalate instead.
 
 ## 8. Full Serve Reconstruction: Escalation Only
 
-Full Serve reconstruction is never a routine repair under this packet. It is
-appropriate only when the evidence cannot isolate a single mapping-level fault,
-when more than one route is implicated, when the known-good baseline is absent,
-or when the result indicates a host, TLS, or application problem.
+Full Serve reconstruction is never a routine repair under this packet. It
+includes recreating or replacing Serve mappings or local targets, and is
+appropriate only as a separately authorized escalation when the narrow
+certificate/data-plane hypothesis cannot safely resolve the evidence.
 
-It requires new, explicit authorization, a separate reviewed implementation
+It requires new, explicit authorization, a separately reviewed implementation
 procedure, a new sanitized baseline, and a distinct off-host acceptance plan.
 The procedure must state its rollback boundary before it begins. Until those
 conditions exist, stop at diagnosis and retain the evidence for the authorized
@@ -156,7 +179,8 @@ owner's decision.
 
 Close the packet with the following sanitized summary: read-only and mutation
 authorization records, repository revision, observation window, affected route,
-evidence class, narrow-change decision, strict-TLS result, rollback status if
-used, and whether escalation was requested. Do not treat this repository
-document as proof that a live repair occurred; the signed authorization and
-off-host verification record are the live evidence.
+the five capture categories, certificate/data-plane hypothesis result,
+strict-TLS result, rollback status if used, and whether escalation was
+requested. Do not treat this repository document as proof that a live repair
+occurred; the signed authorization and off-host verification record are the
+live evidence.
