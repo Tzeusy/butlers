@@ -45,14 +45,26 @@ def _quote_ident(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
-def _execute_as_role(db_url: str, role_name: str, statement: str, params: dict | None = None):
-    """Execute one statement as an actual runtime role, not a setup owner."""
+def _execute_as_role(
+    db_url: str,
+    role_name: str,
+    statement: str,
+    params: dict | None = None,
+    *,
+    fetch_one: bool = False,
+):
+    """Execute one statement as an actual runtime role, not a setup owner.
+
+    Receipt queries opt into ``fetch_one`` so their SQLAlchemy result is
+    materialized before the role-bound connection is reset and disposed.
+    """
     engine = create_engine(db_url, isolation_level="AUTOCOMMIT")
     try:
         with engine.connect() as conn:
             conn.execute(text(f"SET ROLE {_quote_ident(role_name)}"))
             try:
-                return conn.execute(text(statement), params or {})
+                result = conn.execute(text(statement), params or {})
+                return result.one() if fetch_one else None
             finally:
                 conn.execute(text("RESET ROLE"))
     finally:
@@ -69,7 +81,7 @@ def _execute_as_connecting_user(db_url: str, statement: str, params: dict | None
     engine = create_engine(db_url, isolation_level="AUTOCOMMIT")
     try:
         with engine.connect() as conn:
-            return conn.execute(text(statement), params or {})
+            conn.execute(text(statement), params or {})
     finally:
         engine.dispose()
 
@@ -502,8 +514,12 @@ def test_dnd_gateway_replay_and_real_role_denials(migrated_db_url: str) -> None:
     }
     gateway = _dnd_set_statement()
 
-    first = _execute_as_role(migrated_db_url, "butler_general_rw", gateway, parameters).one()
-    replay = _execute_as_role(migrated_db_url, "butler_general_rw", gateway, parameters).one()
+    first = _execute_as_role(
+        migrated_db_url, "butler_general_rw", gateway, parameters, fetch_one=True
+    )
+    replay = _execute_as_role(
+        migrated_db_url, "butler_general_rw", gateway, parameters, fetch_one=True
+    )
     assert replay == first
     assert first.writer == "general"
     assert first.operation == "set"
@@ -657,7 +673,8 @@ def test_switchboard_can_mutate_only_its_own_dnd_row(migrated_db_url: str) -> No
         "butler_switchboard_rw",
         _dnd_set_statement("switchboard"),
         set_parameters,
-    ).one()
+        fetch_one=True,
+    )
     clear_receipt = _execute_as_role(
         migrated_db_url,
         "butler_switchboard_rw",
@@ -665,7 +682,8 @@ def test_switchboard_can_mutate_only_its_own_dnd_row(migrated_db_url: str) -> No
         {
             "mutation_id": str(uuid.uuid4()),
         },
-    ).one()
+        fetch_one=True,
+    )
 
     assert set_receipt.writer == "switchboard"
     assert set_receipt.operation == "set"
@@ -687,7 +705,9 @@ def test_dnd_default_ttl_and_normalized_metadata_replay_are_durable(
         "metadata": '{"accent":"\\u00e9","count":1}',
     }
     gateway = _dnd_set_statement()
-    first = _execute_as_role(migrated_db_url, "butler_general_rw", gateway, parameters).one()
+    first = _execute_as_role(
+        migrated_db_url, "butler_general_rw", gateway, parameters, fetch_one=True
+    )
     replay = _execute_as_role(
         migrated_db_url,
         "butler_general_rw",
@@ -696,7 +716,8 @@ def test_dnd_default_ttl_and_normalized_metadata_replay_are_durable(
             **parameters,
             "metadata": '{"count":1.00,"accent":"e\\u0301"}',
         },
-    ).one()
+        fetch_one=True,
+    )
 
     assert replay == first
     assert first.requested_expires_at is None
@@ -734,7 +755,8 @@ def test_dnd_concurrent_identical_retry_advances_generation_once(migrated_db_url
             "butler_general_rw",
             _dnd_set_statement(),
             parameters,
-        ).one()
+            fetch_one=True,
+        )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(invoke_same_action) for _ in range(2)]

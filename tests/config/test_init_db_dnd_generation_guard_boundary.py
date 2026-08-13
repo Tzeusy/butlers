@@ -25,10 +25,21 @@ _MIGRATION = (
 _POSTGRES_INTEGRATION_TEST = (
     _REPO_ROOT / "tests" / "config" / "test_dnd_generation_guard_postgres.py"
 )
+_CONTEXT_PRODUCERS_INTEGRATION_TEST = _REPO_ROOT / "tests" / "jobs" / "test_context_producers.py"
 
 
 def _load_core_197():
     spec = importlib.util.spec_from_file_location("core_197_dnd_boundary", _MIGRATION)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_dnd_postgres_integration_test():
+    spec = importlib.util.spec_from_file_location(
+        "dnd_generation_guard_postgres", _POSTGRES_INTEGRATION_TEST
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -394,3 +405,109 @@ def test_dnd_finalizer_preserves_the_existing_optional_calendar_permission_matri
     assert "'butler_calendar_rw'" not in finalizer
     assert "GRANT SELECT, INSERT, UPDATE ON TABLE public.user_context TO %I" in finalizer
     assert "GRANT SELECT ON TABLE public.dnd_generation_guard TO %I" in finalizer
+
+
+def test_dnd_role_receipts_materialize_before_connection_teardown() -> None:
+    """A real-role receipt cannot outlive the SQLAlchemy connection that owns it."""
+    integration_test = _load_dnd_postgres_integration_test()
+    events: list[str] = []
+
+    class Result:
+        def one(self) -> str:
+            events.append("receipt-one")
+            assert connection.open
+            return "receipt"
+
+    class Connection:
+        open = False
+
+        def execute(self, statement, params=None):
+            assert self.open
+            sql = str(statement).strip()
+            if sql.startswith("SET ROLE"):
+                events.append("set-role")
+                return None
+            if sql == "RESET ROLE":
+                events.append("reset-role")
+                return None
+            events.append("query")
+            return Result()
+
+    class ConnectionContext:
+        def __enter__(self):
+            events.append("connection-enter")
+            connection.open = True
+            return connection
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            events.append("connection-exit")
+            connection.open = False
+            return False
+
+    class Engine:
+        def connect(self):
+            events.append("connect")
+            return ConnectionContext()
+
+        def dispose(self) -> None:
+            events.append("dispose")
+
+    connection = Connection()
+    with patch.object(integration_test, "create_engine", return_value=Engine()):
+        receipt = integration_test._execute_as_role(
+            "postgresql://example.invalid/test",
+            "butler_general_rw",
+            "SELECT receipt",
+            fetch_one=True,
+        )
+
+    assert receipt == "receipt"
+    assert events == [
+        "connect",
+        "connection-enter",
+        "set-role",
+        "query",
+        "receipt-one",
+        "reset-role",
+        "connection-exit",
+        "dispose",
+    ]
+
+
+def test_dnd_postgres_suite_has_no_inline_result_consumption_after_role_teardown() -> None:
+    """Role-bound query results must be materialized by the helper itself."""
+    tree = ast.parse(_POSTGRES_INTEGRATION_TEST.read_text(encoding="utf-8"))
+    stale_result_reads = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "one"
+        and isinstance(node.func.value, ast.Call)
+        and isinstance(node.func.value.func, ast.Name)
+        and node.func.value.func.id == "_execute_as_role"
+    ]
+
+    assert stale_result_reads == []
+
+
+def test_context_producer_fixture_resets_only_non_dnd_rows_without_truncate() -> None:
+    """Fixture cleanup must respect the DND table-level privilege boundary."""
+    source = _CONTEXT_PRODUCERS_INTEGRATION_TEST.read_text(encoding="utf-8")
+    init_db = _INIT_DB.read_text(encoding="utf-8")
+    finalizer_start = init_db.index(
+        "CREATE OR REPLACE FUNCTION dnd_generation_admin.finalize_interface()"
+    )
+    installer_start = init_db.index(
+        "CREATE OR REPLACE FUNCTION dnd_generation_admin.install_interface()", finalizer_start
+    )
+    finalizer = init_db[finalizer_start:installer_start]
+
+    assert "TRUNCATE public.user_context" not in source
+    assert "async def _clear_non_dnd_context" in source
+    assert "UPDATE public.user_context" in source
+    assert "SET superseded_at = now()" in source
+    assert "WHERE signal_type <> 'dnd'" in source
+    assert "await _clear_non_dnd_context(p)" in source
+    assert "await _clear_non_dnd_context(pool)" in source
+    assert "REVOKE TRUNCATE, REFERENCES, TRIGGER ON TABLE public.user_context FROM %I" in finalizer
