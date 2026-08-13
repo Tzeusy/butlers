@@ -1,7 +1,8 @@
 # Beads Runtime Data Bridge
 
-> **Status:** Proposed design — no migration, deployment, or architecture
-> decision is authorized by this document.
+> **Status:** Owner-approved Option A planning baseline — implementation,
+> migration execution, credential provisioning, deployment, and cutover remain
+> separately authorized operational work.
 >
 > **Decision owner:** the Butlers operator / platform owner.
 >
@@ -104,7 +105,7 @@ not an incidental application connection to another database.
 | Direct Dolt SQL client from runtime | Queries canonical tracker data directly | Requires exposing/binding Dolt beyond host loopback, new MySQL/Dolt client/runtime surface beside the PostgreSQL stack, and a private-network allowlist exception; grants application workloads tracker read capability | Reject |
 | Self-hosted Dolt read replica | Could keep a tracker-native read model and support multiple readers | The repository has no proven self-hosted replication, failover, freshness, or credential-rotation contract for this topology. It would still need a network/service boundary and an application-side Dolt client. Replica consistency and recovery must be demonstrated before selection | Prototype-only alternative; not the default recommendation |
 | Immutable export in object storage | Multi-host fan-out without a tracker TCP route; immutable artifacts aid audit | Adds storage credentials, object lifecycle, reader cache invalidation, and duplicate parsing/query logic. It does not naturally provide transactional relational joins for the decision digest | Viable only if object storage becomes the approved cross-host artifact plane; otherwise not preferred |
-| **Management-plane export sync to a PostgreSQL projection** | Uses the already-required Butlers PostgreSQL plane; keeps tracker access outside runtime; permits transactionally complete snapshots, typed queries, metrics, role grants, and multi-host readers | Adds a small service, a new schema/migration, sync lag, and operational ownership | **Recommended, pending owner approval** |
+| **Management-plane export sync to a PostgreSQL projection** | Uses the already-required Butlers PostgreSQL plane; keeps tracker access outside runtime; permits transactionally complete snapshots, typed queries, metrics, role grants, and multi-host readers | Adds a small service, a new schema/migration, sync lag, and operational ownership | **Selected by the owner (Option A); activation remains separately authorized** |
 
 The Dolt-replica option is deliberately not rejected as impossible. It is
 rejected as the default until a time-boxed prototype proves the exact
@@ -134,16 +135,17 @@ operator / alerting                                  Switchboard + dashboard API
                                                     degraded-honest decision digest
 ```
 
-`beads-projection-sync` is a deterministic management-plane process, not a
-butler and not an LLM task. It may run as a host service or in a separately
-isolated management workload on the tracker host; choosing that placement is
-an owner decision below. Its only tracker operation is local read/export.
+`beads-projection-sync` is a deterministic tracker-host management-plane
+process, not a butler and not an LLM task. Its only tracker operation is local
+read/export. The implementation may not install it or provision its TLS writer
+credential until a separate operational authorization selects the concrete
+tracker-host workload.
 
 The initial projection should contain only data required by the decision
 digest and its escalation query:
 
 - issue identifier, title, status, type, priority, labels, timestamps, and
-  native deadline fields;
+  native deadline fields for active (`open`, `in_progress`, `blocked`) rows;
 - the bounded structured decision context the current digest exposes:
   description, normalized `metadata.decision.options` and
   `metadata.decision.default`, plus per-record structured-details
@@ -153,18 +155,18 @@ digest and its escalation query:
   producer version, validation result, and the strict decision-convention
   lint outcome required by the weekly digest.
 
-Comments, raw arbitrary metadata, and raw export blobs are intentionally
-excluded until an approved consumer needs them. The normalized decision fields
-above are an explicit bounded exception, not permission to replicate the
-source metadata object wholesale. This avoids silently creating a broad
-governance-data replica merely because the exporter can read it.
+Raw notes, comments, history, arbitrary metadata, attachments, and raw export
+blobs are intentionally excluded. A source description is retained only for an
+eligible non-epic decision-labeled issue; the normalized decision fields above
+are an explicit bounded exception, not permission to replicate the source
+metadata object wholesale. This avoids silently creating a broad governance-
+data replica merely because the exporter can read it.
 
 ### Snapshot publication protocol
 
-The proposed schema name is `beads_projection` rather than `public`. It keeps
-this control-plane cache out of every butler's default search path and enables
-targeted grants. Exact table and role names remain implementation details for
-the approved change, but the minimum shape is:
+The schema name is `beads_projection` rather than `public`. It keeps this
+control-plane cache out of every butler's default search path and enables
+targeted grants. The implementation must provide at least:
 
 - `sync_runs`: every attempt, its source/export timestamp, content digest,
   validation outcome, error class, and stable run id;
@@ -190,9 +192,9 @@ For each run, the service must:
 4. Insert the run and its candidate rows in PostgreSQL, then atomically mark
    the snapshot current in the same transaction. A crash or database error
    leaves the previously completed snapshot current.
-5. Retain a bounded number of prior completed snapshots and failed-run
-   metadata for diagnosis and rollback; the retention period is an owner
-   decision.
+5. Retain the active completed snapshot and exactly two prior complete
+   snapshots. Retain only categorical failed-run metadata for 30 days; no raw
+   export or error payload survives with a failed run.
 
 The source does not currently provide a documented, portable export sequence
 number. The service should store a content digest and observed export time, but
@@ -226,8 +228,17 @@ Every result must carry at least:
   rollout;
 - `as_of`: completed snapshot time and source export time when known;
 - `age`: reader-observed projection age;
+- `target_met`: whether the age is at or below the five-minute target when the
+  selected source is readable;
 - `unavailable_reason`: a stable reason such as `projection_missing`,
   `projection_stale`, `projection_read_error`, or `projection_schema_mismatch`.
+
+Freshness is fixed: age at or below five minutes meets target; over five
+through ten minutes is readable but misses target; over ten through fifteen
+minutes is readable with a named warning; over fifteen minutes is unavailable.
+The provider reads the active pointer and all active rows under one
+repeatable-read, read-only transaction and fails closed if any returned row
+belongs to another snapshot id.
 
 `GET /api/decisions` and the Switchboard scheduled jobs must use this same
 provider. A healthy empty snapshot can produce a genuine all-clear; an
@@ -248,8 +259,10 @@ one source explicitly and report it in status/telemetry.
   verify the live role/grant model and explicitly revoke unnecessary access,
   including direct access to projection history tables.
 - Runtime containers receive no Dolt port, `bd` credential, `bd` write tool,
-  or `.beads` mount. Their only new dependency is the existing PostgreSQL
-  endpoint they already need.
+  or whole `.beads` directory mount. Until separately authorized JSONL
+  retirement, an explicitly selected compatibility mode may retain only the
+  existing read-only `issues.export.jsonl` file mount. Their only new
+  dependency is the existing PostgreSQL endpoint they already need.
 - If the sync process uses a networked PostgreSQL endpoint, it uses TLS and a
   narrowly provisioned credential. If it is containerized, its egress policy
   admits only that endpoint; it never adds the tracker/Dolt host to the normal
@@ -267,7 +280,7 @@ one source explicitly and report it in status/telemetry.
 | Malformed, oversized, or adversarial export record | Strict parser/schema validation, bounded fields, no shell interpolation from record content, and no publishing on validation failure | Failed run is visible; last complete snapshot remains active |
 | Partial write, crash, or two writers | One-writer lease/advisory lock plus transactional candidate-and-pointer publication | Readers retain the previous complete snapshot; duplicate-writer detection is an alert |
 | Stale, rolled-back, or unexpectedly empty data | Source/projection timestamps, digest recording, warning and hard TTLs, comparison against prior counts, and explicit rollback validation | Consumers become unavailable at hard TTL; stale data is never an all-clear or escalation trigger |
-| Unnecessary sensitive tracker data in the runtime plane | Minimal initial field set, no raw export blob, retention policy, and an approved change for each added field | Data-scope review is required before description/comment/metadata replication |
+| Unnecessary sensitive tracker data in the runtime plane | Active-only allowlist, no raw export blob/notes/history/metadata, decision-only description, and an approved change for each added field | Data-scope review is required before any field expansion |
 | Projection database unavailable | Reader returns degraded availability; jobs do not send conclusions from unknown data | Dashboard and attention paths name the source failure rather than showing zero decisions |
 
 ## Ownership and failure semantics
@@ -295,16 +308,15 @@ The following failure rules are mandatory for the implementation change:
 5. A consumer must not use an unavailable snapshot to send a weekly "no
    decisions" message or an escalation conclusion.
 
-## Migration and operational plan
+## Implementation and operational plan
 
-This is an ordered proposal, not an approved work plan.
+This is a packet-complete implementation graph, not authorization to execute
+its operational steps.
 
-1. **Record the architecture decision.** Confirm the owner decisions below.
-   Add or amend an RFC for the control-plane boundary; amend RFC 0006 for the
-   projection schema/role contract and RFC 0008 for any new management-plane
-   network rule. Reconcile the executable compose/firewall configuration with
-   RFC wording as part of that same change rather than relying on either one
-   silently.
+1. **Record the architecture decision.** RFC 0023 and the
+   `beads-projection-exporter` OpenSpec change carry the chosen control-plane,
+   schema/role, and deployment-boundary contract. Reconcile implementation
+   against RFC 0006 and RFC 0008 in the same code change.
 2. **Specify the consumer contract.** Create an OpenSpec change covering the
    provider envelope, freshness semantics, decision-digest parity, dashboard
    metadata, and migration acceptance criteria. Do not make the table layout
@@ -313,11 +325,13 @@ This is an ordered proposal, not an approved work plan.
    schema, completed-snapshot protocol, indexes, constraints, targeted grants,
    and telemetry/status surface. It must work against a fresh/core-only
    database as well as the deployed one.
-4. **Build the sync process in shadow mode.** Run it on the selected
-   management plane, publish candidates, and compare its decision digest with
-   the exact current `bd export` output. Keep runtime readers on the explicitly
-   selected legacy source while parity, failure injection, freshness, and role
-   tests prove out.
+4. **Build the sync process in shadow mode.** After separate operational
+   authorization, run it in the tracker-host management plane, publish
+   candidates, and compare its decision digest/lint semantics with the exact
+   current JSONL source for 14 full consecutive days. Keep runtime readers on
+   the explicitly selected JSONL source while parity, failure injection,
+   freshness, and role tests prove out. Any mismatch resets the clean-day
+   counter.
 5. **Cut consumers over deliberately.** Switch both Switchboard and dashboard
    through the shared provider under an explicit deployment setting. Expose
    source, as-of, and unavailable reason in existing status surfaces. Do not
@@ -327,10 +341,11 @@ This is an ordered proposal, not an approved work plan.
    the normal application egress firewall still cannot reach the tracker/Dolt
    address and that the sync identity cannot access unrelated application
    schemas.
-7. **Retire the local mount only after a soak period.** Keep the JSONL route as
-   a documented rollback mode for a bounded, owner-approved period. Remove
-   compose mounts, deploy-time materialization, and legacy parser branches
-   together once the new source has met the agreed SLO.
+7. **Keep the local mount for the explicit rollback window.** For seven calendar
+   days after a separately authorized cutover, JSONL remains a documented,
+   explicit configuration rollback mode. Do not remove compose mounts,
+   deploy-time materialization, or legacy parser branches without a later,
+   separate owner authorization.
 
 ### Proposed validation gates
 
@@ -359,32 +374,26 @@ This is an ordered proposal, not an approved work plan.
   database grant, and restore it; each branch must produce a named status and
   leave the last valid snapshot intact.
 
-## Open owner decisions
+## Fixed design decisions and remaining authorization
 
-These decisions are intentionally unresolved. Approving this document does
-not choose them implicitly.
+The owner selected the following Option A design values:
 
-1. **Management-plane placement:** host `systemd` service, an isolated
-   management container, or another operator-owned runner. The recommendation
-   is a tracker-host service/workload separate from the application runtime.
-2. **Freshness contract:** proposed starting point is a five-minute target,
-   warning before the hard limit, and a 15-minute hard unavailable TTL. The
-   owner must set the actual SLO and decide whether an unavailable weekly
-   digest creates a notification, a dashboard-only alert, or both.
-3. **Source method:** use `bd export` polling initially, or fund a Dolt
-   replica prototype. The recommendation is export polling until a replica
-   prototype proves the required self-hosted contract.
-4. **Projection scope and retention:** exact fields, whether any description
-   or arbitrary metadata may cross the boundary, number/age of retained
-   snapshots, and access-audit retention.
-5. **Credential and role operator:** who provisions/rotates the projection
-   writer credential, and which exact dashboard/Switchboard database roles
-   receive read access.
-6. **Cutover and rollback policy:** soak duration, source-selection mechanism,
-   and the criterion for removing JSONL mounts and legacy code.
-7. **Operational ownership:** who responds to a stale projection, how quickly,
-   and which alert channel is authoritative when the decision desk's source is
-   unavailable.
+1. A tracker-host exporter with a TLS, least-privilege PostgreSQL writer.
+2. Atomic active-snapshot pointer and rows; all runtime reads use the bounded
+   `BeadReadProvider`.
+3. Five-minute freshness target, warning at ten minutes, hard unavailable at
+   fifteen minutes.
+4. Retention of the active plus two prior complete snapshots and 30 days of
+   categorical failed-run metadata.
+5. Preserved decision lint and dependency projection with no raw notes,
+   history, or arbitrary metadata.
+6. Fourteen full days of shadow semantic parity and seven days of explicit
+   JSONL rollback after cutover.
+
+Still required before executing any operational step: an owner authorization
+for the concrete tracker-host workload, TLS writer credential provisioning,
+migration/deployment execution, shadow start, cutover, and any later JSONL
+retirement. No successful plan, test, or CI result grants those permissions.
 
 ## References
 
@@ -398,5 +407,9 @@ not choose them implicitly.
   — schema, role, migration, and cross-boundary requirements.
 - [RFC 0008: Deployment Network Security](../../about/legends-and-lore/rfcs/0008-deployment-network-security.md)
   — least-privilege deployment and egress requirements.
+- [RFC 0023: Tracker-Host Beads Projection Exporter](../../about/legends-and-lore/rfcs/0023-tracker-host-beads-projection-exporter.md)
+  — selected snapshot, freshness, retention, parity, and rollback contract.
+- `openspec/changes/beads-projection-exporter/` — strict implementation
+  requirements and packet-complete task graph.
 - `openspec/changes/owner-decision-desk-decisions-lane/` — decision-desk
   degraded-envelope and digest-consumer contract.
