@@ -74,10 +74,16 @@ def test_projection_plan_allocates_its_core_revision_from_the_exact_rebased_head
 
 def test_tracker_projection_rfc_identity_is_unique_and_indexed() -> None:
     """The tracker-exporter packet owns one unique, correctly indexed RFC."""
-    rfc_number = "0024"
-    rfc_filename = "0024-tracker-host-beads-projection-exporter.md"
+    rfc_number = "0025"
+    rfc_filename = "0025-tracker-host-beads-projection-exporter.md"
     rfc_title = "Tracker-Host Beads Projection Exporter"
     rfc_directory = _REPO_ROOT / "about/legends-and-lore/rfcs"
+
+    numbered_rfcs = sorted(rfc_directory.glob("[0-9][0-9][0-9][0-9]-*.md"))
+    rfc_numbers = [path.name[:4] for path in numbered_rfcs]
+    assert len(rfc_numbers) == len(set(rfc_numbers))
+    assert (rfc_directory / "0023-durable-approval-delivery-intent-recovery.md").is_file()
+    assert (rfc_directory / "0024-messenger-private-email-correspondence-ledger.md").is_file()
 
     tracker_exporter_rfcs = sorted(
         rfc_directory.glob("*-tracker-host-beads-projection-exporter.md")
@@ -88,6 +94,7 @@ def test_tracker_projection_rfc_identity_is_unique_and_indexed() -> None:
 
     rfc = expected_rfc.read_text(encoding="utf-8")
     assert re.search(rf"^# RFC {rfc_number}: {re.escape(rfc_title)}$", rfc, re.MULTILINE)
+    assert "RFC 0024" not in rfc
 
     index_rows = re.findall(
         r"^\| \[(\d{4})\]\(rfcs/([^)]*)\) \| ([^|]+) \|",
@@ -127,7 +134,7 @@ def test_retirement_packet_requires_a_complete_jsonl_consumer_inventory() -> Non
         "separately scoped security review",
     )
     planning_artifacts = (
-        "about/legends-and-lore/rfcs/0024-tracker-host-beads-projection-exporter.md",
+        "about/legends-and-lore/rfcs/0025-tracker-host-beads-projection-exporter.md",
         "docs/architecture/beads-runtime-data-bridge.md",
         "docs/superpowers/plans/2026-08-13-beads-projection-exporter.md",
         "openspec/changes/beads-projection-exporter/design.md",
@@ -152,32 +159,32 @@ def test_projection_requirement_traceability_is_contiguous() -> None:
         (
             "Tracker-Host Export Boundary and Minimal Active Projection",
             "REQ-beads-projection-001",
-            "RFC 0024 §§1-3, 10",
+            "RFC 0025 §§1-3, 10",
         ),
         (
             "Atomic Complete Snapshot Publication and Retention",
             "REQ-beads-projection-002",
-            "RFC 0024 §§3-4",
+            "RFC 0025 §§3-4",
         ),
         (
             "Bounded Atomic BeadReadProvider and Freshness Classification",
             "REQ-beads-projection-003",
-            "RFC 0024 §§3, 5-6",
+            "RFC 0025 §§3, 5-6",
         ),
         (
             "Preserved Decision Lint and Dependency Semantics",
             "REQ-beads-projection-004",
-            "RFC 0024 §7",
+            "RFC 0025 §7",
         ),
         (
             "Shadow Parity, Explicit Cutover, and Explicit JSONL Rollback",
             "REQ-beads-projection-006",
-            "RFC 0024 §8",
+            "RFC 0025 §8",
         ),
         (
             "JSONL Consumer Inventory Gates Retirement",
             "REQ-beads-projection-005",
-            "RFC 0024 §9; RFC 0007 Amendment 2",
+            "RFC 0025 §9; RFC 0007 Amendment 2",
         ),
     )
 
@@ -196,19 +203,19 @@ def test_modified_dashboard_requirements_have_contiguous_traceability() -> None:
         _read("openspec/changes/beads-projection-exporter/specs/dashboard-api/spec.md"),
         title="Decisions Digest Endpoint",
         requirement_id="REQ-dashboard-api-001",
-        source="RFC 0024 §§3, 5-8; RFC 0007",
+        source="RFC 0025 §§3, 5-8; RFC 0007",
     )
     _assert_contiguous_traceability(
         _read("openspec/changes/beads-projection-exporter/specs/dashboard-decisions/spec.md"),
         title="Export As-Of Plaque",
         requirement_id="REQ-dashboard-decisions-001",
-        source="RFC 0024 §§3, 5-8; RFC 0007",
+        source="RFC 0025 §§3, 5-8; RFC 0007",
     )
 
 
 def test_projection_contract_keeps_tracker_authority_and_derived_jsonl_role() -> None:
     """REQ-beads-projection-001: only Beads/Dolt is tracker authority."""
-    rfc = _read("about/legends-and-lore/rfcs/0024-tracker-host-beads-projection-exporter.md")
+    rfc = _read("about/legends-and-lore/rfcs/0025-tracker-host-beads-projection-exporter.md")
     projection_spec = _read(
         "openspec/changes/beads-projection-exporter/specs/beads-projection/spec.md"
     )
@@ -225,7 +232,7 @@ def test_projection_contract_keeps_tracker_authority_and_derived_jsonl_role() ->
 
 def test_projection_tls_policy_and_bounds_fail_closed_in_the_plan() -> None:
     """REQ-beads-projection-001: verified transport and bounded candidates are planned."""
-    rfc = _read("about/legends-and-lore/rfcs/0024-tracker-host-beads-projection-exporter.md")
+    rfc = _read("about/legends-and-lore/rfcs/0025-tracker-host-beads-projection-exporter.md")
     projection_spec = _read(
         "openspec/changes/beads-projection-exporter/specs/beads-projection/spec.md"
     )
@@ -276,7 +283,7 @@ def test_projection_tls_policy_and_bounds_fail_closed_in_the_plan() -> None:
 
 def test_suspicious_empty_or_regressed_candidate_requires_source_completeness_evidence() -> None:
     """REQ-beads-projection-001: an unproven smaller source cannot create an all-clear."""
-    rfc = _read("about/legends-and-lore/rfcs/0024-tracker-host-beads-projection-exporter.md")
+    rfc = _read("about/legends-and-lore/rfcs/0025-tracker-host-beads-projection-exporter.md")
     projection_spec = _read(
         "openspec/changes/beads-projection-exporter/specs/beads-projection/spec.md"
     )

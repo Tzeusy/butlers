@@ -43,7 +43,7 @@ snapshot exists. A warning snapshot remains readable but SHALL name `warning`
 freshness. Open decisions SHALL remain oldest-first.
 
 ID: REQ-dashboard-api-001
-Source: RFC 0024 §§3, 5-8; RFC 0007
+Source: RFC 0025 §§3, 5-8; RFC 0007
 Scope: v1-mandatory
 
 #### Scenario: Valid structured context preserves order and the native deadline

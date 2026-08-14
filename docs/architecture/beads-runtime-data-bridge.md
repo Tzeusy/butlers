@@ -387,7 +387,7 @@ The following failure rules are mandatory for the implementation change:
 This is a packet-complete implementation graph, not authorization to execute
 its operational steps.
 
-1. **Record the architecture decision.** RFC 0024 and the
+1. **Record the architecture decision.** RFC 0025 and the
    `beads-projection-exporter` OpenSpec change carry the chosen control-plane,
    schema/role, and deployment-boundary contract. Reconcile implementation
    against RFC 0006 and RFC 0008 in the same code change.
@@ -490,7 +490,7 @@ retirement. No successful plan, test, or CI result grants those permissions.
   — schema, role, migration, and cross-boundary requirements.
 - [RFC 0008: Deployment Network Security](../../about/legends-and-lore/rfcs/0008-deployment-network-security.md)
   — least-privilege deployment and egress requirements.
-- [RFC 0024: Tracker-Host Beads Projection Exporter](../../about/legends-and-lore/rfcs/0024-tracker-host-beads-projection-exporter.md)
+- [RFC 0025: Tracker-Host Beads Projection Exporter](../../about/legends-and-lore/rfcs/0025-tracker-host-beads-projection-exporter.md)
   — selected snapshot, freshness, retention, parity, and rollback contract.
 - `openspec/changes/beads-projection-exporter/` — strict implementation
   requirements and packet-complete task graph.
