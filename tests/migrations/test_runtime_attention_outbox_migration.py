@@ -9,10 +9,16 @@ perform validated appends while Switchboard owns delivery transitions.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
+import os
+import select
 import shutil
+import subprocess
+import sys
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 import asyncpg
@@ -43,6 +49,13 @@ _SWITCHBOARD = "butler_switchboard_rw"
 _CONNECTOR = "connector_writer"
 _FUNCTION_MODEL_BREAKER = "public.append_runtime_attention_model_breaker(bigint)"
 _FUNCTION_FLEET_HALT = "public.append_runtime_attention_fleet_halt()"
+_CORE_198_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "alembic"
+    / "versions"
+    / "core"
+    / "core_198_runtime_attention_outbox.py"
+)
 
 
 def _quote_ident(identifier: str) -> str:
@@ -55,6 +68,111 @@ def _upgrade_to_core_197(db_url: str) -> None:
 
 def _upgrade_to_core_head(db_url: str) -> None:
     command.upgrade(_build_alembic_config(db_url, chains=["core"]), "core@head")
+
+
+def _load_core_198_migration():
+    """Load the migration so catalog proof uses its canonical predicate."""
+    spec = importlib.util.spec_from_file_location(
+        "core_198_runtime_attention_outbox", _CORE_198_MIGRATION
+    )
+    assert spec is not None and spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    return migration
+
+
+def _has_exact_finalized_runtime_attention_interface(db_url: str) -> bool:
+    """Evaluate the migration's authoritative finalized ACL/catalog predicate."""
+    migration = _load_core_198_migration()
+    engine = create_engine(db_url)
+    try:
+        with engine.connect() as conn:
+            return bool(conn.execute(text(migration._TRUSTED_FINALIZED_INTERFACE_SQL)).scalar_one())
+    finally:
+        engine.dispose()
+
+
+_CORE_HEAD_UPGRADE_PROCESS = """
+import os
+import sys
+import traceback
+
+from alembic import command
+from butlers.migrations import _build_alembic_config
+
+db_url, target_schema, ready_fd, release_fd = sys.argv[1:]
+try:
+    config = _build_alembic_config(db_url, chains=["core"], target_schema=target_schema)
+    os.write(int(ready_fd), b"1")
+    if os.read(int(release_fd), 1) != b"1":
+        raise RuntimeError("concurrent core-upgrade barrier was not released")
+    command.upgrade(config, "core@head")
+except BaseException:
+    traceback.print_exc()
+    raise
+"""
+
+
+def _run_concurrent_core_head_upgrades(
+    db_url: str, target_schemas: tuple[str, str]
+) -> dict[str, tuple[int, str, str]]:
+    """Release two fresh Python processes together at the core_198 boundary."""
+    ready_read, ready_write = os.pipe()
+    release_read, release_write = os.pipe()
+    processes: dict[str, subprocess.Popen[str]] = {}
+    try:
+        for target_schema in target_schemas:
+            processes[target_schema] = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    _CORE_HEAD_UPGRADE_PROCESS,
+                    db_url,
+                    target_schema,
+                    str(ready_write),
+                    str(release_read),
+                ],
+                cwd=Path(__file__).resolve().parents[2],
+                pass_fds=(ready_write, release_read),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        os.close(ready_write)
+        ready_write = -1
+        os.close(release_read)
+        release_read = -1
+
+        ready = b""
+        while len(ready) < len(target_schemas):
+            readable, _, _ = select.select([ready_read], [], [], 45)
+            if not readable:
+                raise TimeoutError("concurrent core-upgrade processes did not reach the barrier")
+            chunk = os.read(ready_read, len(target_schemas) - len(ready))
+            if not chunk:
+                raise RuntimeError("concurrent core-upgrade process exited before the barrier")
+            ready += chunk
+        assert ready == b"1" * len(target_schemas)
+        assert os.write(release_write, b"1" * len(target_schemas)) == len(target_schemas)
+        os.close(release_write)
+        release_write = -1
+
+        results: dict[str, tuple[int, str, str]] = {}
+        for target_schema, process in processes.items():
+            stdout, stderr = process.communicate(timeout=45)
+            assert process.returncode is not None
+            results[target_schema] = (process.returncode, stdout, stderr)
+        return results
+    finally:
+        for process in processes.values():
+            if process.poll() is None:
+                process.terminate()
+        for process in processes.values():
+            if process.poll() is None:
+                process.communicate(timeout=5)
+        for file_descriptor in (ready_read, ready_write, release_read, release_write):
+            if file_descriptor >= 0:
+                os.close(file_descriptor)
 
 
 def _rerun_actual_init_db(bootstrap_url: str, migration_url: str) -> None:
@@ -891,6 +1009,60 @@ def test_core_chain_is_idempotent_for_two_target_schemas_without_switchboard_dep
             )
     finally:
         engine.dispose()
+
+
+def test_core_chain_serializes_global_runtime_attention_install_across_processes(
+    postgres_container,
+) -> None:
+    """Two independent schema upgrades finalize one protected interface."""
+    db_name = migration_db_name()
+    db_url = create_migration_db(postgres_container, db_name)
+    target_schemas = ("general", "switchboard")
+    for target_schema in target_schemas:
+        command.upgrade(
+            _build_alembic_config(db_url, chains=["core"], target_schema=target_schema),
+            "core_197",
+        )
+
+    process_results = _run_concurrent_core_head_upgrades(db_url, target_schemas)
+    failed_processes = {
+        target_schema: stderr
+        for target_schema, (returncode, _stdout, stderr) in process_results.items()
+        if returncode != 0
+    }
+    assert not failed_processes, "\n".join(failed_processes.values())
+
+    engine = create_engine(migration_bootstrap_db_url(postgres_container, db_name))
+    try:
+        with engine.connect() as conn:
+            assert (
+                conn.execute(
+                    text(
+                        "SELECT count(*) FROM pg_class "
+                        "WHERE oid = 'public.runtime_attention_outbox'::regclass"
+                    )
+                ).scalar_one()
+                == 1
+            )
+            assert conn.execute(
+                text(
+                    "SELECT relrowsecurity AND relforcerowsecurity "
+                    "FROM pg_class WHERE oid = 'public.runtime_attention_outbox'::regclass"
+                )
+            ).scalar_one()
+            for target_schema in target_schemas:
+                assert (
+                    conn.execute(
+                        text(
+                            f"SELECT version_num FROM {_quote_ident(target_schema)}.alembic_version"
+                        )
+                    ).scalar_one()
+                    == "core_198"
+                )
+    finally:
+        engine.dispose()
+
+    assert _has_exact_finalized_runtime_attention_interface(db_url)
 
 
 def test_actual_init_db_rerun_repairs_function_only_acl_and_effective_roles(

@@ -26,6 +26,16 @@ depends_on = None
 _ADMIN_INSTALLER = "runtime_attention_admin.install_interface"
 _ADMIN_ROLLBACK = "runtime_attention_admin.rollback_interface"
 
+# Core migrations execute once per target schema, while this trusted interface
+# is database-global.  Serialize the install/finalized-catalog decision for
+# the full migration transaction so the second schema rechecks only after the
+# first installer has committed its fixed boundary.
+_INSTALLER_SERIALIZATION_LOCK_SQL = """
+    SELECT pg_advisory_xact_lock(
+        hashtextextended('butlers:core_198:runtime_attention_interface', 0)
+    )
+"""
+
 
 # This is deliberately catalog based rather than a to_regclass shortcut.  A
 # later core-chain invocation must only trust the exact bootstrap-owned,
@@ -663,6 +673,7 @@ _TRUSTED_BOOTSTRAP_ROLLBACK_SQL = """
 def upgrade() -> None:
     """Install once, then verify/no-op for subsequent target-schema runs."""
     bind = op.get_bind()
+    bind.execute(sa.text(_INSTALLER_SERIALIZATION_LOCK_SQL))
     if bool(bind.execute(sa.text(_TRUSTED_FINALIZED_INTERFACE_SQL)).scalar_one()):
         return
 
