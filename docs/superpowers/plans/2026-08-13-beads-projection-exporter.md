@@ -81,7 +81,7 @@ Beads JSONL export/linter, FastAPI, React/Vite/Vitest, Docker/testcontainers.
 
 | File | Responsibility |
 |---|---|
-| `alembic/versions/core/core_197_beads_projection.py` | Current-base core migration: schema, private tables, active reader views, role boundaries, and constraints. Reallocate the revision only if a rebased base has claimed `core_197`. |
+| `alembic/versions/core/<allocated-next-core-revision>_beads_projection.py` | Core migration allocated from the exact rebased core-chain head at implementation time: schema, private tables, active reader views, role boundaries, and constraints. This planning packet reserves neither its revision identifier nor its predecessor. |
 | `src/butlers/core/beads_projection.py` | Typed snapshot model, source selector, async `BeadReadProvider`, atomic active-view reader, freshness classifier, and pure JSONL compatibility adapter. |
 | `scripts/beads_projection_exporter.py` | Tracker-host-only deterministic candidate parser, lint normalizer, advisory-lock publisher, retention, and bounded run reporting. Must carry PEP 723 metadata. |
 | `src/butlers/jobs/decision_review.py` | Source-agnostic decision calculation and lint/attention integration; no direct runtime parser after cutover. |
@@ -247,9 +247,17 @@ observable freshness signal.
 
 ### Task 2: Create the projection schema and privilege boundary
 
+**Revision-allocation precondition:** Immediately before creating this migration,
+rebase the implementation branch onto its exact target base, inspect the core
+chain's single head in that rebased worktree, and allocate the next core Alembic
+revision with `down_revision` set to that head. Do not reuse a revision
+identifier, filename, or predecessor from this planning packet. If the target
+base advances before implementation or review, rebase and repeat this
+allocation from the new exact rebased core-chain head at implementation time.
+
 **Files:**
 
-- Create: `alembic/versions/core/core_197_beads_projection.py`
+- Create: `alembic/versions/core/<allocated-next-core-revision>_beads_projection.py`
 - Create: `tests/migrations/test_beads_projection_migration.py`
 - Modify: `tests/config/test_migration_chain_head.py`
 
@@ -279,7 +287,7 @@ observable freshness signal.
 
   Expected: RED because the schema/views/grants do not exist.
 
-- [ ] **Step 2: Implement `core_197_beads_projection.py`**
+- [ ] **Step 2: Implement the allocated core migration**
 
   Use the existing core-chain conventions and guard optional role operations.
   Create:
@@ -321,9 +329,10 @@ observable freshness signal.
 
   ```bash
   uv run pytest tests/migrations/test_beads_projection_migration.py tests/config/test_migration_chain_head.py -q
-  uv run ruff check alembic/versions/core/core_197_beads_projection.py tests/migrations/test_beads_projection_migration.py
-  uv run ruff format --check alembic/versions/core/core_197_beads_projection.py tests/migrations/test_beads_projection_migration.py
-  git add alembic/versions/core/core_197_beads_projection.py tests/migrations/test_beads_projection_migration.py tests/config/test_migration_chain_head.py
+  MIGRATION_PATH="alembic/versions/core/<allocated-next-core-revision>_beads_projection.py"
+  uv run ruff check "$MIGRATION_PATH" tests/migrations/test_beads_projection_migration.py
+  uv run ruff format --check "$MIGRATION_PATH" tests/migrations/test_beads_projection_migration.py
+  git add "$MIGRATION_PATH" tests/migrations/test_beads_projection_migration.py tests/config/test_migration_chain_head.py
   git commit -m "feat: add bounded beads projection schema"
   ```
 
@@ -658,9 +667,10 @@ observable freshness signal.
   fourteen-day parity/seven-day rollback requirement; Task 7 preserves the
   operational authorization boundary.
 - **Completeness scan:** Every future source/test path, interface, bounded field
-  set, command, expected outcome, and owner gate is named. `core_197` is
-  explicitly tied to the current base and must be reallocated only through the
-  normal migration-chain rebase if another merged change claims it.
+  set, command, expected outcome, and owner gate is named. The core migration
+  revision is allocated only from the exact rebased core-chain head at
+  implementation time, so this planning packet reserves no revision identifier
+  or predecessor and remains valid if the target base advances.
 - **Type consistency:** `BeadReadProvider.read_active()` returns one
   `BeadSnapshot`; the exporter publishes its data, decision review consumes it,
   and API/UI expose only its source/freshness provenance.

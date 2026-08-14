@@ -16,9 +16,14 @@
 
 ## 2. Projection schema and least-privilege database boundary
 
-- [ ] 2.1 Allocate the next core Alembic revision (currently after
-  `core_196`) and create `beads_projection` schema, completed snapshot tables,
-  active-pointer relation, active reader views, categorical sync-run rows, and
+- [ ] 2.1 Immediately before creating the migration, rebase onto the exact
+  target base, inspect the core chain's single head in that rebased worktree,
+  and allocate the next core Alembic revision with `down_revision` set to that
+  exact rebased core-chain head at implementation time. Do not reserve a
+  revision identifier, filename, or predecessor in this planning packet; if
+  the base advances, rebase and repeat the allocation. Then create the
+  `beads_projection` schema, completed snapshot tables, active-pointer
+  relation, active reader views, categorical sync-run rows, and
   constraints/indexes for the allowlisted fields.
 - [ ] 2.2 Implement the writer-only advisory-lock/publication transaction and
   retention SQL so candidate rows, complete state, and active pointer commit

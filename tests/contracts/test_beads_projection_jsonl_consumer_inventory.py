@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from butlers.migrations import get_chain_head
+
 pytestmark = pytest.mark.contract
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -49,6 +51,25 @@ def _assert_contiguous_traceability(
     assert _requirement_preamble(text, title).endswith(expected), (
         f"{title}: require contiguous ID, Source, Scope metadata before scenarios"
     )
+
+
+def test_projection_plan_allocates_its_core_revision_from_the_exact_rebased_head() -> None:
+    """The planning packet cannot reserve a migration revision before implementation."""
+    implementation_plan = _read("docs/superpowers/plans/2026-08-13-beads-projection-exporter.md")
+    tasks = _read("openspec/changes/beads-projection-exporter/tasks.md")
+    core_head = get_chain_head("core")
+    match = re.fullmatch(r"core_(\d+)", core_head)
+    assert match is not None, f"unexpected core-chain head: {core_head}"
+    next_revision = f"core_{int(match.group(1)) + 1}"
+
+    for text in map(_normalise, (implementation_plan, tasks)):
+        assert "exact rebased core-chain head at implementation time" in text
+        assert "allocate the next core Alembic revision" in text
+
+    assert not re.search(r"core_\d+_beads_projection\.py", implementation_plan)
+    assert f"{core_head}_beads_projection.py" not in implementation_plan
+    assert f"{next_revision}_beads_projection.py" not in implementation_plan
+    assert f"after `{core_head}`" not in tasks
 
 
 def test_tracker_projection_rfc_identity_is_unique_and_indexed() -> None:
