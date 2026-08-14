@@ -1065,6 +1065,72 @@ def test_core_chain_serializes_global_runtime_attention_install_across_processes
     assert _has_exact_finalized_runtime_attention_interface(db_url)
 
 
+def test_core_chain_rejects_colliding_runtime_attention_index_across_processes(
+    postgres_container,
+) -> None:
+    """A failed post-install catalog proof rolls every target back to core_197."""
+    db_name = migration_db_name()
+    db_url = create_migration_db(postgres_container, db_name)
+    target_schemas = ("general", "switchboard")
+    for target_schema in target_schemas:
+        command.upgrade(
+            _build_alembic_config(db_url, chains=["core"], target_schema=target_schema),
+            "core_197",
+        )
+
+    bootstrap_url = migration_bootstrap_db_url(postgres_container, db_name)
+    poison_engine = create_engine(bootstrap_url)
+    try:
+        with poison_engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE INDEX idx_model_dispatch_attempts_catalog_ts_id
+                    ON public.model_dispatch_attempts (id ASC)
+                    """
+                )
+            )
+    finally:
+        poison_engine.dispose()
+
+    process_results = _run_concurrent_core_head_upgrades(db_url, target_schemas)
+    successful_processes = {
+        target_schema: stdout
+        for target_schema, (returncode, stdout, _stderr) in process_results.items()
+        if returncode == 0
+    }
+    assert not successful_processes
+
+    engine = create_engine(bootstrap_url)
+    try:
+        with engine.connect() as conn:
+            for target_schema in target_schemas:
+                assert (
+                    conn.execute(
+                        text(
+                            f"SELECT version_num FROM {_quote_ident(target_schema)}.alembic_version"
+                        )
+                    ).scalar_one()
+                    == "core_197"
+                )
+            assert (
+                conn.execute(
+                    text("SELECT to_regclass('public.runtime_attention_outbox')")
+                ).scalar_one()
+                is None
+            )
+            assert (
+                conn.execute(
+                    text("SELECT to_regclass('public.runtime_attention_delivery_lease')")
+                ).scalar_one()
+                is None
+            )
+    finally:
+        engine.dispose()
+
+    assert not _has_exact_finalized_runtime_attention_interface(db_url)
+
+
 def test_actual_init_db_rerun_repairs_function_only_acl_and_effective_roles(
     postgres_container,
 ) -> None:

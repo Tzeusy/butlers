@@ -691,6 +691,17 @@ def upgrade() -> None:
         )
 
     op.execute(f"SELECT {_ADMIN_INSTALLER}()")
+    if not bool(bind.execute(sa.text(_TRUSTED_FINALIZED_INTERFACE_SQL)).scalar_one()):
+        op.execute(
+            """
+            DO $$
+            BEGIN
+                RAISE EXCEPTION
+                    'runtime-attention installer completed without exact finalized catalog proof';
+            END;
+            $$;
+            """
+        )
 
 
 def downgrade() -> None:
