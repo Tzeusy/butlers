@@ -41,7 +41,7 @@ _INSTALLER_SERIALIZATION_LOCK_SQL = """
 # later core-chain invocation must only trust the exact bootstrap-owned,
 # least-privilege interface, never silently adopt an attacker-shaped public
 # table or a migration-login-owned SECURITY DEFINER function.
-_TRUSTED_FINALIZED_INTERFACE_SQL = """
+_TRUSTED_FINALIZED_INTERFACE_SQL_TEMPLATE = """
     SELECT EXISTS (
         SELECT 1
         FROM pg_roles AS outbox_owner
@@ -119,7 +119,7 @@ _TRUSTED_FINALIZED_INTERFACE_SQL = """
           AND NOT outbox_owner.rolreplication
           AND NOT outbox_owner.rolbypassrls
           AND NOT outbox_owner.rolinherit
-          AND NOT migration_role.rolsuper
+          AND __CALLER_ROLE_CONSTRAINT__
           AND NOT EXISTS (
               SELECT 1
               FROM pg_auth_members AS member
@@ -302,7 +302,7 @@ _TRUSTED_FINALIZED_INTERFACE_SQL = """
           )
           AND NOT has_function_privilege(connector_runtime.oid, model_breaker.oid, 'EXECUTE')
           AND NOT has_function_privilege(connector_runtime.oid, fleet_halt.oid, 'EXECUTE')
-          AND NOT pg_has_role(current_user, outbox_owner.oid, 'USAGE')
+          AND __CALLER_OUTBOX_OWNER_CONSTRAINT__
           AND NOT EXISTS (
               SELECT 1
               FROM aclexplode(
@@ -520,6 +520,36 @@ _TRUSTED_FINALIZED_INTERFACE_SQL = """
     )
 """
 
+# The catalog/ACL proof is identical for both callers.  Its caller-specific
+# constraints remain explicit: normal schema migrations must stay non-super
+# and lack owner-role usage; the managed bootstrap superuser may verify its own
+# empty rollback/reapply.  PostgreSQL gives superusers implicit owner-role
+# usage, so the bootstrap form retains the exact ACL-shape checks while omitting
+# only that normal-caller membership assertion.  In either case, the surrounding
+# upgrade path still requires the exact trusted bootstrap installer before it
+# can create or repair this interface.
+_TRUSTED_FINALIZED_INTERFACE_SQL = _TRUSTED_FINALIZED_INTERFACE_SQL_TEMPLATE.replace(
+    "__CALLER_ROLE_CONSTRAINT__", "NOT migration_role.rolsuper"
+).replace(
+    "__CALLER_OUTBOX_OWNER_CONSTRAINT__",
+    "NOT pg_has_role(current_user, outbox_owner.oid, 'USAGE')",
+)
+_TRUSTED_BOOTSTRAP_FINALIZED_INTERFACE_SQL = _TRUSTED_FINALIZED_INTERFACE_SQL_TEMPLATE.replace(
+    "__CALLER_ROLE_CONSTRAINT__", "migration_role.rolsuper"
+).replace("__CALLER_OUTBOX_OWNER_CONSTRAINT__", "TRUE")
+
+
+def _has_trusted_finalized_interface(bind: sa.Connection) -> bool:
+    """Accept only the exact catalog proof for the active caller's trust mode."""
+    return any(
+        bool(bind.execute(sa.text(proof_sql)).scalar_one())
+        for proof_sql in (
+            _TRUSTED_FINALIZED_INTERFACE_SQL,
+            _TRUSTED_BOOTSTRAP_FINALIZED_INTERFACE_SQL,
+        )
+    )
+
+
 _TRUSTED_BOOTSTRAP_INSTALLER_SQL = """
     SELECT EXISTS (
         SELECT 1
@@ -674,7 +704,7 @@ def upgrade() -> None:
     """Install once, then verify/no-op for subsequent target-schema runs."""
     bind = op.get_bind()
     bind.execute(sa.text(_INSTALLER_SERIALIZATION_LOCK_SQL))
-    if bool(bind.execute(sa.text(_TRUSTED_FINALIZED_INTERFACE_SQL)).scalar_one()):
+    if _has_trusted_finalized_interface(bind):
         return
 
     if not bool(bind.execute(sa.text(_TRUSTED_BOOTSTRAP_INSTALLER_SQL)).scalar_one()):
@@ -691,7 +721,7 @@ def upgrade() -> None:
         )
 
     op.execute(f"SELECT {_ADMIN_INSTALLER}()")
-    if not bool(bind.execute(sa.text(_TRUSTED_FINALIZED_INTERFACE_SQL)).scalar_one()):
+    if not _has_trusted_finalized_interface(bind):
         op.execute(
             """
             DO $$

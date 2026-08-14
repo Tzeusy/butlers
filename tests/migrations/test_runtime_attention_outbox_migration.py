@@ -81,15 +81,28 @@ def _load_core_198_migration():
     return migration
 
 
-def _has_exact_finalized_runtime_attention_interface(db_url: str) -> bool:
-    """Evaluate the migration's authoritative finalized ACL/catalog predicate."""
-    migration = _load_core_198_migration()
+def _has_finalized_runtime_attention_interface(db_url: str, proof_sql: str) -> bool:
+    """Evaluate one caller-specific finalized ACL/catalog predicate."""
     engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
-            return bool(conn.execute(text(migration._TRUSTED_FINALIZED_INTERFACE_SQL)).scalar_one())
+            return bool(conn.execute(text(proof_sql)).scalar_one())
     finally:
         engine.dispose()
+
+
+def _has_exact_finalized_runtime_attention_interface(db_url: str) -> bool:
+    """Evaluate the ordinary migration-role finalized predicate."""
+    return _has_finalized_runtime_attention_interface(
+        db_url, _load_core_198_migration()._TRUSTED_FINALIZED_INTERFACE_SQL
+    )
+
+
+def _has_bootstrap_finalized_runtime_attention_interface(db_url: str) -> bool:
+    """Evaluate the managed-bootstrap finalized predicate."""
+    return _has_finalized_runtime_attention_interface(
+        db_url, _load_core_198_migration()._TRUSTED_BOOTSTRAP_FINALIZED_INTERFACE_SQL
+    )
 
 
 _CORE_HEAD_UPGRADE_PROCESS = """
@@ -1237,7 +1250,7 @@ def test_actual_init_db_rerun_repairs_function_only_acl_and_effective_roles(
 def test_empty_outbox_can_downgrade_and_reupgrade_through_bootstrap(
     postgres_container,
 ) -> None:
-    """An empty inert representation is the only reversible core_198 state."""
+    """A bootstrap round-trip preserves the later ordinary-role no-op proof."""
     db_name = migration_db_name()
     db_url = create_migration_db(postgres_container, db_name)
     bootstrap_url = migration_bootstrap_db_url(postgres_container, db_name)
@@ -1250,7 +1263,12 @@ def test_empty_outbox_can_downgrade_and_reupgrade_through_bootstrap(
             assert conn.execute(text(f"SELECT to_regclass('{_OUTBOX}') IS NULL")).scalar_one()
     finally:
         engine.dispose()
+    command.upgrade(config, "core@head")
+    assert _has_bootstrap_finalized_runtime_attention_interface(bootstrap_url)
+    # The regular migration role must still recognize the exact finalized
+    # interface without becoming a bootstrap fallback.
     _upgrade_to_core_head(db_url)
+    assert _has_exact_finalized_runtime_attention_interface(db_url)
     engine = create_engine(bootstrap_url)
     try:
         with engine.connect() as conn:
