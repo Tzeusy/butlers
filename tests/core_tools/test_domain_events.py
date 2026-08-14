@@ -819,7 +819,7 @@ class TestFanOutEvent:
             "_dispatch_receive_via_switchboard",
             AsyncMock(return_value=({"state": "task_conflict"}, None, False)),
         )
-        mark_conflict_mock = AsyncMock()
+        mark_conflict_mock = AsyncMock(return_value="conflict")
         monkeypatch.setattr(_domain_events, "mark_delivery_conflict", mark_conflict_mock)
 
         result = await fan_out_event(
@@ -833,6 +833,39 @@ class TestFanOutEvent:
 
         assert result["deliveries"] == [{"subscriber_butler": "finance", "status": "conflict"}]
         mark_conflict_mock.assert_awaited_once_with(pool, "d1")
+
+    async def test_task_conflict_reports_reobserved_terminal_status(self, monkeypatch):
+        """A stale task-conflict response must report the ledger's terminal outcome."""
+        pool = AsyncMock()
+        monkeypatch.setattr(
+            _domain_events, "get_active_subscribers", AsyncMock(return_value=["finance"])
+        )
+        monkeypatch.setattr(
+            _domain_events,
+            "claim_delivery",
+            AsyncMock(return_value={"id": "d-fenced-conflict", "status": "pending"}),
+        )
+        monkeypatch.setattr(
+            _domain_events,
+            "_dispatch_receive_via_switchboard",
+            AsyncMock(return_value=({"state": "task_conflict"}, None, False)),
+        )
+        mark_conflict_mock = AsyncMock(return_value="failed_permanent")
+        monkeypatch.setattr(_domain_events, "mark_delivery_conflict", mark_conflict_mock)
+
+        result = await fan_out_event(
+            pool,
+            None,
+            event_id="event-fenced-conflict",
+            event_type="travel.trip_booked",
+            source_butler="travel",
+            payload={},
+        )
+
+        assert result["deliveries"] == [
+            {"subscriber_butler": "finance", "status": "failed_permanent"}
+        ]
+        mark_conflict_mock.assert_awaited_once_with(pool, "d-fenced-conflict")
 
     async def test_successful_dispatch_marks_delivered(self, monkeypatch):
         pool = AsyncMock()

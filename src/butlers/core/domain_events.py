@@ -357,20 +357,33 @@ async def mark_delivery_delivered(
     return str(observed_status) if observed_status is not None else None
 
 
-async def mark_delivery_conflict(pool: asyncpg.Pool, delivery_id: uuid.UUID | str) -> None:
-    """Record that the subscriber found a conflicting deterministic-named task.
+async def mark_delivery_conflict(pool: asyncpg.Pool, delivery_id: uuid.UUID | str) -> str | None:
+    """Persist a task conflict and return the observed final delivery status.
 
-    Never downgrades an already-``delivered`` row (mirrors
-    ``delegation_ledger.record_wake_task_conflict``).
+    A task-conflict response can race a durable terminal failure. Do not let
+    that stale response overwrite either terminal status; if it loses the
+    fence, re-observe and return the row's actual status so callers do not
+    report a conflict that the ledger rejected. ``None`` means the row
+    disappeared before it could be re-observed.
     """
-    await pool.execute(
+    delivery_uuid = uuid.UUID(str(delivery_id))
+    resulting_status = await pool.fetchval(
         """
         UPDATE public.domain_event_deliveries
         SET status = 'conflict', updated_at = now()
-        WHERE id = $1 AND status != 'delivered'
+        WHERE id = $1 AND status NOT IN ('delivered', 'failed_permanent')
+        RETURNING status
         """,
-        uuid.UUID(str(delivery_id)),
+        delivery_uuid,
     )
+    if resulting_status is not None:
+        return str(resulting_status)
+
+    observed_status = await pool.fetchval(
+        "SELECT status FROM public.domain_event_deliveries WHERE id = $1",
+        delivery_uuid,
+    )
+    return str(observed_status) if observed_status is not None else None
 
 
 async def mark_delivery_failed(

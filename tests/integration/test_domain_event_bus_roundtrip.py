@@ -160,6 +160,57 @@ class _BlockingSuccessClient:
         )
 
 
+class _BlockingConflictClient:
+    """Holds a real task-conflict result until a terminal fence lands."""
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = 0
+
+    async def call_tool(self, tool_name: str, args: dict[str, Any]) -> Any:
+        from types import SimpleNamespace
+
+        assert tool_name == "route"
+        assert args["tool_name"] == "receive_domain_event"
+        self.calls += 1
+        self.started.set()
+        await self.release.wait()
+        call_args = args["args"]
+        result = await handle_receive_domain_event(
+            self._pool,
+            event_id=call_args["event_id"],
+            event_type=call_args["event_type"],
+            source_butler=call_args["source_butler"],
+            payload=call_args["payload"],
+            subscriber_butler=args["target_butler"],
+        )
+        assert result["state"] == "task_conflict"
+        return SimpleNamespace(is_error=False, data={"result": result})
+
+
+class _PermanentFailureClient:
+    """Returns a route-level terminal failure and counts actual dispatches."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def call_tool(self, tool_name: str, args: dict[str, Any]) -> Any:
+        from types import SimpleNamespace
+
+        assert tool_name == "route"
+        assert args["tool_name"] == "receive_domain_event"
+        self.calls += 1
+        return SimpleNamespace(
+            is_error=False,
+            data={
+                "error": "RuntimeError: permanent terminal fence",
+                "retryable": False,
+            },
+        )
+
+
 # ---------------------------------------------------------------------------
 # Migration shape + seed
 # ---------------------------------------------------------------------------
@@ -719,6 +770,103 @@ async def test_terminal_fence_wins_over_a_concurrent_route_success(pool: asyncpg
     }
     assert client.calls == 1
     assert await _delivery_status(pool, delivery_id) == ("failed_permanent", 1)
+
+
+async def test_terminal_fence_wins_over_a_concurrent_task_conflict_and_prevents_replay(
+    pool: asyncpg.Pool, monkeypatch
+) -> None:
+    """A stale task conflict cannot demote a terminal failure or re-enable fan-out."""
+    from butlers.core_tools import _domain_events
+
+    event_type = f"terminal_conflict_fence.{uuid.uuid4().hex}"
+    event_id, delivery_id = await _insert_delivery_row(
+        pool,
+        event_type=event_type,
+        source_butler="travel",
+        subscriber_butler="finance",
+        status="pending",
+        updated_at_ago=timedelta(seconds=0),
+    )
+    await pool.execute(
+        """
+        INSERT INTO scheduled_tasks (name, cron, dispatch_mode, prompt, source, enabled)
+        VALUES ($1, '* * * * *', 'prompt', 'an unrelated hand-crafted task', 'db', true)
+        """,
+        task_name_for(event_id, "finance"),
+    )
+
+    metric_calls: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        _domain_events,
+        "record_domain_event_delivery_failed_permanent",
+        lambda **kwargs: metric_calls.append(kwargs),
+    )
+    conflict_client = _BlockingConflictClient(pool)
+    permanent_client = _PermanentFailureClient()
+    conflict_fanout = asyncio.create_task(
+        fan_out_event(
+            pool,
+            conflict_client,
+            event_id=str(event_id),
+            event_type=event_type,
+            source_butler="travel",
+            payload={},
+        )
+    )
+
+    await asyncio.wait_for(conflict_client.started.wait(), timeout=5)
+    try:
+        terminal_result = await asyncio.wait_for(
+            fan_out_event(
+                pool,
+                permanent_client,
+                event_id=str(event_id),
+                event_type=event_type,
+                source_butler="travel",
+                payload={},
+            ),
+            timeout=5,
+        )
+    finally:
+        conflict_client.release.set()
+
+    assert terminal_result["deliveries"] == [
+        {
+            "subscriber_butler": "finance",
+            "status": "failed_permanent",
+            "error": "RuntimeError: permanent terminal fence",
+        }
+    ]
+    conflict_result = await asyncio.wait_for(conflict_fanout, timeout=5)
+
+    assert conflict_result == {
+        "event_id": str(event_id),
+        "deliveries": [{"subscriber_butler": "finance", "status": "failed_permanent"}],
+    }
+    assert conflict_client.calls == 1
+    assert await _delivery_status(pool, delivery_id) == ("failed_permanent", 1)
+
+    replay = await fan_out_event(
+        pool,
+        permanent_client,
+        event_id=str(event_id),
+        event_type=event_type,
+        source_butler="travel",
+        payload={},
+    )
+
+    assert replay == {
+        "event_id": str(event_id),
+        "deliveries": [{"subscriber_butler": "finance", "status": "failed_permanent"}],
+    }
+    assert permanent_client.calls == 1
+    assert metric_calls == [
+        {
+            "source_butler": "travel",
+            "destination_butler": "finance",
+            "reason": "non_retryable",
+        }
+    ]
 
 
 async def test_sweep_redrives_a_stale_pending_delivery(pool: asyncpg.Pool, monkeypatch) -> None:

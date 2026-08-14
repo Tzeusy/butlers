@@ -299,8 +299,9 @@ async def _dispatch_and_record_delivery(
 
     state = (data or {}).get("state")
     if state == "task_conflict":
+        resulting_status: str | None = None
         try:
-            await mark_delivery_conflict(pool, delivery["id"])
+            resulting_status = await mark_delivery_conflict(pool, delivery["id"])
         except Exception:
             logger.warning(
                 "fan_out_event: failed to record delivery conflict for event_id=%s "
@@ -309,7 +310,10 @@ async def _dispatch_and_record_delivery(
                 subscriber_butler,
                 exc_info=True,
             )
-        return {"subscriber_butler": subscriber_butler, "status": "conflict"}
+        return {
+            "subscriber_butler": subscriber_butler,
+            "status": resulting_status or "failed",
+        }
 
     task_id = (data or {}).get("task_id")
     task_name = (data or {}).get("task_name")
