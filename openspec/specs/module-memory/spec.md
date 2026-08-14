@@ -295,9 +295,9 @@ Scope: v1-mandatory
 
 #### Scenario: Individual action failures do not block others
 
-- **WHEN** storing one new fact fails with an exception
+- **WHEN** storing one valid new fact fails with an exception
 - **THEN** the error MUST be logged and added to the `errors` list
-- **AND** subsequent actions MUST still be attempted
+- **AND** subsequent valid actions MUST still be attempted
 
 #### Scenario: Memory events include tenant_id
 

@@ -70,6 +70,22 @@ def test_completed_provenance_changes_are_archived_with_canonical_test_mappings(
             assert text in _read(destination)
 
 
+def test_req_module_memory_006_preserves_pr_3669_action_isolation_contract() -> None:
+    """Canonical REQ-006 keeps valid work eligible after one action fails."""
+    module_memory = _read(_SPECS / "module-memory" / "spec.md")
+    scenario = re.search(
+        r"#### Scenario: Individual action failures do not block others\n(?P<body>.*?)(?=\n####|\Z)",
+        module_memory,
+        flags=re.DOTALL,
+    )
+
+    assert scenario is not None
+    action_isolation = scenario.group("body")
+    assert "- **WHEN** storing one valid new fact fails with an exception" in action_isolation
+    assert "- **THEN** the error MUST be logged and added to the `errors` list" in action_isolation
+    assert "- **AND** subsequent valid actions MUST still be attempted" in action_isolation
+
+
 def test_b5_b6_have_narrow_observed_authority_without_accepting_carrier_work() -> None:
     """#3728 is canonicalized alone; B1-B4 and Tracks C-E stay open."""
     module_memory = _read(_SPECS / "module-memory" / "spec.md")
@@ -108,7 +124,13 @@ def test_b5_b6_have_narrow_observed_authority_without_accepting_carrier_work() -
     assert "PR #3728" in transfer
     assert "not acceptance of B1-B4 or Tracks C-E" in transfer
     assert "Consolidation narrative edges use an exact local allowlist" not in carrier_delta
-    for unfinished_task in (
+    unchecked_task_ids = set(
+        re.findall(r"^- \[ \] ([A-Z]\d+)\s+—", carrier_tasks, flags=re.MULTILINE)
+    )
+    assert unchecked_task_ids == {
+        "A1",
+        "A2",
+        "A3",
         "B1",
         "B2",
         "B3",
@@ -123,5 +145,4 @@ def test_b5_b6_have_narrow_observed_authority_without_accepting_carrier_work() -
         "E1",
         "E2",
         "E3",
-    ):
-        assert f"- [ ] {unfinished_task}" in carrier_tasks
+    }
