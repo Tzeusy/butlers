@@ -611,6 +611,66 @@ class TestFanOutEvent:
         observed_status_mock.assert_awaited_once_with(pool, "d-fenced-failure")
         metric_record_mock.assert_not_called()
 
+    @pytest.mark.parametrize("observed_terminal_status", ["delivered", "failed_permanent"])
+    async def test_stale_incomplete_success_reports_observed_terminal_status(
+        self, monkeypatch, observed_terminal_status
+    ):
+        """A fenced incomplete target result must report the durable terminal row."""
+        pool = AsyncMock()
+        monkeypatch.setattr(
+            _domain_events, "get_active_subscribers", AsyncMock(return_value=["finance"])
+        )
+        monkeypatch.setattr(
+            _domain_events,
+            "claim_delivery",
+            AsyncMock(return_value={"id": "d-fenced-incomplete", "status": "pending"}),
+        )
+        monkeypatch.setattr(
+            _domain_events,
+            "_dispatch_receive_via_switchboard",
+            AsyncMock(return_value=({"state": "task_created"}, None, False)),
+        )
+        mark_failed_mock = AsyncMock(return_value=None)
+        observed_status_mock = AsyncMock(return_value=observed_terminal_status)
+        metric_record_mock = Mock()
+        monkeypatch.setattr(_domain_events, "mark_delivery_failed", mark_failed_mock)
+        monkeypatch.setattr(
+            _domain_events,
+            "get_delivery_status",
+            observed_status_mock,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            _domain_events,
+            "record_domain_event_delivery_failed_permanent",
+            metric_record_mock,
+            raising=False,
+        )
+
+        result = await fan_out_event(
+            pool,
+            None,
+            event_id="event-fenced-incomplete",
+            event_type="travel.trip_booked",
+            source_butler="travel",
+            payload={},
+        )
+
+        assert result["deliveries"][0]["subscriber_butler"] == "finance"
+        assert result["deliveries"][0]["status"] == observed_terminal_status
+        assert result["deliveries"][0]["error"].startswith(
+            "receive_domain_event on 'finance' returned an incomplete success payload"
+        )
+        mark_failed_mock.assert_awaited_once_with(
+            pool,
+            "d-fenced-incomplete",
+            result["deliveries"][0]["error"],
+            retryable=False,
+            max_attempts=_domain_events._MAX_DELIVERY_RETRY_ATTEMPTS,
+        )
+        observed_status_mock.assert_awaited_once_with(pool, "d-fenced-incomplete")
+        metric_record_mock.assert_not_called()
+
     async def test_permanent_route_error_marks_delivery_failed_permanent(self, monkeypatch):
         """A route error classified permanent (retryable=False) must land on the
         terminal `failed_permanent` status, not the retryable `failed` -- and
@@ -1394,6 +1454,49 @@ class TestRunDomainEventReconciliationSweep:
             destination_butler="health",
             reason="attempts_exhausted",
         )
+
+    async def test_reobserved_terminal_failure_is_not_counted_or_logged_as_new(
+        self, monkeypatch, caplog
+    ):
+        """Sweep accounting follows the write-won bit, not an observed terminal status."""
+        pool = _SweepLockPool()
+        row = {
+            "id": "d-fenced",
+            "event_id": "event-fenced",
+            "subscriber_butler": "health",
+            "status": "failed",
+            "attempt_count": _domain_events._MAX_DELIVERY_RETRY_ATTEMPTS - 1,
+            "error_message": "TimeoutError: stale route failure",
+            "event_type": "travel.trip_active",
+            "source_butler": "travel",
+            "payload": {},
+        }
+        monkeypatch.setattr(
+            _domain_events, "select_stale_pending_deliveries", AsyncMock(return_value=[])
+        )
+        monkeypatch.setattr(
+            _domain_events, "select_retryable_failed_deliveries", AsyncMock(return_value=[row])
+        )
+        monkeypatch.setattr(_domain_events, "claim_delivery", AsyncMock(return_value=dict(row)))
+        monkeypatch.setattr(
+            _domain_events,
+            "_dispatch_and_record_delivery",
+            AsyncMock(
+                return_value={
+                    "subscriber_butler": "health",
+                    "status": "failed_permanent",
+                    "error": "TimeoutError: stale route failure",
+                    "_newly_permanently_failed": False,
+                }
+            ),
+        )
+
+        with caplog.at_level("ERROR"):
+            result = await run_domain_event_reconciliation_sweep(pool)
+
+        assert result["failed_retried"] == 1
+        assert result["newly_permanently_failed"] == 0
+        assert not any("permanently failed" in message for message in caplog.messages)
 
     async def test_active_sweep_is_observably_skipped(self, monkeypatch):
         pool = _SweepLockPool(lock_acquired=False)

@@ -244,10 +244,12 @@ exception text, and timestamps.
 The Switchboard dashboard displays it with a reset-safe
 `increase(...)` query. The provisioned warning rule evaluates a new transition
 over 15 minutes for 5 minutes, but it is explicitly paused and ships no contact
-point or notification policy. Its no-data state remains `NoData`, never a
-healthy zero, so a missing telemetry series stays diagnosable. Enabling
-notification delivery, changing a route, or exercising an alert requires a
-separate owner-approved operational change.
+point or notification policy. While `isPaused=true`, Grafana performs no
+evaluation and creates no alert instances, so this rule cannot diagnose a
+missing series or evaluation error. Its configured `NoData` and `Error`
+policies take effect only after an owner explicitly enables evaluation.
+Enabling evaluation or notification delivery, changing a route, or exercising
+an alert requires a separate owner-approved operational change.
 
 Its JSON definition lives in `observability/grafana-alerting/`, mounted only
 at Grafana's alerting-provisioning path. It must remain outside the recursive

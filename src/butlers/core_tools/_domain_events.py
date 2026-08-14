@@ -246,7 +246,10 @@ async def _dispatch_and_record_delivery(
     failure-classification contract.
 
     Returns ``{"subscriber_butler": ..., "status": ...}`` (plus ``"error"``/
-    ``"retryable"`` on failure) -- one outcome entry, never raises.
+    ``"retryable"`` on failure) -- one outcome entry, never raises.  A newly
+    won ``failed_permanent`` transition also carries the private
+    ``"_newly_permanently_failed"`` bit for the reconciliation sweep; the
+    public fan-out result removes that bookkeeping before returning it.
     """
     if delivery["status"] in {"delivered", "failed_permanent"}:
         return {"subscriber_butler": subscriber_butler, "status": delivery["status"]}
@@ -284,7 +287,8 @@ async def _dispatch_and_record_delivery(
                 subscriber_butler,
                 exc_info=True,
             )
-        if transitioned_status == "failed_permanent":
+        newly_permanently_failed = transitioned_status == "failed_permanent"
+        if newly_permanently_failed:
             _record_failed_permanent_delivery_metric(
                 source_butler=source_butler,
                 destination_butler=subscriber_butler,
@@ -310,6 +314,8 @@ async def _dispatch_and_record_delivery(
         }
         if retryable and transitioned_status == "failed":
             outcome["retryable"] = True
+        if newly_permanently_failed:
+            outcome["_newly_permanently_failed"] = True
         return outcome
 
     state = (data or {}).get("state")
@@ -340,15 +346,17 @@ async def _dispatch_and_record_delivery(
             f"receive_domain_event on {subscriber_butler!r} returned an incomplete "
             f"success payload: {data!r}"
         )
-        resulting_status = None
+        transitioned_status: str | None = None
+        failure_write_completed = False
         try:
-            resulting_status = await mark_delivery_failed(
+            transitioned_status = await mark_delivery_failed(
                 pool,
                 delivery["id"],
                 error_text,
                 retryable=False,
                 max_attempts=max_attempts,
             )
+            failure_write_completed = True
         except Exception:
             logger.warning(
                 "fan_out_event: failed to record incomplete-success failure for "
@@ -357,17 +365,33 @@ async def _dispatch_and_record_delivery(
                 subscriber_butler,
                 exc_info=True,
             )
-        if resulting_status == "failed_permanent":
+        newly_permanently_failed = transitioned_status == "failed_permanent"
+        if newly_permanently_failed:
             _record_failed_permanent_delivery_metric(
                 source_butler=source_butler,
                 destination_butler=subscriber_butler,
                 retryable=False,
             )
-        return {
+        observed_status = transitioned_status
+        if failure_write_completed and observed_status is None:
+            try:
+                observed_status = await get_delivery_status(pool, delivery["id"])
+            except Exception:
+                logger.warning(
+                    "fan_out_event: failed to re-observe terminal delivery state for "
+                    "incomplete-success event_id=%s subscriber_butler=%s",
+                    event_id,
+                    subscriber_butler,
+                    exc_info=True,
+                )
+        outcome = {
             "subscriber_butler": subscriber_butler,
-            "status": resulting_status or "failed",
+            "status": observed_status or "failed",
             "error": error_text,
         }
+        if newly_permanently_failed:
+            outcome["_newly_permanently_failed"] = True
+        return outcome
 
     resulting_status: str | None = None
     try:
@@ -431,6 +455,7 @@ async def fan_out_event(
             source_butler=source_butler,
             payload=payload,
         )
+        outcome.pop("_newly_permanently_failed", None)
         outcomes.append(outcome)
 
     return {"event_id": event_id, "deliveries": outcomes}
@@ -582,7 +607,7 @@ async def _run_domain_event_reconciliation_sweep_locked(
             max_attempts=max_attempts,
         )
         failed_retried += 1
-        if outcome["status"] == "failed_permanent":
+        if outcome.pop("_newly_permanently_failed", False):
             newly_permanent += 1
             logger.error(
                 "domain-event delivery permanently failed after retries: event_id=%s "

@@ -20,7 +20,7 @@ _PROMETHEUS_METRIC = "butlers_domain_event_delivery_failed_permanent_deliveries_
 
 
 def test_failed_permanent_delivery_panel_and_paused_warning_rule_are_reset_safe() -> None:
-    """The panel and disabled rule share one reset-safe, low-cardinality query."""
+    """The paused rule preserves its diagnostic policies for explicit later enablement."""
     dashboard = json.loads(_DASHBOARD_PATH.read_text())
     panels = dashboard["panels"]
     panel = next(
@@ -44,6 +44,9 @@ def test_failed_permanent_delivery_panel_and_paused_warning_rule_are_reset_safe(
     assert rule["for"] == "5m"
     assert rule["noDataState"] == "NoData"
     assert rule["execErrState"] == "Error"
+    assert "only after an owner explicitly enables evaluation" in rule["annotations"]["no_data"]
+    assert "only after an owner explicitly enables evaluation" in rule["annotations"]["exec_error"]
+    assert "no alert instances" in rule["annotations"]["disabled"]
     assert rule["labels"] == {"severity": "warning"}
     assert rule["dashboardUid"] == dashboard["uid"]
     assert rule["panelId"] == panel["id"]
@@ -57,7 +60,7 @@ def test_failed_permanent_delivery_panel_and_paused_warning_rule_are_reset_safe(
     assert "destination_butler" in rule["annotations"]["deduplication"]
     assert "reason" in rule["annotations"]["deduplication"]
     assert "reset" in rule["annotations"]
-    assert "never coerced to a healthy zero" in rule["annotations"]["no_data"]
+    assert "rather than treating it as healthy" in rule["annotations"]["no_data"]
     assert "contactPoints" not in provisioned
     assert "policies" not in provisioned
 

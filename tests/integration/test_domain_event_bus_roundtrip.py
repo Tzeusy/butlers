@@ -27,6 +27,7 @@ for those):
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 import uuid
 from datetime import timedelta
@@ -41,6 +42,7 @@ from butlers.core.domain_events import (
     get_active_subscribers,
     list_recent_deliveries,
     list_subscriptions,
+    mark_delivery_delivered,
     mark_delivery_failed,
     upsert_subscription,
 )
@@ -119,6 +121,25 @@ class _IncompleteSuccessClient:
         assert tool_name == "route"
         assert args["tool_name"] == "receive_domain_event"
         return SimpleNamespace(is_error=False, data={"result": {"status": "ok"}})
+
+
+class _BlockingIncompleteSuccessClient:
+    """Holds an incomplete target success until a terminal fence lands."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = 0
+
+    async def call_tool(self, tool_name: str, args: dict[str, Any]) -> Any:
+        from types import SimpleNamespace
+
+        assert tool_name == "route"
+        assert args["tool_name"] == "receive_domain_event"
+        self.calls += 1
+        self.started.set()
+        await self.release.wait()
+        return SimpleNamespace(is_error=False, data={"result": {"state": "task_created"}})
 
 
 class _UnexpectedRouteClient:
@@ -797,6 +818,64 @@ async def test_terminal_fence_wins_over_a_concurrent_route_success(pool: asyncpg
     assert await _delivery_status(pool, delivery_id) == ("failed_permanent", 1)
 
 
+@pytest.mark.parametrize("winning_status", ["delivered", "failed_permanent"])
+async def test_terminal_fence_wins_over_a_concurrent_incomplete_success(
+    pool: asyncpg.Pool, winning_status: str
+) -> None:
+    """An incomplete target result reports the terminal row that won the real-PG race."""
+    event_type = f"terminal_incomplete_fence.{uuid.uuid4().hex}"
+    event_id, delivery_id = await _insert_delivery_row(
+        pool,
+        event_type=event_type,
+        source_butler="travel",
+        subscriber_butler="finance",
+        status="pending",
+        updated_at_ago=timedelta(seconds=0),
+    )
+    incomplete_client = _BlockingIncompleteSuccessClient()
+    stale_fanout = asyncio.create_task(
+        fan_out_event(
+            pool,
+            incomplete_client,
+            event_id=str(event_id),
+            event_type=event_type,
+            source_butler="travel",
+            payload={},
+        )
+    )
+
+    await asyncio.wait_for(incomplete_client.started.wait(), timeout=5)
+    try:
+        if winning_status == "delivered":
+            winner = await mark_delivery_delivered(
+                pool,
+                delivery_id,
+                task_id=str(uuid.uuid4()),
+                task_name="domain-event-incomplete-success-race",
+            )
+        else:
+            winner = await mark_delivery_failed(
+                pool,
+                delivery_id,
+                "RuntimeError: permanent terminal fence",
+                retryable=False,
+                max_attempts=5,
+            )
+        assert winner == winning_status
+    finally:
+        incomplete_client.release.set()
+
+    stale_result = await asyncio.wait_for(stale_fanout, timeout=5)
+    assert stale_result["deliveries"][0]["subscriber_butler"] == "finance"
+    assert stale_result["deliveries"][0]["status"] == winning_status
+    assert stale_result["deliveries"][0]["error"].startswith(
+        "receive_domain_event on 'finance' returned an incomplete success payload"
+    )
+    assert incomplete_client.calls == 1
+    expected_attempt_count = 0 if winning_status == "delivered" else 1
+    assert await _delivery_status(pool, delivery_id) == (winning_status, expected_attempt_count)
+
+
 async def test_terminal_fence_wins_over_a_concurrent_task_conflict_and_prevents_replay(
     pool: asyncpg.Pool, monkeypatch
 ) -> None:
@@ -1081,6 +1160,103 @@ async def test_sweep_retries_transient_failure_up_to_bound_then_permanent(
     assert result["failed_retry_candidates"] == 0
     _, final_attempt_count = await _delivery_status(pool, delivery_id)
     assert final_attempt_count == max_attempts
+
+
+async def test_sweep_does_not_recount_a_concurrently_won_terminal_transition(
+    pool: asyncpg.Pool, monkeypatch, caplog
+) -> None:
+    """A sweep loser reports the durable terminal row without a duplicate terminal signal."""
+    from butlers.core_tools import _domain_events
+
+    route_started = asyncio.Event()
+    release_route = asyncio.Event()
+    route_calls = 0
+
+    async def _blocking_transient_route(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        nonlocal route_calls
+        route_calls += 1
+        route_started.set()
+        await release_route.wait()
+        return {"error": "TimeoutError: stale retryable route failure", "retryable": True}
+
+    _patch_switchboard_route(monkeypatch, pool, route_fn=_blocking_transient_route)
+    event_type = f"sweep.fenced_terminal_signal.{uuid.uuid4().hex}"
+    event_id, delivery_id = await _insert_delivery_row(
+        pool,
+        event_type=event_type,
+        source_butler="travel",
+        subscriber_butler="finance",
+        status="failed",
+        updated_at_ago=timedelta(days=1),
+        attempt_count=4,
+    )
+    metric_calls: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        _domain_events,
+        "record_domain_event_delivery_failed_permanent",
+        lambda **kwargs: metric_calls.append(kwargs),
+    )
+    permanent_client = _PermanentFailureClient()
+
+    with caplog.at_level(logging.ERROR):
+        sweep = asyncio.create_task(
+            run_domain_event_reconciliation_sweep(
+                pool,
+                failed_retry_backoff=timedelta(seconds=0),
+                max_attempts=5,
+                limit=1,
+            )
+        )
+        await asyncio.wait_for(route_started.wait(), timeout=5)
+        try:
+            terminal_result = await asyncio.wait_for(
+                fan_out_event(
+                    pool,
+                    permanent_client,
+                    event_id=str(event_id),
+                    event_type=event_type,
+                    source_butler="travel",
+                    payload={},
+                ),
+                timeout=5,
+            )
+        finally:
+            release_route.set()
+        sweep_result = await asyncio.wait_for(sweep, timeout=5)
+
+    assert terminal_result["deliveries"][0]["status"] == "failed_permanent"
+    assert sweep_result["failed_retry_candidates"] == 1
+    assert sweep_result["failed_retried"] == 1
+    assert sweep_result["newly_permanently_failed"] == 0
+    assert not any(
+        "delivery permanently failed after retries" in message for message in caplog.messages
+    )
+    assert route_calls == 1
+    assert permanent_client.calls == 1
+    assert await _delivery_status(pool, delivery_id) == ("failed_permanent", 5)
+    assert metric_calls == [
+        {
+            "source_butler": "travel",
+            "destination_butler": "finance",
+            "reason": "non_retryable",
+        }
+    ]
+
+    replay = await run_domain_event_reconciliation_sweep(
+        pool,
+        failed_retry_backoff=timedelta(seconds=0),
+        max_attempts=5,
+        limit=1,
+    )
+    assert replay["failed_retry_candidates"] == 0
+    assert replay["newly_permanently_failed"] == 0
+    assert metric_calls == [
+        {
+            "source_butler": "travel",
+            "destination_butler": "finance",
+            "reason": "non_retryable",
+        }
+    ]
 
 
 async def test_overlapping_sweeps_do_not_double_progress_a_failed_delivery(
