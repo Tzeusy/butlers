@@ -41,6 +41,7 @@ from butlers.core.domain_events import (
     get_active_subscribers,
     list_recent_deliveries,
     list_subscriptions,
+    mark_delivery_failed,
     upsert_subscription,
 )
 from butlers.core_tools._domain_events import (
@@ -118,6 +119,45 @@ class _IncompleteSuccessClient:
         assert tool_name == "route"
         assert args["tool_name"] == "receive_domain_event"
         return SimpleNamespace(is_error=False, data={"result": {"status": "ok"}})
+
+
+class _UnexpectedRouteClient:
+    """Records any accidental dispatch of a terminal delivery."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def call_tool(self, tool_name: str, args: dict[str, Any]) -> Any:
+        self.calls += 1
+        raise AssertionError(f"terminal delivery was dispatched via {tool_name!r}: {args!r}")
+
+
+class _BlockingSuccessClient:
+    """Holds a valid target success until a concurrent terminal fence lands."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = 0
+        self.task_id = str(uuid.uuid4())
+
+    async def call_tool(self, tool_name: str, args: dict[str, Any]) -> Any:
+        from types import SimpleNamespace
+
+        assert tool_name == "route"
+        self.calls += 1
+        self.started.set()
+        await self.release.wait()
+        return SimpleNamespace(
+            is_error=False,
+            data={
+                "result": {
+                    "state": "task_created",
+                    "task_id": self.task_id,
+                    "task_name": "domain-event-terminal-fence-race",
+                }
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -593,6 +633,92 @@ async def _delivery_status(pool: asyncpg.Pool, delivery_id: Any) -> tuple[str, i
         delivery_id,
     )
     return row["status"], row["attempt_count"]
+
+
+async def test_fanout_replay_does_not_dispatch_a_real_failed_permanent_delivery(
+    pool: asyncpg.Pool,
+) -> None:
+    """A durable terminal ledger row is re-observed, never sent to route() again."""
+    event_type = f"terminal_replay.{uuid.uuid4().hex}"
+    event_id, delivery_id = await _insert_delivery_row(
+        pool,
+        event_type=event_type,
+        source_butler="travel",
+        subscriber_butler="finance",
+        status="pending",
+        updated_at_ago=timedelta(seconds=0),
+    )
+    transition = await mark_delivery_failed(
+        pool,
+        delivery_id,
+        "RuntimeError: subscriber intentionally terminal",
+        retryable=False,
+        max_attempts=5,
+    )
+    assert transition == "failed_permanent"
+
+    client = _UnexpectedRouteClient()
+    result = await fan_out_event(
+        pool,
+        client,
+        event_id=str(event_id),
+        event_type=event_type,
+        source_butler="travel",
+        payload={},
+    )
+
+    assert result == {
+        "event_id": str(event_id),
+        "deliveries": [{"subscriber_butler": "finance", "status": "failed_permanent"}],
+    }
+    assert client.calls == 0
+    assert await _delivery_status(pool, delivery_id) == ("failed_permanent", 1)
+
+
+async def test_terminal_fence_wins_over_a_concurrent_route_success(pool: asyncpg.Pool) -> None:
+    """A stale route success cannot overwrite or misreport a permanent terminal state."""
+    event_type = f"terminal_fence.{uuid.uuid4().hex}"
+    event_id, delivery_id = await _insert_delivery_row(
+        pool,
+        event_type=event_type,
+        source_butler="travel",
+        subscriber_butler="finance",
+        status="pending",
+        updated_at_ago=timedelta(seconds=0),
+    )
+    client = _BlockingSuccessClient()
+    fanout = asyncio.create_task(
+        fan_out_event(
+            pool,
+            client,
+            event_id=str(event_id),
+            event_type=event_type,
+            source_butler="travel",
+            payload={},
+        )
+    )
+
+    await asyncio.wait_for(client.started.wait(), timeout=5)
+    try:
+        transition = await mark_delivery_failed(
+            pool,
+            delivery_id,
+            "RuntimeError: permanent terminal fence",
+            retryable=False,
+            max_attempts=5,
+        )
+        assert transition == "failed_permanent"
+    finally:
+        client.release.set()
+
+    result = await asyncio.wait_for(fanout, timeout=5)
+
+    assert result == {
+        "event_id": str(event_id),
+        "deliveries": [{"subscriber_butler": "finance", "status": "failed_permanent"}],
+    }
+    assert client.calls == 1
+    assert await _delivery_status(pool, delivery_id) == ("failed_permanent", 1)
 
 
 async def test_sweep_redrives_a_stale_pending_delivery(pool: asyncpg.Pool, monkeypatch) -> None:

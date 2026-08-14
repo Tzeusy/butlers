@@ -463,6 +463,41 @@ class TestFanOutEvent:
         }
         dispatch_mock.assert_not_awaited()
 
+    async def test_failed_permanent_replay_is_not_dispatched_again(self, monkeypatch):
+        """A terminal permanent failure is observed, never re-dispatched."""
+        pool = AsyncMock()
+        monkeypatch.setattr(
+            _domain_events, "get_active_subscribers", AsyncMock(return_value=["finance"])
+        )
+        monkeypatch.setattr(
+            _domain_events,
+            "claim_delivery",
+            AsyncMock(return_value={"id": "d-terminal", "status": "failed_permanent"}),
+        )
+        dispatch_mock = AsyncMock(
+            return_value=(
+                {"state": "task_created", "task_id": str(uuid.uuid4()), "task_name": "ignored"},
+                None,
+                False,
+            )
+        )
+        monkeypatch.setattr(_domain_events, "_dispatch_receive_via_switchboard", dispatch_mock)
+
+        result = await fan_out_event(
+            pool,
+            None,
+            event_id="event-terminal",
+            event_type="travel.trip_booked",
+            source_butler="travel",
+            payload={},
+        )
+
+        assert result == {
+            "event_id": "event-terminal",
+            "deliveries": [{"subscriber_butler": "finance", "status": "failed_permanent"}],
+        }
+        dispatch_mock.assert_not_awaited()
+
     async def test_dispatch_failure_marks_delivery_failed(self, monkeypatch):
         pool = AsyncMock()
         monkeypatch.setattr(
@@ -821,7 +856,7 @@ class TestFanOutEvent:
                 )
             ),
         )
-        mark_delivered_mock = AsyncMock()
+        mark_delivered_mock = AsyncMock(return_value="delivered")
         monkeypatch.setattr(_domain_events, "mark_delivery_delivered", mark_delivered_mock)
 
         result = await fan_out_event(
@@ -836,6 +871,48 @@ class TestFanOutEvent:
         assert result["deliveries"] == [{"subscriber_butler": "finance", "status": "delivered"}]
         mark_delivered_mock.assert_awaited_once_with(
             pool, "d1", task_id=task_id, task_name="domain-event-x"
+        )
+
+    async def test_successful_dispatch_reports_reobserved_terminal_status(self, monkeypatch):
+        """A stale success must not claim delivery after a terminal fence wins."""
+        pool = AsyncMock()
+        monkeypatch.setattr(
+            _domain_events, "get_active_subscribers", AsyncMock(return_value=["finance"])
+        )
+        monkeypatch.setattr(
+            _domain_events,
+            "claim_delivery",
+            AsyncMock(return_value={"id": "d-fenced", "status": "pending"}),
+        )
+        task_id = str(uuid.uuid4())
+        monkeypatch.setattr(
+            _domain_events,
+            "_dispatch_receive_via_switchboard",
+            AsyncMock(
+                return_value=(
+                    {"state": "task_created", "task_id": task_id, "task_name": "domain-event-race"},
+                    None,
+                    False,
+                )
+            ),
+        )
+        mark_delivered_mock = AsyncMock(return_value="failed_permanent")
+        monkeypatch.setattr(_domain_events, "mark_delivery_delivered", mark_delivered_mock)
+
+        result = await fan_out_event(
+            pool,
+            None,
+            event_id="event-fenced",
+            event_type="travel.trip_booked",
+            source_butler="travel",
+            payload={},
+        )
+
+        assert result["deliveries"] == [
+            {"subscriber_butler": "finance", "status": "failed_permanent"}
+        ]
+        mark_delivered_mock.assert_awaited_once_with(
+            pool, "d-fenced", task_id=task_id, task_name="domain-event-race"
         )
 
 

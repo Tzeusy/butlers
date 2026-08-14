@@ -249,6 +249,10 @@ healthy zero, so a missing telemetry series stays diagnosable. Enabling
 notification delivery, changing a route, or exercising an alert requires a
 separate owner-approved operational change.
 
+Its JSON definition lives in `observability/grafana-alerting/`, mounted only
+at Grafana's alerting-provisioning path. It must remain outside the recursive
+dashboard source so Grafana never mistakes the alert rule for a dashboard.
+
 ## Related Pages
 
 - [Deployment Posture](deployment-posture.md) -- Dev vs hardened posture, Grafana anon-viewer gating

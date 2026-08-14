@@ -247,8 +247,8 @@ async def _dispatch_and_record_delivery(
     Returns ``{"subscriber_butler": ..., "status": ...}`` (plus ``"error"``/
     ``"retryable"`` on failure) -- one outcome entry, never raises.
     """
-    if delivery["status"] == "delivered":
-        return {"subscriber_butler": subscriber_butler, "status": "delivered"}
+    if delivery["status"] in {"delivered", "failed_permanent"}:
+        return {"subscriber_butler": subscriber_butler, "status": delivery["status"]}
 
     data, route_error, retryable = await _dispatch_receive_via_switchboard(
         switchboard_client,
@@ -350,8 +350,11 @@ async def _dispatch_and_record_delivery(
             "error": error_text,
         }
 
+    resulting_status: str | None = None
     try:
-        await mark_delivery_delivered(pool, delivery["id"], task_id=task_id, task_name=task_name)
+        resulting_status = await mark_delivery_delivered(
+            pool, delivery["id"], task_id=task_id, task_name=task_name
+        )
     except Exception:
         logger.warning(
             "fan_out_event: failed to record delivery success for event_id=%s subscriber_butler=%s",
@@ -359,7 +362,7 @@ async def _dispatch_and_record_delivery(
             subscriber_butler,
             exc_info=True,
         )
-    return {"subscriber_butler": subscriber_butler, "status": "delivered"}
+    return {"subscriber_butler": subscriber_butler, "status": resulting_status or "failed"}
 
 
 async def fan_out_event(
