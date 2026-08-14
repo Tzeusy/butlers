@@ -319,6 +319,15 @@ async def claim_delivery(
     return _row_to_dict(existing)
 
 
+async def get_delivery_status(pool: asyncpg.Pool, delivery_id: uuid.UUID | str) -> str | None:
+    """Return the durable status for one delivery, or ``None`` if it no longer exists."""
+    observed_status = await pool.fetchval(
+        "SELECT status FROM public.domain_event_deliveries WHERE id = $1",
+        uuid.UUID(str(delivery_id)),
+    )
+    return str(observed_status) if observed_status is not None else None
+
+
 async def mark_delivery_delivered(
     pool: asyncpg.Pool,
     delivery_id: uuid.UUID | str,

@@ -211,6 +211,31 @@ class _PermanentFailureClient:
         )
 
 
+class _BlockingRetryableFailureClient:
+    """Holds a retryable route failure until a terminal fence lands."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = 0
+
+    async def call_tool(self, tool_name: str, args: dict[str, Any]) -> Any:
+        from types import SimpleNamespace
+
+        assert tool_name == "route"
+        assert args["tool_name"] == "receive_domain_event"
+        self.calls += 1
+        self.started.set()
+        await self.release.wait()
+        return SimpleNamespace(
+            is_error=False,
+            data={
+                "error": "TimeoutError: stale retryable route failure",
+                "retryable": True,
+            },
+        )
+
+
 # ---------------------------------------------------------------------------
 # Migration shape + seed
 # ---------------------------------------------------------------------------
@@ -860,6 +885,87 @@ async def test_terminal_fence_wins_over_a_concurrent_task_conflict_and_prevents_
         "deliveries": [{"subscriber_butler": "finance", "status": "failed_permanent"}],
     }
     assert permanent_client.calls == 1
+    assert metric_calls == [
+        {
+            "source_butler": "travel",
+            "destination_butler": "finance",
+            "reason": "non_retryable",
+        }
+    ]
+
+
+async def test_terminal_fence_wins_over_a_concurrent_stale_route_failure(
+    pool: asyncpg.Pool, monkeypatch
+) -> None:
+    """A stale retryable route failure re-observes the terminal row without a second metric."""
+    from butlers.core_tools import _domain_events
+
+    event_type = f"terminal_failure_fence.{uuid.uuid4().hex}"
+    event_id, delivery_id = await _insert_delivery_row(
+        pool,
+        event_type=event_type,
+        source_butler="travel",
+        subscriber_butler="finance",
+        status="pending",
+        updated_at_ago=timedelta(seconds=0),
+    )
+
+    metric_calls: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        _domain_events,
+        "record_domain_event_delivery_failed_permanent",
+        lambda **kwargs: metric_calls.append(kwargs),
+    )
+    stale_failure_client = _BlockingRetryableFailureClient()
+    permanent_client = _PermanentFailureClient()
+    stale_fanout = asyncio.create_task(
+        fan_out_event(
+            pool,
+            stale_failure_client,
+            event_id=str(event_id),
+            event_type=event_type,
+            source_butler="travel",
+            payload={},
+        )
+    )
+
+    await asyncio.wait_for(stale_failure_client.started.wait(), timeout=5)
+    try:
+        terminal_result = await asyncio.wait_for(
+            fan_out_event(
+                pool,
+                permanent_client,
+                event_id=str(event_id),
+                event_type=event_type,
+                source_butler="travel",
+                payload={},
+            ),
+            timeout=5,
+        )
+    finally:
+        stale_failure_client.release.set()
+
+    assert terminal_result["deliveries"] == [
+        {
+            "subscriber_butler": "finance",
+            "status": "failed_permanent",
+            "error": "RuntimeError: permanent terminal fence",
+        }
+    ]
+    stale_result = await asyncio.wait_for(stale_fanout, timeout=5)
+    assert stale_result == {
+        "event_id": str(event_id),
+        "deliveries": [
+            {
+                "subscriber_butler": "finance",
+                "status": "failed_permanent",
+                "error": "TimeoutError: stale retryable route failure",
+            }
+        ],
+    }
+    assert stale_failure_client.calls == 1
+    assert permanent_client.calls == 1
+    assert await _delivery_status(pool, delivery_id) == ("failed_permanent", 1)
     assert metric_calls == [
         {
             "source_butler": "travel",

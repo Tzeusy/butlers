@@ -62,6 +62,7 @@ from butlers.core.domain_event_wake import handle_receive_domain_event
 from butlers.core.domain_events import (
     claim_delivery,
     get_active_subscribers,
+    get_delivery_status,
     is_valid_event_type,
     list_subscriptions,
     mark_delivery_conflict,
@@ -264,15 +265,17 @@ async def _dispatch_and_record_delivery(
     )
 
     if route_error is not None:
-        resulting_status: str | None = None
+        transitioned_status: str | None = None
+        failure_write_completed = False
         try:
-            resulting_status = await mark_delivery_failed(
+            transitioned_status = await mark_delivery_failed(
                 pool,
                 delivery["id"],
                 route_error,
                 retryable=retryable,
                 max_attempts=max_attempts,
             )
+            failure_write_completed = True
         except Exception:
             logger.warning(
                 "fan_out_event: failed to record delivery failure for event_id=%s "
@@ -281,19 +284,31 @@ async def _dispatch_and_record_delivery(
                 subscriber_butler,
                 exc_info=True,
             )
-        if resulting_status == "failed_permanent":
+        if transitioned_status == "failed_permanent":
             _record_failed_permanent_delivery_metric(
                 source_butler=source_butler,
                 destination_butler=subscriber_butler,
                 retryable=retryable,
             )
-        status = resulting_status or "failed"
+        observed_status = transitioned_status
+        if failure_write_completed and observed_status is None:
+            try:
+                observed_status = await get_delivery_status(pool, delivery["id"])
+            except Exception:
+                logger.warning(
+                    "fan_out_event: failed to re-observe terminal delivery state for event_id=%s "
+                    "subscriber_butler=%s",
+                    event_id,
+                    subscriber_butler,
+                    exc_info=True,
+                )
+        status = observed_status or "failed"
         outcome: dict[str, Any] = {
             "subscriber_butler": subscriber_butler,
             "status": status,
             "error": route_error,
         }
-        if retryable and status != "failed_permanent":
+        if retryable and transitioned_status == "failed":
             outcome["retryable"] = True
         return outcome
 

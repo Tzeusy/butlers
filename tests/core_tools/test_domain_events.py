@@ -549,6 +549,68 @@ class TestFanOutEvent:
         )
         metric_record_mock.assert_not_called()
 
+    @pytest.mark.parametrize("observed_terminal_status", ["delivered", "failed_permanent"])
+    async def test_stale_retryable_failure_reports_observed_terminal_status(
+        self, monkeypatch, observed_terminal_status
+    ):
+        """A fenced stale failure must report the ledger's terminal state, not retryability."""
+        pool = AsyncMock()
+        monkeypatch.setattr(
+            _domain_events, "get_active_subscribers", AsyncMock(return_value=["finance"])
+        )
+        monkeypatch.setattr(
+            _domain_events,
+            "claim_delivery",
+            AsyncMock(return_value={"id": "d-fenced-failure", "status": "pending"}),
+        )
+        monkeypatch.setattr(
+            _domain_events,
+            "_dispatch_receive_via_switchboard",
+            AsyncMock(return_value=(None, "TimeoutError: stale route failure", True)),
+        )
+        mark_failed_mock = AsyncMock(return_value=None)
+        observed_status_mock = AsyncMock(return_value=observed_terminal_status)
+        metric_record_mock = Mock()
+        monkeypatch.setattr(_domain_events, "mark_delivery_failed", mark_failed_mock)
+        monkeypatch.setattr(
+            _domain_events,
+            "get_delivery_status",
+            observed_status_mock,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            _domain_events,
+            "record_domain_event_delivery_failed_permanent",
+            metric_record_mock,
+            raising=False,
+        )
+
+        result = await fan_out_event(
+            pool,
+            None,
+            event_id="event-fenced-failure",
+            event_type="travel.trip_booked",
+            source_butler="travel",
+            payload={},
+        )
+
+        assert result["deliveries"] == [
+            {
+                "subscriber_butler": "finance",
+                "status": observed_terminal_status,
+                "error": "TimeoutError: stale route failure",
+            }
+        ]
+        mark_failed_mock.assert_awaited_once_with(
+            pool,
+            "d-fenced-failure",
+            "TimeoutError: stale route failure",
+            retryable=True,
+            max_attempts=_domain_events._MAX_DELIVERY_RETRY_ATTEMPTS,
+        )
+        observed_status_mock.assert_awaited_once_with(pool, "d-fenced-failure")
+        metric_record_mock.assert_not_called()
+
     async def test_permanent_route_error_marks_delivery_failed_permanent(self, monkeypatch):
         """A route error classified permanent (retryable=False) must land on the
         terminal `failed_permanent` status, not the retryable `failed` -- and
@@ -625,8 +687,12 @@ class TestFanOutEvent:
             AsyncMock(return_value=(None, "TimeoutError: route timed out", True)),
         )
         mark_failed_mock = AsyncMock(side_effect=["failed_permanent", None])
+        observed_status_mock = AsyncMock(return_value="failed_permanent")
         metric_record_mock = Mock()
         monkeypatch.setattr(_domain_events, "mark_delivery_failed", mark_failed_mock)
+        monkeypatch.setattr(
+            _domain_events, "get_delivery_status", observed_status_mock, raising=False
+        )
         monkeypatch.setattr(
             _domain_events,
             "record_domain_event_delivery_failed_permanent",
@@ -652,7 +718,8 @@ class TestFanOutEvent:
         )
 
         assert first["deliveries"][0]["status"] == "failed_permanent"
-        assert repeat["deliveries"][0]["status"] == "failed"
+        assert repeat["deliveries"][0]["status"] == "failed_permanent"
+        observed_status_mock.assert_awaited_once_with(pool, "d-attempts")
         metric_record_mock.assert_called_once_with(
             source_butler="travel",
             destination_butler="finance",
