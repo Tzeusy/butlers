@@ -134,7 +134,7 @@ Six buffer instruments: `butlers.buffer.queue_depth` (UpDownCounter), `butlers.b
 - **THEN** `buffer_enqueue_hot()` increments the counter with `path="hot"`
 
 ### Requirement: Additional Domain Metric Instruments
-Beyond the core spawner, route, and buffer instruments above, `ButlerMetrics` (`src/butlers/core/metrics.py`) ships additional instruments that the spec earlier omitted. These SHALL be available and carry the `butler` label where applicable:
+Beyond the core spawner, route, and buffer instruments above, the metrics module (`src/butlers/core/metrics.py`) ships additional instruments via `ButlerMetrics` where applicable. These SHALL be available and carry the `butler` label where applicable:
 - Spawner extensions: `butlers.spawner.global_queue_depth` (UpDownCounter), `butlers.spawner.input_tokens` (Counter), `butlers.spawner.output_tokens` (Counter).
 - Failover: `butlers.spawner.failover_attempts_total`, `butlers.spawner.failover_suppressed_total`, `butlers.spawner.failover_exhausted_total` (Counters).
 - Scheduler: `butlers.scheduler.tasks_dispatched` (Counter).

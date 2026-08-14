@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytestmark = pytest.mark.unit
 
@@ -67,8 +68,20 @@ def test_failed_permanent_delivery_panel_and_paused_warning_rule_are_reset_safe(
 
 def test_alert_rule_is_mounted_only_in_grafana_alerting_provisioning() -> None:
     """Dashboard discovery must never parse this alert-rule JSON as a dashboard."""
-    compose = _OBSERVABILITY_COMPOSE_PATH.read_text()
+    compose = yaml.safe_load(_OBSERVABILITY_COMPOSE_PATH.read_text(encoding="utf-8"))
+    grafana_volumes = compose["services"]["grafana"]["volumes"]
+    alerting_mounts = [
+        tuple(volume.split(":", 2))
+        for volume in grafana_volumes
+        if volume.split(":", 2)[0] == "./observability/grafana-alerting"
+    ]
 
     assert _RULE_PATH.is_file()
     assert not _RULE_PATH.is_relative_to(_DASHBOARD_ROOT)
-    assert "./observability/grafana-alerting:/etc/grafana/provisioning/alerting:ro" in compose
+    assert alerting_mounts == [
+        (
+            "./observability/grafana-alerting",
+            "/etc/grafana/provisioning/alerting",
+            "ro",
+        )
+    ]

@@ -242,12 +242,13 @@ newly durable `failed_permanent` domain-event delivery. It has only
 exception text, and timestamps.
 
 The Switchboard dashboard displays it with a reset-safe
-`increase(...)` query. The provisioned warning rule evaluates a new transition
-over 15 minutes for 5 minutes, but it is explicitly paused and ships no contact
-point or notification policy. While `isPaused=true`, Grafana performs no
-evaluation and creates no alert instances, so this rule cannot diagnose a
-missing series or evaluation error. Its configured `NoData` and `Error`
-policies take effect only after an owner explicitly enables evaluation.
+`increase(...)` query. The provisioned warning rule is configured to evaluate a
+new transition over 15 minutes for 5 minutes once an owner-approved change
+enables evaluation; it is explicitly paused and ships no contact point or
+notification policy. While `isPaused=true`, Grafana performs no evaluation and
+creates no alert instances, so this rule cannot diagnose a missing series or
+evaluation error. Its configured `NoData` and `Error` policies take effect only
+after an owner explicitly enables evaluation.
 Enabling evaluation or notification delivery, changing a route, or exercising
 an alert requires a separate owner-approved operational change.
 
