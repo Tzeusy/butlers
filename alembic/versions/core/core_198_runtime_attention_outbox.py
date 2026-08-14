@@ -27,9 +27,9 @@ _ADMIN_INSTALLER = "runtime_attention_admin.install_interface"
 _ADMIN_ROLLBACK = "runtime_attention_admin.rollback_interface"
 
 # Core migrations execute once per target schema, while this trusted interface
-# is database-global.  Serialize the install/finalized-catalog decision for
-# the full migration transaction so the second schema rechecks only after the
-# first installer has committed its fixed boundary.
+# is database-global.  Serialize both install and rollback decisions for the
+# full migration transaction so every later target rechecks only after the
+# first target has committed the shared boundary transition.
 _INSTALLER_SERIALIZATION_LOCK_SQL = """
     SELECT pg_advisory_xact_lock(
         hashtextextended('butlers:core_198:runtime_attention_interface', 0)
@@ -67,6 +67,10 @@ _TRUSTED_FINALIZED_INTERFACE_SQL_TEMPLATE = """
           ON delivery_lease.relnamespace = public_schema.oid
          AND delivery_lease.relname = 'runtime_attention_delivery_lease'
          AND delivery_lease.relkind = 'r'
+        JOIN pg_class AS dispatch_attempts
+          ON dispatch_attempts.relnamespace = public_schema.oid
+         AND dispatch_attempts.relname = 'model_dispatch_attempts'
+         AND dispatch_attempts.relkind = 'r'
         JOIN pg_class AS bootstrap_configuration
           ON bootstrap_configuration.relnamespace = admin_schema.oid
          AND bootstrap_configuration.relname = 'bootstrap_configuration'
@@ -379,6 +383,15 @@ _TRUSTED_FINALIZED_INTERFACE_SQL_TEMPLATE = """
           AND has_column_privilege(
               switchboard_runtime.oid, outbox.oid, 'claim_token', 'UPDATE'
           )
+          AND NOT has_column_privilege(
+              switchboard_runtime.oid, outbox.oid, 'delivery_error_class', 'UPDATE'
+          )
+          AND NOT has_column_privilege(
+              switchboard_runtime.oid, outbox.oid, 'delivery_error_detail', 'UPDATE'
+          )
+          AND NOT has_column_privilege(
+              switchboard_runtime.oid, outbox.oid, 'notification_ref', 'UPDATE'
+          )
           AND has_table_privilege(switchboard_runtime.oid, delivery_lease.oid, 'SELECT')
           AND has_table_privilege(switchboard_runtime.oid, delivery_lease.oid, 'INSERT')
           AND has_table_privilege(switchboard_runtime.oid, delivery_lease.oid, 'UPDATE')
@@ -403,9 +416,37 @@ _TRUSTED_FINALIZED_INTERFACE_SQL_TEMPLATE = """
                     'ck_runtime_attention_outbox_retention',
                     'ck_runtime_attention_outbox_claim_shape',
                     'ck_runtime_attention_outbox_claim_expiry',
-                    'ck_runtime_attention_outbox_delivery_shape'
+                    'ck_runtime_attention_outbox_delivery_shape',
+                    'ck_runtime_attention_outbox_delivery_evidence'
                 ]::name[])
-          ) = 7
+          ) = 8
+          AND EXISTS (
+              SELECT 1
+              FROM pg_attribute AS attribute
+              WHERE attribute.attrelid = outbox.oid
+                AND attribute.attname = 'delivery_error_class'
+                AND attribute.atttypid = 'text'::regtype
+                AND NOT attribute.attnotnull
+                AND NOT attribute.atthasdef
+          )
+          AND EXISTS (
+              SELECT 1
+              FROM pg_attribute AS attribute
+              WHERE attribute.attrelid = outbox.oid
+                AND attribute.attname = 'delivery_error_detail'
+                AND attribute.atttypid = 'text'::regtype
+                AND NOT attribute.attnotnull
+                AND NOT attribute.atthasdef
+          )
+          AND EXISTS (
+              SELECT 1
+              FROM pg_attribute AS attribute
+              WHERE attribute.attrelid = outbox.oid
+                AND attribute.attname = 'notification_ref'
+                AND attribute.atttypid = 'uuid'::regtype
+                AND NOT attribute.attnotnull
+                AND NOT attribute.atthasdef
+          )
           AND EXISTS (
               SELECT 1
               FROM pg_constraint AS constraint_row
@@ -416,19 +457,53 @@ _TRUSTED_FINALIZED_INTERFACE_SQL_TEMPLATE = """
               SELECT 1
               FROM pg_class AS index_relation
               JOIN pg_index AS index_row ON index_row.indexrelid = index_relation.oid
-              WHERE index_relation.relname = 'idx_model_dispatch_attempts_catalog_ts_id'
-                AND index_row.indrelid = 'public.model_dispatch_attempts'::regclass
-                AND pg_get_indexdef(index_relation.oid)
-                    LIKE '%(catalog_entry_id, ts DESC, id DESC)%'
+              JOIN pg_am AS access_method ON access_method.oid = index_relation.relam
+              WHERE index_relation.relnamespace = public_schema.oid
+                AND index_relation.relname = 'idx_model_dispatch_attempts_catalog_ts_id'
+                AND index_relation.relkind = 'i'
+                AND index_relation.relpersistence = 'p'
+                AND index_relation.reloptions IS NULL
+                AND access_method.amname = 'btree'
+                AND index_row.indrelid = dispatch_attempts.oid
+                AND index_row.indisvalid
+                AND index_row.indisready
+                AND index_row.indislive
+                AND NOT index_row.indisunique
+                AND NOT index_row.indnullsnotdistinct
+                AND index_row.indnkeyatts = 3
+                AND index_row.indnatts = 3
+                AND index_row.indpred IS NULL
+                AND index_row.indexprs IS NULL
+                AND pg_get_indexdef(index_relation.oid) =
+                    'CREATE INDEX idx_model_dispatch_attempts_catalog_ts_id '
+                    || 'ON public.model_dispatch_attempts USING btree '
+                    || '(catalog_entry_id, ts DESC, id DESC)'
           )
           AND EXISTS (
               SELECT 1
               FROM pg_class AS index_relation
               JOIN pg_index AS index_row ON index_row.indexrelid = index_relation.oid
-              WHERE index_relation.relname = 'idx_model_dispatch_attempts_outcome_ts_id'
-                AND index_row.indrelid = 'public.model_dispatch_attempts'::regclass
-                AND pg_get_indexdef(index_relation.oid)
-                    LIKE '%(outcome, ts DESC, id DESC)%'
+              JOIN pg_am AS access_method ON access_method.oid = index_relation.relam
+              WHERE index_relation.relnamespace = public_schema.oid
+                AND index_relation.relname = 'idx_model_dispatch_attempts_outcome_ts_id'
+                AND index_relation.relkind = 'i'
+                AND index_relation.relpersistence = 'p'
+                AND index_relation.reloptions IS NULL
+                AND access_method.amname = 'btree'
+                AND index_row.indrelid = dispatch_attempts.oid
+                AND index_row.indisvalid
+                AND index_row.indisready
+                AND index_row.indislive
+                AND NOT index_row.indisunique
+                AND NOT index_row.indnullsnotdistinct
+                AND index_row.indnkeyatts = 3
+                AND index_row.indnatts = 3
+                AND index_row.indpred IS NULL
+                AND index_row.indexprs IS NULL
+                AND pg_get_indexdef(index_relation.oid) =
+                    'CREATE INDEX idx_model_dispatch_attempts_outcome_ts_id '
+                    || 'ON public.model_dispatch_attempts USING btree '
+                    || '(outcome, ts DESC, id DESC)'
           )
           AND EXISTS (
               SELECT 1 FROM pg_policy AS policy
@@ -700,6 +775,63 @@ _TRUSTED_BOOTSTRAP_ROLLBACK_SQL = """
 """
 
 
+# The second core target must not call the bootstrap rollback a second time:
+# the first target has already removed the shared objects.  This deliberately
+# checks every core_198-owned public relation and expected function signature,
+# including the two dispatch-attempt indexes.  A partial teardown is neither a
+# normal no-op nor a state we are willing to stamp as downgraded.
+_EXACT_ROLLBACK_READY_ABSENCE_SQL = """
+    SELECT
+        NOT EXISTS (
+            SELECT 1
+            FROM pg_class AS relation
+            JOIN pg_namespace AS relation_schema
+              ON relation_schema.oid = relation.relnamespace
+            WHERE relation_schema.nspname = 'public'
+              AND relation.relname = ANY (ARRAY[
+                  'runtime_attention_outbox',
+                  'runtime_attention_delivery_lease',
+                  'idx_model_dispatch_attempts_catalog_ts_id',
+                  'idx_model_dispatch_attempts_outcome_ts_id'
+              ]::name[])
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM pg_proc AS interface_function
+            JOIN pg_namespace AS function_schema
+              ON function_schema.oid = interface_function.pronamespace
+            WHERE function_schema.nspname = 'public'
+              AND (
+                  (
+                      interface_function.proname = 'append_runtime_attention_model_breaker'
+                      AND interface_function.proargtypes = '20'::oidvector
+                      AND interface_function.prorettype = 'uuid'::regtype
+                  )
+                  OR (
+                      interface_function.proname = 'append_runtime_attention_fleet_halt'
+                      AND interface_function.pronargs = 0
+                      AND interface_function.prorettype = 'uuid'::regtype
+                  )
+                  OR (
+                      interface_function.proname = 'runtime_attention_active_switchboard_role'
+                      AND interface_function.pronargs = 0
+                      AND interface_function.prorettype = 'boolean'::regtype
+                  )
+                  OR (
+                      interface_function.proname = 'runtime_attention_outbox_guard'
+                      AND interface_function.pronargs = 0
+                      AND interface_function.prorettype = 'trigger'::regtype
+                  )
+                  OR (
+                      interface_function.proname = 'runtime_attention_delivery_lease_guard'
+                      AND interface_function.pronargs = 0
+                      AND interface_function.prorettype = 'trigger'::regtype
+                  )
+              )
+        )
+"""
+
+
 def upgrade() -> None:
     """Install once, then verify/no-op for subsequent target-schema runs."""
     bind = op.get_bind()
@@ -737,7 +869,14 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Permit only an empty, consumer-disabled rollback under bootstrap authority."""
     bind = op.get_bind()
-    if not bool(bind.execute(sa.text(_TRUSTED_BOOTSTRAP_ROLLBACK_SQL)).scalar_one()):
+    bind.execute(sa.text(_INSTALLER_SERIALIZATION_LOCK_SQL))
+    if bool(bind.execute(sa.text(_EXACT_ROLLBACK_READY_ABSENCE_SQL)).scalar_one()):
+        return
+
+    if not (
+        bool(bind.execute(sa.text(_TRUSTED_BOOTSTRAP_ROLLBACK_SQL)).scalar_one())
+        and _has_trusted_finalized_interface(bind)
+    ):
         op.execute(
             """
             DO $$
@@ -749,3 +888,14 @@ def downgrade() -> None:
             """
         )
     op.execute(f"SELECT {_ADMIN_ROLLBACK}()")
+    if not bool(bind.execute(sa.text(_EXACT_ROLLBACK_READY_ABSENCE_SQL)).scalar_one()):
+        op.execute(
+            """
+            DO $$
+            BEGIN
+                RAISE EXCEPTION
+                    'core_198 rollback completed without exact shared-boundary absence proof';
+            END;
+            $$;
+            """
+        )

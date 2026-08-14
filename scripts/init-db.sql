@@ -3268,6 +3268,14 @@ BEGIN
         claim_expires_at TIMESTAMPTZ,
         next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         delivered_at TIMESTAMPTZ,
+        -- Dormant worker-stage evidence: only fixed, non-secret codes can
+        -- ever be persisted.  Core_198 does not grant these fields to any
+        -- runtime role or activate a producer/worker that writes them.
+        delivery_error_class TEXT,
+        delivery_error_detail TEXT,
+        -- Optional scalar linkage only.  Do not add a switchboard-schema FK:
+        -- core-only databases must install this boundary before that schema.
+        notification_ref UUID,
         retention_until TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '90 days'),
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -3329,6 +3337,31 @@ BEGIN
         CONSTRAINT ck_runtime_attention_outbox_delivery_shape CHECK (
             (lifecycle_state = 'sent' AND delivered_at IS NOT NULL)
             OR (lifecycle_state <> 'sent' AND delivered_at IS NULL)
+        ),
+        CONSTRAINT ck_runtime_attention_outbox_delivery_evidence CHECK (
+            (
+                (
+                    delivery_error_class IS NULL
+                    AND delivery_error_detail IS NULL
+                )
+                OR (
+                    lifecycle_state IN ('failed', 'uncertain')
+                    AND delivery_error_class IS NOT NULL
+                    AND delivery_error_detail IS NOT NULL
+                    AND (delivery_error_class, delivery_error_detail) IN (
+                        ('pre_transport', 'recipient_unavailable'),
+                        ('pre_transport', 'policy_denied'),
+                        ('transport_rejected', 'provider_rejected'),
+                        ('transport_uncertain', 'transport_timeout'),
+                        ('transport_uncertain', 'transport_connection_lost'),
+                        ('transport_uncertain', 'worker_recovery')
+                    )
+                )
+            )
+            AND (
+                notification_ref IS NULL
+                OR lifecycle_state IN ('sent', 'failed', 'uncertain')
+            )
         )
     );
     CREATE TABLE public.runtime_attention_delivery_lease (
@@ -3464,7 +3497,10 @@ BEGIN
                    OR NEW.claimed_by_instance IS DISTINCT FROM OLD.claimed_by_instance
                    OR NEW.claimed_at IS DISTINCT FROM OLD.claimed_at
                    OR NEW.claim_expires_at IS DISTINCT FROM OLD.claim_expires_at
-                   OR NEW.delivered_at IS DISTINCT FROM OLD.delivered_at THEN
+                   OR NEW.delivered_at IS DISTINCT FROM OLD.delivered_at
+                   OR NEW.delivery_error_class IS DISTINCT FROM OLD.delivery_error_class
+                   OR NEW.delivery_error_detail IS DISTINCT FROM OLD.delivery_error_detail
+                   OR NEW.notification_ref IS DISTINCT FROM OLD.notification_ref THEN
                     RAISE EXCEPTION 'runtime-attention terminal fence is immutable'
                         USING ERRCODE = '23514';
                 END IF;
@@ -3760,6 +3796,8 @@ BEGIN
     DROP FUNCTION public.runtime_attention_active_switchboard_role();
     DROP FUNCTION public.runtime_attention_outbox_guard();
     DROP FUNCTION public.runtime_attention_delivery_lease_guard();
+    DROP INDEX IF EXISTS public.idx_model_dispatch_attempts_catalog_ts_id;
+    DROP INDEX IF EXISTS public.idx_model_dispatch_attempts_outcome_ts_id;
     EXECUTE format('REVOKE ALL PRIVILEGES ON SCHEMA runtime_attention_admin FROM %I', v_migration_role);
     EXECUTE format('GRANT USAGE ON SCHEMA runtime_attention_admin TO %I', v_migration_role);
     EXECUTE format(

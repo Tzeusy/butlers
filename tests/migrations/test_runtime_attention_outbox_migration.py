@@ -126,6 +126,27 @@ except BaseException:
 """
 
 
+_CORE_197_DOWNGRADE_PROCESS = """
+import os
+import sys
+import traceback
+
+from alembic import command
+from butlers.migrations import _build_alembic_config
+
+db_url, target_schema, ready_fd, release_fd = sys.argv[1:]
+try:
+    config = _build_alembic_config(db_url, chains=["core"], target_schema=target_schema)
+    os.write(int(ready_fd), b"1")
+    if os.read(int(release_fd), 1) != b"1":
+        raise RuntimeError("concurrent core-downgrade barrier was not released")
+    command.downgrade(config, "core_197")
+except BaseException:
+    traceback.print_exc()
+    raise
+"""
+
+
 def _run_concurrent_core_head_upgrades(
     db_url: str, target_schemas: tuple[str, str]
 ) -> dict[str, tuple[int, str, str]]:
@@ -164,6 +185,68 @@ def _run_concurrent_core_head_upgrades(
             chunk = os.read(ready_read, len(target_schemas) - len(ready))
             if not chunk:
                 raise RuntimeError("concurrent core-upgrade process exited before the barrier")
+            ready += chunk
+        assert ready == b"1" * len(target_schemas)
+        assert os.write(release_write, b"1" * len(target_schemas)) == len(target_schemas)
+        os.close(release_write)
+        release_write = -1
+
+        results: dict[str, tuple[int, str, str]] = {}
+        for target_schema, process in processes.items():
+            stdout, stderr = process.communicate(timeout=45)
+            assert process.returncode is not None
+            results[target_schema] = (process.returncode, stdout, stderr)
+        return results
+    finally:
+        for process in processes.values():
+            if process.poll() is None:
+                process.terminate()
+        for process in processes.values():
+            if process.poll() is None:
+                process.communicate(timeout=5)
+        for file_descriptor in (ready_read, ready_write, release_read, release_write):
+            if file_descriptor >= 0:
+                os.close(file_descriptor)
+
+
+def _run_concurrent_core_197_downgrades(
+    db_url: str, target_schemas: tuple[str, str]
+) -> dict[str, tuple[int, str, str]]:
+    """Release two bootstrap downgrades together at the core_198 boundary."""
+    ready_read, ready_write = os.pipe()
+    release_read, release_write = os.pipe()
+    processes: dict[str, subprocess.Popen[str]] = {}
+    try:
+        for target_schema in target_schemas:
+            processes[target_schema] = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    _CORE_197_DOWNGRADE_PROCESS,
+                    db_url,
+                    target_schema,
+                    str(ready_write),
+                    str(release_read),
+                ],
+                cwd=Path(__file__).resolve().parents[2],
+                pass_fds=(ready_write, release_read),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        os.close(ready_write)
+        ready_write = -1
+        os.close(release_read)
+        release_read = -1
+
+        ready = b""
+        while len(ready) < len(target_schemas):
+            readable, _, _ = select.select([ready_read], [], [], 45)
+            if not readable:
+                raise TimeoutError("concurrent core-downgrade processes did not reach the barrier")
+            chunk = os.read(ready_read, len(target_schemas) - len(ready))
+            if not chunk:
+                raise RuntimeError("concurrent core-downgrade process exited before the barrier")
             ready += chunk
         assert ready == b"1" * len(target_schemas)
         assert os.write(release_write, b"1" * len(target_schemas)) == len(target_schemas)
@@ -560,6 +643,146 @@ async def test_core_only_database_has_guarded_outbox_without_specialist_schema(
 
 
 @pytest.mark.asyncio(loop_scope="module")
+async def test_core_only_outbox_stages_bounded_delivery_evidence_without_worker_access(
+    core_only_admin_pool: asyncpg.Pool,
+) -> None:
+    """REQ-runtime-attention-outbox-001: dormant delivery data stays safe and inert."""
+    staged_columns = await core_only_admin_pool.fetch(
+        """
+        SELECT attribute.attname
+        FROM pg_attribute AS attribute
+        WHERE attribute.attrelid = 'public.runtime_attention_outbox'::regclass
+          AND attribute.attname = ANY (
+              ARRAY['delivery_error_class', 'delivery_error_detail', 'notification_ref']
+          )
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped
+        ORDER BY attribute.attname
+        """
+    )
+    assert [row["attname"] for row in staged_columns] == [
+        "delivery_error_class",
+        "delivery_error_detail",
+        "notification_ref",
+    ]
+    # This is deliberately a scalar UUID, not a cross-schema foreign key: a
+    # core-only database lacks switchboard.notifications but must remain safe
+    # to migrate before any worker is activated.
+    staged = await core_only_admin_pool.fetchrow(
+        f"""
+        INSERT INTO {_OUTBOX} (
+            source, fleet_halt_month, source_snapshot, payload,
+            lifecycle_state, claim_token, claim_epoch, delivery_lease_epoch,
+            claimed_by_instance, claimed_at, claim_expires_at,
+            delivery_error_class, delivery_error_detail, notification_ref
+        )
+        VALUES (
+            'fleet_halt', date '2099-01-01',
+            jsonb_build_object('month', '2099-01-01', 'denied_count', 1, 'first_denied_at', NULL),
+            jsonb_build_object('classification', 'monthly_spend_ceiling', 'door', '/spend'),
+            'uncertain', gen_random_uuid(), 1, 1,
+            'migration-contract-test', now(), now() + interval '30 seconds',
+            'transport_uncertain', 'transport_timeout', gen_random_uuid()
+        )
+        RETURNING delivery_error_class, delivery_error_detail, notification_ref
+        """
+    )
+    assert staged is not None
+    assert dict(staged)["delivery_error_class"] == "transport_uncertain"
+    assert dict(staged)["delivery_error_detail"] == "transport_timeout"
+    assert isinstance(dict(staged)["notification_ref"], uuid.UUID)
+    assert await core_only_admin_pool.fetchval(
+        """
+        SELECT NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint AS constraint_row
+            WHERE constraint_row.conrelid = 'public.runtime_attention_outbox'::regclass
+              AND constraint_row.contype = 'f'
+        )
+        """
+    )
+
+    with pytest.raises(asyncpg.CheckViolationError, match="delivery_evidence"):
+        await core_only_admin_pool.execute(
+            f"""
+            INSERT INTO {_OUTBOX} (
+                source, fleet_halt_month, source_snapshot, payload,
+                lifecycle_state, claim_token, claim_epoch, delivery_lease_epoch,
+                claimed_by_instance, claimed_at, claim_expires_at,
+                delivery_error_class, delivery_error_detail
+            )
+            VALUES (
+                'fleet_halt', date '2099-02-01',
+                jsonb_build_object('month', '2099-02-01', 'denied_count', 1, 'first_denied_at', NULL),
+                jsonb_build_object('classification', 'monthly_spend_ceiling', 'door', '/spend'),
+                'uncertain', gen_random_uuid(), 1, 1,
+                'migration-contract-test', now(), now() + interval '30 seconds',
+                'transport_uncertain', 'provider_secret=must_not_persist'
+            )
+            """
+        )
+
+    with pytest.raises(asyncpg.CheckViolationError, match="delivery_evidence"):
+        await core_only_admin_pool.execute(
+            f"""
+            INSERT INTO {_OUTBOX} (
+                source, fleet_halt_month, source_snapshot, payload,
+                lifecycle_state, claim_token, claim_epoch, delivery_lease_epoch,
+                claimed_by_instance, claimed_at, claim_expires_at,
+                delivery_error_class
+            )
+            VALUES (
+                'fleet_halt', date '2099-02-15',
+                jsonb_build_object('month', '2099-02-15', 'denied_count', 1, 'first_denied_at', NULL),
+                jsonb_build_object('classification', 'monthly_spend_ceiling', 'door', '/spend'),
+                'uncertain', gen_random_uuid(), 1, 1,
+                'migration-contract-test', now(), now() + interval '30 seconds',
+                'transport_uncertain'
+            )
+            """
+        )
+
+    with pytest.raises(asyncpg.CheckViolationError, match="delivery_evidence"):
+        await core_only_admin_pool.execute(
+            f"""
+            INSERT INTO {_OUTBOX} (
+                source, fleet_halt_month, source_snapshot, payload, notification_ref
+            )
+            VALUES (
+                'fleet_halt', date '2099-03-01',
+                jsonb_build_object('month', '2099-03-01', 'denied_count', 1, 'first_denied_at', NULL),
+                jsonb_build_object('classification', 'monthly_spend_ceiling', 'door', '/spend'),
+                gen_random_uuid()
+            )
+            """
+        )
+
+    assert await core_only_admin_pool.fetchval(
+        """
+        SELECT
+            NOT has_column_privilege(
+                'butler_switchboard_rw'::regrole,
+                'public.runtime_attention_outbox'::regclass,
+                'delivery_error_class',
+                'UPDATE'
+            )
+            AND NOT has_column_privilege(
+                'butler_switchboard_rw'::regrole,
+                'public.runtime_attention_outbox'::regclass,
+                'delivery_error_detail',
+                'UPDATE'
+            )
+            AND NOT has_column_privilege(
+                'butler_switchboard_rw'::regrole,
+                'public.runtime_attention_outbox'::regclass,
+                'notification_ref',
+                'UPDATE'
+            )
+        """
+    )
+
+
+@pytest.mark.asyncio(loop_scope="module")
 async def test_validated_producers_append_only_safe_server_derived_episodes(
     upgraded_pool: asyncpg.Pool,
     upgraded_admin_pool: asyncpg.Pool,
@@ -588,7 +811,8 @@ async def test_validated_producers_append_only_safe_server_derived_episodes(
     row = await upgraded_admin_pool.fetchrow(
         f"""
         SELECT source, lifecycle_state, triggering_attempt_id, source_snapshot, payload,
-               claim_epoch, claim_token, manual_reissue_of
+               claim_epoch, claim_token, manual_reissue_of,
+               delivery_error_class, delivery_error_detail, notification_ref
         FROM {_OUTBOX}
         WHERE id = $1
         """,
@@ -614,6 +838,9 @@ async def test_validated_producers_append_only_safe_server_derived_episodes(
         "claim_epoch": 0,
         "claim_token": None,
         "manual_reissue_of": None,
+        "delivery_error_class": None,
+        "delivery_error_detail": None,
+        "notification_ref": None,
     }
     assert "unsafe provider detail" not in json.dumps(dict(row))
 
@@ -1078,10 +1305,88 @@ def test_core_chain_serializes_global_runtime_attention_install_across_processes
     assert _has_exact_finalized_runtime_attention_interface(db_url)
 
 
-def test_core_chain_rejects_colliding_runtime_attention_index_across_processes(
+def test_core_chain_serializes_global_runtime_attention_downgrade_and_reapply_across_processes(
     postgres_container,
 ) -> None:
-    """A failed post-install catalog proof rolls every target back to core_197."""
+    """One target tears down the global boundary; the other records the same downgrade."""
+    db_name = migration_db_name()
+    db_url = create_migration_db(postgres_container, db_name)
+    bootstrap_url = migration_bootstrap_db_url(postgres_container, db_name)
+    target_schemas = ("general", "switchboard")
+    for target_schema in target_schemas:
+        command.upgrade(
+            _build_alembic_config(db_url, chains=["core"], target_schema=target_schema),
+            "core_197",
+        )
+
+    upgrade_results = _run_concurrent_core_head_upgrades(db_url, target_schemas)
+    failed_upgrades = {
+        target_schema: stderr
+        for target_schema, (returncode, _stdout, stderr) in upgrade_results.items()
+        if returncode != 0
+    }
+    assert not failed_upgrades, "\n".join(failed_upgrades.values())
+
+    downgrade_results = _run_concurrent_core_197_downgrades(bootstrap_url, target_schemas)
+    failed_downgrades = {
+        target_schema: stderr
+        for target_schema, (returncode, _stdout, stderr) in downgrade_results.items()
+        if returncode != 0
+    }
+    assert not failed_downgrades, "\n".join(failed_downgrades.values())
+
+    engine = create_engine(bootstrap_url)
+    try:
+        with engine.connect() as conn:
+            for target_schema in target_schemas:
+                assert (
+                    conn.execute(
+                        text(
+                            f"SELECT version_num FROM {_quote_ident(target_schema)}.alembic_version"
+                        )
+                    ).scalar_one()
+                    == "core_197"
+                )
+            for relation in (
+                "public.runtime_attention_outbox",
+                "public.runtime_attention_delivery_lease",
+                "public.idx_model_dispatch_attempts_catalog_ts_id",
+                "public.idx_model_dispatch_attempts_outcome_ts_id",
+            ):
+                assert conn.execute(text(f"SELECT to_regclass('{relation}') IS NULL")).scalar_one()
+    finally:
+        engine.dispose()
+    assert not _has_bootstrap_finalized_runtime_attention_interface(bootstrap_url)
+
+    reapply_results = _run_concurrent_core_head_upgrades(db_url, target_schemas)
+    failed_reapply = {
+        target_schema: stderr
+        for target_schema, (returncode, _stdout, stderr) in reapply_results.items()
+        if returncode != 0
+    }
+    assert not failed_reapply, "\n".join(failed_reapply.values())
+    assert _has_exact_finalized_runtime_attention_interface(db_url)
+
+
+@pytest.mark.parametrize(
+    ("index_name", "index_definition"),
+    [
+        (
+            "idx_model_dispatch_attempts_catalog_ts_id",
+            "catalog_entry_id, ts DESC, id DESC",
+        ),
+        (
+            "idx_model_dispatch_attempts_outcome_ts_id",
+            "outcome, ts DESC, id DESC",
+        ),
+    ],
+)
+def test_core_chain_rejects_partial_runtime_attention_index_across_processes(
+    postgres_container,
+    index_name: str,
+    index_definition: str,
+) -> None:
+    """A same-name partial index cannot satisfy the required full index proof."""
     db_name = migration_db_name()
     db_url = create_migration_db(postgres_container, db_name)
     target_schemas = ("general", "switchboard")
@@ -1097,9 +1402,10 @@ def test_core_chain_rejects_colliding_runtime_attention_index_across_processes(
         with poison_engine.begin() as conn:
             conn.execute(
                 text(
-                    """
-                    CREATE INDEX idx_model_dispatch_attempts_catalog_ts_id
-                    ON public.model_dispatch_attempts (id ASC)
+                    f"""
+                    CREATE INDEX {index_name}
+                    ON public.model_dispatch_attempts ({index_definition})
+                    WHERE false
                     """
                 )
             )
@@ -1113,6 +1419,16 @@ def test_core_chain_rejects_colliding_runtime_attention_index_across_processes(
         if returncode == 0
     }
     assert not successful_processes
+
+    failed_processes = {
+        target_schema: stderr
+        for target_schema, (returncode, _stdout, stderr) in process_results.items()
+        if returncode != 0
+    }
+    assert all(
+        "runtime-attention installer completed without exact finalized catalog proof" in stderr
+        for stderr in failed_processes.values()
+    )
 
     engine = create_engine(bootstrap_url)
     try:
@@ -1141,6 +1457,190 @@ def test_core_chain_rejects_colliding_runtime_attention_index_across_processes(
     finally:
         engine.dispose()
 
+    assert not _has_exact_finalized_runtime_attention_interface(db_url)
+
+
+@pytest.mark.parametrize(
+    ("index_name", "index_definition", "predicate_type", "predicate_column"),
+    [
+        (
+            "idx_model_dispatch_attempts_catalog_ts_id",
+            "catalog_entry_id, ts DESC, id DESC",
+            "uuid",
+            "catalog_entry_id",
+        ),
+        (
+            "idx_model_dispatch_attempts_outcome_ts_id",
+            "outcome, ts DESC, id DESC",
+            "text",
+            "outcome",
+        ),
+    ],
+)
+def test_core_chain_rejects_invalid_runtime_attention_index_across_processes(
+    postgres_container,
+    index_name: str,
+    index_definition: str,
+    predicate_type: str,
+    predicate_column: str,
+) -> None:
+    """An invalid same-name index cannot make the core_198 catalog proof pass."""
+    db_name = migration_db_name()
+    db_url = create_migration_db(postgres_container, db_name)
+    target_schemas = ("general", "switchboard")
+    for target_schema in target_schemas:
+        command.upgrade(
+            _build_alembic_config(db_url, chains=["core"], target_schema=target_schema),
+            "core_197",
+        )
+
+    bootstrap_url = migration_bootstrap_db_url(postgres_container, db_name)
+    seed_engine = create_engine(bootstrap_url)
+    try:
+        with seed_engine.begin() as conn:
+            entry_id = uuid.uuid4()
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO public.model_catalog (id, alias, runtime_type, model_id)
+                    VALUES (:id, 'core-198-invalid-index', 'codex', 'invalid-index-model')
+                    """
+                ),
+                {"id": entry_id},
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO public.model_dispatch_attempts (
+                        catalog_entry_id, butler, outcome
+                    )
+                    VALUES (:catalog_entry_id, 'general', 'runtime_failure')
+                    """
+                ),
+                {"catalog_entry_id": entry_id},
+            )
+    finally:
+        seed_engine.dispose()
+
+    poison_engine = create_engine(bootstrap_url, isolation_level="AUTOCOMMIT")
+    try:
+        with poison_engine.connect() as conn:
+            conn.execute(
+                text(
+                    f"""
+                    CREATE FUNCTION public.core_198_poison_index_predicate(value {predicate_type})
+                    RETURNS boolean
+                    LANGUAGE plpgsql
+                    IMMUTABLE
+                    AS $$
+                    BEGIN
+                        RAISE EXCEPTION 'core_198 invalid-index fixture';
+                    END;
+                    $$
+                    """
+                )
+            )
+            with pytest.raises(DBAPIError, match="core_198 invalid-index fixture"):
+                conn.execute(
+                    text(
+                        f"""
+                        CREATE INDEX CONCURRENTLY {index_name}
+                        ON public.model_dispatch_attempts ({index_definition})
+                        WHERE public.core_198_poison_index_predicate({predicate_column})
+                        """
+                    )
+                )
+            assert conn.execute(
+                text(
+                    f"""
+                    SELECT NOT index_row.indisvalid AND NOT index_row.indisready
+                    FROM pg_index AS index_row
+                    WHERE index_row.indexrelid =
+                        'public.{index_name}'::regclass
+                    """
+                )
+            ).scalar_one()
+    finally:
+        poison_engine.dispose()
+
+    process_results = _run_concurrent_core_head_upgrades(db_url, target_schemas)
+    successful_processes = {
+        target_schema: stdout
+        for target_schema, (returncode, stdout, _stderr) in process_results.items()
+        if returncode == 0
+    }
+    assert not successful_processes
+    failed_processes = {
+        target_schema: stderr
+        for target_schema, (returncode, _stdout, stderr) in process_results.items()
+        if returncode != 0
+    }
+    assert all(
+        "runtime-attention installer completed without exact finalized catalog proof" in stderr
+        for stderr in failed_processes.values()
+    )
+    assert not _has_exact_finalized_runtime_attention_interface(db_url)
+
+
+@pytest.mark.parametrize(
+    ("index_name", "index_definition"),
+    [
+        (
+            "idx_model_dispatch_attempts_catalog_ts_id",
+            "catalog_entry_id, ts ASC, id DESC",
+        ),
+        (
+            "idx_model_dispatch_attempts_outcome_ts_id",
+            "outcome, ts ASC, id DESC",
+        ),
+    ],
+)
+def test_core_chain_rejects_wrong_direction_runtime_attention_index_across_processes(
+    postgres_container,
+    index_name: str,
+    index_definition: str,
+) -> None:
+    """The exact catalog proof rejects either index with a wrong sort direction."""
+    db_name = migration_db_name()
+    db_url = create_migration_db(postgres_container, db_name)
+    target_schemas = ("general", "switchboard")
+    for target_schema in target_schemas:
+        command.upgrade(
+            _build_alembic_config(db_url, chains=["core"], target_schema=target_schema),
+            "core_197",
+        )
+
+    bootstrap_url = migration_bootstrap_db_url(postgres_container, db_name)
+    poison_engine = create_engine(bootstrap_url)
+    try:
+        with poison_engine.begin() as conn:
+            conn.execute(
+                text(
+                    f"""
+                    CREATE INDEX {index_name}
+                    ON public.model_dispatch_attempts ({index_definition})
+                    """
+                )
+            )
+    finally:
+        poison_engine.dispose()
+
+    process_results = _run_concurrent_core_head_upgrades(db_url, target_schemas)
+    successful_processes = {
+        target_schema: stdout
+        for target_schema, (returncode, stdout, _stderr) in process_results.items()
+        if returncode == 0
+    }
+    assert not successful_processes
+    failed_processes = {
+        target_schema: stderr
+        for target_schema, (returncode, _stdout, stderr) in process_results.items()
+        if returncode != 0
+    }
+    assert all(
+        "runtime-attention installer completed without exact finalized catalog proof" in stderr
+        for stderr in failed_processes.values()
+    )
     assert not _has_exact_finalized_runtime_attention_interface(db_url)
 
 
@@ -1261,6 +1761,16 @@ def test_empty_outbox_can_downgrade_and_reupgrade_through_bootstrap(
     try:
         with engine.connect() as conn:
             assert conn.execute(text(f"SELECT to_regclass('{_OUTBOX}') IS NULL")).scalar_one()
+            assert conn.execute(
+                text(
+                    "SELECT to_regclass('public.idx_model_dispatch_attempts_catalog_ts_id') IS NULL"
+                )
+            ).scalar_one()
+            assert conn.execute(
+                text(
+                    "SELECT to_regclass('public.idx_model_dispatch_attempts_outcome_ts_id') IS NULL"
+                )
+            ).scalar_one()
     finally:
         engine.dispose()
     command.upgrade(config, "core@head")
@@ -1273,6 +1783,16 @@ def test_empty_outbox_can_downgrade_and_reupgrade_through_bootstrap(
     try:
         with engine.connect() as conn:
             assert conn.execute(text(f"SELECT to_regclass('{_OUTBOX}') IS NOT NULL")).scalar_one()
+            assert conn.execute(
+                text(
+                    "SELECT to_regclass('public.idx_model_dispatch_attempts_catalog_ts_id') IS NOT NULL"
+                )
+            ).scalar_one()
+            assert conn.execute(
+                text(
+                    "SELECT to_regclass('public.idx_model_dispatch_attempts_outcome_ts_id') IS NOT NULL"
+                )
+            ).scalar_one()
     finally:
         engine.dispose()
 
