@@ -3250,6 +3250,14 @@ BEGIN
        OR to_regclass('public.model_dispatch_attempts') IS NULL THEN
         RAISE EXCEPTION 'runtime-attention requires canonical model catalog and dispatch attempts';
     END IF;
+    IF to_regclass('public.idx_model_dispatch_attempts_catalog_ts_id') IS NOT NULL
+       OR to_regclass('public.idx_model_dispatch_attempts_outcome_ts_id') IS NOT NULL THEN
+        -- These names are rollback-owned only after this installer creates
+        -- them.  Never adopt an operator-created exact match that the bounded
+        -- rollback would later destroy.
+        RAISE EXCEPTION
+            'runtime-attention reserved deterministic index already exists before installation';
+    END IF;
 
     CREATE TABLE public.runtime_attention_outbox (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -3393,9 +3401,9 @@ BEGIN
         WHERE lifecycle_state = 'pending';
     CREATE INDEX idx_runtime_attention_outbox_retention
         ON public.runtime_attention_outbox (retention_until ASC, id ASC);
-    CREATE INDEX IF NOT EXISTS idx_model_dispatch_attempts_catalog_ts_id
+    CREATE INDEX idx_model_dispatch_attempts_catalog_ts_id
         ON public.model_dispatch_attempts (catalog_entry_id, ts DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS idx_model_dispatch_attempts_outcome_ts_id
+    CREATE INDEX idx_model_dispatch_attempts_outcome_ts_id
         ON public.model_dispatch_attempts (outcome, ts DESC, id DESC);
 
     CREATE FUNCTION public.runtime_attention_active_switchboard_role()

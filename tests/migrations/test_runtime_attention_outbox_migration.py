@@ -1381,6 +1381,88 @@ def test_core_chain_serializes_global_runtime_attention_downgrade_and_reapply_ac
         ),
     ],
 )
+def test_core_chain_rejects_preexisting_exact_index_before_install_and_on_reapply(
+    postgres_container,
+    index_name: str,
+    index_definition: str,
+) -> None:
+    """A reserved exact index remains external across rejected install attempts."""
+    db_name = migration_db_name()
+    db_url = create_migration_db(postgres_container, db_name)
+    bootstrap_url = migration_bootstrap_db_url(postgres_container, db_name)
+    _upgrade_to_core_197(db_url)
+
+    engine = create_engine(bootstrap_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f"""
+                    CREATE INDEX {index_name}
+                    ON public.model_dispatch_attempts ({index_definition})
+                    """
+                )
+            )
+
+        with pytest.raises(DBAPIError, match="reserved deterministic index already exists"):
+            _upgrade_to_core_head(db_url)
+
+        with engine.connect() as conn:
+            assert conn.execute(
+                text(f"SELECT to_regclass('public.{index_name}') IS NOT NULL")
+            ).scalar_one()
+            assert conn.execute(
+                text("SELECT to_regclass('public.runtime_attention_outbox') IS NULL")
+            ).scalar_one()
+
+        # A clean install owns both reserved indexes, so its bounded empty
+        # rollback may remove them before returning the installer handoff.
+        with engine.begin() as conn:
+            conn.execute(text(f"DROP INDEX public.{index_name}"))
+        _upgrade_to_core_head(db_url)
+        command.downgrade(_build_alembic_config(bootstrap_url, chains=["core"]), "core_197")
+        with engine.connect() as conn:
+            assert conn.execute(
+                text(f"SELECT to_regclass('public.{index_name}') IS NULL")
+            ).scalar_one()
+
+        # Reapplication has the same ownership rule: an independently
+        # recreated reserved name is rejected and preserved before mutation.
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    f"""
+                    CREATE INDEX {index_name}
+                    ON public.model_dispatch_attempts ({index_definition})
+                    """
+                )
+            )
+        with pytest.raises(DBAPIError, match="reserved deterministic index already exists"):
+            _upgrade_to_core_head(db_url)
+        with engine.connect() as conn:
+            assert conn.execute(
+                text(f"SELECT to_regclass('public.{index_name}') IS NOT NULL")
+            ).scalar_one()
+            assert conn.execute(
+                text("SELECT to_regclass('public.runtime_attention_outbox') IS NULL")
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("index_name", "index_definition"),
+    [
+        (
+            "idx_model_dispatch_attempts_catalog_ts_id",
+            "catalog_entry_id, ts DESC, id DESC",
+        ),
+        (
+            "idx_model_dispatch_attempts_outcome_ts_id",
+            "outcome, ts DESC, id DESC",
+        ),
+    ],
+)
 def test_core_chain_rejects_partial_runtime_attention_index_across_processes(
     postgres_container,
     index_name: str,
@@ -1426,7 +1508,7 @@ def test_core_chain_rejects_partial_runtime_attention_index_across_processes(
         if returncode != 0
     }
     assert all(
-        "runtime-attention installer completed without exact finalized catalog proof" in stderr
+        "runtime-attention reserved deterministic index already exists" in stderr
         for stderr in failed_processes.values()
     )
 
@@ -1576,7 +1658,7 @@ def test_core_chain_rejects_invalid_runtime_attention_index_across_processes(
         if returncode != 0
     }
     assert all(
-        "runtime-attention installer completed without exact finalized catalog proof" in stderr
+        "runtime-attention reserved deterministic index already exists" in stderr
         for stderr in failed_processes.values()
     )
     assert not _has_exact_finalized_runtime_attention_interface(db_url)
@@ -1638,7 +1720,7 @@ def test_core_chain_rejects_wrong_direction_runtime_attention_index_across_proce
         if returncode != 0
     }
     assert all(
-        "runtime-attention installer completed without exact finalized catalog proof" in stderr
+        "runtime-attention reserved deterministic index already exists" in stderr
         for stderr in failed_processes.values()
     )
     assert not _has_exact_finalized_runtime_attention_interface(db_url)
