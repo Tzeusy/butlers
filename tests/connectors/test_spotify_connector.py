@@ -14,9 +14,10 @@ Verifies:
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -42,6 +43,44 @@ _ENDPOINT = "spotify_user_client:spotify:user123"
 _SPOTIFY_USER_ID = "user123"
 _OBSERVED = "2026-03-26T10:00:00+00:00"
 _NOW = datetime(2026, 3, 26, 10, 0, 0, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_connector_refresh_persists_only_secured_owner_oauth_rows() -> None:
+    connector = SpotifyConnector(
+        SpotifyConnectorConfig(switchboard_mcp_url="http://switchboard.test/mcp")
+    )
+    conn = MagicMock()
+
+    @asynccontextmanager
+    async def _transaction():
+        yield
+
+    @asynccontextmanager
+    async def _acquire():
+        yield conn
+
+    conn.transaction = MagicMock(side_effect=_transaction)
+    pool = MagicMock()
+    pool.acquire = _acquire
+    connector._db_pool = pool
+    connector._access_token = "rotated-access"
+    connector._refresh_token = "rotated-refresh"
+    connector._token_expires_at = _NOW
+
+    with patch(
+        "butlers.connectors.spotify.upsert_owner_entity_info_on_connection",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as upsert:
+        await connector._persist_tokens()
+
+    assert [call.args[1] for call in upsert.await_args_list] == [
+        "spotify_oauth_access",
+        "spotify_oauth_refresh",
+        "spotify_oauth_expires_at",
+    ]
+    assert all(call.kwargs == {"secured": True} for call in upsert.await_args_list)
 
 
 @pytest.fixture

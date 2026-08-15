@@ -1,28 +1,7 @@
-"""Spotify credential key constants for use with CredentialStore.
+"""Canonical Spotify credential authority identifiers.
 
-Defines the canonical butler_secrets key names for Spotify OAuth tokens and
-app credentials.  All Spotify credentials are stored with ``category="spotify"``
-and ``is_sensitive=True`` (the default).
-
-Resolution order (via ``CredentialStore.resolve()``)::
-
-    access_token = await store.resolve(SPOTIFY_ACCESS_TOKEN)
-    if access_token is None:
-        raise RuntimeError("Spotify access token is not configured")
-
-Key constants
--------------
-SPOTIFY_CLIENT_ID
-    The Spotify application client ID (32-character hex string).
-SPOTIFY_ACCESS_TOKEN
-    The short-lived OAuth access token for Spotify Web API calls.
-SPOTIFY_REFRESH_TOKEN
-    The long-lived OAuth refresh token for obtaining new access tokens.
-SPOTIFY_TOKEN_EXPIRES_AT
-    ISO-8601 UTC timestamp string indicating when the access token expires,
-    used for proactive refresh (refresh 5 minutes before expiry).
-
-See tasks 2.1-2.2 in openspec/changes/connector-spotify/tasks.md.
+The application client id is Tier 1 system configuration. OAuth tokens are
+Tier 2 owner credentials and must only be resolved from ``entity_info``.
 """
 
 from __future__ import annotations
@@ -34,14 +13,19 @@ from __future__ import annotations
 SPOTIFY_CLIENT_ID = "SPOTIFY_CLIENT_ID"
 """Spotify application client ID (32-character hex string)."""
 
+SPOTIFY_OAUTH_ACCESS = "spotify_oauth_access"
+SPOTIFY_OAUTH_REFRESH = "spotify_oauth_refresh"
+SPOTIFY_OAUTH_EXPIRES_AT = "spotify_oauth_expires_at"
+
+SPOTIFY_MANAGED_ENTITY_INFO_TYPES: frozenset[str] = frozenset(
+    {SPOTIFY_OAUTH_ACCESS, SPOTIFY_OAUTH_REFRESH, SPOTIFY_OAUTH_EXPIRES_AT}
+)
+
+# Compatibility names retained until the separately-owned generic OAuth
+# Spotify provider is removed. Connector and module code must not use these.
 SPOTIFY_ACCESS_TOKEN = "SPOTIFY_ACCESS_TOKEN"
-"""Short-lived Spotify OAuth access token for Web API calls."""
-
 SPOTIFY_REFRESH_TOKEN = "SPOTIFY_REFRESH_TOKEN"
-"""Long-lived Spotify OAuth refresh token for obtaining new access tokens."""
-
 SPOTIFY_TOKEN_EXPIRES_AT = "SPOTIFY_TOKEN_EXPIRES_AT"
-"""ISO-8601 UTC timestamp string for proactive access token refresh."""
 
 SPOTIFY_CATEGORY = "spotify"
 """Category label used when storing Spotify credentials in butler_secrets."""
