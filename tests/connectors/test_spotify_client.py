@@ -20,7 +20,7 @@ from butlers.connectors.spotify_client import (
 pytestmark = pytest.mark.unit
 
 
-def _credential_store(*, expires_at: str | None = None) -> AsyncMock:
+def _credential_store(*, expires_at: str | datetime | None = None) -> AsyncMock:
     store = AsyncMock()
     store.pool = MagicMock()
     store.pool.spotify_values = {
@@ -124,6 +124,56 @@ async def test_token_refresh_invalid_grant_remains_auth_error() -> None:
         await client.get_me()
 
     store.store.assert_not_awaited()
+
+
+async def test_token_refresh_provider_text_is_absent_from_exception_and_logs(caplog) -> None:
+    marker = "PROVIDER_REFRESH_RESPONSE_MARKER"
+    expires_at = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    store = _credential_store(expires_at=expires_at)
+    http_client = AsyncMock(spec=httpx.AsyncClient)
+    http_client.post = AsyncMock(
+        return_value=_response(
+            400,
+            {"error": marker, "error_description": marker},
+        )
+    )
+    client = SpotifyClient(credential_store=store, http_client=http_client)
+    await client.open()
+
+    with pytest.raises(SpotifyAuthError) as exc_info:
+        await client.get_me()
+
+    assert marker not in str(exc_info.value)
+    assert marker not in caplog.text
+
+
+async def test_malformed_token_refresh_body_is_absent_from_exception_and_logs(caplog) -> None:
+    marker = "MALFORMED_REFRESH_RESPONSE_MARKER"
+    expires_at = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
+    store = _credential_store(expires_at=expires_at)
+    response = _response(200, {})
+    response.json.side_effect = ValueError("invalid json")
+    response.text = marker
+    http_client = AsyncMock(spec=httpx.AsyncClient)
+    http_client.post = AsyncMock(return_value=response)
+    client = SpotifyClient(credential_store=store, http_client=http_client)
+    await client.open()
+
+    with pytest.raises(SpotifyAuthError) as exc_info:
+        await client.get_me()
+
+    assert marker not in str(exc_info.value)
+    assert marker not in caplog.text
+
+
+async def test_owner_expiry_accepts_decoded_datetime() -> None:
+    expires_at = datetime.now(UTC) + timedelta(hours=1)
+    store = _credential_store(expires_at=expires_at)
+    client = SpotifyClient(credential_store=store, http_client=AsyncMock(spec=httpx.AsyncClient))
+
+    await client.open()
+
+    assert client._expires_at == expires_at
 
 
 async def test_successful_refresh_persists_owner_rows_in_one_transaction() -> None:

@@ -38,6 +38,7 @@ from butlers.api.routers.healing import _get_dispatch_fn
 from butlers.api.routers.spotify import (
     _clear_state_store as _spotify_clear_states,
 )
+from butlers.api.routers.spotify import _exchange_code_for_tokens, _TokenExchangeError
 from butlers.api.routers.spotify import (
     _get_db_manager as _spotify_get_db,
 )
@@ -402,6 +403,61 @@ class TestSpotifyAPI:
         assert "toast=connection_failed" in resp.headers["location"]
         assert "provider-controlled-detail" not in resp.headers["location"]
 
+    async def test_token_exchange_error_does_not_expose_provider_response_text(
+        self, monkeypatch, caplog
+    ):
+        from butlers.api.routers import spotify as spotify_router
+
+        marker = "PROVIDER_TOKEN_RESPONSE_MARKER"
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 400
+        response.text = marker
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.post = AsyncMock(return_value=response)
+        client_context = AsyncMock()
+        client_context.__aenter__.return_value = http_client
+        client_context.__aexit__.return_value = None
+        monkeypatch.setattr(
+            spotify_router.httpx, "AsyncClient", MagicMock(return_value=client_context)
+        )
+
+        with pytest.raises(_TokenExchangeError) as exc_info:
+            await _exchange_code_for_tokens(
+                code="code",
+                code_verifier="verifier",
+                redirect_uri="http://callback.test",
+                client_id="a" * 32,
+            )
+
+        assert exc_info.value.status_code == 400
+        assert marker not in str(exc_info.value)
+        assert marker not in caplog.text
+
+    async def test_callback_token_exchange_failure_logs_only_local_classification(
+        self, monkeypatch, caplog
+    ):
+        from butlers.api.routers import spotify as spotify_router
+
+        marker = "PROVIDER_CALLBACK_RESPONSE_MARKER"
+        monkeypatch.setattr(
+            spotify_router,
+            "_exchange_code_for_tokens",
+            AsyncMock(side_effect=_TokenExchangeError(marker, status_code=400)),
+        )
+        app = self._make_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            start = await client.post("/api/connectors/spotify/oauth/start")
+            resp = await client.get(
+                "/api/connectors/spotify/oauth/callback",
+                params={"code": "code", "state": start.json()["state"]},
+            )
+
+        assert resp.status_code == 502
+        assert marker not in resp.text
+        assert marker not in caplog.text
+
     async def test_callback_writes_only_secured_owner_oauth_rows(self, monkeypatch):
         from butlers.api.routers import spotify as spotify_router
 
@@ -531,6 +587,53 @@ class TestSpotifyAPI:
             resp = await client.post("/api/connectors/spotify/disconnect")
         assert resp.status_code == 200
         assert resp.json() == {"disconnected": True}
+
+    async def test_disconnect_is_idempotent_after_zero_row_authority_delete(self, monkeypatch):
+        from butlers.api.routers import spotify as spotify_router
+
+        delete = AsyncMock(return_value=0)
+        monkeypatch.setattr(spotify_router, "_delete_spotify_oauth_rows", delete)
+        app = self._make_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post("/api/connectors/spotify/disconnect")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"disconnected": True}
+        delete.assert_awaited_once()
+
+    async def test_disconnect_reports_unavailable_when_credential_authority_is_missing(self):
+        app = self._make_app(access_token="tok-abc")
+        app.dependency_overrides[_spotify_get_db] = lambda: None
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post("/api/connectors/spotify/disconnect")
+
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": "Owner credential authority is unavailable."}
+
+    async def test_disconnect_transaction_failure_is_content_blind(self, monkeypatch, caplog):
+        from butlers.api.routers import spotify as spotify_router
+
+        marker = "DISCONNECT_TRANSACTION_MARKER"
+        monkeypatch.setattr(
+            spotify_router,
+            "_delete_spotify_oauth_rows",
+            AsyncMock(side_effect=RuntimeError(marker)),
+        )
+        app = self._make_app(access_token="tok-abc")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post("/api/connectors/spotify/disconnect")
+
+        assert resp.status_code == 503
+        assert resp.json() == {"detail": "Owner credential authority is unavailable."}
+        assert marker not in resp.text
+        assert marker not in caplog.text
 
     async def test_disconnect_preserves_client_id_while_clearing_local_oauth_state(
         self, monkeypatch

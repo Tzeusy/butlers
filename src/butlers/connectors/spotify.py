@@ -596,10 +596,13 @@ class SpotifyRateLimitError(Exception):
 
 
 _SPOTIFY_ACTION_REQUIRED_ERROR_CODES = frozenset({"invalid_grant", "invalid_client"})
+_SPOTIFY_OBSERVABLE_OAUTH_ERROR_CODES = _SPOTIFY_ACTION_REQUIRED_ERROR_CODES | frozenset(
+    {"server_error", "temporarily_unavailable"}
+)
 
 
 def _format_spotify_error(response: httpx.Response | None) -> str | None:
-    """Return compact, safe Spotify OAuth/API error detail when available."""
+    """Return fixed detail containing only status and allowlisted OAuth codes."""
     if response is None:
         return None
 
@@ -609,20 +612,11 @@ def _format_spotify_error(response: httpx.Response | None) -> str | None:
         payload = None
 
     if isinstance(payload, dict):
-        parts: list[str] = []
         error = payload.get("error")
-        if isinstance(error, str) and error:
-            parts.append(f"error={error}")
-        description = payload.get("error_description")
-        if isinstance(description, str) and description:
-            parts.append(f"description={description}")
-        if parts:
-            return ", ".join(parts)
+        if isinstance(error, str) and error in _SPOTIFY_OBSERVABLE_OAUTH_ERROR_CODES:
+            return f"oauth_error={error}, http_status={response.status_code}"
 
-    body = response.text.strip()
-    if body:
-        return f"HTTP {response.status_code}: {body[:200]}"
-    return f"HTTP {response.status_code}"
+    return f"http_status={response.status_code}"
 
 
 def _classify_source_api_error(exc: Exception) -> tuple[bool, str]:
@@ -638,7 +632,7 @@ def _classify_source_api_error(exc: Exception) -> tuple[bool, str]:
     detail = _format_spotify_error(response) if isinstance(response, httpx.Response) else None
 
     if isinstance(exc, SpotifyCredentialError):
-        return True, detail or str(exc) or "Spotify credentials require attention"
+        return True, detail or "Spotify credentials require attention"
 
     requires_operator_action = False
     if isinstance(response, httpx.Response):
@@ -660,7 +654,7 @@ def _classify_source_api_error(exc: Exception) -> tuple[bool, str]:
             if isinstance(error_code, str) and error_code in _SPOTIFY_ACTION_REQUIRED_ERROR_CODES:
                 requires_operator_action = True
 
-    return requires_operator_action, detail or f"{type(exc).__name__}: {exc}"
+    return requires_operator_action, detail or "Spotify API not reachable"
 
 
 def _http_status_error(response: httpx.Response, message: str) -> httpx.HTTPStatusError:
@@ -1325,7 +1319,7 @@ class SpotifyConnector:
         client_id = await store.resolve(_CRED_CLIENT_ID)
         access_token = await resolve_owner_entity_info(self._db_pool, SPOTIFY_OAUTH_ACCESS)
         refresh_token = await resolve_owner_entity_info(self._db_pool, SPOTIFY_OAUTH_REFRESH)
-        expires_at_str = await resolve_owner_entity_info(self._db_pool, SPOTIFY_OAUTH_EXPIRES_AT)
+        expires_at_value = await resolve_owner_entity_info(self._db_pool, SPOTIFY_OAUTH_EXPIRES_AT)
 
         if not client_id or not refresh_token:
             raise SpotifyCredentialError(
@@ -1339,16 +1333,20 @@ class SpotifyConnector:
         if access_token:
             self._access_token = access_token
 
-        if expires_at_str:
+        if expires_at_value:
             try:
-                self._token_expires_at = datetime.fromisoformat(
-                    expires_at_str.replace("Z", "+00:00")
-                )
-            except ValueError:
-                logger.warning(
-                    "SpotifyConnector: could not parse spotify_oauth_expires_at=%r",
-                    expires_at_str,
-                )
+                if isinstance(expires_at_value, datetime):
+                    self._token_expires_at = expires_at_value
+                elif isinstance(expires_at_value, str):
+                    self._token_expires_at = datetime.fromisoformat(
+                        expires_at_value.replace("Z", "+00:00")
+                    )
+                else:
+                    raise TypeError("unsupported owner expiry type")
+                if self._token_expires_at.tzinfo is None:
+                    self._token_expires_at = self._token_expires_at.replace(tzinfo=UTC)
+            except (TypeError, ValueError):
+                logger.warning("SpotifyConnector: could not parse spotify_oauth_expires_at")
 
         logger.info("SpotifyConnector: OAuth credentials resolved from owner entity_info")
 
@@ -1404,19 +1402,24 @@ class SpotifyConnector:
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
                 timeout=15,
             )
-        except httpx.TransportError as exc:
+        except httpx.TransportError:
             if self._endpoint_identity:
                 spotify_token_refreshes_total.labels(
                     endpoint_identity=self._endpoint_identity, status="error"
                 ).inc()
-            error = RuntimeError(f"Token refresh transport error: {exc}")
+            error = RuntimeError("Spotify token refresh transport failed")
             self._record_source_api_failure(error)
-            raise error from exc
+            raise error from None
 
         if resp.status_code == 200:
-            data = resp.json()
-            self._access_token = data["access_token"]
-            expires_in = int(data.get("expires_in", 3600))
+            try:
+                data = resp.json()
+                self._access_token = data["access_token"]
+                expires_in = int(data.get("expires_in", 3600))
+            except Exception:
+                error = RuntimeError("Spotify token refresh returned malformed response")
+                self._record_source_api_failure(error)
+                raise error from None
             self._token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
 
             # Rotate refresh token if provided
@@ -1484,9 +1487,11 @@ class SpotifyConnector:
                         )
                     if stored and not all(stored):
                         raise SpotifyCredentialError("Owner credential authority is unavailable")
-        except Exception as exc:
-            logger.warning("SpotifyConnector: failed to persist owner OAuth state: %s", exc)
-            raise SpotifyCredentialError("Failed to persist refreshed Spotify OAuth state") from exc
+        except Exception:
+            logger.warning("SpotifyConnector: failed to persist owner OAuth state")
+            raise SpotifyCredentialError(
+                "Failed to persist refreshed Spotify OAuth state"
+            ) from None
 
     # ------------------------------------------------------------------
     # Identity resolution

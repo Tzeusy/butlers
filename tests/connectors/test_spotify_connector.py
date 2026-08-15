@@ -29,6 +29,7 @@ from butlers.connectors.spotify import (
     SpokenSessionTracker,
     SpotifyConnector,
     SpotifyConnectorConfig,
+    SpotifyCredentialError,
     _classify_source_api_error,
     build_context_start_envelope,
     build_listening_digest_envelope,
@@ -1172,28 +1173,71 @@ def test_spotify_non_post_token_response_never_proves_token_revocation(url: str)
 
 
 def test_spotify_health_reports_revocation_as_error_and_api_failure_as_degraded() -> None:
+    marker = "PROVIDER_HEALTH_RESPONSE_MARKER"
     connector = SpotifyConnector(
         SpotifyConnectorConfig(switchboard_mcp_url="http://switchboard.test/mcp")
     )
     connector._record_source_api_failure(
-        _spotify_http_error({"error": "server_error", "error_description": "Try again later"}, 503)
+        _spotify_http_error({"error": "server_error", "error_description": marker}, 503)
     )
 
     assert connector._get_health_state() == (
         "degraded",
-        "error=server_error, description=Try again later",
+        "oauth_error=server_error, http_status=503",
     )
 
     connector._record_source_api_failure(
-        _spotify_http_error(
-            {"error": "invalid_grant", "error_description": "Refresh token revoked"}, 400
-        )
+        _spotify_http_error({"error": "invalid_grant", "error_description": marker}, 400)
     )
 
     assert connector._get_health_state() == (
         "error",
-        "error=invalid_grant, description=Refresh token revoked",
+        "oauth_error=invalid_grant, http_status=400",
     )
+    assert marker not in connector._get_health_state()[1]
+
+
+def test_spotify_health_omits_unallowlisted_provider_error_code() -> None:
+    marker = "PROVIDER_ERROR_CODE_MARKER"
+    connector = SpotifyConnector(
+        SpotifyConnectorConfig(switchboard_mcp_url="http://switchboard.test/mcp")
+    )
+
+    connector._record_source_api_failure(
+        _spotify_http_error({"error": marker, "error_description": marker}, 400)
+    )
+
+    state, detail = connector._get_health_state()
+    assert state == "degraded"
+    assert detail == "http_status=400"
+    assert marker not in detail
+
+
+@pytest.mark.asyncio
+async def test_token_refresh_provider_text_is_absent_from_exception_logs_and_health(
+    caplog,
+) -> None:
+    marker = "PROVIDER_CONNECTOR_REFRESH_MARKER"
+    connector = SpotifyConnector(
+        SpotifyConnectorConfig(switchboard_mcp_url="http://switchboard.test/mcp")
+    )
+    connector._client_id = "client-id"
+    connector._refresh_token = "refresh-token"
+    connector._http_client = AsyncMock()
+    connector._http_client.post = AsyncMock(
+        return_value=httpx.Response(
+            400,
+            json={"error": "invalid_grant", "error_description": marker},
+            request=httpx.Request("POST", "https://accounts.spotify.com/api/token"),
+        )
+    )
+
+    with pytest.raises(SpotifyCredentialError) as exc_info:
+        await connector._refresh_access_token()
+
+    assert marker not in str(exc_info.value)
+    assert marker not in caplog.text
+    assert marker not in str(connector._get_health_state())
 
 
 def test_spotify_startup_health_uses_canonical_degraded_state() -> None:

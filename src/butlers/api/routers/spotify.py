@@ -326,8 +326,14 @@ def _secrets_redirect(base_url: str, **params: str) -> str:
 class _TokenExchangeError(Exception):
     """Raised when Spotify token exchange fails."""
 
-    def __init__(self, message: str, status_code: int | None = None) -> None:
-        super().__init__(message)
+    def __init__(self, reason: str, status_code: int | None = None) -> None:
+        messages = {
+            "network": "Spotify token exchange transport failed.",
+            "http": "Spotify token exchange was rejected.",
+            "malformed": "Spotify token exchange returned an unexpected response.",
+        }
+        self.reason = reason if reason in messages else "unknown"
+        super().__init__(messages.get(self.reason, "Spotify token exchange failed."))
         self.status_code = status_code
 
 
@@ -376,20 +382,19 @@ async def _exchange_code_for_tokens(
                 data=payload,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
-    except httpx.RequestError as exc:
-        raise _TokenExchangeError(f"Network error contacting Spotify: {exc}") from exc
+    except httpx.RequestError:
+        raise _TokenExchangeError("network") from None
 
     if resp.status_code != 200:
-        body = resp.text[:200]
         raise _TokenExchangeError(
-            f"Spotify token exchange failed (HTTP {resp.status_code}): {body}",
+            "http",
             status_code=resp.status_code,
         )
 
     try:
         return resp.json()
-    except Exception as exc:
-        raise _TokenExchangeError(f"Spotify token response is not valid JSON: {exc}") from exc
+    except Exception:
+        raise _TokenExchangeError("malformed", status_code=resp.status_code) from None
 
 
 async def _fetch_spotify_me(access_token: str) -> dict | None:
@@ -634,7 +639,11 @@ async def spotify_oauth_callback(
             client_id=client_id,
         )
     except _TokenExchangeError as exc:
-        logger.error("Spotify token exchange failed: %s", exc)
+        logger.error(
+            "Spotify token exchange failed (reason=%s, status=%s)",
+            exc.reason,
+            exc.status_code,
+        )
         raise HTTPException(
             status_code=502,
             detail=(
@@ -795,15 +804,25 @@ async def disconnect_spotify(
     Preserves SPOTIFY_CLIENT_ID so the user does not need to re-enter it when reconnecting.
     Does not call Spotify or revoke provider-side authorization.
 
-    Returns success=True even when no credentials were stored (idempotent).
+    Returns success only after the reachable owner authority executes the
+    atomic delete, including when it finds no stored credentials.
     """
     cred_store = _make_credential_store(db_manager)
     if cred_store is None:
-        # No DB — nothing to delete; treat as success
-        logger.info("Disconnect requested but credential store is unavailable; treating as success")
-        return SpotifyDisconnectResponse()
+        logger.error("Spotify disconnect failed: owner credential authority unavailable")
+        raise HTTPException(
+            status_code=503,
+            detail="Owner credential authority is unavailable.",
+        )
 
-    deleted_count = await _delete_spotify_oauth_rows(cred_store.pool)
+    try:
+        deleted_count = await _delete_spotify_oauth_rows(cred_store.pool)
+    except Exception:
+        logger.error("Spotify disconnect failed: owner credential authority transaction failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Owner credential authority is unavailable.",
+        ) from None
 
     logger.info("Spotify disconnect: deleted %d credential key(s)", deleted_count)
     return SpotifyDisconnectResponse()
