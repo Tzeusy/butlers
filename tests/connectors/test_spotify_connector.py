@@ -1240,6 +1240,122 @@ async def test_token_refresh_provider_text_is_absent_from_exception_logs_and_hea
     assert marker not in str(connector._get_health_state())
 
 
+def _refresh_connector(payload: dict[str, Any]) -> SpotifyConnector:
+    """A connector whose token endpoint returns ``payload`` with HTTP 200."""
+    connector = SpotifyConnector(
+        SpotifyConnectorConfig(switchboard_mcp_url="http://switchboard.test/mcp")
+    )
+    connector._client_id = "client-id"
+    connector._refresh_token = "prior-refresh-token"
+    connector._access_token = "prior-access-token"
+    connector._token_expires_at = None
+    connector._http_client = AsyncMock()
+    connector._http_client.post = AsyncMock(
+        return_value=httpx.Response(
+            200,
+            json=payload,
+            request=httpx.Request("POST", "https://accounts.spotify.com/api/token"),
+        )
+    )
+    connector._persist_tokens = AsyncMock()  # type: ignore[method-assign]
+    return connector
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "expires_in",
+    ["3600", True, 3600.5, -1, 0, None, [3600]],
+    ids=["string", "bool", "float", "negative", "zero", "null", "list"],
+)
+async def test_connector_refresh_rejects_malformed_expires_in(expires_in: Any) -> None:
+    connector = _refresh_connector({"access_token": "new-access-token", "expires_in": expires_in})
+
+    with pytest.raises(RuntimeError, match="malformed response"):
+        await connector._refresh_access_token()
+
+    connector._persist_tokens.assert_not_awaited()  # type: ignore[attr-defined]
+    assert connector._access_token == "prior-access-token"
+    assert connector._refresh_token == "prior-refresh-token"
+    assert connector._token_expires_at is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "rotated",
+    ["   ", "", None, 12345, {"token": "x"}],
+    ids=["whitespace", "empty", "null", "int", "dict"],
+)
+async def test_connector_refresh_rejects_malformed_rotated_refresh_token(rotated: Any) -> None:
+    connector = _refresh_connector(
+        {"access_token": "new-access-token", "expires_in": 3600, "refresh_token": rotated}
+    )
+
+    with pytest.raises(RuntimeError, match="malformed response"):
+        await connector._refresh_access_token()
+
+    connector._persist_tokens.assert_not_awaited()  # type: ignore[attr-defined]
+    assert connector._refresh_token == "prior-refresh-token"
+    assert connector._access_token == "prior-access-token"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "access_token", ["   ", "", None, 42], ids=["whitespace", "empty", "null", "int"]
+)
+async def test_connector_refresh_rejects_malformed_access_token(access_token: Any) -> None:
+    connector = _refresh_connector({"access_token": access_token, "expires_in": 3600})
+
+    with pytest.raises(RuntimeError, match="malformed response"):
+        await connector._refresh_access_token()
+
+    connector._persist_tokens.assert_not_awaited()  # type: ignore[attr-defined]
+    assert connector._access_token == "prior-access-token"
+
+
+@pytest.mark.asyncio
+async def test_connector_refresh_malformed_payload_discloses_no_provider_text(caplog) -> None:
+    marker = "PROVIDER_SUCCESS_PAYLOAD_MARKER"
+    connector = _refresh_connector(
+        {"access_token": marker, "expires_in": marker, "refresh_token": marker}
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await connector._refresh_access_token()
+
+    assert marker not in str(exc_info.value)
+    assert marker not in caplog.text
+    assert marker not in str(connector._get_health_state())
+
+
+@pytest.mark.asyncio
+async def test_connector_refresh_accepts_valid_payload_without_rotation() -> None:
+    connector = _refresh_connector({"access_token": "new-access-token", "expires_in": 3600})
+
+    token = await connector._refresh_access_token()
+
+    assert token == "new-access-token"
+    assert connector._access_token == "new-access-token"
+    assert connector._refresh_token == "prior-refresh-token"
+    assert connector._token_expires_at is not None
+    connector._persist_tokens.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_connector_refresh_accepts_valid_rotated_refresh_token() -> None:
+    connector = _refresh_connector(
+        {
+            "access_token": "new-access-token",
+            "expires_in": 3600,
+            "refresh_token": "rotated-refresh-token",
+        }
+    )
+
+    await connector._refresh_access_token()
+
+    assert connector._refresh_token == "rotated-refresh-token"
+    connector._persist_tokens.assert_awaited_once()  # type: ignore[attr-defined]
+
+
 def test_spotify_startup_health_uses_canonical_degraded_state() -> None:
     connector = SpotifyConnector(
         SpotifyConnectorConfig(switchboard_mcp_url="http://switchboard.test/mcp")

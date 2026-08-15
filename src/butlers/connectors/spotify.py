@@ -81,6 +81,7 @@ from butlers.spotify_credentials import (
     SPOTIFY_OAUTH_ACCESS,
     SPOTIFY_OAUTH_EXPIRES_AT,
     SPOTIFY_OAUTH_REFRESH,
+    parse_spotify_token_response,
 )
 
 if TYPE_CHECKING:
@@ -1412,19 +1413,26 @@ class SpotifyConnector:
             raise error from None
 
         if resp.status_code == 200:
+            # Validate the complete success payload through the shared authority
+            # before any value reaches in-memory state or the Tier 2 rows.
             try:
-                data = resp.json()
-                self._access_token = data["access_token"]
-                expires_in = int(data.get("expires_in", 3600))
+                token_response = parse_spotify_token_response(
+                    resp.json(),
+                    require_refresh_token=False,
+                )
             except Exception:
                 error = RuntimeError("Spotify token refresh returned malformed response")
                 self._record_source_api_failure(error)
                 raise error from None
-            self._token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
 
-            # Rotate refresh token if provided
-            if "refresh_token" in data:
-                self._refresh_token = data["refresh_token"]
+            self._access_token = token_response.access_token
+            self._token_expires_at = datetime.now(UTC) + timedelta(
+                seconds=token_response.expires_in
+            )
+            # Spotify may or may not rotate the refresh token; keep the prior one
+            # unless a validated replacement was supplied.
+            if token_response.refresh_token is not None:
+                self._refresh_token = token_response.refresh_token
 
             # Persist through the connector-owned Tier 2 authority.
             await self._persist_tokens()
