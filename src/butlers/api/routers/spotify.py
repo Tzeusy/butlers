@@ -80,6 +80,8 @@ from butlers.spotify_credentials import (
     SPOTIFY_OAUTH_ACCESS,
     SPOTIFY_OAUTH_EXPIRES_AT,
     SPOTIFY_OAUTH_REFRESH,
+    SpotifyTokenResponseError,
+    parse_spotify_token_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -638,6 +640,26 @@ async def spotify_oauth_callback(
             redirect_uri=state_entry.redirect_uri,
             client_id=client_id,
         )
+        token_response = parse_spotify_token_response(
+            token_data,
+            require_refresh_token=True,
+            require_scope=True,
+            require_token_type=True,
+        )
+    except SpotifyTokenResponseError:
+        exc = _TokenExchangeError("malformed")
+        logger.error(
+            "Spotify token exchange failed (reason=%s, status=%s)",
+            exc.reason,
+            exc.status_code,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Failed to exchange authorization code for tokens. "
+                "Retry POST /api/connectors/spotify/oauth/start."
+            ),
+        ) from None
     except _TokenExchangeError as exc:
         logger.error(
             "Spotify token exchange failed (reason=%s, status=%s)",
@@ -652,16 +674,12 @@ async def spotify_oauth_callback(
             ),
         ) from exc
 
-    access_token = token_data.get("access_token", "")
-    refresh_token = token_data.get("refresh_token", "")
-    expires_in = token_data.get("expires_in", 3600)
-    granted_scope = token_data.get("scope", "")
-
-    if not access_token or not refresh_token:
-        raise HTTPException(
-            status_code=502,
-            detail="Spotify token response was incomplete.",
-        )
+    access_token = token_response.access_token
+    refresh_token = token_response.refresh_token
+    expires_in = token_response.expires_in
+    granted_scope = token_response.scope
+    assert refresh_token is not None
+    assert granted_scope is not None
 
     profile = await _fetch_spotify_me(access_token)
     spotify_user_id = profile.get("id") if isinstance(profile, dict) else None

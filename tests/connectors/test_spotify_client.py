@@ -166,6 +166,67 @@ async def test_malformed_token_refresh_body_is_absent_from_exception_and_logs(ca
     assert marker not in caplog.text
 
 
+@pytest.mark.parametrize(
+    ("payload", "marker"),
+    [
+        pytest.param(
+            {
+                "access_token": "rotated-access",
+                "refresh_token": "rotated-refresh",
+                "expires_in": "MALFORMED_REFRESH_EXPIRY_MARKER",
+            },
+            "MALFORMED_REFRESH_EXPIRY_MARKER",
+            id="expiry",
+        ),
+        pytest.param(
+            {
+                "access_token": "rotated-access",
+                "refresh_token": ["MALFORMED_ROTATED_REFRESH_MARKER"],
+                "expires_in": 3600,
+            },
+            "MALFORMED_ROTATED_REFRESH_MARKER",
+            id="rotated-refresh",
+        ),
+    ],
+)
+async def test_token_refresh_rejects_malformed_success_payload_before_persisting(
+    payload: dict[str, Any], marker: str, caplog
+) -> None:
+    store = _credential_store()
+    conn = MagicMock()
+
+    @asynccontextmanager
+    async def _transaction():
+        yield
+
+    @asynccontextmanager
+    async def _acquire():
+        yield conn
+
+    conn.transaction = MagicMock(side_effect=_transaction)
+    store.pool.acquire = _acquire
+    http_client = AsyncMock(spec=httpx.AsyncClient)
+    http_client.post = AsyncMock(return_value=_response(200, payload))
+    client = SpotifyClient(credential_store=store, http_client=http_client)
+    await client.open()
+
+    with patch(
+        "butlers.connectors.spotify_client.upsert_owner_entity_info_on_connection",
+        new_callable=AsyncMock,
+        return_value=True,
+    ) as upsert:
+        with pytest.raises(SpotifyAuthError) as exc_info:
+            await client._refresh_access_token()
+
+    assert str(exc_info.value) == (
+        "Spotify token refresh returned an unexpected response. "
+        "Re-connect Spotify via dashboard settings."
+    )
+    assert marker not in str(exc_info.value)
+    assert marker not in caplog.text
+    upsert.assert_not_awaited()
+
+
 async def test_owner_expiry_accepts_decoded_datetime() -> None:
     expires_at = datetime.now(UTC) + timedelta(hours=1)
     store = _credential_store(expires_at=expires_at)

@@ -69,6 +69,7 @@ from butlers.spotify_credentials import (
     SPOTIFY_OAUTH_ACCESS,
     SPOTIFY_OAUTH_EXPIRES_AT,
     SPOTIFY_OAUTH_REFRESH,
+    parse_spotify_token_response,
 )
 
 if TYPE_CHECKING:
@@ -358,8 +359,10 @@ class SpotifyClient:
             )
 
         try:
-            data: dict[str, Any] = response.json()
-            new_access_token: str = data["access_token"]
+            token_response = parse_spotify_token_response(
+                response.json(),
+                require_refresh_token=False,
+            )
         except Exception:
             logger.error("Spotify token refresh returned malformed response")
             raise SpotifyAuthError(
@@ -367,9 +370,10 @@ class SpotifyClient:
                 "Re-connect Spotify via dashboard settings."
             ) from None
         # Spotify may or may not rotate the refresh token
-        new_refresh_token: str = data.get("refresh_token", self._refresh_token)
-        expires_in: int = data.get("expires_in", 3600)
-        new_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
+        new_access_token = token_response.access_token
+        new_refresh_token = token_response.refresh_token or self._refresh_token
+        assert new_refresh_token is not None
+        new_expires_at = datetime.now(UTC) + timedelta(seconds=token_response.expires_in)
 
         # Connector-owned refresh rotates secured owner OAuth rows.
         try:

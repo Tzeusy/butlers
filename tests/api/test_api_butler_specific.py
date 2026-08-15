@@ -458,6 +458,49 @@ class TestSpotifyAPI:
         assert marker not in resp.text
         assert marker not in caplog.text
 
+    async def test_callback_malformed_success_payload_is_content_blind_before_profile_lookup(
+        self, monkeypatch, caplog
+    ):
+        """A provider-controlled successful payload is validated before any use."""
+        from butlers.api.routers import spotify as spotify_router
+
+        marker = "PROVIDER_CALLBACK_SUCCESS_PAYLOAD_MARKER"
+        exchange = AsyncMock(
+            return_value={
+                "access_token": "access-secret",
+                "refresh_token": "refresh-secret",
+                "expires_in": marker,
+                "scope": "user-read-playback-state",
+                "token_type": "Bearer",
+            }
+        )
+        fetch_profile = AsyncMock(return_value={"id": "user-42"})
+        upsert = AsyncMock(return_value=True)
+        monkeypatch.setattr(spotify_router, "_exchange_code_for_tokens", exchange)
+        monkeypatch.setattr(spotify_router, "_fetch_spotify_me", fetch_profile)
+        monkeypatch.setattr(spotify_router, "upsert_owner_entity_info_on_connection", upsert)
+
+        app = self._make_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as client:
+            start = await client.post("/api/connectors/spotify/oauth/start")
+            resp = await client.get(
+                "/api/connectors/spotify/oauth/callback",
+                params={"code": "code", "state": start.json()["state"]},
+            )
+
+        assert resp.status_code == 502
+        assert resp.json() == {
+            "detail": "Failed to exchange authorization code for tokens. "
+            "Retry POST /api/connectors/spotify/oauth/start."
+        }
+        assert marker not in resp.text
+        assert marker not in caplog.text
+        fetch_profile.assert_not_awaited()
+        upsert.assert_not_awaited()
+
     async def test_callback_writes_only_secured_owner_oauth_rows(self, monkeypatch):
         from butlers.api.routers import spotify as spotify_router
 
@@ -473,6 +516,7 @@ class TestSpotifyAPI:
                 "refresh_token": "refresh-secret",
                 "expires_in": 3600,
                 "scope": "user-read-playback-state",
+                "token_type": "Bearer",
             }
 
         monkeypatch.setattr(spotify_router, "upsert_owner_entity_info_on_connection", _upsert)
@@ -538,6 +582,7 @@ class TestSpotifyAPI:
                     "refresh_token": "refresh-secret",
                     "expires_in": 3600,
                     "scope": "user-read-playback-state",
+                    "token_type": "Bearer",
                 }
             ),
         )
