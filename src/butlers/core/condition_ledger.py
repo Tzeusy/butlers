@@ -40,19 +40,22 @@ Only a complete snapshot with a strictly higher declared successor version
 records reciprocal episode links and the superseded terminal reason. The
 fingerprint itself is never migrated or reinterpreted.
 
-``reconcile_snapshot`` is the single entry point: it accepts everything a
-producer currently observes for one ``source`` plus whether that observation
-is a complete, successful snapshot of the producer's authoritative scope.
-Only a ``snapshot_complete=True`` call may resolve an active episode that it
-did not observe — a failed/degraded/partial producer run
-(``snapshot_complete=False``) can still confirm evidence for what it DID see,
-but can never resolve anything by omission.
+``reconcile_snapshot`` is the snapshot-driven reconciliation entry point: it
+accepts everything a producer currently observes for one ``source`` plus
+whether that observation is a complete, successful snapshot of the producer's
+authoritative scope. Only a ``snapshot_complete=True`` call may resolve an
+active episode that it did not observe — a failed/degraded/partial producer
+run (``snapshot_complete=False``) can still confirm evidence for what it DID
+see, but can never resolve anything by omission. ``resolve_condition`` is the
+explicit-resolution entry point for closing one active identity without a
+complete producer snapshot. Both APIs emit ``ConditionTransition`` values for
+their row-level outcomes.
 
 Concurrency
 -----------
-All of one ``source``'s writes within a single ``reconcile_snapshot`` call
-run inside one transaction holding a transaction-scoped Postgres advisory
-lock keyed by ``hashtext(table || ':' || source)`` — the table prefix keeps
+All writes from either ``reconcile_snapshot`` or ``resolve_condition`` for a
+``source`` run inside one transaction holding a transaction-scoped Postgres
+advisory lock keyed by ``hashtext(table || ':' || source)`` — the table prefix keeps
 the same source string in two different condition tables (e.g. a butler
 named "finance" as an infra_conditions source vs. an owner_conditions
 source) from contending on the same lock key. That serializes every
@@ -165,7 +168,7 @@ class Observation:
 
 @dataclass(frozen=True)
 class ConditionTransition:
-    """One row's outcome from a single :func:`reconcile_snapshot` call."""
+    """One row-level outcome from snapshot reconciliation or explicit resolution."""
 
     condition_id: uuid.UUID
     source: str
@@ -278,9 +281,12 @@ async def reconcile_snapshot(
         plain ``confirmed``.
 
     When ``snapshot_complete`` is True, every active episode for ``source``
-    that was NOT named by any ``observations`` entry resolves — this is the
-    ONLY path that can resolve a condition. Recurrence after a resolution
-    always creates the next episode, never mutates the resolved row.
+    that was NOT named by any ``observations`` entry resolves by snapshot
+    omission. This is the snapshot-driven resolution path; callers with
+    explicit recovery confirmation can use :func:`resolve_condition` to
+    resolve one active identity without a complete producer snapshot.
+    Recurrence after a resolution always creates the next episode, never
+    mutates the resolved row.
 
     Raises ``ValueError`` for an empty ``table``/``source``, a negative
     ``initial_grace_seconds``, or a duplicate fingerprint within
