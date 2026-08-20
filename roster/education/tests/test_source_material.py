@@ -147,3 +147,22 @@ async def test_education_module_registers_source_material_tools() -> None:
         "source_material_list",
         "source_material_remove",
     } <= mcp.tools.keys()
+
+
+async def test_source_material_register_schema_requires_title_and_type() -> None:
+    from fastmcp import FastMCP
+
+    from roster.education.modules import EducationModule, EducationModuleConfig
+
+    mcp = FastMCP("source-material-schema")
+    module = EducationModule()
+    await module.register_tools(
+        mcp,
+        EducationModuleConfig(),
+        SimpleNamespace(pool=AsyncMock()),
+        "education",
+    )
+
+    tool = await mcp.get_tool("source_material_register")
+
+    assert set(tool.parameters["required"]) >= {"title", "type"}

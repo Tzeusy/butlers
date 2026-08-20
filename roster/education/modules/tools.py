@@ -481,8 +481,8 @@ def register_tools(mcp: Any, module: Any, config: Any) -> None:  # noqa: C901
     @_tool("source_material")
     async def source_material_register(
         title: str,
+        type: str,
         authors: list[str] | str | None = None,
-        type: str | None = None,
         toc: Any | None = None,
         url: str | None = None,
     ) -> dict[str, Any]:

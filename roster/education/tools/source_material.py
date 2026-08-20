@@ -48,8 +48,8 @@ def _source_key(source_id: str) -> str:
 async def source_material_register(
     pool: asyncpg.Pool,
     title: str,
+    type: str,
     authors: list[str] | tuple[str, ...] | str | None = None,
-    type: str | None = None,
     toc: Any | None = None,
     url: str | None = None,
 ) -> dict[str, Any]:
