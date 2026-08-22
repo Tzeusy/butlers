@@ -375,6 +375,110 @@ async def test_scope_widening_unions_granted_scopes(app):
 
 
 # ---------------------------------------------------------------------------
+# Opaque account references (bu-nz4sn)
+# ---------------------------------------------------------------------------
+#
+# The Secrets reauthorize route must not hand the account email to its caller,
+# so it emits ``account_ref=<credential entity uuid>`` instead.  Start resolves
+# that reference to the stored hint server-side; everything downstream of the
+# resolution is the unchanged ``account_hint`` path.
+
+
+def _shared_pool(app):
+    """The pool ``_make_app`` wired in, so a test can control its fetchrow."""
+    return app.dependency_overrides[oauth_module._get_db_manager]().credential_shared_pool()
+
+
+async def test_account_ref_resolves_to_the_stored_login_hint(app):
+    """A ref with a stored label produces the same login_hint a hint would."""
+    _make_app(app)
+    _shared_pool(app).fetchrow = AsyncMock(return_value={"label": "u@example.com"})
+    mock_account = MagicMock()
+    mock_account.granted_scopes = []
+    get_account = AsyncMock(return_value=mock_account)
+
+    with patch(_GET_ACCOUNT_PATCH, get_account):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(
+                "/api/oauth/google/start",
+                params={"redirect": "false", "account_ref": str(uuid.uuid4())},
+            )
+
+    assert resp.status_code == 200, resp.text
+    url = resp.json()["authorization_url"]
+    assert _extract_query_param(url, "login_hint") == "u@example.com"
+    # Resolving the ref must put the flow on the existing-account branch — the
+    # reason the hint could not simply be dropped, since the no-hint branch
+    # runs the account-limit check and can 409 a legitimate re-authorization.
+    assert get_account.await_count == 1
+
+
+async def test_account_hint_wins_over_account_ref(app):
+    """An explicit hint short-circuits the lookup rather than racing it."""
+    _make_app(app)
+    lookup = AsyncMock(return_value={"label": "resolved@example.com"})
+    _shared_pool(app).fetchrow = lookup
+    mock_account = MagicMock()
+    mock_account.granted_scopes = []
+
+    with patch(_GET_ACCOUNT_PATCH, AsyncMock(return_value=mock_account)):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(
+                "/api/oauth/google/start",
+                params={
+                    "redirect": "false",
+                    "account_hint": "explicit@example.com",
+                    "account_ref": str(uuid.uuid4()),
+                },
+            )
+
+    assert resp.status_code == 200, resp.text
+    url = resp.json()["authorization_url"]
+    assert _extract_query_param(url, "login_hint") == "explicit@example.com"
+    assert lookup.await_count == 0
+
+
+async def test_unresolvable_account_ref_starts_a_hintless_flow(app):
+    """A ref that matches no stored credential degrades to first-time connect.
+
+    The reference is a lookup key, not an assertion that the row exists, so a
+    stale one must not fail the dance — it must behave exactly like a start
+    call with no hint at all.
+    """
+    _make_app(app)
+    _shared_pool(app).fetchrow = AsyncMock(return_value=None)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/oauth/google/start",
+            params={"redirect": "false", "account_ref": str(uuid.uuid4())},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert _extract_query_param(resp.json()["authorization_url"], "login_hint") is None
+
+
+async def test_account_ref_must_be_a_uuid(app):
+    """The ref is typed, so a label smuggled into the field is rejected."""
+    _make_app(app)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/oauth/google/start",
+            params={"redirect": "false", "account_ref": "u@example.com"},
+        )
+
+    assert resp.status_code == 422, resp.status_code
+
+
+# ---------------------------------------------------------------------------
 # OAuth callback
 # ---------------------------------------------------------------------------
 
