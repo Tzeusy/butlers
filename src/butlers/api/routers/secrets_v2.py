@@ -717,11 +717,127 @@ def _content_blind_summary(record: UserSecret) -> UserSecretSummary:
     )
 
 
+class SystemSecretSummary(BaseModel):
+    """Content-blind inventory row for one system credential.
+
+    The published projection of ``SystemSecret``, which stays internal so the
+    counting and grouping passes in ``get_inventory`` can keep reading the
+    unprojected row.
+
+    ``last_test_message`` and the probe's free-text ``message`` are absent, and
+    every audit row is rebuilt without its ``note``: owner decision 2026-08-13
+    puts audit / probe / failure free text off the wire for this response
+    regardless of credential family, because that text can echo a provider
+    response or the credential's own content.
+
+    ``key``, ``category`` and ``description`` deliberately survive. They are
+    operator-authored labels for infrastructure keys rather than evidence
+    derived from credential content, and the passport has no other way to name
+    a system row. Whether they belong behind the same projection is an open
+    policy question, not a decided one (bu-iph56).
+    """
+
+    key: str
+    category: str = "general"
+    description: str | None = None
+    state: str  # 'ok' | 'warn' | 'failing' | 'expired' | 'never_set'
+    fingerprint: str | None = None  # sha256[:8] hex, computed on-read
+    last_verified: datetime | None = None
+    last_test_ok: bool | None = None
+    last_test_code: int | None = None
+    butler: str  # which butler schema owns this row
+    test: CredentialTestOutcome | None = None
+    audit: list[CredentialAuditOutcome] = Field(default_factory=list)
+    read_only: bool = False
+    used_by: list[str] = Field(default_factory=list)
+
+
+def _content_blind_system(record: SystemSecret) -> SystemSecretSummary:
+    """Project an internal system row onto the public inventory payload.
+
+    Deliberately field-by-field rather than ``model_dump()``: a new field on
+    ``SystemSecret`` must be consciously allowed through here before it can
+    reach a client.
+
+    ``audit`` is re-projected rather than trusted from its writers, for the
+    same reason ``_content_blind_summary`` re-projects the ``u:`` namespace:
+    ``s:`` rows are written by ``_write_credential_audit`` here and by
+    ``jobs/secrets_lifecycle``, and nothing stops a further writer appearing,
+    so read-side projection is the only chokepoint that actually holds.
+    """
+    return SystemSecretSummary(
+        key=record.key,
+        category=record.category,
+        description=record.description,
+        state=record.state,
+        fingerprint=record.fingerprint,
+        last_verified=record.last_verified,
+        last_test_ok=record.last_test_ok,
+        last_test_code=record.last_test_code,
+        butler=record.butler,
+        test=_test_outcome(record.test),
+        audit=[
+            CredentialAuditOutcome(
+                ts=str(event.get("ts") or ""),
+                actor=str(event.get("actor") or ""),
+                action=str(event.get("action") or ""),
+            )
+            for event in record.audit
+        ],
+        read_only=record.read_only,
+        used_by=list(record.used_by),
+    )
+
+
+class CliRuntimeSummary(BaseModel):
+    """Content-blind inventory row for one CLI runtime token.
+
+    ``CliRuntime``'s published projection. Carries no ``audit`` array because
+    the inventory never populated one for this family; ``last_test_message``
+    and the probe ``message`` are dropped for the same reason as
+    ``SystemSecretSummary``.
+    """
+
+    key: str
+    category: str = "cli"
+    description: str | None = None
+    state: str  # 'ok' | 'warn' | 'failing' | 'expired' | 'never_set'
+    fingerprint: str | None = None  # sha256[:8] hex, computed on-read
+    issued: datetime | None = None
+    expires: datetime | None = None
+    last_verified: datetime | None = None
+    last_test_ok: bool | None = None
+    last_test_code: int | None = None
+    test: CredentialTestOutcome | None = None
+
+
+def _content_blind_cli(record: CliRuntime) -> CliRuntimeSummary:
+    """Project an internal CLI row onto the public inventory payload.
+
+    Deliberately field-by-field rather than ``model_dump()``: a new field on
+    ``CliRuntime`` must be consciously allowed through here before it can
+    reach a client.
+    """
+    return CliRuntimeSummary(
+        key=record.key,
+        category=record.category,
+        description=record.description,
+        state=record.state,
+        fingerprint=record.fingerprint,
+        issued=record.issued,
+        expires=record.expires,
+        last_verified=record.last_verified,
+        last_test_ok=record.last_test_ok,
+        last_test_code=record.last_test_code,
+        test=_test_outcome(record.test),
+    )
+
+
 class InventoryData(BaseModel):
     """Payload returned by GET /api/secrets/inventory."""
 
-    cli: list[CliRuntime] = Field(default_factory=list)
-    system: list[SystemSecret] = Field(default_factory=list)
+    cli: list[CliRuntimeSummary] = Field(default_factory=list)
+    system: list[SystemSecretSummary] = Field(default_factory=list)
     user: list[UserSecretSummary] = Field(default_factory=list)
     identities: list[IdentityInfo] = Field(default_factory=list)
     providers: dict[str, ProviderMetadata] = Field(default_factory=dict)
@@ -2261,13 +2377,18 @@ async def get_inventory(
 
     Raw credential values are NEVER returned.
 
-    The user family is content-blind (bu-iph56, owner decision 2026-08-13):
-    each row is a ``UserSecretSummary`` whose scope evidence is published as
+    Every row of every family is content-blind (bu-iph56, owner decision
+    2026-08-13): probe messages and audit note free text never reach the wire,
+    for the user, system and CLI families alike.
+
+    The user family goes furthest, because its evidence is derived from
+    credential content rather than authored by an operator: each row is a
+    ``UserSecretSummary`` whose scope evidence is published as
     ``CAPABILITY_VOCABULARY`` categories and whose provider slug is clamped to
-    ``USER_PROVIDER_VOCABULARY``. The persisted credential type and label, the
-    probe message, and audit note free text never reach the wire. The system
-    and CLI families still carry their descriptions, probe messages, and audit
-    notes — the content-blind contract has not been extended to them.
+    ``USER_PROVIDER_VOCABULARY``, and the persisted credential type and label
+    never reach the wire either. System and CLI rows keep their operator-authored
+    ``key`` / ``category`` / ``description`` labels; whether those belong behind
+    the same projection is an open policy question, not a decided one.
 
     meta.failing_count / meta.unverified_count are computed server-side from
     a deduplicated row set (bu-976n0): failing_count counts genuinely broken
@@ -2376,14 +2497,14 @@ async def get_inventory(
     }
     severity = {k: v for k, v in counts.items() if v > 0}
 
-    # The user family is projected through _content_blind_summary on the way
-    # out (bu-iph56): the rows above stay unprojected for the counting and
-    # grouping above, which need the persisted type, but what reaches the
-    # client carries capability categories instead of raw scopes and no
-    # credential type, label, probe message, or audit note.
+    # Every family is projected on the way out (bu-iph56). The rows above
+    # stay unprojected for the counting and grouping, which need the persisted
+    # type; what reaches the client carries capability categories instead of
+    # raw scopes, no credential type or label, and — for all three families —
+    # no probe message and no audit note.
     data = InventoryData(
-        cli=cli_secrets,
-        system=system_secrets,
+        cli=[_content_blind_cli(secret) for secret in cli_secrets],
+        system=[_content_blind_system(secret) for secret in system_secrets],
         user=[_content_blind_summary(secret) for secret in user_secrets],
         identities=identities,
         providers=PROVIDER_CATALOG,

@@ -131,6 +131,10 @@ export const MOCK_USER_CREDENTIALS: UserCredential[] = [
   },
 ];
 
+// System and CLI rows are content-blind on the wire too (bu-iph56): the
+// inventory publishes no probe message and no audit note for them either.
+// Operator-authored key/category/description labels are outside that
+// decision and still ship, so they stay here.
 export const MOCK_SYSTEM_CREDENTIALS: SystemCredential[] = [
   {
     key: "BUTLER_TELEGRAM_TOKEN", category: "telegram", rowState: "shared",
@@ -140,8 +144,8 @@ export const MOCK_SYSTEM_CREDENTIALS: SystemCredential[] = [
     usedBy: ["switchboard", "relationship", "qa"],
     test: { ok: true, code: 200, latencyMs: 41, at: "14:20 today" },
     audit: [
-      { ts: "2026-05-23 14:20", actor: "system", action: "verified", note: "getMe · 41ms" },
-      { ts: "2025-09-14 11:05", actor: "tze",    action: "rotated",  note: "token replaced" },
+      { ts: "2026-05-23 14:20", actor: "system", action: "verified", note: "" },
+      { ts: "2025-09-14 11:05", actor: "tze",    action: "rotated",  note: "" },
     ],
   },
   {
@@ -152,8 +156,8 @@ export const MOCK_SYSTEM_CREDENTIALS: SystemCredential[] = [
     usedBy: ["*"],
     test: { ok: true, code: 200, latencyMs: 220, at: "14:14 today" },
     audit: [
-      { ts: "2026-05-23 14:14", actor: "system", action: "verified", note: "1-token probe · 220ms" },
-      { ts: "2026-05-01 10:00", actor: "tze",    action: "rotated",  note: "monthly rotation" },
+      { ts: "2026-05-23 14:14", actor: "system", action: "verified", note: "" },
+      { ts: "2026-05-01 10:00", actor: "tze",    action: "rotated",  note: "" },
     ],
   },
   {
@@ -172,7 +176,7 @@ export const MOCK_SYSTEM_CREDENTIALS: SystemCredential[] = [
     plainValue: "tze@lim.house",
     test: null,
     audit: [
-      { ts: "2026-04-22 16:00", actor: "tze", action: "set", note: "changed from butlers@…" },
+      { ts: "2026-04-22 16:00", actor: "tze", action: "set", note: "" },
     ],
   },
 ];

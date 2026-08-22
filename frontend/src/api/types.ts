@@ -8500,7 +8500,9 @@ export interface SecretsProbeAllResponse {
 /**
  * A CLI runtime token row as returned by GET /api/secrets/inventory.
  *
- * Maps to CliRuntime in the backend secrets_v2 router.
+ * Maps to CliRuntimeSummary in the backend secrets_v2 router — the published
+ * projection of CliRuntime. The probe's free-text `message` and the cached
+ * `last_test_message` are not on the wire (bu-iph56); do not add them back.
  */
 export interface SecretsCliRaw {
   key: string;
@@ -8513,13 +8515,16 @@ export interface SecretsCliRaw {
   /** butler_secrets.expires_at (real; bu-6v1hx). */
   expires?: string | null;
   last_verified: string | null;
-  test: SecretsProbeResult | null;
+  test: SecretsCredentialTestOutcome | null;
 }
 
 /**
  * A system credential row as returned by GET /api/secrets/inventory.
  *
- * Maps to SystemSecret in the backend secrets_v2 router.
+ * Maps to SystemSecretSummary in the backend secrets_v2 router — the published
+ * projection of SystemSecret. Probe messages and audit note free text are not
+ * on the wire (bu-iph56); `key` / `category` / `description` are
+ * operator-authored labels and deliberately still are.
  */
 export interface SecretsSystemRaw {
   key: string;
@@ -8529,13 +8534,14 @@ export interface SecretsSystemRaw {
   fingerprint: string | null;
   last_verified: string | null;
   butler: string;
-  test: SecretsProbeResult | null;
+  test: SecretsCredentialTestOutcome | null;
   /**
    * Last few public.audit_log rows for this credential (target='s:<key>'),
-   * newest first. Real data (bu-6v1hx); empty when nothing has ever been
-   * logged for this key. May be absent on older backends (treat as []).
+   * newest first, without their free-text notes (bu-iph56). Real data
+   * (bu-6v1hx); empty when nothing has ever been logged for this key. May be
+   * absent on older backends (treat as []).
    */
-  audit?: SecretsAuditEvent[];
+  audit?: SecretsCredentialAuditOutcome[];
   /**
    * When true, the passport renders the row read-only (generic editor suppressed).
    * Shared-public rows (butler="shared-public") are NOT flagged read_only —

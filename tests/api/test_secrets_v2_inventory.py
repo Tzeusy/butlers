@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -174,6 +174,7 @@ def _make_db_manager(
     shared_system_rows: list[MagicMock] | None = None,
     probe_row: MagicMock | None = None,
     probe_rows: list[MagicMock] | None = None,
+    audit_rows: list[MagicMock] | None = None,
     shared_pool_available: bool = True,
 ) -> MagicMock:
     """Build a mock DatabaseManager for inventory endpoint tests.
@@ -189,12 +190,15 @@ def _make_db_manager(
     - probe_row: DEPRECATED legacy single-probe row (now used only for
                  singular fetchrow callers such as per-credential detail
                  endpoints).  For inventory tests, use probe_rows instead.
+    - audit_rows: rows returned by the bulk public.audit_log query. Each
+                  must have target, ts, actor, action, note.
     """
     butler_names = butler_names or []
     system_rows = system_rows or []
     user_rows = user_rows or []
     cli_rows = cli_rows or []
     shared_system_rows = shared_system_rows or []
+    bulk_audit_rows: list[MagicMock] = audit_rows or []
     # probe_rows drives the bulk fetch path; fall back to wrapping probe_row
     # in a list so existing tests continue to work.
     if probe_rows is None and probe_row is not None:
@@ -205,6 +209,8 @@ def _make_db_manager(
     butler_pool = AsyncMock()
 
     async def _butler_fetch(sql, *args):
+        if "audit_log" in sql:
+            return bulk_audit_rows
         if "secret_probe_log" in sql:
             # Bulk probe-log query for system credentials.
             return bulk_probe_rows
@@ -220,6 +226,8 @@ def _make_db_manager(
     shared_pool = AsyncMock()
 
     async def _shared_fetch(sql, *args):
+        if "audit_log" in sql:
+            return bulk_audit_rows
         if "secret_probe_log" in sql:
             # Bulk probe-log query for user/cli/shared-system credentials.
             return bulk_probe_rows
@@ -1801,7 +1809,11 @@ def test_inventory_probe_results_match_per_row_expectations():
     assert by_key["FAIL_KEY"]["test"] is not None
     assert by_key["FAIL_KEY"]["test"]["ok"] is False
     assert by_key["FAIL_KEY"]["test"]["code"] == 401
-    assert by_key["FAIL_KEY"]["test"]["message"] == "auth error"
+    # bu-iph56: the probe's free-text message is projected away for every
+    # family, so the machine-checkable outcome survives the bulk refactor but
+    # "auth error" does not reach the wire.
+    assert "message" not in by_key["FAIL_KEY"]["test"]
+    assert "auth error" not in resp.text
 
 
 def test_inventory_credential_with_no_probe_has_null_test():
@@ -3281,3 +3293,131 @@ def test_inventory_user_row_for_unknown_type_publishes_other_not_the_type():
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"]["user"][0]["provider"] == "other"
     assert "sentineltype" not in resp.text
+
+
+# ---------------------------------------------------------------------------
+# bu-iph56: the inventory's system and CLI families are content-blind too
+# ---------------------------------------------------------------------------
+# Owner decision Option C puts "audit/probe/failure free text" off the wire
+# with no qualification by credential family, so the system and CLI arrays of
+# this same response are bound by it as well. Operator-authored labels (key,
+# category, description) are NOT covered by that decision and deliberately
+# still ship; whether they should is an open policy question.
+# ---------------------------------------------------------------------------
+
+
+def test_inventory_system_and_cli_rows_omit_every_probe_and_audit_sentinel():
+    """No probe message or audit note ships for the system or CLI families.
+
+    Each free-text source is planted with a distinct sentinel; none may appear
+    anywhere in the response BYTES. Absence from the Pydantic model is not
+    enough — ``SystemSecret.audit`` was a ``list[dict]``, so a note could
+    previously reach the wire through a nested dict that no field list guards.
+    """
+    system_row = _make_system_row(
+        key="SENTINEL_SYSTEM_KEY",
+        value="fake-system-value",
+        category="general",
+        description="sentinel-system-description",
+        last_test_ok=False,
+        last_test_code=401,
+        last_test_message="sentinel-system-cached-message",
+    )
+    cli_row = _make_system_row(
+        key="sentinel-cli-key",
+        value="fake-cli-value",
+        category="cli",
+        description="sentinel-cli-description",
+        last_test_ok=False,
+        last_test_code=401,
+        last_test_message="sentinel-cli-cached-message",
+    )
+    mock_db = _make_db_manager(
+        butler_names=["switchboard"],
+        system_rows=[system_row],
+        cli_rows=[cli_row],
+        probe_rows=[
+            _make_row(
+                credential_key="SENTINEL_SYSTEM_KEY",
+                ok=False,
+                code=401,
+                message="sentinel-system-probe-message",
+                recorded_at=_NOW,
+                latency_ms=12,
+            ),
+            _make_row(
+                credential_key="sentinel-cli-key",
+                ok=False,
+                code=401,
+                message="sentinel-cli-probe-message",
+                recorded_at=_NOW,
+                latency_ms=13,
+            ),
+        ],
+        audit_rows=[
+            _make_row(
+                target="s:SENTINEL_SYSTEM_KEY",
+                ts=_NOW,
+                actor="owner",
+                action="verified",
+                note="sentinel-system-audit-note",
+            ),
+        ],
+    )
+
+    resp = _build_app(mock_db).get("/api/secrets/inventory")
+
+    assert resp.status_code == 200, resp.text
+    for sentinel in (
+        "sentinel-system-cached-message",
+        "sentinel-system-probe-message",
+        "sentinel-system-audit-note",
+        "sentinel-cli-cached-message",
+        "sentinel-cli-probe-message",
+    ):
+        assert sentinel not in resp.text, f"{sentinel} leaked into the inventory response"
+
+    body = resp.json()["data"]
+    system_entry = next(row for row in body["system"] if row["key"] == "SENTINEL_SYSTEM_KEY")
+    cli_entry = next(row for row in body["cli"] if row["key"] == "sentinel-cli-key")
+
+    # The published field lists, locked so a new internal field cannot ride out.
+    assert set(system_entry) == {
+        "key",
+        "category",
+        "description",
+        "state",
+        "fingerprint",
+        "last_verified",
+        "last_test_ok",
+        "last_test_code",
+        "butler",
+        "test",
+        "audit",
+        "read_only",
+        "used_by",
+    }
+    assert set(cli_entry) == {
+        "key",
+        "category",
+        "description",
+        "state",
+        "fingerprint",
+        "issued",
+        "expires",
+        "last_verified",
+        "last_test_ok",
+        "last_test_code",
+        "test",
+    }
+
+    # The machine-checkable outcome survives; only the free text is gone.
+    assert system_entry["test"] == {"ok": False, "code": 401, "at": ANY, "latency_ms": 12}
+    assert cli_entry["test"] == {"ok": False, "code": 401, "at": ANY, "latency_ms": 13}
+    assert system_entry["last_test_ok"] is False
+    assert system_entry["last_test_code"] == 401
+    assert system_entry["audit"] == [{"ts": ANY, "actor": "owner", "action": "verified"}]
+
+    # Operator-authored labels are outside the owner decision and still ship.
+    assert system_entry["description"] == "sentinel-system-description"
+    assert cli_entry["description"] == "sentinel-cli-description"

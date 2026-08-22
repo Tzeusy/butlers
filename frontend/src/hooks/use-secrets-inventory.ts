@@ -19,7 +19,6 @@ import { useQuery } from "@tanstack/react-query";
 
 import { getSecretsInventory } from "@/api/client.ts";
 import type {
-  SecretsAuditEvent,
   SecretsCliRaw,
   SecretsCredentialAuditOutcome,
   SecretsCredentialCapabilityOutcome,
@@ -127,28 +126,13 @@ function rowStateFromSystemRaw(raw: SecretsSystemRaw): SystemCredential["rowStat
   return raw.butler && !["shared", "switchboard", "shared-public"].includes(raw.butler) ? "local" : "shared";
 }
 
-function adaptProbeResult(raw: SecretsCliRaw["test"]): TestResult | null {
-  if (!raw) return null;
-  return {
-    ok: raw.ok,
-    code: raw.code ?? null,
-    message: raw.message ?? null,
-    // Real round-trip latency (bu-6v1hx) when the backend measured one — only
-    // probes that make an actual live network call populate this column.
-    // Stays null (never a fabricated "0ms") for local-state-derived probes;
-    // see ProbeResult's conditional render in atoms.tsx.
-    latencyMs: raw.latency_ms ?? null,
-    at: raw.at ?? "",
-  };
-}
-
 /**
  * Map a content-blind probe outcome (bu-iph56) to the FE TestResult shape.
  *
- * `message` is pinned to null rather than threaded: the user-credential wire
- * shape has no probe message, by design. Kept separate from adaptProbeResult
- * so a future `message` on the system/CLI probe shape cannot leak into a user
- * row by sharing an adapter.
+ * `message` is pinned to null rather than threaded: no inventory family has a
+ * probe message on the wire any more, by design. `latencyMs` stays null
+ * (never a fabricated "0ms") for probes the backend never timed; see
+ * ProbeResult's conditional render in atoms.tsx.
  */
 function adaptTestOutcome(raw: SecretsCredentialTestOutcome | null): TestResult | null {
   if (!raw) return null;
@@ -165,8 +149,9 @@ function adaptTestOutcome(raw: SecretsCredentialTestOutcome | null): TestResult 
  * Map content-blind audit rows (bu-iph56) to the FE AuditEvent shape.
  *
  * `note` is pinned to "" because the backend drops it on read for every
- * writer of the `u:` audit namespace — there is no note to render, and this
- * must not be "fixed" by reaching for a note field that is not on the wire.
+ * writer of the `u:` and `s:` audit namespaces — there is no note to render,
+ * and this must not be "fixed" by reaching for a note field that is not on
+ * the wire.
  */
 function adaptAuditOutcomes(raw: SecretsCredentialAuditOutcome[] | undefined): AuditEvent[] {
   if (!raw) return [];
@@ -186,17 +171,6 @@ function adaptCapabilityOutcomes(
   return raw.map((c) => ({
     capability: c.capability,
     test: adaptTestOutcome(c.test),
-  }));
-}
-
-/** Map backend audit_log rows to the FE AuditEvent shape (note: null → ""). */
-function adaptAuditEvents(raw: SecretsAuditEvent[] | undefined): AuditEvent[] {
-  if (!raw) return [];
-  return raw.map((event) => ({
-    ts: event.ts,
-    actor: event.actor,
-    action: event.action,
-    note: event.note ?? "",
   }));
 }
 
@@ -271,9 +245,9 @@ function adaptSystemCredential(raw: SecretsSystemRaw): SystemCredential {
     // key->consumer map. Empty means "not tracked", never "verified unused"
     // — see SystemCredential.usedBy and the "used by" band's rendering.
     usedBy:       raw.used_by ?? [],
-    test:         adaptProbeResult(raw.test),
+    test:         adaptTestOutcome(raw.test),
     // Real (bu-6v1hx): last few public.audit_log rows for this credential.
-    audit:        adaptAuditEvents(raw.audit),
+    audit:        adaptAuditOutcomes(raw.audit),
     readOnly:     raw.read_only ?? false,
   };
 }
@@ -291,7 +265,7 @@ function adaptCliCredential(raw: SecretsCliRaw): CliCredential {
     // No real source: CLI runtime tokens have no scope concept in this codebase.
     scopesGranted:  [],
     scopesRequired: [],
-    test:           adaptProbeResult(raw.test),
+    test:           adaptTestOutcome(raw.test),
   };
 }
 
