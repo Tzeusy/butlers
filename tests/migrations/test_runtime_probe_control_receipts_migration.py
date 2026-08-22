@@ -120,12 +120,23 @@ def test_grants_are_revoked_before_switchboard_gets_its_own() -> None:
     assert "UPDATE ON TABLE" not in sql
 
 
-def test_row_security_is_forced_so_the_owner_is_fenced_too() -> None:
-    """Grants cannot fence the table owner, and init-db re-grants tables anyway."""
+def test_row_security_is_enabled_but_deliberately_not_forced() -> None:
+    """Row security survives an init-db re-grant; FORCE would break the backup.
+
+    ENABLE is what makes the fence durable: ``scripts/init-db.sql`` re-grants
+    public-schema DML to every runtime role on each run, and a policy is not a
+    grant, so it is not re-granted away.
+
+    FORCE is deliberately absent.  It would also fence the table OWNER, and the
+    owner is the identity ``deploy/backup/pg_dump.sh`` dumps as -- see
+    ``test_forcing_row_security_would_break_that_backup``.  The owner is
+    therefore NOT fenced by this migration; owner-fencing needs a mechanism
+    that does not sit in the backup path.
+    """
     sql = _executed_sql("upgrade")
 
     assert f"ALTER TABLE {_TABLE} ENABLE ROW LEVEL SECURITY" in sql
-    assert f"ALTER TABLE {_TABLE} FORCE ROW LEVEL SECURITY" in sql
+    assert "FORCE ROW LEVEL SECURITY" not in sql
     assert f"USING (current_user = '{_SWITCHBOARD}')" in sql
     assert f"WITH CHECK (current_user = '{_SWITCHBOARD}')" in sql
 
@@ -337,11 +348,69 @@ async def test_no_other_runtime_role_can_touch_receipts(core_db_url: str, role: 
 
 @_integration
 @_asyncio_session
-async def test_the_owning_login_sees_no_receipts_either(core_db_url: str) -> None:
-    """FORCE ROW LEVEL SECURITY fences the owner, which grants cannot.
+async def test_the_nightly_backup_can_still_read_the_table(core_db_url: str) -> None:
+    """``pg_dump`` must not trip over row security on this table.
 
-    The dashboard and the migrations share one login here, so without FORCE the
-    "Switchboard-owned" claim would be true of grants and false in practice.
+    ``deploy/backup/pg_dump.sh`` dumps as ``POSTGRES_USER`` (default
+    ``butlers``), which is the migration user and therefore this table's OWNER,
+    and ``scripts/init-db.sql`` forces that role ``NOSUPERUSER`` with no
+    ``BYPASSRLS``.  ``pg_dump`` issues ``SET row_security = off`` before it
+    copies anything, and in that mode PostgreSQL raises rather than silently
+    returning a filtered result whenever a policy would apply to the reader.
+
+    Under ``FORCE ROW LEVEL SECURITY`` policies apply to the owner too, so the
+    dump would abort -- and because ``pg_dump.sh`` runs under ``set -o
+    pipefail``, that aborts the WHOLE nightly backup, not just this table.
+
+    This asserts on ``row_security = off`` rather than shelling out to
+    ``pg_dump`` deliberately: it is the same mechanism, it needs no client
+    binary matching the server major version, and a real ``pg_dump`` run
+    against a freshly bootstrapped database currently fails earlier for an
+    unrelated pre-existing reason (``init-db.sql`` revokes the migration
+    user's access to the restore-drill boundary objects, which ``pg_dump``
+    locks before dumping).  That is tracked separately; it must not silently
+    become this table's problem later.
+    """
+    owner = await _connect(core_db_url)
+    try:
+        await owner.execute("SET row_security = off")
+        # The value does not matter; not raising is the whole assertion.
+        assert await owner.fetchval(f"SELECT count(*) FROM {_TABLE}") is not None
+    finally:
+        await owner.close()
+
+
+@_integration
+@_asyncio_session
+async def test_forcing_row_security_would_break_that_backup(core_db_url: str) -> None:
+    """Pin the trap itself, so nobody re-adds FORCE without seeing the cost.
+
+    Everything happens inside a rolled-back transaction, so the table keeps the
+    settings the migration gave it.
+    """
+    owner = await _connect(core_db_url)
+    transaction = owner.transaction()
+    await transaction.start()
+    try:
+        await owner.execute(f"ALTER TABLE {_TABLE} FORCE ROW LEVEL SECURITY")
+        await owner.execute("SET LOCAL row_security = off")
+        with pytest.raises(asyncpg.PostgresError) as raised:
+            await owner.fetchval(f"SELECT count(*) FROM {_TABLE}")
+        assert "row-level security" in str(raised.value).lower()
+    finally:
+        await transaction.rollback()
+        await owner.close()
+
+
+@_integration
+@_asyncio_session
+async def test_row_security_survives_an_init_db_regrant(core_db_url: str) -> None:
+    """This is what row security buys, and why the revokes alone are not enough.
+
+    ``scripts/init-db.sql`` re-runs ``GRANT ... ON ALL TABLES IN SCHEMA public``
+    for every runtime role on every invocation, so the migration's per-role
+    REVOKEs are undone the next time an operator bootstraps.  The policy is not
+    a grant and is not re-granted away.
     """
     switchboard = await _connect(core_db_url, role=_SWITCHBOARD)
     digest = nonce_digest(_synthetic_nonce())
@@ -359,18 +428,27 @@ async def test_the_owning_login_sees_no_receipts_either(core_db_url: str) -> Non
 
     owner = await _connect(core_db_url)
     try:
-        visible = await owner.fetchval(
-            f"SELECT count(*) FROM {_TABLE} WHERE nonce_digest = $1", digest
+        # Exactly what init-db does, narrowed to one role.
+        await owner.execute(
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {_TABLE} TO {_OTHER_BUTLER}"
         )
-        with pytest.raises(asyncpg.InsufficientPrivilegeError):
-            await owner.execute(
-                f"INSERT INTO {_TABLE} (audience, nonce_digest, kid, capability_exp) "
-                "VALUES ($1, $2, $3, $4)",
-                _AUDIENCE,
-                nonce_digest(_synthetic_nonce()),
-                "probe-2026-05a",
-                datetime.now(UTC) + timedelta(seconds=60),
+        regranted = await _connect(core_db_url, role=_OTHER_BUTLER)
+        try:
+            visible = await regranted.fetchval(
+                f"SELECT count(*) FROM {_TABLE} WHERE nonce_digest = $1", digest
             )
+            with pytest.raises(asyncpg.InsufficientPrivilegeError):
+                await regranted.execute(
+                    f"INSERT INTO {_TABLE} (audience, nonce_digest, kid, capability_exp) "
+                    "VALUES ($1, $2, $3, $4)",
+                    _AUDIENCE,
+                    nonce_digest(_synthetic_nonce()),
+                    "probe-2026-05a",
+                    datetime.now(UTC) + timedelta(seconds=60),
+                )
+        finally:
+            await regranted.close()
+            await owner.execute(f"REVOKE ALL PRIVILEGES ON TABLE {_TABLE} FROM {_OTHER_BUTLER}")
     finally:
         await owner.close()
 

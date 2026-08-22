@@ -31,13 +31,20 @@ Two boundaries beyond the grants:
   ``capability_exp + 5s``, the accepted expiry plus the clock-skew allowance.
   A cleanup worker with a wrong predicate therefore fails loudly instead of
   quietly reopening a live replay window.
-* Row security is ENABLEd *and* FORCEd with a ``current_user =
-  'butler_switchboard_rw'`` policy.  Grants alone would not be enough here for
-  two reasons: ``scripts/init-db.sql`` deliberately re-grants broad DML on all
-  public tables to every runtime role on each rerun (see its ALTER DEFAULT
-  PRIVILEGES block), and the table owner is the shared migration/dashboard
-  login, which grants cannot fence at all.  FORCE ROW LEVEL SECURITY survives
-  both.
+* Row security is ENABLEd with a ``current_user = 'butler_switchboard_rw'``
+  policy.  The revokes alone would not hold: ``scripts/init-db.sql``
+  deliberately re-grants broad DML on all public tables to every runtime role
+  on each rerun (see its ALTER DEFAULT PRIVILEGES block), and a policy is not a
+  grant, so a rerun cannot undo it.
+
+  Row security is deliberately **not** FORCEd.  FORCE would additionally fence
+  the table owner -- but the owner is the migration user, which is the same
+  identity ``deploy/backup/pg_dump.sh`` dumps as, and ``init-db.sql`` pins that
+  role ``NOSUPERUSER`` with no ``BYPASSRLS``.  ``pg_dump`` sets
+  ``row_security = off``, which raises rather than silently filtering, and the
+  backup script runs under ``set -o pipefail``; a forced table would abort the
+  whole nightly dump.  So the owner is NOT fenced by this revision.  Fencing it
+  needs a mechanism outside the backup path.
 
 ``public.record_runtime_probe_verification`` is the other half of the boundary:
 a probe may write the four ``model_catalog`` verification columns and nothing
@@ -170,10 +177,19 @@ def upgrade() -> None:
         f"GRANT SELECT, INSERT, DELETE ON TABLE {_RECEIPTS} TO {_SWITCHBOARD_ROLE}",
     )
 
-    # Then row security, which also fences the owning migration/dashboard login
-    # and survives an init-db rerun that re-grants table DML.
+    # Then row security, which survives an init-db rerun that re-grants table
+    # DML to every runtime role.  A policy is not a grant, so it is not
+    # re-granted away.
+    #
+    # NOT forced, on purpose.  FORCE ROW LEVEL SECURITY would apply policies to
+    # the table OWNER as well -- and the owner is the migration user, which is
+    # exactly the identity deploy/backup/pg_dump.sh dumps as (init-db.sql
+    # pins it NOSUPERUSER, so it has no BYPASSRLS).  pg_dump runs with
+    # row_security = off, which RAISES rather than filtering when a policy
+    # would apply, and pg_dump.sh uses `set -o pipefail`, so a forced table
+    # would abort the entire nightly backup.  The owner is therefore not
+    # fenced here; every non-owner runtime role is.
     op.execute(f"ALTER TABLE {_RECEIPTS} ENABLE ROW LEVEL SECURITY")
-    op.execute(f"ALTER TABLE {_RECEIPTS} FORCE ROW LEVEL SECURITY")
     op.execute(f"DROP POLICY IF EXISTS runtime_probe_control_receipts_switchboard ON {_RECEIPTS}")
     op.execute(f"""
         CREATE POLICY runtime_probe_control_receipts_switchboard ON {_RECEIPTS}
