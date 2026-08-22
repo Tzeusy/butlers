@@ -100,9 +100,9 @@ class TestTransportVocabulary:
         assert proves_transport_not_attempted(refused) is True
         assert proves_transport_not_attempted(reset) is False
         assert classify_transport_exception(reset) is not None
-        assert (
-            classify_transport_exception(reset).outcome is TransportOutcome.UNCERTAIN
-        ), "a mid-flight reset may have delivered the request"
+        assert classify_transport_exception(reset).outcome is TransportOutcome.UNCERTAIN, (
+            "a mid-flight reset may have delivered the request"
+        )
 
     def test_fastmcp_connect_wrapper_is_unwrapped(self) -> None:
         wrapper = RuntimeError("Client failed to connect: nope")
@@ -267,10 +267,13 @@ class TestRoutePostSendBookkeeping:
             result = await route(pool, "messenger", "route.execute", {}, call_fn=call_fn)
 
         assert transport_calls == 1, "bookkeeping failure must not re-send"
-        assert result == {"result": {"receipt": "ok"}, "transport": {
-            "outcome": "confirmed",
-            "retryable": False,
-        }}
+        assert result == {
+            "result": {"receipt": "ok"},
+            "transport": {
+                "outcome": "confirmed",
+                "retryable": False,
+            },
+        }
         assert failing_write in calls
 
     async def test_bookkeeping_failure_logs_no_raw_provider_error(
@@ -328,10 +331,13 @@ def _notify_envelope() -> dict[str, Any]:
 class TestDeliverPostSendBookkeeping:
     async def test_confirmed_delivery_survives_notification_log_failure(self) -> None:
         pool = _mock_pool()
-        route_result = {"result": {"notify_response": {"status": "ok"}}, "transport": {
-            "outcome": "confirmed",
-            "retryable": False,
-        }}
+        route_result = {
+            "result": {"notify_response": {"status": "ok"}},
+            "transport": {
+                "outcome": "confirmed",
+                "retryable": False,
+            },
+        }
 
         with (
             patch(
@@ -352,10 +358,13 @@ class TestDeliverPostSendBookkeeping:
 
     async def test_confirmed_delivery_survives_message_inbox_failure(self) -> None:
         pool = _mock_pool(execute=AsyncMock(side_effect=RuntimeError("inbox down")))
-        route_result = {"result": {"notify_response": {"status": "ok"}}, "transport": {
-            "outcome": "confirmed",
-            "retryable": False,
-        }}
+        route_result = {
+            "result": {"notify_response": {"status": "ok"}},
+            "transport": {
+                "outcome": "confirmed",
+                "retryable": False,
+            },
+        }
 
         with (
             patch(
