@@ -149,13 +149,15 @@ After a curriculum request is accepted, the Education page SHALL render a receip
 
 The panel SHALL render four distinct states and SHALL NOT collapse any of them into another:
 - **accepted / running** — the request was accepted and work is in flight. The panel SHALL say so and SHALL NOT claim the curriculum exists or that the owner has been contacted.
-- **completed** — the receipt carries terminal evidence. The panel SHALL name the curriculum and, when `calibration_ready_at` is set, SHALL say the calibration is ready to answer.
+- **completed** — the receipt carries terminal evidence. The panel SHALL name the curriculum topic and SHALL distinguish `calibration_ready_at` being set (the teaching flow has started calibrating) from it being unset, rather than implying calibration in both cases.
 - **failed** — the panel SHALL render the terminal `failure_reason` in owner-readable language and SHALL offer a retry.
 - **unavailable** — when `receipts_available` is `false`, the panel SHALL say the status could not be read, and SHALL NOT render an all-clear or an empty "no request" state.
 
 The panel SHALL provide doors to the evidence it names: a link to the session (`/sessions/{session_id}`) whenever `session_id` is present, including on the failure path, and a control that opens the correlated curriculum whenever `mind_map_id` is present.
 
 While the receipt is non-terminal the query SHALL poll; once terminal it SHALL stop polling.
+
+In fallback mode (no request submitted in this session, so the panel reads the latest request), a receipt that settled longer than the recency window ago SHALL NOT be rendered — otherwise a curriculum created weeks ago would keep a permanent card on the page. A request tracked by `request_id` from this session's 202 SHALL always be rendered, however long ago it settled.
 
 The panel SHALL be announced to assistive technology as a live status region, and every door SHALL be a keyboard-reachable control with an accessible name.
 
@@ -188,6 +190,17 @@ The panel SHALL be announced to assistive technology as a live status region, an
 
 - **WHEN** the tracked receipt reaches `completed` or `failed`
 - **THEN** the receipt query SHALL stop refetching
+
+#### Scenario: A long-settled fallback receipt is not parked on the page
+
+- **WHEN** no request has been submitted in this session
+- **AND** the latest receipt settled longer than the recency window ago
+- **THEN** the panel SHALL render nothing
+
+#### Scenario: A request tracked in this session stays visible
+
+- **WHEN** a request submitted in this session settled longer than the recency window ago
+- **THEN** the panel SHALL still render its terminal outcome
 
 ---
 
