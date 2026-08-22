@@ -361,7 +361,16 @@ class SystemSecret(BaseModel):
 
 
 class UserSecret(BaseModel):
-    """A per-user credential stored in public.entity_info."""
+    """Internal, unprojected inventory read of one ``public.entity_info`` row.
+
+    Never serialised to a client wholesale — ``_content_blind_summary`` is the
+    only bridge from here to ``UserSecretSummary``, the row shape
+    ``GET /api/secrets/inventory`` actually publishes (bu-iph56). The persisted
+    type, label, probe message, and raw scopes stay on this record because
+    server-side consumers genuinely need them: ``jobs/secrets_lifecycle`` and
+    ``jobs/secrets_staleness`` read ``type`` to derive a provider, and
+    ``_dedupe_display_families`` groups inventory rows by it.
+    """
 
     id: str  # entity_info row id (UUID)
     entity_id: str  # entity UUID
@@ -433,22 +442,6 @@ class IdentityInfo(BaseModel):
     entity_id: str
     name: str
     role: str  # 'owner' | 'member'
-
-
-class InventoryData(BaseModel):
-    """Payload returned by GET /api/secrets/inventory."""
-
-    cli: list[CliRuntime] = Field(default_factory=list)
-    system: list[SystemSecret] = Field(default_factory=list)
-    user: list[UserSecret] = Field(default_factory=list)
-    identities: list[IdentityInfo] = Field(default_factory=list)
-    providers: dict[str, ProviderMetadata] = Field(default_factory=dict)
-    """Provider display metadata catalog keyed by provider slug.
-
-    Included so the frontend never needs a separate round-trip and the
-    static FE copy stays in sync with this authoritative backend source.
-    Shape mirrors ProviderInfo in frontend/src/components/secrets/passport/types.ts.
-    """
 
 
 # ---------------------------------------------------------------------------
@@ -622,6 +615,122 @@ def _content_blind_detail(record: _UserCredentialRecord) -> UserSecretDetail:
             for entry in record.capabilities
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# Inventory payload (content-blind user rows)
+# ---------------------------------------------------------------------------
+# Defined here, after the projection helpers above, because the inventory's
+# user array is the same content-blind evidence the per-credential detail
+# endpoint publishes — just one row per credential instead of one credential
+# (bu-iph56).
+# ---------------------------------------------------------------------------
+
+
+class UserSecretSummary(BaseModel):
+    """Content-blind inventory row for one user credential.
+
+    The list-shaped sibling of ``UserSecretDetail``: same contract, same fixed
+    capability vocabulary, one row per ``public.entity_info`` credential.  Kept
+    a separate model rather than reusing ``UserSecretDetail`` so per-credential
+    detail can grow richer single-read evidence (breaks, feeds) without that
+    evidence silently fanning out across every row of the inventory.
+
+    Every field is a database identifier, a timestamp, a derived hash, a
+    ``PROVIDER_CATALOG`` slug, or a member of ``CAPABILITY_VOCABULARY``. Raw
+    scope identifiers, the persisted credential type and label, and audit /
+    probe / failure free text are never projected here (owner decision,
+    2026-08-13).
+    """
+
+    # Identity
+    id: str  # entity_info row id (UUID)
+    entity_id: str  # entity UUID
+    provider: str  # a USER_PROVIDER_VOCABULARY member; 'other' when unknown
+
+    # State
+    state: str  # 'ok' | 'warn' | 'failing' | 'expired' | 'never_set'
+    fingerprint: str | None = None  # sha256[:8] hex, computed on-read
+
+    # Timestamps
+    issued: datetime | None = None  # created_at
+    expires: datetime | None = None  # Google test-mode only; see UserSecret
+    last_verified: datetime | None = None
+
+    # Capability evidence, drawn only from CAPABILITY_VOCABULARY. Empty means
+    # "no capability is recorded for this credential", never "unknown".
+    capabilities_required: list[str] = Field(default_factory=list)
+    capabilities_granted: list[str] = Field(default_factory=list)
+
+    # Evidence tail
+    test: CredentialTestOutcome | None = None  # most recent probe outcome
+    audit: list[CredentialAuditOutcome] = Field(default_factory=list)
+    capabilities: list[CredentialCapabilityOutcome] = Field(default_factory=list)
+
+
+def _content_blind_summary(record: UserSecret) -> UserSecretSummary:
+    """Project an internal inventory row onto the public inventory payload.
+
+    Deliberately field-by-field rather than ``model_dump()``: a new field on
+    ``UserSecret`` must be consciously allowed through here before it can reach
+    a client.
+
+    ``audit`` is re-projected here rather than trusted from its writers.  Rows
+    in the ``u:`` target namespace are written by three separate producers —
+    ``_write_credential_audit`` in this router, ``_emit_oauth_audit`` in
+    ``routers/oauth.py``, and ``jobs/secrets_lifecycle`` — and a fourth could
+    appear at any time, so read-side projection is the only chokepoint that
+    actually holds. ``note`` is dropped for every row regardless of who wrote
+    it; see ``CredentialAuditOutcome`` for why ``actor``/``action`` survive.
+    """
+    return UserSecretSummary(
+        id=record.id,
+        entity_id=record.entity_id,
+        provider=_published_provider(record.type),
+        state=record.state,
+        fingerprint=record.fingerprint,
+        issued=record.issued,
+        expires=record.expires,
+        last_verified=record.last_verified,
+        capabilities_required=_capability_categories(
+            _infer_provider_from_type(record.type), record.scopes_required
+        ),
+        capabilities_granted=_capability_categories(
+            _infer_provider_from_type(record.type), record.scopes_granted
+        ),
+        test=_test_outcome(record.test),
+        audit=[
+            CredentialAuditOutcome(
+                ts=str(event.get("ts") or ""),
+                actor=str(event.get("actor") or ""),
+                action=str(event.get("action") or ""),
+            )
+            for event in record.audit
+        ],
+        capabilities=[
+            CredentialCapabilityOutcome(
+                capability=_capability_name(entry.capability),
+                test=_test_outcome(entry.test),
+            )
+            for entry in record.capabilities
+        ],
+    )
+
+
+class InventoryData(BaseModel):
+    """Payload returned by GET /api/secrets/inventory."""
+
+    cli: list[CliRuntime] = Field(default_factory=list)
+    system: list[SystemSecret] = Field(default_factory=list)
+    user: list[UserSecretSummary] = Field(default_factory=list)
+    identities: list[IdentityInfo] = Field(default_factory=list)
+    providers: dict[str, ProviderMetadata] = Field(default_factory=dict)
+    """Provider display metadata catalog keyed by provider slug.
+
+    Included so the frontend never needs a separate round-trip and the
+    static FE copy stays in sync with this authoritative backend source.
+    Shape mirrors ProviderInfo in frontend/src/components/secrets/passport/types.ts.
+    """
 
 
 class SystemSecretDetail(BaseModel):
@@ -1194,6 +1303,32 @@ def _infer_provider_from_type(entity_type: str) -> str:
 
     idx = entity_type.find("_")
     return entity_type[:idx] if idx > 0 else entity_type
+
+
+# Provider slugs the inventory is allowed to publish for a user credential.
+# PROVIDER_CATALOG's own keys plus the two real entity_info groupings that have
+# no catalogue entry: 'email' (email_password) and 'other' (the catch-all type
+# the passport's own add-credential dropdown offers). Held as a fixed tuple so
+# _published_provider FILTERS this vocabulary rather than echoing an inferred
+# string — the last step of _infer_provider_from_type is a prefix of the
+# persisted entity_info.type, which is exactly the content the inventory must
+# not publish (owner decision, 2026-08-13).
+USER_PROVIDER_VOCABULARY: tuple[str, ...] = (*PROVIDER_CATALOG, "email", "other")
+
+
+def _published_provider(entity_type: str) -> str:
+    """Clamp an inferred provider slug to ``USER_PROVIDER_VOCABULARY``.
+
+    An entity_info type that maps to no known provider becomes 'other' rather
+    than leaking its own spelling. Two uncatalogued credentials on the same
+    entity therefore share one 'other' passport row — a display grouping, not
+    a claim that they are the same credential.
+    """
+    inferred = _infer_provider_from_type(entity_type)
+    for provider in USER_PROVIDER_VOCABULARY:
+        if provider == inferred:
+            return provider
+    return "other"
 
 
 def _provider_like_patterns(provider: str) -> list[str]:
@@ -2122,9 +2257,17 @@ async def get_inventory(
     Every credential row includes:
     - state (derived from test-state columns + expiry)
     - fingerprint (sha256 first-8 hex, computed on-read, never persisted)
-    - per-family identity (key / type / id)
+    - per-family identity (key / provider / id)
 
     Raw credential values are NEVER returned.
+
+    The user family is content-blind (bu-iph56, owner decision 2026-08-13):
+    each row is a ``UserSecretSummary`` whose scope evidence is published as
+    ``CAPABILITY_VOCABULARY`` categories and whose provider slug is clamped to
+    ``USER_PROVIDER_VOCABULARY``. The persisted credential type and label, the
+    probe message, and audit note free text never reach the wire. The system
+    and CLI families still carry their descriptions, probe messages, and audit
+    notes — the content-blind contract has not been extended to them.
 
     meta.failing_count / meta.unverified_count are computed server-side from
     a deduplicated row set (bu-976n0): failing_count counts genuinely broken
@@ -2233,10 +2376,15 @@ async def get_inventory(
     }
     severity = {k: v for k, v in counts.items() if v > 0}
 
+    # The user family is projected through _content_blind_summary on the way
+    # out (bu-iph56): the rows above stay unprojected for the counting and
+    # grouping above, which need the persisted type, but what reaches the
+    # client carries capability categories instead of raw scopes and no
+    # credential type, label, probe message, or audit note.
     data = InventoryData(
         cli=cli_secrets,
         system=system_secrets,
-        user=user_secrets,
+        user=[_content_blind_summary(secret) for secret in user_secrets],
         identities=identities,
         providers=PROVIDER_CATALOG,
     )
