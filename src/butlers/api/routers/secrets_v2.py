@@ -478,16 +478,27 @@ class CredentialCapabilityOutcome(BaseModel):
 class CredentialAuditOutcome(BaseModel):
     """One audit-log entry for a credential, without its free-text ``note``.
 
+    Used for every credential namespace this router publishes — ``u:`` user
+    credentials, ``s:`` system secrets, ``c:`` CLI tokens — so the reasoning
+    below is deliberately namespace-independent.
+
     ``note`` is the only operator-authored field on the row and is dropped
-    here. ``actor`` and ``action`` survive because every current writer of the
-    ``u:`` target namespace supplies constants: ``_write_credential_audit`` in
-    this router (``_OWNER_ACTOR`` plus one of its lifecycle verbs),
-    ``_emit_oauth_audit`` in ``routers/oauth.py`` (every call site passes a
-    literal action and the default ``owner`` actor), and
-    ``jobs/secrets_lifecycle.py`` (``_LIFECYCLE_ACTOR`` /
-    ``_LIFECYCLE_NOTIFIED_ACTION``). That is an audited property of today's
-    writers, not an enforced one: a new writer passing a dynamic actor or
-    action would publish it here.
+    here, whichever namespace the row belongs to. ``actor`` and ``action``
+    survive because every current writer supplies constants:
+
+    - ``u:`` — ``_write_credential_audit`` in this router (``_OWNER_ACTOR``
+      plus one of its lifecycle verbs) and ``_emit_oauth_audit`` in
+      ``routers/oauth.py`` (every call site passes a literal action and the
+      default ``owner`` actor).
+    - ``s:`` — ``_write_system_audit`` in this router (``_OWNER_ACTOR`` plus
+      an action that is always a literal or a locally-chosen one of two).
+    - ``c:`` — ``_write_cli_audit`` in this router, same shape.
+    - any namespace — ``jobs/secrets_lifecycle.py``, which writes
+      ``_LIFECYCLE_ACTOR`` / ``_LIFECYCLE_NOTIFIED_ACTION`` against whatever
+      canonical key the credential it is monitoring has.
+
+    That is an audited property of today's writers, not an enforced one: a new
+    writer passing a dynamic actor or action would publish it here.
     """
 
     ts: str  # pre-formatted relative timestamp
@@ -761,9 +772,11 @@ def _content_blind_system(record: SystemSecret) -> SystemSecretSummary:
 
     ``audit`` is re-projected rather than trusted from its writers, for the
     same reason ``_content_blind_summary`` re-projects the ``u:`` namespace:
-    ``s:`` rows are written by ``_write_credential_audit`` here and by
-    ``jobs/secrets_lifecycle``, and nothing stops a further writer appearing,
-    so read-side projection is the only chokepoint that actually holds.
+    ``s:`` rows are written by ``_write_system_audit`` here and by
+    ``jobs/secrets_lifecycle`` (which targets whatever canonical key it is
+    monitoring, so it writes into this namespace too), and nothing stops a
+    further writer appearing, so read-side projection is the only chokepoint
+    that actually holds.
     """
     return SystemSecretSummary(
         key=record.key,
