@@ -363,9 +363,7 @@ async def test_correlate_finds_map_created_after_trigger(pool: asyncpg.Pool) -> 
 
 async def test_correlate_ignores_maps_predating_the_trigger(pool: asyncpg.Pool) -> None:
     """A curriculum that already existed is not evidence this request worked."""
-    await pool.fetchval(
-        "INSERT INTO education.mind_maps (title) VALUES ('Older') RETURNING id"
-    )
+    await pool.fetchval("INSERT INTO education.mind_maps (title) VALUES ('Older') RETURNING id")
     triggered_at = datetime.now(UTC) + timedelta(seconds=1)
 
     found, calibration_ready = await edu._correlate_curriculum(pool, triggered_at)
