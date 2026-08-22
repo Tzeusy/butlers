@@ -1135,7 +1135,14 @@ async def _resolve_account_ref_hint(
     happens here, where the label never leaves the process.
 
     Returns None when the reference resolves to nothing; the caller then
-    behaves exactly as if no hint had been supplied.
+    behaves exactly as if no hint had been supplied.  That fallback is
+    deliberate — a hint lookup must never 500 the OAuth dance — but it is not
+    free: the no-hint branch runs ``_check_account_limit``, so a re-auth of an
+    existing account can come back 409 ``account_limit_reached``.  A reference
+    that simply does not resolve is an expected outcome and stays at debug; a
+    lookup that *fails* is logged at warning, because that case is the
+    regression this parameter exists to prevent, wearing the costume of an
+    ordinary limit rejection.
     """
     shared_pool = _get_shared_pool(db_manager)
     if shared_pool is None:
@@ -1160,9 +1167,26 @@ async def _resolve_account_ref_hint(
             _provider_like_patterns(provider),
         )
     except Exception:  # noqa: BLE001
-        logger.debug("account_ref lookup failed for provider=%s", provider)
+        # Warning, not debug: this is the one path where the safety net
+        # reintroduces the bug account_ref exists to prevent.  Returning None
+        # puts the caller on the no-hint branch, which runs
+        # _check_account_limit, which can reject a legitimate re-authorization
+        # of an already-connected account with 409 account_limit_reached.  From
+        # outside that is indistinguishable from an ordinary limit rejection,
+        # so the lookup failure has to be audible on its own.
+        logger.warning(
+            "account_ref lookup failed for provider=%s; falling back to a hint-free "
+            "OAuth flow, which may 409 with account_limit_reached even though this "
+            "is a re-authorization of an existing account",
+            provider,
+            exc_info=True,
+        )
         return None
     if row is None:
+        # Not a surprise: a reference that resolves to nothing is a real,
+        # expected outcome (stale ref, credential since disconnected), and the
+        # hint-free flow is the correct response to it.  Stays quiet.
+        logger.debug("account_ref resolved to no credential for provider=%s", provider)
         return None
     hint = row["label"]
     return str(hint) if hint else None

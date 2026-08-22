@@ -8,6 +8,7 @@ health test-mode flag contract.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -462,6 +463,38 @@ async def test_unresolvable_account_ref_starts_a_hintless_flow(app):
 
     assert resp.status_code == 200, resp.text
     assert _extract_query_param(resp.json()["authorization_url"], "login_hint") is None
+
+
+async def test_account_ref_lookup_failure_is_audible(app, caplog):
+    """A failed lookup must not degrade quietly.
+
+    Falling back to a hint-free flow puts the dance on the branch that runs
+    _check_account_limit, so a legitimate re-authorization can come back 409
+    account_limit_reached — indistinguishable from an ordinary limit rejection
+    unless the lookup failure says so itself.  The ``row is None`` case is a
+    real expected outcome and deliberately stays at debug; only the exception
+    path is the surprise.
+    """
+    _make_app(app)
+    _shared_pool(app).fetchrow = AsyncMock(side_effect=RuntimeError("pool gone"))
+
+    with caplog.at_level(logging.WARNING, logger="butlers.api.routers.oauth"):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.get(
+                "/api/oauth/google/start",
+                params={"redirect": "false", "account_ref": str(uuid.uuid4())},
+            )
+
+    assert resp.status_code == 200, resp.text
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("account_ref lookup failed" in r.getMessage() for r in warnings), [
+        r.getMessage() for r in warnings
+    ]
+    assert any("account_limit_reached" in r.getMessage() for r in warnings), (
+        "the warning must name the 409 it can cause, or it reads as harmless"
+    )
 
 
 async def test_account_ref_must_be_a_uuid(app):
