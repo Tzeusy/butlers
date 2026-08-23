@@ -2085,6 +2085,14 @@ a relative path resolves fine and the file lands somewhere plausible.
 not normal: DB tests start one pgvector container per pytest *process* (addopts carry `-n 3 --dist
 loadfile`), and a run SIGKILLed mid-flight never reaches teardown.
 
+A run that *reaches* teardown leaks nothing — verified, not assumed: a DB-backed suite run to
+completion left the host container count at 12 before and 12 after. The leak is confined to killed
+runs, which is the case a process cannot handle on its own, and is why the fix belongs in a sidecar
+rather than in teardown. Do not generalise that count delta into a leak detector, though: concurrent
+sessions legitimately raise the count mid-run, and a count that returns to baseline can still hide a
+leak a peer's Ryuk cleaned up meanwhile. The rule below counts nothing, so it stays correct under
+concurrency.
+
 **Ryuk is enabled for local runs and you should not "re-enable" it or replace it.** There is no
 `~/.testcontainers.properties` and no `TESTCONTAINERS_RYUK_DISABLED` in the shell, so
 `config.ryuk_disabled` falls through to its `False` default; every local run starts
