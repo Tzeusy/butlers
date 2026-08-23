@@ -54,10 +54,13 @@ detail is still readable at `public.audit_log` and `public.secret_probe_log`.
 - **Group on a `PROBE_FAILURE_VOCABULARY` token plus the target namespace**
   (the direction the bead proposed). Rejected on evidence: the token is not a
   column. It exists only inside the `note` free text as `probe_status=<token>`,
-  only the two probe paths of the five credential-audit producers write it
-  (`probe_user_credential` via `_write_credential_audit`,
-  `probe_system_credential` via `_write_system_audit`), and the token itself
-  (`live_failed:403`) is **not** a vocabulary member —
+  and only two of the ten endpoints that write credential audit rows put it
+  there — `probe_user_credential` (via `_write_credential_audit`) and
+  `probe_system_credential` (via `_write_system_audit`). The other eight
+  (rotate, disconnect, reauthorize, set, delete, across the user, system and
+  CLI namespaces) never emit a token at all, so a token-keyed identity would
+  have nothing to key on for most credential failures. The token itself
+  (`live_failed:403`) is also **not** a vocabulary member —
   `_probe_failure_category` derives the category at *response* time from that
   token plus the provider's HTTP status code, and the code is never persisted
   on the audit row. Reconstructing it on read would mean substring-parsing the

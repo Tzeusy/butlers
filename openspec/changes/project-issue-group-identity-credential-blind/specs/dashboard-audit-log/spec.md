@@ -70,6 +70,17 @@ the provider's words at the database, which is where they belong.
 - **BECAUSE** this is a credential-namespace carve-out, not a blanket gag: an
   operator log that cannot say what failed is not an operator log.
 
+#### Scenario: The drill-down resolves the group the feed published
+- **WHEN** `GET /api/issues/{issue_key}/occurrences` re-derives a
+  credential-target group by binding the `error_summary` the feed published for
+  it
+- **THEN** it returns that group's rows, and the total agrees with the
+  occurrence count the feed reported for the same window
+- **BECAUSE** the feed and the drill-down build on the same
+  `normalized_errors` CTE and bind on `error_summary`: a credential branch
+  present in one and absent in the other would 404 the drill-down on a group
+  the feed had just rendered.
+
 #### Scenario: One definition of "this target names a credential"
 - **WHEN** the grouping CTE tests a row's `target` and the `AuditLogEntry` model
   tests the same row's `target`
