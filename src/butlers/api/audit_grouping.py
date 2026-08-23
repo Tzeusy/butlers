@@ -43,10 +43,11 @@ Alternatives rejected
 ~~~~~~~~~~~~~~~~~~~~~
 - **Group on a ``PROBE_FAILURE_VOCABULARY`` token plus the target namespace.**
   The token is not on the row. It lives inside the ``note`` free text as
-  ``probe_status=<token>``, only one of the five credential-audit producers
-  writes it, and the token (``live_failed:403``) is not a vocabulary member —
-  the category is derived at *response* time by ``_probe_failure_category`` from
-  the token plus the provider HTTP code, and that code is never persisted.
+  ``probe_status=<token>``, only the two probe paths of the five
+  credential-audit producers write it, and the token (``live_failed:403``) is
+  not a vocabulary member — the category is derived at *response* time by
+  ``_probe_failure_category`` from the token plus the provider HTTP code, and
+  that code is never persisted.
   Recovering it here would mean substring-parsing the very free text this rule
   withholds, which is what owner Option C forbids: the published value must be
   selected out of a closed vocabulary, never derived from an input string.

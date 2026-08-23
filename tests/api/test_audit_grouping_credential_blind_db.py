@@ -41,7 +41,7 @@ from butlers.api.audit_grouping import (
     issue_from_audit_group_row,
 )
 from butlers.api.db import DatabaseManager
-from butlers.api.deps import get_butler_configs
+from butlers.api.deps import get_butler_configs, get_mcp_manager
 from butlers.api.routers import issues as issues_module
 from butlers.db import register_jsonb_codec
 from butlers.testing.migration import create_migrated_test_db, migration_db_name
@@ -86,12 +86,16 @@ def issues_app(pool: asyncpg.Pool) -> FastAPI:
     ``get_butler_configs`` is overridden to an empty roster so the live
     reachability lane contributes nothing: this test is about the audit lane,
     and an empty roster keeps the request off the network entirely.
+    ``get_mcp_manager`` is still resolved as a dependency even with no butlers
+    to probe, and raises unless ``init_dependencies()`` has run, so it is
+    overridden too.
     """
     mock_db = MagicMock(spec=DatabaseManager)
     mock_db.pool.return_value = pool
     application = create_app()
     application.dependency_overrides[issues_module._get_db_manager] = lambda: mock_db
     application.dependency_overrides[get_butler_configs] = lambda: []
+    application.dependency_overrides[get_mcp_manager] = lambda: MagicMock()
     return application
 
 
