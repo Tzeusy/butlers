@@ -651,3 +651,61 @@ async def test_probe_result_discloses_no_capability_material(signer, keyring):
     for segment in compact.split("."):
         assert segment not in rendered
     assert _KID not in rendered
+
+
+async def test_the_runtime_prompt_is_fixed_and_independent_of_the_capability(signer, keyring):
+    """Criterion 8: nothing capability-derived reaches the runtime.
+
+    The prompt and system prompt are module constants, and the caller has no
+    way to influence them --- so a capability cannot smuggle text into a model
+    context, and a probe transcript cannot leak the capability that authorised
+    it.
+    """
+    signer_key, _ = signer
+    compact = _sign(signer_key)
+    harness = _Harness(keyring)
+
+    await harness.run(compact)
+
+    (invocation,) = harness.adapter.invocations
+    assert invocation["prompt"] == coord.PROBE_PROMPT
+    assert invocation["system_prompt"] == coord.PROBE_SYSTEM_PROMPT
+
+    rendered = json.dumps({key: repr(value) for key, value in invocation.items()})
+    for segment in compact.split("."):
+        assert segment not in rendered
+    assert _KID not in rendered
+
+
+@pytest.mark.parametrize(
+    "mangle",
+    [
+        pytest.param(lambda compact: compact + "x", id="tampered-signature"),
+        pytest.param(lambda compact: compact, id="accepted"),
+    ],
+)
+async def test_coordinator_logs_disclose_no_capability_material(signer, keyring, caplog, mangle):
+    """Criterion 8: rejection diagnostics name a category, never the evidence."""
+    signer_key, _ = signer
+    compact = _sign(signer_key)
+    harness = _Harness(keyring)
+
+    with caplog.at_level("DEBUG"):
+        await harness.run(mangle(compact))
+
+    for segment in compact.split("."):
+        assert segment not in caplog.text
+    assert _KID not in caplog.text
+
+
+async def test_replay_and_busy_logs_disclose_no_capability_material(signer, keyring, caplog):
+    signer_key, _ = signer
+    compact = _sign(signer_key)
+    harness = _Harness(keyring, claimed=False)
+
+    with caplog.at_level("DEBUG"):
+        assert (await harness.run(compact)).status is coord.ProbeStatus.REPLAY
+
+    for segment in compact.split("."):
+        assert segment not in caplog.text
+    assert _KID not in caplog.text
