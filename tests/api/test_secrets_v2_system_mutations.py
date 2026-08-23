@@ -1079,9 +1079,15 @@ def test_set_system_credential_drops_planted_audit_notes_and_breaks(monkeypatch)
         "sentinel-scope",
     ):
         assert sentinel not in resp.text, f"{sentinel!r} leaked onto the wire"
-    assert resp.json()["data"]["audit"] == [
-        {"ts": "12:00 today", "actor": "owner", "action": "rotated"}
-    ]
+    data = resp.json()["data"]
+    assert data["audit"] == [{"ts": "12:00 today", "actor": "owner", "action": "rotated"}]
+    # `description` is published, deliberately and identically to the read
+    # route: the read requirement establishes `key` / `category` /
+    # `description` as operator-authored naming for an infrastructure key
+    # rather than evidence derived from credential content. Pinned here so a
+    # later decision to withhold it is a conscious edit to both surfaces
+    # rather than a silent divergence between GET and POST on one row.
+    assert data["description"] == "sentinel-operator-description"
 
 
 def test_set_shared_public_response_is_projected():
