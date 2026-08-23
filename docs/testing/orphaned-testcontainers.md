@@ -25,12 +25,21 @@ the fix below is not a teardown change.
 
 ## Ryuk is enabled, and is the primary defence
 
-Ryuk is **not** disabled in this repo. There is no `TESTCONTAINERS_RYUK_DISABLED` anywhere in the
-tree, no `~/.testcontainers.properties`, and no `ryuk.disabled` property. It runs: every pytest
-process that starts a container first starts `testcontainers-ryuk-<SESSION_ID>`, opens a TCP socket
-to it, and registers the filter `label=org.testcontainers.session-id=<SESSION_ID>`. When the socket
-drops (including via SIGKILL, because the kernel closes it), Ryuk removes everything carrying that
-label and then exits.
+Ryuk is **not** disabled for local runs. There is no `~/.testcontainers.properties`, no
+`ryuk.disabled` property, and no `TESTCONTAINERS_RYUK_DISABLED` in the environment, so
+`config.ryuk_disabled` falls through to its `False` default. It runs: every pytest process that
+starts a container first starts `testcontainers-ryuk-<SESSION_ID>`, opens a TCP socket to it, and
+registers the filter `label=org.testcontainers.session-id=<SESSION_ID>`. When the socket drops
+(including via SIGKILL, because the kernel closes it), Ryuk removes everything carrying that label
+and then exits.
+
+There is one place the variable *is* set, and it is worth knowing before you grep and conclude this
+page is wrong: CI sets `TESTCONTAINERS_RYUK_DISABLED: "true"` in `.github/workflows/ci.yml` (the
+`check` job's smoke and integration steps) and in `.github/workflows/nightly.yml`. That is harmless
+there and cannot leak onto a developer machine, because those jobs are `runs-on: ubuntu-latest`
+throwaway VMs that are destroyed wholesale. (The `gha-runner-*` containers on this host belong to a
+different project, not to butlers CI.) It matters here only because copying the CI environment into
+a local run turns Ryuk off and defeats the live-Ryuk predicate below.
 
 **Do not write an age-based reaper to replace this, and do not "re-enable" Ryuk: it is already on.**
 
@@ -81,7 +90,9 @@ every failure mode (a missing label, an unparseable timestamp, a `docker` call t
 to "not reapable". The script's way of being wrong is to leave an orphan running, never to kill
 something live. Age enters only as a backstop (`--min-age-hours`, default 4, comfortably past the
 ~40 minute full backend gate) covering the one case where a missing Ryuk does not imply a dead
-session: a run launched with `TESTCONTAINERS_RYUK_DISABLED=true`.
+session: a run launched with `TESTCONTAINERS_RYUK_DISABLED=true`. Treat that case as real rather
+than theoretical, since it is exactly what CI does, and copying a CI command line into a local shell
+is the obvious way to reach it.
 
 To pin a container the sweep would otherwise take, give it a name of your own or label it:
 
