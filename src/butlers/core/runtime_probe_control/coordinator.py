@@ -326,10 +326,10 @@ class RuntimeProbeCoordinator:
         the reservation contain no ``await``, so the event loop cannot
         interleave two callers between them.
         """
-        admitted = (
-            self._global_in_flight < GLOBAL_CONCURRENCY
-            and len({entry_id} & self._in_flight) < PER_ENTRY_CONCURRENCY
-        )
+        # ``_in_flight`` is a set, so an entry is either absent or present
+        # once --- PER_ENTRY_CONCURRENCY == 1 expressed in the data structure
+        # rather than re-checked against it.
+        admitted = self._global_in_flight < GLOBAL_CONCURRENCY and entry_id not in self._in_flight
         if admitted:
             self._global_in_flight += 1
             self._in_flight.add(entry_id)

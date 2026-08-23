@@ -589,6 +589,18 @@ async def test_a_freed_entry_slot_admits_the_next_probe(signer, keyring):
     assert (await harness.run(_sign(signer_key))).status is coord.ProbeStatus.COMPLETED
 
 
+def test_declared_limits_match_the_specified_numbers():
+    """Criterion 3 names the numbers, so pin them rather than the symbols.
+
+    The concurrency tests below read the constants back, which proves the
+    coordinator honours whatever they say --- not that they still say what the
+    bead specified.
+    """
+    assert coord.GLOBAL_CONCURRENCY == 8
+    assert coord.PER_ENTRY_CONCURRENCY == 1
+    assert coord.PROBE_TIMEOUT_S == 30
+
+
 async def test_global_concurrency_is_capped_at_eight(signer, keyring):
     """Criterion 3: the ninth distinct entry is refused while eight are in flight."""
     signer_key, _ = signer

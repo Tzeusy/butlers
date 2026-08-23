@@ -103,7 +103,7 @@ class RuntimeProbeControlClient:
     async def _request(self, compact: str) -> ProbeResult:
         try:
             async with httpx.AsyncClient(
-                transport=self._transport, timeout=self._timeout, cookies=None
+                transport=self._transport, timeout=self._timeout
             ) as client:
                 response = await client.post(
                     self._url,
