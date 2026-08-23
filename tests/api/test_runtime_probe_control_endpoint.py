@@ -442,9 +442,7 @@ async def test_readiness_tracks_issuance_not_acceptance(keyring):
     future = parse_verifier_keyring_document(
         _encode(
             keyring_document(
-                current_entry(
-                    synthetic_keypair()[1], kid=_KID, sign_from=now + timedelta(hours=1)
-                )
+                current_entry(synthetic_keypair()[1], kid=_KID, sign_from=now + timedelta(hours=1))
             )
         )
     )
@@ -551,9 +549,7 @@ async def test_readiness_never_reaches_the_coordinator(keyring):
     coordinator = _Coordinator(ProbeResult(ProbeStatus.COMPLETED, ok=True))
 
     async with _client(_app(coordinator, _mounted(keyring))) as client:
-        assert (
-            await client.get(endpoint.READINESS_PATH, params={"kid": _KID})
-        ).status_code == 200
+        assert (await client.get(endpoint.READINESS_PATH, params={"kid": _KID})).status_code == 200
 
     assert coordinator.calls == []
 
@@ -843,9 +839,7 @@ async def test_client_signs_nothing_until_switchboard_reports_ready(signer, keyr
     assert gate.probes == []
 
 
-async def test_client_asks_readiness_about_its_own_key_id_and_offers_no_capability(
-    signer, keyring
-):
+async def test_client_asks_readiness_about_its_own_key_id_and_offers_no_capability(signer, keyring):
     """The gate carries a key *identifier* and nothing else --- no capability."""
     signer_key, _ = signer
     gate = _Gate(_ready())
