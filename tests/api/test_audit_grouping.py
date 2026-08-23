@@ -664,12 +664,10 @@ class TestCredentialTargetGroupIdentity:
         withheld = ("error", "note", "request_summary")
         for column in withheld:
             assert column not in branch, (
-                f"the credential group title reads the withheld column "
-                f"{column!r}: {branch!r}"
+                f"the credential group title reads the withheld column {column!r}: {branch!r}"
             )
         assert "operation" in branch and "target" in branch, (
-            f"the credential group title names neither the action nor the "
-            f"credential: {branch!r}"
+            f"the credential group title names neither the action nor the credential: {branch!r}"
         )
 
     def test_two_credentials_project_to_two_distinct_groups(self):
