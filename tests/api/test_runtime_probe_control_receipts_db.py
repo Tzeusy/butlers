@@ -289,21 +289,33 @@ async def test_cleanup_refuses_to_delete_a_receipt_inside_the_replay_window(pool
     assert await receipts.is_consumed(nonce=nonce)
 
 
-async def test_cleanup_honours_expiry_plus_five_seconds(pool):
-    """Criterion 2: retained through ``exp + 5s``, deletable only after."""
+async def test_the_retention_bound_is_expiry_plus_five_seconds(pool):
+    """Criterion 2: retained through ``exp + 5s``, deletable only after.
+
+    Both offsets are real-clock offsets because the trigger is: it compares
+    ``OLD.capability_exp`` against the database's own ``now()``, so passing
+    ``purge_expired`` a simulated clock moves the caller's predicate but not
+    the bound underneath it.  Four and six seconds sit a full second either
+    side of the boundary, which no plausible round-trip delay closes.
+    """
     receipts = RuntimeProbeControlReceipts(pool)
     now = datetime.now(UTC)
-    expires_at = now - timedelta(seconds=3)
-    nonce = b"\x02" * 32
-    assert await receipts.claim(nonce=nonce, kid=_KID, expires_at=expires_at)
+    inside, outside = b"\x02" * 32, b"\x05" * 32
+    assert await receipts.claim(nonce=inside, kid=_KID, expires_at=now - timedelta(seconds=4))
+    assert await receipts.claim(nonce=outside, kid=_KID, expires_at=now - timedelta(seconds=6))
 
-    # Three seconds past expiry is still inside the five-second skew allowance.
-    assert await receipts.purge_expired(now=now) == 0
-    assert await receipts.is_consumed(nonce=nonce)
+    # The caller's own predicate takes only the receipt past the bound.
+    assert await receipts.purge_expired() == 1
+    assert await receipts.is_consumed(nonce=inside)
+    assert not await receipts.is_consumed(nonce=outside)
 
-    # Two seconds later the window has closed and the receipt may go.
-    assert await receipts.purge_expired(now=now + timedelta(seconds=2.001)) == 1
-    assert not await receipts.is_consumed(nonce=nonce)
+    # And the trigger holds that same line against a caller who asks directly,
+    # which is what stops a wrong cleanup predicate reopening a replay window.
+    with pytest.raises(asyncpg.PostgresError):
+        await pool.execute(
+            f"DELETE FROM {RECEIPTS_TABLE} WHERE nonce_digest = $1", nonce_digest(inside)
+        )
+    assert await receipts.is_consumed(nonce=inside)
 
 
 async def test_purging_an_expired_receipt_does_not_free_a_live_one(pool):
