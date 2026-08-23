@@ -12,11 +12,16 @@ DB-backed tests (`tests/api/*_db.py`, `tests/migrations/`, `tests/config/`) star
 addopts carry `-n 3 --dist loadfile`, so one `make test` is three worker processes, each with its
 own session-scoped container, and a few test modules open a second container of their own.
 
-A run that reaches teardown removes its containers. A run that is SIGKILLed (agent timeout, ctrl-c,
-OOM) never gets there, and the container stays up indefinitely, holding RAM and a published port.
-This was found in the wild (bu-3zu5l): 11 leaked containers, the oldest three weeks old.
+A run that reaches teardown removes its containers. This is not an assumption: a full DB-backed
+suite run to completion during the bu-3zu5l investigation (`tests/api/`, 12 tests, exit 0) left the
+host container count unchanged at 12 before and after. **Teardown works.** A run that is SIGKILLed
+(agent timeout, ctrl-c, OOM) never gets there, and the container stays up indefinitely, holding RAM
+and a published port. That is where the 11 leaked containers found in the wild came from, the
+oldest three weeks old.
 
-A killed process cannot run its own teardown. That is exactly why testcontainers ships a sidecar.
+So the problem is confined to exactly the case a process cannot handle on its own: a killed process
+cannot run its own teardown. That is precisely why testcontainers ships a sidecar, and it is why
+the fix below is not a teardown change.
 
 ## Ryuk is enabled, and is the primary defence
 
@@ -63,6 +68,12 @@ python3 scripts/reap_orphaned_testcontainers.py            # report only (exit 1
 python3 scripts/reap_orphaned_testcontainers.py --json     # machine readable, with reasons
 python3 scripts/reap_orphaned_testcontainers.py --reap     # remove the candidates
 ```
+
+The rule never fires during a healthy run. A container created by a live session is spared twice
+over: its Ryuk sidecar is running for the container's whole life, and it is nowhere near the age
+backstop. Both protections are pinned by tests
+(`test_live_session_is_spared_because_its_ryuk_is_running`,
+`test_recent_container_is_spared_by_the_age_backstop`).
 
 An agent may run this **without owner sign-off**, including `--reap`. The safety argument: the
 predicates above are conjunctive, each one alone is enough to spare a container someone wants, and
