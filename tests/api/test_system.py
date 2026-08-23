@@ -15,6 +15,7 @@ healthy night.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -1003,6 +1004,14 @@ async def test_backups_run_receipt_reason_outside_the_vocabulary_is_not_rendered
 
     assert data["last_run"]["result"] == "failed"
     assert data["last_run"]["reason"] == "unrecognized reason"
+    # Assert the ABSENCE, not just the replacement. Pinning `reason` to its
+    # whitelisted stand-in proves that one field was collapsed; it says nothing
+    # about whether the DSN rode out through some other field of the envelope.
+    # Serialize the whole response and look for the material itself, the way
+    # tests/integration/test_runtime_attention_delivery_worker.py:539 does.
+    serialized = json.dumps(data)
+    for leaked in ("hunter2", "host=db", "user=butlers", "password="):
+        assert leaked not in serialized
 
 
 async def test_backups_run_receipt_survives_a_directory_with_no_dump_at_all(
