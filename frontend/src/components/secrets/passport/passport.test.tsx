@@ -180,6 +180,22 @@ function renderInRouter(element: React.ReactElement, initialEntries: string[] = 
   );
 }
 
+function spotifySpineRow(html: string): string {
+  const start = html.indexOf('data-key="u:spotify"');
+  return html.slice(start, html.indexOf("</button>", start));
+}
+
+function spotifySpineGroup(html: string): string {
+  const rowStart = html.indexOf('data-key="u:spotify"');
+  const groupStart = html.lastIndexOf("data-spine-group=", rowStart);
+  return html.slice(groupStart, html.indexOf("</div>", groupStart));
+}
+
+const SPOTIFY_PROJECTION_INVENTORY: InventoryResponse = {
+  ...MOCK_INVENTORY,
+  user: MOCK_INVENTORY.user.filter((entry) => entry.provider !== "spotify"),
+};
+
 function renderInDomRouter(element: React.ReactElement, initialEntries: string[] = ["/secrets"]) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -758,6 +774,74 @@ describe("DirectionPassport: renders against mocked inventory", () => {
     expect(projection).not.toContain("visa permissions");
     expect(projection).not.toContain("probe · last test");
     expect(projection).not.toContain("stamps · audit");
+  });
+
+  it.each([
+    ["connected", "ok", "integrations"],
+    ["unconfigured", "never_set", "integrations"],
+    ["authorization_needed", "authorization_needed", "needs hand"],
+    ["needs_reauth", "authorization_needed", "needs hand"],
+    ["error", "failed", "needs hand"],
+  ] as const)("maps Spotify %s to %s in %s", async (spotifyState, credentialState, group) => {
+    const useSpotifyModule = await import("@/hooks/use-spotify.ts");
+    vi.mocked(useSpotifyModule.useSpotifyStatus).mockReturnValueOnce({
+      data: {
+        state: spotifyState,
+        connected: spotifyState === "connected",
+        capability_categories: ["listening-history"],
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as unknown as ReturnType<typeof useSpotifyModule.useSpotifyStatus>);
+
+    const html = renderInRouter(
+      <DirectionPassport inventory={SPOTIFY_PROJECTION_INVENTORY} />,
+      ["/secrets?focus=u%3Aspotify"],
+    );
+
+    expect(spotifySpineRow(html)).toContain(`data-state="${credentialState}"`);
+    expect(spotifySpineGroup(html)).toContain(group);
+    expect(html).not.toContain("probe · last test");
+  });
+
+  it("maps a loading Spotify query to checking outside stale", async () => {
+    const useSpotifyModule = await import("@/hooks/use-spotify.ts");
+    vi.mocked(useSpotifyModule.useSpotifyStatus).mockReturnValueOnce({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      error: null,
+    } as unknown as ReturnType<typeof useSpotifyModule.useSpotifyStatus>);
+
+    const html = renderInRouter(
+      <DirectionPassport inventory={SPOTIFY_PROJECTION_INVENTORY} />,
+      ["/secrets?focus=u%3Aspotify"],
+    );
+
+    expect(spotifySpineRow(html)).toContain('data-state="checking"');
+    expect(spotifySpineGroup(html)).toContain("integrations");
+    expect(spotifySpineGroup(html)).not.toContain("stale ·");
+  });
+
+  it("maps a Spotify query failure to content-blind failed state", async () => {
+    const useSpotifyModule = await import("@/hooks/use-spotify.ts");
+    const providerError = "provider error: account 1234 token rejected";
+    vi.mocked(useSpotifyModule.useSpotifyStatus).mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new Error(providerError),
+    } as unknown as ReturnType<typeof useSpotifyModule.useSpotifyStatus>);
+
+    const html = renderInRouter(
+      <DirectionPassport inventory={SPOTIFY_PROJECTION_INVENTORY} />,
+      ["/secrets?focus=u%3Aspotify"],
+    );
+
+    expect(spotifySpineRow(html)).toContain('data-state="failed"');
+    expect(spotifySpineGroup(html)).toContain("needs hand");
+    expect(spotifySpineRow(html)).not.toContain(providerError);
   });
 });
 

@@ -47,8 +47,10 @@ const STATE_RANK: Record<CredentialState, number> = {
   failed: 1,
   scope_mismatch: 2,
   expiring: 3,
+  authorization_needed: 3,
   warn: 4,
   rotating: 4,
+  checking: 5,
   ok: 5,
   never_set: 9,
 };
