@@ -33,7 +33,9 @@
 
 - [x] 4.1 Run focused backend inventory tests and frontend inventory, hook, and
   Spotify projection tests.
-  - Completed: `uv run pytest tests/api/test_secrets_v2_inventory.py tests/api/test_secrets_v2_probe_live_spotify.py -q` (141 passed) and `npx vitest run src/hooks/use-secrets-inventory.test.ts src/hooks/use-cli-auth.test.ts src/components/secrets/passport/passport.test.tsx --configLoader runner` from `frontend/` (167 passed).
+  - Completed backend: `uv run pytest tests/api/test_secrets_v2_inventory.py tests/api/test_secrets_v2_probe_live_spotify.py -q` (141 passed).
+  - Completed Task 3 frontend: `npx vitest run src/hooks/use-secrets-inventory.test.ts src/hooks/use-cli-auth.test.ts` from `frontend/` (2 files, 36 tests passed).
+  - Completed Task 4 frontend: `npx vitest run src/components/secrets/passport/spotify-projection-state.test.ts src/components/secrets/passport/passport.test.tsx src/components/secrets/passport/secrets-fe5.test.tsx src/hooks/use-secrets-inventory.test.ts --reporter=dot` from `frontend/` (4 files, 191 tests passed).
 - [x] 4.2 Run frontend lint, TypeScript build, Knip, and the existing
   content-blind and generic-Spotify-prohibition regression coverage.
   - Completed: `npm run lint`, `npm run lint:emdash`, `npm run lint:query-coercion`, `npm run knip`, and `npm run build` pass. The exact local merge-base `npm run test` run passed; branch-local runs timed out only under contention at `route-chunk-registry.test.ts`'s unchanged 20-second limit. Hosted clean-runner adjudication for PR #3850 at exact head `26a67c082` passed the full frontend job (including Test, 7m37s), frontend-e2e (3m49s), and all fast guards without timeout, worker, or test changes.
