@@ -18,9 +18,10 @@ import { useSearchParams } from "react-router";
 import { Loader2 } from "lucide-react";
 
 import { useRegisterCommands, type PaletteCommand } from "@/lib/command-registry";
-import type { CredentialState, InventoryResponse, SpineSortMode } from "./types.ts";
+import type { InventoryResponse, SpineSortMode } from "./types.ts";
 import { parseFocus } from "./constants.ts";
 import { buildSpineEntries, pickDefaultKey } from "./spine-builder.ts";
+import { spotifyProjectionState } from "./spotify-projection-state.ts";
 import { Spine, SpineAddButton } from "./Spine.tsx";
 import { PageUser, PageSystem, PageCliConnected, PassportEmptyState, PassportAddPanel } from "./pages.tsx";
 import { SpotifyDrawer } from "./ProviderConfigDrawer.tsx";
@@ -141,23 +142,6 @@ function KpiSep() {
   );
 }
 
-function spotifyProjectionState(query: ReturnType<typeof useSpotifyStatus>): CredentialState {
-  if (query.isLoading) return "checking";
-  if (query.isError || !query.data) return "failed";
-
-  switch (query.data.state) {
-    case "connected":
-      return "ok";
-    case "unconfigured":
-      return "never_set";
-    case "authorization_needed":
-    case "needs_reauth":
-      return "authorization_needed";
-    case "error":
-      return "failed";
-  }
-}
-
 // ── DirectionPassport ─────────────────────────────────────────────────────────
 
 /**
@@ -175,6 +159,11 @@ export function DirectionPassport({
   const [searchParams, setSearchParams] = useSearchParams();
   const ownerTimezone = useTimezone();
   const spotifyStatus = useSpotifyStatus();
+  const spotifyState = spotifyProjectionState({
+    isLoading: spotifyStatus.isLoading,
+    isError: spotifyStatus.isError,
+    state: spotifyStatus.data?.state,
+  });
 
   // ── URL state ───────────────────────────────────────────────────────────
   const focusParam = searchParams.get("focus");
@@ -210,7 +199,7 @@ export function DirectionPassport({
           family: "user",
           label: "Spotify",
           provider: "spotify",
-          state: spotifyProjectionState(spotifyStatus),
+          state: spotifyState,
           mono: false,
           lastTouchOrder: 800,
           subline: "connector-managed",
@@ -218,7 +207,7 @@ export function DirectionPassport({
       }
       return projected;
     },
-    [inventory, spineIdentityIds, spotifyStatus],
+    [inventory, spineIdentityIds, spotifyState],
   );
 
   // Focus key: derived from URL param — URL is the single source of truth.
