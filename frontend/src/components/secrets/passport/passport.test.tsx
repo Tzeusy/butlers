@@ -162,7 +162,7 @@ import {
   MOCK_PROVIDERS,
   MOCK_IDENTITIES,
 } from "./mock-data.ts";
-import type { SpineEntry } from "./types.ts";
+import type { InventoryResponse, SpineEntry } from "./types.ts";
 import { buildSpineEntries } from "./spine-builder.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
