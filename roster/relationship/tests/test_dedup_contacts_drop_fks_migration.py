@@ -152,6 +152,8 @@ CREATE TABLE tasks (
     CONSTRAINT tasks_contact_id_fkey FOREIGN KEY (contact_id)
         REFERENCES public.contacts(id) ON DELETE CASCADE
 );
+-- schema-standin-exempt: the pre-rel_030 fixture this migration rewrites, and
+-- the point of the file is that it starts from the schema rel_030 inherits.
 CREATE TABLE contact_entity_map (
     contact_id UUID PRIMARY KEY,
     entity_id  UUID NOT NULL

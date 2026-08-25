@@ -22,7 +22,7 @@ These tests move the failure back to the point of breakage:
 - :func:`test_the_index_diff_can_fail` keeps that index arm honest: a guard
   nobody has watched go red is indistinguishable from one that cannot.
 - :func:`test_no_test_hand_rolls_a_standin_table` stops the class from
-  recurring by refusing a fourth hand-written copy.
+  recurring by refusing any further hand-written copy of a registered table.
 """
 
 from __future__ import annotations
@@ -55,11 +55,19 @@ docker_available = shutil.which("docker") is not None
 
 @pytest.fixture(scope="module")
 def parity_db_url(postgres_container) -> str:
-    """Provision every chain the registered stand-ins claim to mirror."""
+    """Provision every chain the registered stand-ins claim to mirror.
+
+    A chain that owns a schema is migrated under it, so its tables land where
+    the declaring stand-in says they do rather than in ``public``.
+    """
     chains: list[str] = []
+    schemas: dict[str, str] = {}
     for standin in STANDINS.values():
         chains.extend(chain for chain in standin.chains if chain not in chains)
-    return create_migrated_test_db(postgres_container, migration_db_name(), chains=chains)
+        schemas.update(standin.chain_schemas)
+    return create_migrated_test_db(
+        postgres_container, migration_db_name(), chains=chains, schemas=schemas
+    )
 
 
 def _columns(conn, schema: str, table: str) -> dict[str, tuple[str, str, str | None]]:
@@ -225,11 +233,14 @@ def _exempted(lines: list[str], match_line_index: int) -> bool:
 
 @pytest.mark.unit
 def test_no_test_hand_rolls_a_standin_table():
-    """A fourth hand-written copy of a stand-in table is refused at source level.
+    """A further hand-written copy of a stand-in table is refused at source level.
 
     The three original ``connector_registry`` stand-ins each looked reasonable
-    in isolation; the defect only existed across them.  Import the shared
-    constant instead, or annotate a genuinely different use with
+    in isolation; the defect only existed across them -- and the twenty-odd
+    ``entity_predicate_registry`` copies proved it scales (bu-1ehh1): no two
+    agreed on whether the table has a ``kind`` CHECK, so one fixture seeded a
+    kind the real chain has never allowed.  Import the shared constant instead,
+    or annotate a genuinely different use with
     ``# schema-standin-exempt: <why>`` (as
     ``tests/config/test_init_db_bootstrap.py`` does for its two-column
     GRANT target, which is a privilege fixture rather than a query stand-in).

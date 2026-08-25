@@ -104,6 +104,8 @@ def test_new_predicates_count() -> None:
 async def _provision_registry(pool) -> None:
     """Create minimal prerequisites: schema and entity_predicate_registry."""
     await pool.execute("CREATE SCHEMA IF NOT EXISTS relationship")
+    # schema-standin-exempt: the pre-rel_021 registry rel_026 seeds into; the
+    # current shape would let the seed rely on columns that did not exist yet.
     await pool.execute("""
         CREATE TABLE IF NOT EXISTS relationship.entity_predicate_registry (
             predicate   TEXT        NOT NULL PRIMARY KEY,
