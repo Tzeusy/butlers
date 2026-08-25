@@ -40,7 +40,11 @@ must not be silently conflated.
 TEST_DEF_PATTERN='^[[:space:]]*(async[[:space:]]+)?def[[:space:]]+test_'
 TESTS_CURRENT=$(grep -rEc "$TEST_DEF_PATTERN" tests/ --include='*.py' | awk -F: '{sum+=$2} END {print sum+0}')
 ROSTER_CURRENT=$(grep -rEc "$TEST_DEF_PATTERN" roster/ --include='*.py' | awk -F: '{sum+=$2} END {print sum+0}')
-echo "Current static functions: tests/ $TESTS_CURRENT | roster/ $ROSTER_CURRENT | combined $((TESTS_CURRENT + ROSTER_CURRENT)) | active snapshot HEAD d169401398c22b260ceb9d7b8bac539b2c4e0efe"
+ACTIVE_COMBINED_BASELINE=16935
+COMBINED_CURRENT=$((TESTS_CURRENT + ROSTER_CURRENT))
+COMBINED_DELTA=$((COMBINED_CURRENT - ACTIVE_COMBINED_BASELINE))
+COMBINED_DELTA_PERCENT=$(awk -v delta="$COMBINED_DELTA" -v baseline="$ACTIVE_COMBINED_BASELINE" 'BEGIN {printf "%.2f", (delta / baseline) * 100}')
+echo "Current static functions: tests/ $TESTS_CURRENT | roster/ $ROSTER_CURRENT | combined $COMBINED_CURRENT | baseline $ACTIVE_COMBINED_BASELINE | delta $COMBINED_DELTA (${COMBINED_DELTA_PERCENT}%) | active snapshot HEAD d169401398c22b260ceb9d7b8bac539b2c4e0efe"
 
 # CI-selection collection (population only, not test-execution timing):
 uv run --no-sync pytest tests/ roster/ --collect-only -q \
