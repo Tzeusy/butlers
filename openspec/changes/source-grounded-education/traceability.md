@@ -15,6 +15,28 @@ the mapping does not claim repository-wide traceability completeness.
 | `REQ-dashboard-education-api-001` | `roster/education/tests/test_api.py::TestListSourceMaterial` executes populated, empty, nullable-field, and unavailable-pool endpoint states. |
 | `REQ-dashboard-education-ui-001` | `frontend/src/components/education/NodeDetailPanel.test.tsx` executes referenced, model-recalled, dangling, unchecked, concept-type, and annotation-free rendering states. |
 
+## Archive-safety and collision record
+
+A capability-qualified scan of every unarchived `## MODIFIED Requirements` block found eight
+same-named requirement groups across the repository. Two intersect this change:
+
+- `module-education-curriculum :: Topic decomposition into concept graph` also appears in
+  `education-mind-map-lifecycle-integrity`.
+- `dashboard-education-ui :: Mind map graph visualization in Curriculum tab` also appears in
+  `education-mind-map-lifecycle-integrity`.
+
+`MANIFESTO.md Content` and `Teaching Phase — Explain, Question, Evaluate` have no same-capability,
+same-name collision in another unarchived change. The `MANIFESTO.md Content` and `Topic
+decomposition into concept graph` blocks in this change are rebuilt from their current baseline
+bodies: every baseline normative paragraph and scenario is preserved verbatim, then only this
+change's source-grounding and pedagogy clauses and scenarios are added.
+
+The two Education changes remain separately unarchived. This rebuild does not combine the
+lifecycle change's intended edits into the source-grounding delta and does not make either archive
+order independent: after one change is intentionally archived, every colliding block in the other
+change must be rebuilt against the refreshed baseline before that second archive. The dashboard UI
+collision is recorded here but remains outside this bead's authorized body-rebuild scope.
+
 ## Scoped mechanical check
 
 Run the repository trace checker in authoring mode with the relevant backend and co-located
@@ -52,5 +74,18 @@ requirement while preserving its body and a green overwrite guard. The generic c
 recognize those UI lines as structurally valid metadata, so resolving this requires an explicit
 decision to relax the no-rewrite boundary or a checker/format design that satisfies both guards.
 
-This evidence is scoped. It does not authorize archiving the change, modifying a `MODIFIED`
-requirement body, or claiming the repository-wide baseline is clean.
+Recorded on 2026-08-27 from the coherent `bu-istke.8` branch after incorporating `bu-istke.7`:
+
+- `openspec validate source-grounded-education --strict` exited 0.
+- `make check-spec-overwrites` exited 0 with no unfrozen baseline losses; the ratchet reported
+  four fewer frozen losses for `MANIFESTO.md Content` and seven fewer for `Topic decomposition into
+  concept graph`. The overwrite baseline was not replaced or updated.
+- The capability-qualified unarchived collision scan found eight duplicate groups repo-wide and
+  exactly the two Education collisions recorded above for this change.
+- `python3 scripts/check_cited_requirements_resolve.py` exited 0.
+- The focused Education evidence suite passed 39 tests, including the manifesto, curriculum,
+  pedagogy, source-registry API, and reading-pathway cases cited above.
+- `git diff --check` exited 0.
+
+This evidence is scoped. It does not authorize archiving the change, modifying any other
+`MODIFIED` requirement body, or claiming the repository-wide baseline is clean.
