@@ -959,7 +959,7 @@ async def test_constraints_reject_non_edge_forgery_keep_source_snapshot_and_fenc
         "DELETE FROM public.model_catalog WHERE id = $1", retained_entry_id
     )
     retained = await upgraded_admin_pool.fetchrow(
-        f"SELECT triggering_attempt_id, source_snapshot FROM {_OUTBOX} WHERE id = $1",
+        f"SELECT triggering_attempt_id, source_snapshot, payload FROM {_OUTBOX} WHERE id = $1",
         retained_episode_id,
     )
     assert retained is not None
@@ -989,8 +989,11 @@ async def test_constraints_reject_non_edge_forgery_keep_source_snapshot_and_fenc
         is False
     )
 
-    reissue_snapshot = {"reissue_of": str(retained_episode_id)}
-    reissue_payload = {"classification": "manual_reissue"}
+    reissue_snapshot = {
+        **retained["source_snapshot"],
+        "reissue_of": str(retained_episode_id),
+    }
+    reissue_payload = retained["payload"]
     await upgraded_admin_pool.execute(
         f"""
         INSERT INTO {_OUTBOX} (

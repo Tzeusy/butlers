@@ -2827,6 +2827,51 @@ BEGIN
         interface_version = 3,
         reissue_enabled = true;
 
+    -- A manual successor is a distinct delivery episode, but its delivery
+    -- message still needs the original bounded model-breaker context and
+    -- review door.  Keep the immutable allowlist narrow while admitting that
+    -- copied context plus the direct-parent lineage marker.
+    ALTER TABLE public.runtime_attention_outbox
+        DROP CONSTRAINT ck_runtime_attention_outbox_snapshot_allowlist,
+        ADD CONSTRAINT ck_runtime_attention_outbox_snapshot_allowlist CHECK (
+            (manual_reissue_of IS NULL AND source = 'model_breaker'
+                AND source_snapshot ?& ARRAY[
+                    'catalog_entry_id', 'alias', 'model_id',
+                    'triggering_attempt_id', 'consecutive_failures'
+                ]
+                AND source_snapshot - ARRAY[
+                    'catalog_entry_id', 'alias', 'model_id',
+                    'triggering_attempt_id', 'consecutive_failures'
+                ] = '{}'::jsonb)
+            OR (manual_reissue_of IS NULL AND source = 'fleet_halt'
+                AND source_snapshot ?& ARRAY['month', 'denied_count', 'first_denied_at']
+                AND source_snapshot - ARRAY['month', 'denied_count', 'first_denied_at']
+                    = '{}'::jsonb)
+            OR (manual_reissue_of IS NOT NULL AND source = 'model_breaker'
+                AND source_snapshot ?& ARRAY[
+                    'catalog_entry_id', 'alias', 'model_id', 'triggering_attempt_id',
+                    'consecutive_failures', 'reissue_of'
+                ]
+                AND source_snapshot - ARRAY[
+                    'catalog_entry_id', 'alias', 'model_id', 'triggering_attempt_id',
+                    'consecutive_failures', 'reissue_of'
+                ] = '{}'::jsonb)
+        ),
+        DROP CONSTRAINT ck_runtime_attention_outbox_payload_allowlist,
+        ADD CONSTRAINT ck_runtime_attention_outbox_payload_allowlist CHECK (
+            (manual_reissue_of IS NULL AND source = 'model_breaker'
+                AND payload ?& ARRAY['classification', 'consecutive_failures', 'door']
+                AND payload - ARRAY['classification', 'consecutive_failures', 'door']
+                    = '{}'::jsonb)
+            OR (manual_reissue_of IS NULL AND source = 'fleet_halt'
+                AND payload ?& ARRAY['classification', 'door']
+                AND payload - ARRAY['classification', 'door'] = '{}'::jsonb)
+            OR (manual_reissue_of IS NOT NULL AND source = 'model_breaker'
+                AND payload ?& ARRAY['classification', 'consecutive_failures', 'door']
+                AND payload - ARRAY['classification', 'consecutive_failures', 'door']
+                    = '{}'::jsonb)
+        );
+
     CREATE OR REPLACE FUNCTION public.observe_runtime_attention_models()
     RETURNS TABLE (
         catalog_entry_id UUID,
@@ -2981,8 +3026,9 @@ BEGIN
             source, source_snapshot, payload, manual_reissue_of
         ) VALUES (
             'model_breaker',
-            jsonb_build_object('reissue_of', p_original_id::text),
-            jsonb_build_object('classification', 'manual_reissue'),
+            v_original.source_snapshot
+                || jsonb_build_object('reissue_of', p_original_id::text),
+            v_original.payload,
             p_original_id
         )
         ON CONFLICT (manual_reissue_of) WHERE manual_reissue_of IS NOT NULL DO NOTHING

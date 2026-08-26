@@ -29,7 +29,7 @@ def _db(app, *, fetch_rows=(), fetchrow=None, fetch_side_effect=None):
     return pool
 
 
-def _episode_row(*, episode_id=None, state="uncertain", successor_id=None):
+def _episode_row(*, episode_id=None, state="uncertain", successor_id=None, manual_reissue_of=None):
     now = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
     return {
         "catalog_entry_id": uuid.UUID("00000000-0000-0000-0000-000000000001"),
@@ -40,7 +40,7 @@ def _episode_row(*, episode_id=None, state="uncertain", successor_id=None):
         "delivered_at": None,
         "delivery_error_class": "transport_uncertain" if state == "uncertain" else None,
         "delivery_error_detail": "transport_timeout" if state == "uncertain" else None,
-        "manual_reissue_of": None,
+        "manual_reissue_of": manual_reissue_of,
         "successor_id": successor_id,
     }
 
@@ -121,6 +121,28 @@ async def test_attention_observation_returns_only_sanitized_state(
     }
 
 
+async def test_uncertain_manual_successor_is_not_advertised_as_reissue_eligible(
+    app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-dashboard-model-settings-002: the projection matches the DB lineage gate."""
+    monkeypatch.setenv("DASHBOARD_API_KEY", "owner-key")
+    row = _episode_row(manual_reissue_of=uuid.uuid4())
+    _db(app, fetch_rows=[row])
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            "/api/settings/models/attention", headers={"X-API-Key": "owner-key"}
+        )
+
+    assert response.status_code == 200
+    episode = next(iter(response.json()["data"]["episodes"].values()))
+    assert episode["lifecycle_state"] == "uncertain"
+    assert episode["manual_reissue_of"] is not None
+    assert episode["reissue_eligible"] is False
+
+
 async def test_reissue_owner_gate_precedes_side_effect(
     app, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -191,3 +213,34 @@ async def test_non_uncertain_reissue_is_denied_without_false_success(
 
     assert response.status_code == 409
     assert response.json()["detail"] == "Attention episode is not eligible for reissue"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        asyncpg.InterfaceError("pool is closed"),
+        OSError("connection lost"),
+        RuntimeError("pool is closing"),
+        TimeoutError("database deadline"),
+    ],
+)
+async def test_reissue_expected_connection_failures_are_truthful_unavailability(
+    app, monkeypatch: pytest.MonkeyPatch, failure: BaseException
+) -> None:
+    """REQ-dashboard-model-settings-002: expected infrastructure failures are 503, not 500."""
+    monkeypatch.setenv("DASHBOARD_API_KEY", "owner-key")
+    pool = _db(app)
+    pool.fetchrow.side_effect = failure
+
+    with patch("butlers.api.routers.model_settings.model_attention_operator_total") as counter:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                f"/api/settings/models/attention/{uuid.uuid4()}/reissue",
+                headers={"X-API-Key": "owner-key"},
+            )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Attention reissue is unavailable"
+    counter.labels.assert_called_once_with(operation="reissue", outcome="unavailable")

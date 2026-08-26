@@ -238,6 +238,21 @@ describe("SettingsModelsPage — truthful runtime attention", () => {
     expect(screen.getByText("Verification: runtime probe passed")).toBeTruthy();
   });
 
+  it("renders attention loading separately from unavailable and proven empty", () => {
+    setHookState({ entries: [makeModel()] });
+    vi.mocked(useModelAttention).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+    } as AnyMock);
+
+    mountPage();
+
+    expect(screen.getByText("Attention: loading…")).toBeTruthy();
+    expect(screen.queryByText("Attention: unavailable")).toBeNull();
+    expect(screen.queryByText("Attention: no alert recorded")).toBeNull();
+  });
+
   it("uses an accessible confirmation and reports the actual successor", async () => {
     setHookState({ entries: [makeModel()] });
     vi.mocked(useModelAttention).mockReturnValue({

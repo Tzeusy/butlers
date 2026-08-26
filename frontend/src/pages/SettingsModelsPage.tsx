@@ -1348,10 +1348,12 @@ function UsageCell({
 function ModelRow({
   model,
   attention,
+  attentionLoading,
   attentionAvailable,
 }: {
   model: ModelCatalogEntry;
   attention?: ModelAttentionEpisode;
+  attentionLoading: boolean;
   attentionAvailable: boolean;
 }) {
   const updateEntry = useUpdateModelCatalogEntry();
@@ -1534,7 +1536,9 @@ function ModelRow({
           </p>
           <div className="flex items-center gap-2 flex-wrap">
             <span>
-              Attention: {!attentionAvailable
+              Attention: {attentionLoading
+                ? "loading…"
+                : !attentionAvailable
                 ? "unavailable"
                 : attention
                   ? attention.lifecycle_state
@@ -1914,6 +1918,7 @@ export default function SettingsModelsPage() {
                         key={model.id}
                         model={model}
                         attention={attentionQuery.data?.data.episodes?.[model.id]}
+                        attentionLoading={attentionQuery.isLoading}
                         attentionAvailable={
                           !attentionQuery.isError &&
                           attentionQuery.data?.data.available === true

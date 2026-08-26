@@ -17,6 +17,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import asyncpg
 import pytest
@@ -36,6 +37,7 @@ from butlers.tools.switchboard.runtime_attention.outbox import (
 )
 from butlers.tools.switchboard.runtime_attention.worker import (
     RuntimeAttentionDeliveryWorker,
+    build_messenger_transport,
 )
 
 pytestmark = [pytest.mark.db, pytest.mark.integration]
@@ -450,6 +452,55 @@ async def test_manual_reissue_waits_for_recovery_then_returns_one_successor(
         assert [(row["id"], row["lifecycle_state"], row["manual_reissue_of"]) for row in rows] == [
             (first["successor_episode_id"], "pending", episode_id)
         ]
+
+        successor_rows = await _as_role(
+            pool,
+            "butler_switchboard_rw",
+            """
+            SELECT source_snapshot, payload
+            FROM public.runtime_attention_outbox
+            WHERE manual_reissue_of = $1
+            """,
+            episode_id,
+        )
+        assert len(successor_rows) == 1
+        successor = successor_rows[0]
+        original_rows = await _as_role(
+            pool,
+            "butler_switchboard_rw",
+            "SELECT source_snapshot, payload FROM public.runtime_attention_outbox WHERE id = $1",
+            episode_id,
+        )
+        assert len(original_rows) == 1
+        original = original_rows[0]
+        assert successor["source_snapshot"] == {
+            **original["source_snapshot"],
+            "reissue_of": str(episode_id),
+        }
+        assert successor["payload"] == original["payload"]
+
+        delivery_repo = RuntimeAttentionOutbox(pool, instance_id="delivery-worker")
+
+        async def _recipient() -> str:
+            return "owner-recipient"
+
+        with patch(
+            "butlers.tools.switchboard.runtime_attention.worker.deliver",
+            new_callable=AsyncMock,
+            return_value={"status": "sent"},
+        ) as deliver_mock:
+            cycle = await _worker(
+                delivery_repo,
+                build_messenger_transport(pool, resolve_recipient=_recipient),
+            ).run_once()
+
+        assert cycle.delivered == 1
+        notify_request = deliver_mock.await_args.kwargs["notify_request"]
+        assert notify_request["delivery"]["message"] == (
+            "Runtime attention: model_breaker_open. Open "
+            f"/settings/models?highlight={original['source_snapshot']['catalog_entry_id']} "
+            "to review."
+        )
         assert (await _row(pool, episode_id))["lifecycle_state"] == "uncertain"
 
         for role in ("butler_general_rw", "butler_switchboard_rw"):

@@ -483,7 +483,11 @@ def _attention_episode(row: Any) -> ModelAttentionEpisode:
         safe_reason=_attention_safe_reason(row),
         manual_reissue_of=_row_value(row, "manual_reissue_of"),
         successor_id=successor_id,
-        reissue_eligible=state == "uncertain" and successor_id is None,
+        reissue_eligible=(
+            state == "uncertain"
+            and _row_value(row, "manual_reissue_of") is None
+            and successor_id is None
+        ),
     )
 
 
@@ -641,6 +645,10 @@ async def reissue_model_attention(
             _attention_metric("reissue", "not_found")
             raise HTTPException(status_code=404, detail="Attention episode not found") from None
         logger.warning("Models attention reissue database operation unavailable")
+        _attention_metric("reissue", "unavailable")
+        raise HTTPException(status_code=503, detail="Attention reissue is unavailable") from None
+    except (asyncpg.InterfaceError, OSError, RuntimeError, TimeoutError):
+        logger.warning("Models attention reissue database connection unavailable")
         _attention_metric("reissue", "unavailable")
         raise HTTPException(status_code=503, detail="Attention reissue is unavailable") from None
 
