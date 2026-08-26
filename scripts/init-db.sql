@@ -2789,6 +2789,299 @@ BEGIN
 END;
 $$;
 
+-- Operator observation/reissue is installed only through this privileged,
+-- versioned upgrader.  The shared migration/dashboard login receives no raw
+-- outbox privilege: it can call the fixed content-blind projections and the
+-- one state-checked successor operation only.
+CREATE OR REPLACE FUNCTION public.runtime_attention_upgrade_operator_v3()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $runtime_attention_operator_v3$
+DECLARE
+    v_migration_role NAME;
+BEGIN
+    SELECT migration_role INTO v_migration_role
+    FROM runtime_attention_admin.bootstrap_configuration
+    WHERE singleton;
+    IF v_migration_role IS NULL
+       OR to_regclass('public.runtime_attention_outbox') IS NULL
+       OR to_regclass('public.runtime_attention_delivery_lease') IS NULL THEN
+        RAISE EXCEPTION 'runtime-attention operator upgrade requires the finalized outbox';
+    END IF;
+    IF NOT COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = session_user), false)
+       AND session_user <> v_migration_role THEN
+        RAISE EXCEPTION 'runtime-attention operator upgrade requires its configured migration role';
+    END IF;
+
+    CREATE TABLE IF NOT EXISTS public.runtime_attention_operator_control (
+        singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton),
+        interface_version INTEGER NOT NULL CHECK (interface_version = 3),
+        reissue_enabled BOOLEAN NOT NULL
+    );
+    INSERT INTO public.runtime_attention_operator_control (
+        singleton, interface_version, reissue_enabled
+    ) VALUES (true, 3, true)
+    ON CONFLICT (singleton) DO UPDATE SET
+        interface_version = 3,
+        reissue_enabled = true;
+
+    CREATE OR REPLACE FUNCTION public.observe_runtime_attention_models()
+    RETURNS TABLE (
+        catalog_entry_id UUID,
+        episode_id UUID,
+        lifecycle_state TEXT,
+        created_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ,
+        delivered_at TIMESTAMPTZ,
+        delivery_error_class TEXT,
+        delivery_error_detail TEXT,
+        manual_reissue_of UUID,
+        successor_id UUID
+    )
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog, public, pg_temp
+    AS $observe_runtime_attention_models$
+    BEGIN
+        IF COALESCE(current_setting('role', true), 'none') <> 'none' THEN
+            RAISE EXCEPTION 'runtime-attention operator observation forbids SET ROLE'
+                USING ERRCODE = '42501';
+        END IF;
+        RETURN QUERY
+        SELECT DISTINCT ON (resolved.catalog_entry_id)
+            resolved.catalog_entry_id,
+            resolved.episode_id,
+            resolved.lifecycle_state,
+            resolved.created_at,
+            resolved.updated_at,
+            resolved.delivered_at,
+            resolved.delivery_error_class,
+            resolved.delivery_error_detail,
+            resolved.manual_reissue_of,
+            child.id AS successor_id
+        FROM (
+            SELECT
+                COALESCE(
+                    NULLIF(episode.source_snapshot->>'catalog_entry_id', '')::uuid,
+                    NULLIF(parent.source_snapshot->>'catalog_entry_id', '')::uuid
+                ) AS catalog_entry_id,
+                episode.id AS episode_id,
+                episode.lifecycle_state,
+                episode.created_at,
+                episode.updated_at,
+                episode.delivered_at,
+                episode.delivery_error_class,
+                episode.delivery_error_detail,
+                episode.manual_reissue_of
+            FROM public.runtime_attention_outbox AS episode
+            LEFT JOIN public.runtime_attention_outbox AS parent
+              ON parent.id = episode.manual_reissue_of
+            WHERE episode.source = 'model_breaker'
+        ) AS resolved
+        LEFT JOIN public.runtime_attention_outbox AS child
+          ON child.manual_reissue_of = resolved.episode_id
+        WHERE resolved.catalog_entry_id IS NOT NULL
+        ORDER BY resolved.catalog_entry_id, resolved.created_at DESC, resolved.episode_id DESC;
+    END;
+    $observe_runtime_attention_models$;
+
+    CREATE OR REPLACE FUNCTION public.observe_runtime_attention_fleet_halt()
+    RETURNS TABLE (
+        episode_id UUID,
+        lifecycle_state TEXT,
+        created_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ,
+        delivered_at TIMESTAMPTZ,
+        delivery_error_class TEXT,
+        delivery_error_detail TEXT
+    )
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog, public, pg_temp
+    AS $observe_runtime_attention_fleet_halt$
+    BEGIN
+        IF COALESCE(current_setting('role', true), 'none') <> 'none' THEN
+            RAISE EXCEPTION 'runtime-attention operator observation forbids SET ROLE'
+                USING ERRCODE = '42501';
+        END IF;
+        RETURN QUERY
+        SELECT episode.id, episode.lifecycle_state, episode.created_at,
+               episode.updated_at, episode.delivered_at,
+               episode.delivery_error_class, episode.delivery_error_detail
+        FROM public.runtime_attention_outbox AS episode
+        WHERE episode.source = 'fleet_halt'
+          AND episode.fleet_halt_month = date_trunc('month', now() AT TIME ZONE 'UTC')::date
+        ORDER BY episode.created_at DESC, episode.id DESC
+        LIMIT 1;
+    END;
+    $observe_runtime_attention_fleet_halt$;
+
+    CREATE OR REPLACE FUNCTION public.reissue_runtime_attention_episode(p_original_id UUID)
+    RETURNS TABLE (
+        original_episode_id UUID,
+        successor_episode_id UUID,
+        successor_state TEXT,
+        created BOOLEAN
+    )
+    LANGUAGE plpgsql
+    SECURITY DEFINER
+    SET search_path = pg_catalog, public, pg_temp
+    AS $reissue_runtime_attention_episode$
+    DECLARE
+        v_original public.runtime_attention_outbox%ROWTYPE;
+        v_successor public.runtime_attention_outbox%ROWTYPE;
+        v_created BOOLEAN := false;
+        v_enabled BOOLEAN;
+    BEGIN
+        IF COALESCE(current_setting('role', true), 'none') <> 'none' THEN
+            RAISE EXCEPTION 'runtime-attention operator reissue forbids SET ROLE'
+                USING ERRCODE = '42501';
+        END IF;
+        SELECT reissue_enabled INTO v_enabled
+        FROM public.runtime_attention_operator_control WHERE singleton;
+        IF NOT COALESCE(v_enabled, false) THEN
+            RAISE EXCEPTION 'runtime-attention manual reissue is disabled'
+                USING ERRCODE = '55000';
+        END IF;
+
+        PERFORM pg_advisory_xact_lock(hashtextextended(p_original_id::text, 0));
+        SELECT * INTO v_original
+        FROM public.runtime_attention_outbox
+        WHERE id = p_original_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'runtime-attention episode not found' USING ERRCODE = 'P0002';
+        END IF;
+        SELECT * INTO v_successor
+        FROM public.runtime_attention_outbox
+        WHERE manual_reissue_of = p_original_id;
+        IF FOUND THEN
+            RETURN QUERY SELECT p_original_id, v_successor.id,
+                                v_successor.lifecycle_state, false;
+            RETURN;
+        END IF;
+        IF v_original.source <> 'model_breaker'
+           OR v_original.manual_reissue_of IS NOT NULL
+           OR v_original.lifecycle_state <> 'uncertain' THEN
+            RAISE EXCEPTION 'runtime-attention episode is not eligible for reissue'
+                USING ERRCODE = '55000';
+        END IF;
+        IF EXISTS (
+            SELECT 1 FROM public.runtime_attention_delivery_lease
+            WHERE lease_name = 'runtime_attention_delivery'
+              AND lease_token IS NOT NULL
+              AND expires_at > clock_timestamp()
+        ) THEN
+            RAISE EXCEPTION 'runtime-attention delivery recovery is still active'
+                USING ERRCODE = '55000';
+        END IF;
+
+        INSERT INTO public.runtime_attention_outbox (
+            source, source_snapshot, payload, manual_reissue_of
+        ) VALUES (
+            'model_breaker',
+            jsonb_build_object('reissue_of', p_original_id::text),
+            jsonb_build_object('classification', 'manual_reissue'),
+            p_original_id
+        )
+        ON CONFLICT (manual_reissue_of) WHERE manual_reissue_of IS NOT NULL DO NOTHING
+        RETURNING * INTO v_successor;
+        v_created := FOUND;
+        IF NOT v_created THEN
+            SELECT * INTO v_successor FROM public.runtime_attention_outbox
+            WHERE manual_reissue_of = p_original_id;
+        END IF;
+        RETURN QUERY SELECT p_original_id, v_successor.id,
+                            v_successor.lifecycle_state, v_created;
+    END;
+    $reissue_runtime_attention_episode$;
+
+    ALTER TABLE public.runtime_attention_operator_control
+        OWNER TO runtime_attention_outbox_owner;
+    ALTER FUNCTION public.observe_runtime_attention_models()
+        OWNER TO runtime_attention_outbox_owner;
+    ALTER FUNCTION public.observe_runtime_attention_fleet_halt()
+        OWNER TO runtime_attention_outbox_owner;
+    ALTER FUNCTION public.reissue_runtime_attention_episode(UUID)
+        OWNER TO runtime_attention_outbox_owner;
+    REVOKE ALL PRIVILEGES ON TABLE public.runtime_attention_operator_control FROM PUBLIC;
+    REVOKE ALL PRIVILEGES ON FUNCTION public.observe_runtime_attention_models() FROM PUBLIC;
+    REVOKE ALL PRIVILEGES ON FUNCTION public.observe_runtime_attention_fleet_halt() FROM PUBLIC;
+    REVOKE ALL PRIVILEGES ON FUNCTION public.reissue_runtime_attention_episode(UUID) FROM PUBLIC;
+    EXECUTE format(
+        'GRANT SELECT ON TABLE public.runtime_attention_operator_control TO %I',
+        v_migration_role
+    );
+    EXECUTE format(
+        'GRANT EXECUTE ON FUNCTION public.observe_runtime_attention_models() TO %I',
+        v_migration_role
+    );
+    EXECUTE format(
+        'GRANT EXECUTE ON FUNCTION public.observe_runtime_attention_fleet_halt() TO %I',
+        v_migration_role
+    );
+    EXECUTE format(
+        'GRANT EXECUTE ON FUNCTION public.reissue_runtime_attention_episode(UUID) TO %I',
+        v_migration_role
+    );
+    EXECUTE format(
+        'REVOKE ALL PRIVILEGES ON FUNCTION public.runtime_attention_upgrade_operator_v3() FROM %I',
+        v_migration_role
+    );
+END;
+$runtime_attention_operator_v3$;
+
+CREATE OR REPLACE FUNCTION public.runtime_attention_deactivate_operator_v3()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $runtime_attention_deactivate_operator_v3$
+BEGIN
+    IF NOT COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = session_user), false) THEN
+        RAISE EXCEPTION 'runtime-attention operator rollback requires bootstrap superuser';
+    END IF;
+    UPDATE public.runtime_attention_operator_control SET reissue_enabled = false
+    WHERE singleton;
+END;
+$runtime_attention_deactivate_operator_v3$;
+
+REVOKE ALL PRIVILEGES ON FUNCTION public.runtime_attention_upgrade_operator_v3() FROM PUBLIC;
+REVOKE ALL PRIVILEGES ON FUNCTION public.runtime_attention_deactivate_operator_v3() FROM PUBLIC;
+
+DO $$
+DECLARE
+    v_migration_role NAME := COALESCE(
+        NULLIF(current_setting('butlers.connecting_user', true), ''), 'butlers'
+    )::name;
+BEGIN
+    IF to_regprocedure('public.reissue_runtime_attention_episode(uuid)') IS NULL THEN
+        EXECUTE format(
+            'GRANT EXECUTE ON FUNCTION public.runtime_attention_upgrade_operator_v3() TO %I',
+            v_migration_role
+        );
+    ELSE
+        EXECUTE format(
+            'GRANT SELECT ON TABLE public.runtime_attention_operator_control TO %I',
+            v_migration_role
+        );
+        EXECUTE format(
+            'GRANT EXECUTE ON FUNCTION public.observe_runtime_attention_models() TO %I',
+            v_migration_role
+        );
+        EXECUTE format(
+            'GRANT EXECUTE ON FUNCTION public.observe_runtime_attention_fleet_halt() TO %I',
+            v_migration_role
+        );
+        EXECUTE format(
+            'GRANT EXECUTE ON FUNCTION public.reissue_runtime_attention_episode(UUID) TO %I',
+            v_migration_role
+        );
+    END IF;
+END;
+$$;
+
 RESET ROLE;
 
 -- ── Runtime-attention outbox bootstrap boundary ────────────────────────────

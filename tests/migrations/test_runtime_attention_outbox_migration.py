@@ -1017,6 +1017,97 @@ async def test_constraints_reject_non_edge_forgery_keep_source_snapshot_and_fenc
 
 
 @pytest.mark.asyncio(loop_scope="module")
+async def test_operator_rollback_disables_reissue_without_deleting_evidence_or_attempts(
+    upgraded_pool: asyncpg.Pool,
+    upgraded_admin_pool: asyncpg.Pool,
+) -> None:
+    """REQ-runtime-attention-outbox-003: rollback is additive and evidence-safe."""
+    assert (
+        await upgraded_pool.fetchval(
+            "SELECT reissue_enabled FROM public.runtime_attention_operator_control WHERE singleton"
+        )
+        is True
+    )
+    entry_id = uuid.uuid4()
+    episode_id = uuid.uuid4()
+    claim_token = uuid.uuid4()
+    await upgraded_admin_pool.execute(
+        """
+        INSERT INTO public.model_catalog (id, alias, runtime_type, model_id)
+        VALUES ($1, $2, 'codex', $3)
+        """,
+        entry_id,
+        f"rollback-{entry_id}",
+        f"rollback-model-{entry_id}",
+    )
+    attempt_id = await upgraded_admin_pool.fetchval(
+        """
+        INSERT INTO public.model_dispatch_attempts (catalog_entry_id, butler, outcome)
+        VALUES ($1, 'general', 'runtime_failure') RETURNING id
+        """,
+        entry_id,
+    )
+    await upgraded_admin_pool.execute(
+        """
+        INSERT INTO public.runtime_attention_outbox (
+            id, source, lifecycle_state, triggering_attempt_id, source_snapshot, payload,
+            claim_token, claim_epoch, delivery_lease_epoch, claimed_by_instance,
+            claimed_at, claim_expires_at, delivery_error_class, delivery_error_detail
+        ) VALUES (
+            $1, 'model_breaker', 'uncertain', $2::bigint,
+            jsonb_build_object(
+                'catalog_entry_id', $3::text, 'alias', 'rollback-model',
+                'model_id', 'rollback-model', 'triggering_attempt_id', $2::bigint,
+                'consecutive_failures', 5
+            ),
+            '{"classification":"model_breaker_open","consecutive_failures":5,"door":"/settings/models"}'::jsonb,
+            $4, 1, 1, 'dead-worker', now() - interval '2 minutes',
+            now() - interval '1 minute', 'transport_uncertain', 'worker_recovery'
+        )
+        """,
+        episode_id,
+        attempt_id,
+        str(entry_id),
+        claim_token,
+    )
+    successor = await upgraded_pool.fetchrow(
+        "SELECT * FROM public.reissue_runtime_attention_episode($1)", episode_id
+    )
+    assert successor is not None
+    before_attempts = await upgraded_admin_pool.fetchval(
+        "SELECT count(*) FROM public.model_dispatch_attempts WHERE catalog_entry_id = $1",
+        entry_id,
+    )
+
+    try:
+        await upgraded_admin_pool.execute(
+            "SELECT public.runtime_attention_deactivate_operator_v3()"
+        )
+        with pytest.raises(asyncpg.ObjectNotInPrerequisiteStateError):
+            await upgraded_pool.fetchrow(
+                "SELECT * FROM public.reissue_runtime_attention_episode($1)", episode_id
+            )
+        assert (
+            await upgraded_admin_pool.fetchval(
+                "SELECT count(*) FROM public.runtime_attention_outbox WHERE id = $1 OR manual_reissue_of = $1",
+                episode_id,
+            )
+            == 2
+        )
+        assert (
+            await upgraded_admin_pool.fetchval(
+                "SELECT count(*) FROM public.model_dispatch_attempts WHERE catalog_entry_id = $1",
+                entry_id,
+            )
+            == before_attempts
+        )
+    finally:
+        await upgraded_admin_pool.execute(
+            "UPDATE public.runtime_attention_operator_control SET reissue_enabled = true WHERE singleton"
+        )
+
+
+@pytest.mark.asyncio(loop_scope="module")
 async def test_effective_role_boundary_allows_only_validated_producers_and_switchboard_claims(
     upgraded_pool: asyncpg.Pool,
 ) -> None:
