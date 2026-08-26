@@ -14,7 +14,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 
-import type { CalendarPrepAttendee } from "@/api/types.ts";
+import type { CalendarPrepAttendee, CalendarPrepCommitment } from "@/api/types.ts";
 
 import { MeetingPrepRail } from "./MeetingPrepRail.tsx";
 
@@ -38,6 +38,19 @@ function attendee(overrides: Partial<CalendarPrepAttendee> = {}): CalendarPrepAt
         message_count: 3,
       },
     ],
+    commitments: [],
+    ...overrides,
+  };
+}
+
+function commitment(overrides: Partial<CalendarPrepCommitment> = {}): CalendarPrepCommitment {
+  return {
+    kind: "promise",
+    direction: "owner_to_other",
+    summary: "Send the book",
+    deadline: "2026-08-30T09:00:00Z",
+    escalation_level: "L2",
+    fingerprint: "commitment-1",
     ...overrides,
   };
 }
@@ -139,6 +152,59 @@ describe("MeetingPrepRail", () => {
     // Attendee + tier mark still render.
     expect(within(card).getByText("Ada Lovelace")).toBeTruthy();
     expect(within(card).getByTestId("prep-tier-mark")).toBeTruthy();
+  });
+
+  it("renders commitment chips with kind, direction, summary, deadline, and escalation", () => {
+    render(
+      <MeetingPrepRail
+        hasPrepContext
+        attendees={[
+          attendee({
+            commitments: [
+              commitment(),
+              commitment({
+                kind: "waiting_for",
+                direction: "other_to_owner",
+                summary: "Confirm the venue",
+                deadline: null,
+                escalation_level: "L1",
+                fingerprint: "commitment-2",
+              }),
+            ],
+          }),
+        ]}
+      />,
+    );
+
+    const section = screen.getByTestId("prep-commitments");
+    expect(within(section).getByRole("heading", { name: "Commitments" })).toBeTruthy();
+
+    const chips = within(section).getAllByTestId("prep-commitment");
+    expect(chips).toHaveLength(2);
+
+    expect(chips[0].textContent).toContain("PROMISE");
+    expect(chips[0].textContent).toContain("What I owe");
+    expect(chips[0].textContent).toContain("Send the book");
+    expect(within(chips[0]).getByTestId("prep-commitment-deadline")).toBeTruthy();
+    expect(within(chips[0]).getByTestId("prep-commitment-kind-icon")).toBeTruthy();
+    expect(within(chips[0]).getByTestId("prep-commitment-direction-icon")).toBeTruthy();
+    expect(chips[0].getAttribute("aria-label")).toMatch(/What I owe/);
+    expect(chips[0].className).toContain("border-[var(--amber)]");
+    expect(chips[0].getAttribute("data-escalated")).toBe("true");
+
+    expect(chips[1].textContent).toContain("WAITING FOR");
+    expect(chips[1].textContent).toContain("What they owe me");
+    expect(chips[1].textContent).toContain("Confirm the venue");
+    expect(within(chips[1]).queryByTestId("prep-commitment-deadline")).toBeNull();
+    expect(chips[1].className).not.toContain("border-[var(--amber)]");
+    expect(chips[1].getAttribute("data-escalated")).toBe("false");
+  });
+
+  it("does not render a commitment section for attendees without commitments", () => {
+    render(<MeetingPrepRail hasPrepContext attendees={[attendee()]} />);
+
+    expect(screen.queryByTestId("prep-commitments")).toBeNull();
+    expect(screen.queryByTestId("prep-commitment")).toBeNull();
   });
 
   it("falls back to an em-dash tier mark when the attendee has no tier", () => {
