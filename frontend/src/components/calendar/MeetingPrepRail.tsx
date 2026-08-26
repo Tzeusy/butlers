@@ -104,9 +104,9 @@ const COMMITMENT_DIRECTION_META: Record<
   CalendarPrepCommitmentDirection,
   { label: string; Icon: LucideIcon }
 > = {
-  owner_to_other: { label: "What I owe", Icon: ArrowUpRight },
-  other_to_owner: { label: "What they owe me", Icon: ArrowDownLeft },
-  self: { label: "Self commitment", Icon: RotateCcw },
+  owner_to_other: { label: "Owner owes", Icon: ArrowUpRight },
+  other_to_owner: { label: "Counterparty owes owner", Icon: ArrowDownLeft },
+  self: { label: "Owner commitment", Icon: RotateCcw },
 };
 
 /** The API uses labels such as L0 through L3; tolerate numeric labels too. */
@@ -115,7 +115,7 @@ function commitmentEscalationLevel(level: string): number {
   return match ? Number.parseInt(match[1], 10) : -1;
 }
 
-function CommitmentChip({ commitment }: { commitment: CalendarPrepCommitment }) {
+function CommitmentRow({ commitment }: { commitment: CalendarPrepCommitment }) {
   const kind = COMMITMENT_KIND_META[commitment.kind];
   const direction = COMMITMENT_DIRECTION_META[commitment.direction];
   const isEscalated = commitmentEscalationLevel(commitment.escalation_level) >= 2;
@@ -133,40 +133,56 @@ function CommitmentChip({ commitment }: { commitment: CalendarPrepCommitment }) 
       data-escalation-level={commitment.escalation_level}
       data-escalated={isEscalated}
       aria-label={accessibleLabel}
-      className={cn(
-        "flex min-w-0 max-w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-[3px] border px-2 py-1",
-        "font-mono text-[10px] leading-snug",
-        isEscalated
-          ? "border-l-2 border-[var(--amber)]/70 bg-[var(--amber)]/10 text-[var(--amber-text)]"
-          : "border-[var(--border)] bg-foreground/[0.02] text-[var(--mfg)]",
-      )}
+      className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 border-b border-[var(--border)] py-2 last:border-b-0 font-mono text-[10px] leading-snug"
     >
       <kind.Icon
         data-testid="prep-commitment-kind-icon"
         aria-hidden="true"
-        className="size-3 shrink-0"
+        className="mt-0.5 size-3 shrink-0 text-[var(--dim)]"
         strokeWidth={1.5}
       />
-      <span className="shrink-0">{kind.label}</span>
-      <direction.Icon
-        data-testid="prep-commitment-direction-icon"
+      <div className="min-w-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span
+            data-testid="prep-commitment-kind"
+            className="shrink-0 uppercase tracking-[0.08em] text-[var(--dim)]"
+          >
+            {kind.label}
+          </span>
+          <span className="inline-flex min-w-0 items-center gap-1 text-[var(--mfg)]">
+            <direction.Icon
+              data-testid="prep-commitment-direction-icon"
+              aria-hidden="true"
+              className="size-3 shrink-0"
+              strokeWidth={1.5}
+            />
+            <span>{direction.label}</span>
+          </span>
+        </div>
+        <p className="mt-1 min-w-0 break-words text-[11px] leading-snug text-fg">
+          {commitment.summary}
+        </p>
+        {commitment.deadline ? (
+          <span
+            data-testid="prep-commitment-deadline"
+            className="mt-1 inline-flex shrink-0 items-center gap-1 text-[var(--dim)]"
+          >
+            <span className="sr-only">Deadline </span>
+            <Time value={commitment.deadline} mode="absolute" precision="day" compact />
+          </span>
+        ) : null}
+      </div>
+      <span
+        data-testid="prep-commitment-escalation"
         aria-hidden="true"
-        className="size-3 shrink-0"
-        strokeWidth={1.5}
-      />
-      <span className="shrink-0">{direction.label}</span>
-      <span className="min-w-0 flex-1 break-words text-fg">{commitment.summary}</span>
-      {commitment.deadline ? (
-        <span
-          data-testid="prep-commitment-deadline"
-          className="inline-flex shrink-0 items-center gap-1 text-[var(--dim)]"
-        >
-          <span aria-hidden="true">·</span>
-          <span className="sr-only">Deadline </span>
-          <Time value={commitment.deadline} mode="absolute" precision="day" compact />
-        </span>
-      ) : null}
-      <span className="shrink-0 tabular-nums text-[var(--dim)]">{commitment.escalation_level}</span>
+        title={`Escalation ${commitment.escalation_level}`}
+        className={cn(
+          "shrink-0 tabular-nums",
+          isEscalated ? "font-medium text-[var(--amber-text)]" : "text-[var(--dim)]",
+        )}
+      >
+        {commitment.escalation_level}
+      </span>
     </li>
   );
 }
@@ -184,10 +200,10 @@ function CommitmentSection({ attendee }: { attendee: CalendarPrepAttendee }) {
       </h3>
       <ul
         aria-label={`Commitments for ${attendee.name}`}
-        className="flex min-w-0 flex-wrap gap-1.5 list-none p-0"
+        className="min-w-0 list-none p-0"
       >
         {commitments.map((item, index) => (
-          <CommitmentChip key={`${item.fingerprint}-${index}`} commitment={item} />
+          <CommitmentRow key={`${item.fingerprint}-${index}`} commitment={item} />
         ))}
       </ul>
     </div>

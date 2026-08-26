@@ -154,7 +154,7 @@ describe("MeetingPrepRail", () => {
     expect(within(card).getByTestId("prep-tier-mark")).toBeTruthy();
   });
 
-  it("renders commitment chips with kind, direction, summary, deadline, and escalation", () => {
+  it("renders commitment rows with kind, direction, summary, deadline, and escalation", () => {
     render(
       <MeetingPrepRail
         hasPrepContext
@@ -178,26 +178,52 @@ describe("MeetingPrepRail", () => {
 
     const section = screen.getByTestId("prep-commitments");
     expect(within(section).getByRole("heading", { name: "Commitments" })).toBeTruthy();
+    const list = within(section).getByRole("list", { name: "Commitments for Ada Lovelace" });
+    expect(list.className).not.toContain("flex-wrap");
 
-    const chips = within(section).getAllByTestId("prep-commitment");
-    expect(chips).toHaveLength(2);
+    const rows = within(section).getAllByTestId("prep-commitment");
+    expect(rows).toHaveLength(2);
 
-    expect(chips[0].textContent).toContain("PROMISE");
-    expect(chips[0].textContent).toContain("What I owe");
-    expect(chips[0].textContent).toContain("Send the book");
-    expect(within(chips[0]).getByTestId("prep-commitment-deadline")).toBeTruthy();
-    expect(within(chips[0]).getByTestId("prep-commitment-kind-icon")).toBeTruthy();
-    expect(within(chips[0]).getByTestId("prep-commitment-direction-icon")).toBeTruthy();
-    expect(chips[0].getAttribute("aria-label")).toMatch(/What I owe/);
-    expect(chips[0].className).toContain("border-[var(--amber)]");
-    expect(chips[0].getAttribute("data-escalated")).toBe("true");
+    expect(rows[0].textContent).toContain("PROMISE");
+    expect(rows[0].textContent).toContain("Owner owes");
+    expect(rows[0].textContent).toContain("Send the book");
+    expect(within(rows[0]).getByTestId("prep-commitment-deadline")).toBeTruthy();
+    expect(within(rows[0]).getByTestId("prep-commitment-kind-icon")).toBeTruthy();
+    expect(within(rows[0]).getByTestId("prep-commitment-direction-icon")).toBeTruthy();
+    const kindTag = within(rows[0]).getByTestId("prep-commitment-kind");
+    expect(kindTag.className).toContain("text-[var(--dim)]");
+    expect(kindTag.className).toContain("uppercase");
+    expect(kindTag.className).not.toContain("border");
+    expect(kindTag.className).not.toContain("bg-");
+    const escalatedSignal = within(rows[0]).getByTestId("prep-commitment-escalation");
+    expect(escalatedSignal.textContent).toBe("L2");
+    expect(escalatedSignal.getAttribute("title")).toBe("Escalation L2");
+    expect(rows[0].getAttribute("aria-label")).toMatch(/Owner owes/);
+    expect(rows[0].getAttribute("aria-label")).toMatch(/deadline 2026-08-30T09:00:00Z/);
+    expect(rows[0].getAttribute("aria-label")).toMatch(/escalation L2/);
+    expect(rows[0].className).toContain("grid");
+    expect(rows[0].className).toContain("border-b");
+    expect(rows[0].className).not.toContain("rounded");
+    expect(rows[0].className).not.toContain("bg-");
+    expect(within(rows[0]).getByTestId("prep-commitment-escalation").className).toContain(
+      "text-[var(--amber-text)]",
+    );
+    expect(rows[0].getAttribute("data-escalated")).toBe("true");
 
-    expect(chips[1].textContent).toContain("WAITING FOR");
-    expect(chips[1].textContent).toContain("What they owe me");
-    expect(chips[1].textContent).toContain("Confirm the venue");
-    expect(within(chips[1]).queryByTestId("prep-commitment-deadline")).toBeNull();
-    expect(chips[1].className).not.toContain("border-[var(--amber)]");
-    expect(chips[1].getAttribute("data-escalated")).toBe("false");
+    expect(rows[1].textContent).toContain("WAITING FOR");
+    expect(rows[1].textContent).toContain("Counterparty owes owner");
+    expect(rows[1].textContent).toContain("Confirm the venue");
+    expect(within(rows[1]).queryByTestId("prep-commitment-deadline")).toBeNull();
+    const standardSignal = within(rows[1]).getByTestId("prep-commitment-escalation");
+    expect(standardSignal.textContent).toBe("L1");
+    expect(standardSignal.getAttribute("title")).toBe("Escalation L1");
+    expect(standardSignal.className).not.toContain(
+      "text-[var(--amber-text)]",
+    );
+    expect(rows[1].className).not.toContain("border-[var(--amber)]");
+    expect(rows[1].className).not.toContain("bg-");
+    expect(rows[1].getAttribute("aria-label")).toMatch(/Counterparty owes owner/);
+    expect(rows[1].getAttribute("data-escalated")).toBe("false");
   });
 
   it("does not render a commitment section for attendees without commitments", () => {
