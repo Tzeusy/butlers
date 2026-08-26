@@ -40,6 +40,10 @@ Provenance SHALL be resolved against the source registry
 An entry with an unrecognized `provenance` value SHALL be rendered as model-recalled: a malformed
 annotation is never promoted to a citation.
 
+ID: REQ-dashboard-education-ui-001
+Source: source-grounded-education design.md; REQ-education-source-grounding-002; REQ-dashboard-education-api-001
+Scope: v1-mandatory
+
 #### Scenario: Referenced source annotation on node detail
 
 - **WHEN** a node's `metadata.source_refs` carries an entry with `provenance: "referenced"` whose
