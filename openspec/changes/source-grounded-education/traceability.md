@@ -28,8 +28,11 @@ same-named requirement groups across the repository. Two intersect this change:
 `MANIFESTO.md Content` and `Teaching Phase — Explain, Question, Evaluate` have no same-capability,
 same-name collision in another unarchived change. The `MANIFESTO.md Content` and `Topic
 decomposition into concept graph` blocks in this change are rebuilt from their current baseline
-bodies: every baseline normative paragraph and scenario is preserved verbatim, then only this
-change's source-grounding and pedagogy clauses and scenarios are added.
+bodies: the manifesto paragraph, the curriculum introduction, both numbered curriculum clauses,
+and every baseline scenario remain present, then only this change's source-grounding and pedagogy
+clauses and scenarios are added. The numbered curriculum clauses retain their baseline text inside
+distinct Markdown bullets so the trace check sees one contiguous normative block while the strict
+overwrite analysis still evaluates each baseline clause independently.
 
 The two Education changes remain separately unarchived. This rebuild does not combine the
 lifecycle change's intended edits into the source-grounding delta and does not make either archive
@@ -62,6 +65,26 @@ tail -n 1 "$trace_log"
 python3 scripts/check_cited_requirements_resolve.py
 ```
 
+Run the strict overwrite projection separately. Its repository-wide exit remains non-zero while
+frozen debt exists, so retain every source-grounded Education finding with its capability and
+requirement name, then assert that the rebuilt curriculum requirement has no finding. This check
+must not be replaced with an ID-only filter: strict overwrite diagnostics do not carry IDs.
+
+```bash
+overwrite_log="$(mktemp /tmp/source-grounded-education-overwrite.XXXXXX.log)"
+python3 scripts/check_spec_overwrites.py --strict >"$overwrite_log" 2>&1
+overwrite_rc=$?
+awk '
+  /^source-grounded-education -> / { print_block = 1 }
+  print_block { print }
+  print_block && /^$/ { print_block = 0 }
+' "$overwrite_log"
+! rg -n '^source-grounded-education -> module-education-curriculum "Topic decomposition into concept graph"$' \
+  "$overwrite_log"
+printf 'repository-wide strict overwrite exit: %s\n' "$overwrite_rc"
+tail -n 1 "$overwrite_log"
+```
+
 ## Validation record
 
 Recorded on 2026-08-27 from the corrected, coherent `bu-istke.8` branch after incorporating
@@ -79,13 +102,19 @@ Recorded on 2026-08-27 from the corrected, coherent `bu-istke.8` branch after in
   requirement IDs as provisionally resolved by this active change. The trace command above also
   scans `frontend/src` and resolves `REQ-dashboard-education-ui-001` to
   `NodeDetailPanel.test.tsx`.
+- `python3 scripts/check_spec_overwrites.py --strict` exited 1 with the repository's existing
+  unfrozen/frozen-debt projection. Its complete source-grounded Education projection contains no
+  finding for `module-education-curriculum :: Topic decomposition into concept graph`, proving the
+  two numbered baseline clauses survive independently. It still reports the pre-existing
+  `module-education-teaching-flows :: Teaching Phase — Explain, Question, Evaluate` prose finding;
+  that finding was not hidden or reclassified by this correction.
 - `make check-spec-overwrites` exited 0 with no unfrozen baseline losses; the ratchet reported
-  fewer frozen losses for `MANIFESTO.md Content`, `Topic decomposition into concept graph`, and
-  `Teaching Phase — Explain, Question, Evaluate`. The overwrite baseline was not replaced or
-  updated.
+  four fewer frozen losses for `MANIFESTO.md Content`, seven fewer for `Topic decomposition into
+  concept graph`, and five fewer for `Teaching Phase — Explain, Question, Evaluate`. The overwrite
+  baseline was not replaced or updated.
 - The capability-qualified unarchived collision scan found eight duplicate groups repo-wide and
   exactly the two Education collisions recorded above for this change.
-- The focused Education backend evidence suite passed 42 tests, including the manifesto,
+- The focused Education backend evidence suite passed 50 tests, including the manifesto,
   curriculum, pedagogy, source-registry API, and reading-pathway cases cited above; the focused
   `NodeDetailPanel` frontend suite passed 12 tests.
 - `git diff --check` exited 0.
