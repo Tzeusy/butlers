@@ -40,51 +40,54 @@ collision is recorded here but remains outside this bead's authorized body-rebui
 ## Scoped mechanical check
 
 Run the repository trace checker in authoring mode with the relevant backend and co-located
-frontend test roots, retain its complete output as the global baseline record, and filter that
-record to the six implementation requirement IDs named by `bu-istke.7`. The scoped result is clean
-only when that exact-ID filter contains no `ERROR` or `WARN` line. The repository-wide command is
-expected to remain non-zero while unrelated baseline findings exist; its final summary must be
-reported separately.
+frontend test roots and retain its complete output as the global baseline record. Scope the
+acceptance check by the active change's spec path, not by requirement ID: structural diagnostics
+name the spec path and requirement title but do not include the ID. The scoped result is clean only
+when no `ERROR` or `WARN` line names any spec under
+`openspec/changes/source-grounded-education/specs/`. Requirement-ID resolution is checked
+separately by the repository citation guard. The repository-wide trace command is expected to
+remain non-zero while unrelated baseline findings exist; its final summary must be reported
+separately.
 
 ```bash
+trace_log="$(mktemp /tmp/source-grounded-education-trace.XXXXXX.log)"
 uv run /home/tze/.dotfiles/ai-bootstrap/skills/personal/th-projects/scripts/spec-trace-check.py \
   "$PWD" --tests-dir tests --tests-dir roster/education/tests --tests-dir frontend/src \
-  --authoring
+  --authoring >"$trace_log" 2>&1
+trace_rc=$?
+rg -n 'openspec/changes/source-grounded-education/specs/' "$trace_log" || true
+! rg -n '^(ERROR|WARN).*openspec/changes/source-grounded-education/specs/' "$trace_log"
+printf 'repository-wide trace exit: %s\n' "$trace_rc"
+tail -n 1 "$trace_log"
+python3 scripts/check_cited_requirements_resolve.py
 ```
 
 ## Validation record
 
-Recorded on 2026-08-27 from the `bu-istke.7` worktree:
-
-- The exact six-ID filter named by this task returned no `ERROR` or `WARN` lines in both authoring
-  and strict modes.
-- The unfiltered authoring run exited 1 with `2410 requirements, 113 IDs, 2846 errors, 58 warnings`.
-- The unfiltered strict run exited 1 with `2410 requirements, 113 IDs, 2904 errors, 0 warnings`.
-- `python3 scripts/check_cited_requirements_resolve.py` exited 0 and listed all six task IDs plus
-  `REQ-dashboard-education-api-001` as provisionally resolved by this active change. The repository
-  guard does not scan co-located frontend tests; the scoped command above adds `frontend/src` and
-  resolves `REQ-dashboard-education-ui-001` to `NodeDetailPanel.test.tsx`.
-- `make check-spec-overwrites` exited 0 with no unfrozen baseline losses.
-
-The generic checker also reports that the dashboard UI `MODIFIED` requirement's metadata is not
-contiguous with its first normative paragraph. Moving it there would require restructuring the
-existing multi-paragraph `MODIFIED` body and makes `make check-spec-overwrites` report four new
-unfrozen baseline losses. This change therefore keeps the ID/Source/Scope lines alongside the
-requirement while preserving its body and a green overwrite guard. The generic checker does not
-recognize those UI lines as structurally valid metadata, so resolving this requires an explicit
-decision to relax the no-rewrite boundary or a checker/format design that satisfies both guards.
-
-Recorded on 2026-08-27 from the coherent `bu-istke.8` branch after incorporating `bu-istke.7`:
+Recorded on 2026-08-27 from the corrected, coherent `bu-istke.8` branch after incorporating
+`bu-istke.7`:
 
 - `openspec validate source-grounded-education --strict` exited 0.
+- The active-change path projection returned no `ERROR` or `WARN` lines in authoring or strict
+  trace mode. This path-based projection retains name-only structural diagnostics that the retired
+  ID-only projection hid.
+- The unfiltered authoring trace run exited 1 with
+  `2410 requirements, 113 IDs, 2845 errors, 58 warnings`; the unfiltered strict trace run exited 1
+  with `2410 requirements, 113 IDs, 2903 errors, 0 warnings`. Those repository-wide baseline
+  findings are outside this change.
+- `python3 scripts/check_cited_requirements_resolve.py` exited 0 and listed all seven backend-cited
+  requirement IDs as provisionally resolved by this active change. The trace command above also
+  scans `frontend/src` and resolves `REQ-dashboard-education-ui-001` to
+  `NodeDetailPanel.test.tsx`.
 - `make check-spec-overwrites` exited 0 with no unfrozen baseline losses; the ratchet reported
-  four fewer frozen losses for `MANIFESTO.md Content` and seven fewer for `Topic decomposition into
-  concept graph`. The overwrite baseline was not replaced or updated.
+  fewer frozen losses for `MANIFESTO.md Content`, `Topic decomposition into concept graph`, and
+  `Teaching Phase — Explain, Question, Evaluate`. The overwrite baseline was not replaced or
+  updated.
 - The capability-qualified unarchived collision scan found eight duplicate groups repo-wide and
   exactly the two Education collisions recorded above for this change.
-- `python3 scripts/check_cited_requirements_resolve.py` exited 0.
-- The focused Education evidence suite passed 39 tests, including the manifesto, curriculum,
-  pedagogy, source-registry API, and reading-pathway cases cited above.
+- The focused Education backend evidence suite passed 42 tests, including the manifesto,
+  curriculum, pedagogy, source-registry API, and reading-pathway cases cited above; the focused
+  `NodeDetailPanel` frontend suite passed 12 tests.
 - `git diff --check` exited 0.
 
 This evidence is scoped. It does not authorize archiving the change, modifying any other
