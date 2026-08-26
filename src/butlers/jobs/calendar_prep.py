@@ -380,7 +380,10 @@ async def run_relationship_calendar_prep_contribution(
                     WHERE state IN ('open', 'aging')
                       AND metadata->>'class' = 'commitment'
                       AND metadata->>'counterparty_entity_id' = $1
-                    ORDER BY escalation_level DESC
+                    ORDER BY escalation_level DESC,
+                             last_confirmed_at DESC,
+                             fingerprint ASC,
+                             id ASC
                     LIMIT $2
                     """,
                     attendee_entity_id,

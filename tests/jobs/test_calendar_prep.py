@@ -67,7 +67,11 @@ class _FakePool:
             entity_id = str(args[0])
             if entity_id in self._commitments_raise_for:
                 raise RuntimeError("owner_conditions unavailable")
-            return self._commitments_by_entity.get(entity_id, [])
+            rows = self._commitments_by_entity.get(entity_id, [])
+            rows = sorted(rows, key=lambda row: (str(row["fingerprint"]), str(row["id"])))
+            rows = sorted(rows, key=lambda row: row["last_confirmed_at"], reverse=True)
+            rows = sorted(rows, key=lambda row: row["escalation_level"], reverse=True)
+            return rows[: int(args[1])]
         if "dunbar_tier_override" in sql:
             return self._tiers
         if "predicate = ANY($2::text[])" in sql:
@@ -169,20 +173,36 @@ async def test_populated_writes_attendee_context():
 
 
 async def test_commitments_are_escalation_sorted_and_capped_per_attendee():
-    """Active commitment rows are denormalized in escalation-first order."""
+    """The query selects a deterministic escalation-first capped commitment set."""
     event_id = uuid4()
     alice = uuid4()
-    levels = ["L3", "L2", "L1"] + ["L0"] * (MAX_COMMITMENTS_PER_ATTENDEE - 3)
     rows = [
         {
+            "id": f"condition-{i:02d}",
             "kind": "promise",
             "direction": "owner_to_other",
             "summary": f"Commitment {i}",
             "deadline": f"2026-07-{i + 1:02d}T09:00:00+00:00",
             "escalation_level": level,
-            "fingerprint": f"fingerprint-{i}",
+            "last_confirmed_at": datetime(2026, 6, 1 + recency, tzinfo=UTC),
+            "fingerprint": fingerprint,
         }
-        for i, level in enumerate(levels + ["L0", "L0"])
+        for i, (level, recency, fingerprint) in enumerate(
+            [
+                ("L0", 12, "fingerprint-z"),
+                ("L3", 1, "fingerprint-a"),
+                ("L0", 10, "fingerprint-a"),
+                ("L2", 2, "fingerprint-b"),
+                ("L0", 10, "fingerprint-a"),
+                ("L1", 3, "fingerprint-c"),
+                ("L0", 9, "fingerprint-d"),
+                ("L0", 8, "fingerprint-e"),
+                ("L0", 7, "fingerprint-f"),
+                ("L0", 6, "fingerprint-g"),
+                ("L0", 5, "fingerprint-h"),
+                ("L0", 4, "fingerprint-i"),
+            ]
+        )
     ]
     pool = _FakePool(
         events=[
@@ -202,25 +222,34 @@ async def test_commitments_are_escalation_sorted_and_capped_per_attendee():
         await run_relationship_calendar_prep_contribution(pool, None)
 
     commitments = cap.store[prep_key(str(event_id))]["attendees"][0]["commitments"]
-    assert len(commitments) == min(len(rows), MAX_COMMITMENTS_PER_ATTENDEE)
+    assert len(commitments) == MAX_COMMITMENTS_PER_ATTENDEE
     assert len(rows) == MAX_COMMITMENTS_PER_ATTENDEE + 2
-    assert [commitment["escalation_level"] for commitment in commitments] == levels
-    assert commitments[0] == {
-        "kind": "promise",
-        "direction": "owner_to_other",
-        "summary": "Commitment 0",
-        "deadline": "2026-07-01T09:00:00+00:00",
-        "escalation_level": "L3",
-        "fingerprint": "fingerprint-0",
-    }
+    assert [commitment["summary"] for commitment in commitments] == [
+        "Commitment 1",
+        "Commitment 3",
+        "Commitment 5",
+        "Commitment 0",
+        "Commitment 2",
+        "Commitment 4",
+        "Commitment 6",
+        "Commitment 7",
+        "Commitment 8",
+        "Commitment 9",
+    ]
     owner_conditions_query = next(
         sql for sql in pool.fetch_calls if "FROM public.owner_conditions" in sql
     )
     assert "metadata->>'class'" in owner_conditions_query
     assert "metadata->>'counterparty_entity_id'" in owner_conditions_query
     assert "state IN ('open', 'aging')" in owner_conditions_query
-    assert "ORDER BY escalation_level DESC" in owner_conditions_query
-    assert "LIMIT" in owner_conditions_query
+    assert (
+        """ORDER BY escalation_level DESC,
+                             last_confirmed_at DESC,
+                             fingerprint ASC,
+                             id ASC
+                    LIMIT $2"""
+        in owner_conditions_query
+    )
 
 
 async def test_commitment_query_failure_keeps_existing_context_and_logs_warning(caplog):
