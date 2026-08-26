@@ -21,6 +21,7 @@ from uuid import uuid4
 import pytest
 
 from butlers.jobs.calendar_prep import (
+    MAX_COMMITMENTS_PER_ATTENDEE,
     PREP_KEY_PREFIX,
     prep_key,
     run_relationship_calendar_prep_contribution,
@@ -30,7 +31,7 @@ pytestmark = pytest.mark.unit
 
 
 class _FakePool:
-    """Routes ``pool.fetch`` to the prep job's five queries by SQL content."""
+    """Routes ``pool.fetch`` to the prep job's six queries by SQL content."""
 
     def __init__(
         self,
@@ -40,12 +41,20 @@ class _FakePool:
         tiers: list[dict[str, Any]] | None = None,
         notes: list[dict[str, Any]] | None = None,
         last_met: list[dict[str, Any]] | None = None,
+        commitments_by_entity: dict[Any, list[dict[str, Any]]] | None = None,
+        commitments_raise_for: set[Any] | None = None,
     ) -> None:
         self._events = events or []
         self._names = names or []
         self._tiers = tiers or []
         self._notes = notes or []
         self._last_met = last_met or []
+        self._commitments_by_entity = {
+            str(entity_id): rows for entity_id, rows in (commitments_by_entity or {}).items()
+        }
+        self._commitments_raise_for = {
+            str(entity_id) for entity_id in (commitments_raise_for or set())
+        }
         self.fetch_calls: list[str] = []
 
     async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
@@ -54,6 +63,11 @@ class _FakePool:
             return self._events
         if "FROM public.entities" in sql:
             return self._names
+        if "FROM public.owner_conditions" in sql:
+            entity_id = str(args[0])
+            if entity_id in self._commitments_raise_for:
+                raise RuntimeError("owner_conditions unavailable")
+            return self._commitments_by_entity.get(entity_id, [])
         if "dunbar_tier_override" in sql:
             return self._tiers
         if "predicate = ANY($2::text[])" in sql:
@@ -151,6 +165,111 @@ async def test_populated_writes_attendee_context():
     assert bob_att["notes"] == []
     assert bob_att["last_met"] is None
     assert bob_att["message_context"] == []
+    assert bob_att["commitments"] == []
+
+
+async def test_commitments_are_escalation_sorted_and_capped_per_attendee():
+    """Active commitment rows are denormalized in escalation-first order."""
+    event_id = uuid4()
+    alice = uuid4()
+    levels = ["L3", "L2", "L1"] + ["L0"] * (MAX_COMMITMENTS_PER_ATTENDEE - 3)
+    rows = [
+        {
+            "kind": "promise",
+            "direction": "owner_to_other",
+            "summary": f"Commitment {i}",
+            "deadline": f"2026-07-{i + 1:02d}T09:00:00+00:00",
+            "escalation_level": level,
+            "fingerprint": f"fingerprint-{i}",
+        }
+        for i, level in enumerate(levels + ["L0", "L0"])
+    ]
+    pool = _FakePool(
+        events=[
+            {
+                "event_id": event_id,
+                "title": "Team lunch",
+                "starts_at": datetime(2026, 6, 25, 12, 0, tzinfo=UTC),
+                "entity_ids": [alice],
+            }
+        ],
+        names=[{"id": alice, "name": "Alice Tan"}],
+        commitments_by_entity={alice: rows},
+    )
+    cap = _StateCapture()
+
+    with _patch_state(cap):
+        await run_relationship_calendar_prep_contribution(pool, None)
+
+    commitments = cap.store[prep_key(str(event_id))]["attendees"][0]["commitments"]
+    assert len(commitments) == min(len(rows), MAX_COMMITMENTS_PER_ATTENDEE)
+    assert len(rows) == MAX_COMMITMENTS_PER_ATTENDEE + 2
+    assert [commitment["escalation_level"] for commitment in commitments] == levels
+    assert commitments[0] == {
+        "kind": "promise",
+        "direction": "owner_to_other",
+        "summary": "Commitment 0",
+        "deadline": "2026-07-01T09:00:00+00:00",
+        "escalation_level": "L3",
+        "fingerprint": "fingerprint-0",
+    }
+    owner_conditions_query = next(
+        sql for sql in pool.fetch_calls if "FROM public.owner_conditions" in sql
+    )
+    assert "metadata->>'class'" in owner_conditions_query
+    assert "metadata->>'counterparty_entity_id'" in owner_conditions_query
+    assert "state IN ('open', 'aging')" in owner_conditions_query
+    assert "ORDER BY escalation_level DESC" in owner_conditions_query
+    assert "LIMIT" in owner_conditions_query
+
+
+async def test_commitment_query_failure_keeps_existing_context_and_logs_warning(caplog):
+    """A commitment read failure leaves other prep context intact and fail-opens."""
+    event_id = uuid4()
+    alice = uuid4()
+    pool = _FakePool(
+        events=[
+            {
+                "event_id": event_id,
+                "title": "Team lunch",
+                "starts_at": datetime(2026, 6, 25, 12, 0, tzinfo=UTC),
+                "entity_ids": [alice],
+            }
+        ],
+        names=[{"id": alice, "name": "Alice Tan"}],
+        tiers=[{"entity_id": alice, "content": "5"}],
+        notes=[
+            {
+                "entity_id": alice,
+                "predicate": "contact_note",
+                "content": "Allergic to shellfish",
+                "importance": 8.0,
+                "ts": datetime(2026, 1, 1, tzinfo=UTC),
+            }
+        ],
+        last_met=[
+            {
+                "entity_id": alice,
+                "starts_at": datetime(2026, 5, 1, 9, 0, tzinfo=UTC),
+                "title": "Quarterly sync",
+            }
+        ],
+        commitments_raise_for={alice},
+    )
+    cap = _StateCapture()
+
+    with _patch_state(cap), caplog.at_level("WARNING", logger="butlers.jobs.calendar_prep"):
+        await run_relationship_calendar_prep_contribution(pool, None)
+
+    attendee = cap.store[prep_key(str(event_id))]["attendees"][0]
+    assert attendee["dunbar_tier"] == 5
+    assert attendee["notes"] == [{"kind": "contact_note", "text": "Allergic to shellfish"}]
+    assert attendee["last_met"] == "2026-05-01T09:00:00+00:00"
+    assert attendee["last_met_event"] == "Quarterly sync"
+    assert attendee["commitments"] == []
+    warning = next(record for record in caplog.records if record.levelname == "WARNING")
+    assert str(event_id) in warning.message
+    assert str(alice) in warning.message
 
 
 async def test_empty_when_no_events():
