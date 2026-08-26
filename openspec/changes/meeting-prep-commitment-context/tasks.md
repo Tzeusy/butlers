@@ -32,12 +32,14 @@ Acceptance:
 
 ### 3. Frontend prep rail commitment rendering
 
-- [x] 3.1 Extend the prep rail component to render commitment chips per attendee. Each chip
-      shows kind icon, direction indicator, summary text, and deadline when present.
-      Visually emphasize commitments at `L2` or `L3`.
+- [x] 3.1 Extend the prep rail component to render rule-separated commitment rows per
+      attendee. Each row shows kind icon, direction indicator, summary text, deadline
+      when present, and the established `L0` through `L3` escalation label. Visually
+      emphasize commitments at `L2` or `L3`.
 
 Acceptance:
-- Commitment chips render for attendees with active commitments
+- Commitment rows render for attendees with active commitments
 - Empty state: no commitment section shown when list is empty
-- High-escalation commitments visually distinct
-- Responsive layout (chips wrap correctly on narrow viewports)
+- Established `L0` through `L3` labels render; `L2` and `L3` are visually distinct
+- Responsive layout: grid rows remain readable on narrow viewports; the commitment list
+  does not use a flex-wrap chip layout
