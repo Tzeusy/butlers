@@ -22,6 +22,7 @@ openspec/changes/redesign-secrets-passport/specs/core-credentials/spec.md
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -84,6 +85,7 @@ def _make_shared_pool(
     probe_row: MagicMock | None = None,
     execute_ok: bool = True,
     oauth_app_configured: bool = False,
+    rotate_update_error: Exception | None = None,
 ) -> AsyncMock:
     """Build a mock shared-pool that supports fetchrow, execute, and transaction.
 
@@ -111,11 +113,21 @@ def _make_shared_pool(
     else:
         shared_pool.execute = AsyncMock(side_effect=Exception("DB error"))
 
-    # Fake transaction context manager (used by probe endpoint).
+    async def _transaction_fetchrow(sql, *args):
+        if "UPDATE public.entity_info" in sql and rotate_update_error is not None:
+            raise rotate_update_error
+        return await _fetchrow(sql, *args)
+
+    # Keep transaction connection spies independent from the pool so tests can
+    # prove locked reads and updates never fall back to pool-level calls.
     fake_conn = AsyncMock()
-    fake_conn.fetchrow = shared_pool.fetchrow
-    fake_conn.fetch = shared_pool.fetch
-    fake_conn.execute = shared_pool.execute
+    fake_conn.fetchrow = AsyncMock(side_effect=_transaction_fetchrow)
+    fake_conn.fetch = AsyncMock(return_value=[])
+    fake_conn.execute = (
+        AsyncMock(return_value="UPDATE 1")
+        if execute_ok
+        else AsyncMock(side_effect=Exception("DB error"))
+    )
     fake_conn.fetchval = AsyncMock(return_value=1)
 
     # Fake transaction() context manager.
@@ -142,6 +154,7 @@ def _make_db(
     shared_pool_available: bool = True,
     execute_ok: bool = True,
     oauth_app_configured: bool = False,
+    rotate_update_error: Exception | None = None,
 ) -> MagicMock:
     """Build a mock DatabaseManager for mutation endpoint tests."""
     mock_db = MagicMock(spec=DatabaseManager)
@@ -154,6 +167,7 @@ def _make_db(
             probe_row=probe_row,
             execute_ok=execute_ok,
             oauth_app_configured=oauth_app_configured,
+            rotate_update_error=rotate_update_error,
         )
         mock_db.credential_shared_pool = MagicMock(return_value=shared_pool)
     else:
@@ -1416,9 +1430,19 @@ def _issued_sql(shared_pool: AsyncMock) -> list[str]:
     connection while read paths use ``fetch`` directly. Keeping all three here
     makes a query-count assertion describe the route's actual round trips.
     """
+    transaction_connection = getattr(shared_pool, "_transaction_connection", None)
+    methods = [shared_pool.fetch, shared_pool.fetchrow, shared_pool.execute]
+    if transaction_connection is not None:
+        methods.extend(
+            [
+                transaction_connection.fetch,
+                transaction_connection.fetchrow,
+                transaction_connection.execute,
+            ]
+        )
     return [
         call.args[0]
-        for method in (shared_pool.fetch, shared_pool.fetchrow, shared_pool.execute)
+        for method in methods
         for call in method.await_args_list
         if call.args and isinstance(call.args[0], str)
     ]
@@ -1478,10 +1502,43 @@ def test_rotate_locks_and_updates_on_one_transactional_connection(monkeypatch):
 
     assert response.status_code == 200, response.text
     shared_pool.acquire.assert_called_once()
-    shared_pool._transaction_connection.transaction.assert_called_once()
-    entity_info_sql = _matching(shared_pool, _ENTITY_INFO_SQL)
+    connection = shared_pool._transaction_connection
+    connection.transaction.assert_called_once()
+    entity_info_sql = [
+        call.args[0]
+        for call in connection.fetchrow.await_args_list
+        if call.args and _ENTITY_INFO_SQL in call.args[0]
+    ]
+    assert len(entity_info_sql) == 2
     assert "FOR UPDATE" in entity_info_sql[0]
-    assert "UPDATE" in entity_info_sql[1]
+    assert "UPDATE" in entity_info_sql[1] and "RETURNING" in entity_info_sql[1]
+    pool_entity_info_sql = [
+        call.args[0]
+        for call in shared_pool.fetchrow.await_args_list
+        if call.args and _ENTITY_INFO_SQL in call.args[0]
+    ]
+    assert pool_entity_info_sql == []
+
+
+def test_rotate_update_error_is_content_blind_in_logs_and_response(caplog, monkeypatch):
+    """A DB exception after binding a new credential must not expose it."""
+    supplied_value = f"credential-{uuid4()}"
+    driver_text = f"driver echoed bound value {supplied_value}"
+    mock_db = _make_db(
+        user_row=_make_entity_info_row(info_type="google_oauth_refresh", value="old-token"),
+        rotate_update_error=RuntimeError(driver_text),
+    )
+    client = _build_app(mock_db)
+
+    with caplog.at_level(logging.WARNING, logger="butlers.api.routers.secrets_v2"):
+        response = client.post("/api/secrets/user/google/rotate", json={"value": supplied_value})
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Credential rotation failed"}
+    assert supplied_value not in response.text
+    assert driver_text not in response.text
+    assert supplied_value not in caplog.text
+    assert driver_text not in caplog.text
 
 
 def test_rotate_loads_scope_evidence_only_for_the_published_read(monkeypatch):

@@ -5251,7 +5251,7 @@ async def rotate_user_credential(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.warning("rotate_user_credential: update failed for provider=%s: %s", provider, exc)
+        logger.warning("rotate_user_credential: update failed")
         raise HTTPException(status_code=503, detail="Credential rotation failed") from exc
     if updated_row is None:
         # Should not happen: the row was locked before this primary-key update.
