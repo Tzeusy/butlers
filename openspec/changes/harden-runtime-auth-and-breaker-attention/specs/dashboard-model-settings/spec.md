@@ -2,15 +2,21 @@
 
 ### Requirement: Catalog Verify-All API
 
-The dashboard SHALL expose `POST /api/settings/models/verify-all` to
-re-verify enabled catalog models in bounded parallelism. The verification core
-(`butlers.api.routers.model_settings.run_verify_all_models`) is shared by this
-manual endpoint and the hourly automated sweep so both use the same explicit
-Codex authority and persistence semantics. The manual endpoint SHALL select
-its shared credential pool before constructing `CredentialStore(pool,
+The dashboard SHALL expose `POST /api/settings/models/verify-all` to re-verify every enabled model in parallel. The verification core is shared (`butlers.api.routers.model_settings.run_verify_all_models`) between this manual endpoint and the hourly automated sweep (see Hourly Automated Verification Sweep) so the two can never disagree about what "verified" means or how the result is persisted.
+
+For Codex adapter construction, the manual endpoint SHALL select its shared
+credential pool before constructing `CredentialStore(pool,
 system_global_pool=pool)` and pass that authority only to Codex adapter
 construction; non-Codex adapter construction retains its existing provider
 configuration behavior.
+
+#### Scenario: Verify-all parallel execution
+- **WHEN** `POST /api/settings/models/verify-all` is called
+- **THEN** the system issues a 1-token completion against each enabled model concurrently with a bounded concurrency of 8
+- **AND** for each model, `last_verified_at`, `last_verified_latency_ms`, `last_verified_ok`, and `last_verified_error` are persisted
+- **AND** `last_verified_error` is set to the truncated exception text on failure (or `"verification returned an empty response"` when the probe completed with no usable output) and cleared to `NULL` on success
+- **AND** the call is rate-limited to once per minute system-wide; subsequent calls within the minute return `429 Too Many Requests`
+- **AND** `audit.append("models.verify_all", actor="owner")` is invoked once per accepted run.
 
 #### Scenario: Verify-all persists completed model probes
 
@@ -24,15 +30,7 @@ configuration behavior.
 - **AND** the call remains rate-limited to once per minute system-wide and
   appends one `models.verify_all` audit record for the accepted run
 
-#### Scenario: Verify-all parallel execution
-
-- **WHEN** `POST /api/settings/models/verify-all` is accepted
-- **THEN** enabled, authority-ready models are probed concurrently with bounded
-  concurrency of eight
-- **AND** each completed probe persists the canonical verification fields
-- **AND** the accepted manual run remains rate-limited and audited once
-
-#### Scenario: Unavailable Codex authority is skipped without poisoning verification evidence
+#### Scenario: Unavailable Codex authority is unavailable without poisoning verification evidence
 
 - **WHEN** the shared verification core encounters an enabled Codex entry
   without an explicitly selected system-global Codex `CredentialStore`
@@ -42,7 +40,7 @@ configuration behavior.
 - **AND** it SHALL not write `last_verified_at`, `last_verified_latency_ms`,
   `last_verified_ok`, or `last_verified_error`, preserving the prior catalog
   evidence and routing eligibility
-- **AND** the accepted result increments `skipped`, does not increment
+- **AND** the accepted result increments `unavailable`, does not increment
   `failed`, and records only a categorical authority-unavailable audit note
   without provider diagnostic text
 - **AND** remaining eligible non-Codex and authorized Codex entries retain
@@ -52,33 +50,39 @@ configuration behavior.
 
 The dashboard-api process SHALL run an hourly background sweep
 (`butlers.jobs.model_verify.run_model_verify_loop`, started from the FastAPI
-lifespan) that calls the same verification core as the manual endpoint. Each
-sweep SHALL construct and pass `CredentialStore(pool, system_global_pool=pool)`
-from `DatabaseManager.credential_shared_pool()`; it SHALL not infer Codex
-authority from a schema-local or fallback pool.
+alongside the other periodic jobs) that calls the same verification core as the manual
+endpoint, so `last_verified_ok`/`last_verified_at` are never more than roughly one
+interval stale even when no operator visits the Models tab.
+
+Each sweep SHALL construct and pass `CredentialStore(pool,
+system_global_pool=pool)` from `DatabaseManager.credential_shared_pool()`; it
+SHALL not infer Codex authority from a schema-local or fallback pool.
+
+#### Scenario: Hourly sweep runs independently of the manual rate limit
+- **WHEN** the sweep's interval (default `DEFAULT_MODEL_VERIFY_INTERVAL_S = 3600`,
+  overridable via `MODEL_VERIFY_INTERVAL_S`) elapses
+- **THEN** the sweep calls `run_verify_all_models(pool, audit_actor="model_verify_sweep")`
+  directly, bypassing the manual endpoint's once-per-minute HTTP rate limit (that limit is
+  an HTTP-surface concern specific to the operator-facing route)
+- **AND** `audit.append("models.verify_all", actor="model_verify_sweep")` is invoked,
+  distinguishing an automated run from an owner-initiated one in `public.audit_log`
+
+#### Scenario: Sweep sleeps first and tolerates a bad tick
+- **WHEN** the dashboard-api process starts
+- **THEN** the sweep loop sleeps for one interval before its first run (mirrors
+  `run_secrets_lifecycle_loop`), so it never fires real LLM-CLI verification calls during
+  a process boot or a test that exercises the full API lifespan
+- **AND** a single sweep's failure is logged and swallowed; the loop continues on its
+  next interval rather than dying
+- **AND** when no shared credential pool is configured, the sweep is a no-op tick (logged
+  at WARNING) rather than raising
 
 #### Scenario: Hourly sweep preserves authority-unavailable catalog entries
 
-- **WHEN** the shared credential pool is unavailable at a sweep tick
-- **THEN** the sweep is a logged no-op and does not call the verification core
-- **AND** it does not write failed verification evidence for any model
-- **WHEN** the core reports an authority-unavailable Codex skip
-- **THEN** the sweep returns that safe `skipped` count rather than recording a
+- **WHEN** the shared verification core encounters an enabled Codex entry
+  without its required authority
+- **THEN** the sweep returns that safe `unavailable` count rather than recording a
   false model failure or excluding the entry from routing
-
-#### Scenario: Hourly sweep runs independently of the manual rate limit
-
-- **WHEN** the configured verification interval elapses
-- **THEN** the sweep calls the shared verification core directly as the
-  registered scheduler caller, outside the manual HTTP rate limit
-- **AND** its audit actor distinguishes it from an owner-initiated run
-
-#### Scenario: Sweep sleeps first and tolerates a bad tick
-
-- **WHEN** dashboard-api starts
-- **THEN** the sweep sleeps for one interval before its first run
-- **AND** one failed or authority-unavailable tick is logged safely and does
-  not terminate later intervals
 
 ## ADDED Requirements
 

@@ -128,7 +128,6 @@ class VerifyAllResult(BaseModel):
     total: int = 0
     ok: int = 0
     failed: int = 0
-    skipped: int = 0
     unavailable: int = 0
 
 
@@ -731,8 +730,6 @@ async def run_verify_all_models(
     * ``failed`` --- the probe ran and the model did not;
     * ``unavailable`` --- the control plane could not run a probe at all
       (no signer, no readiness, busy, timed out, replayed, or refused);
-    * ``skipped`` --- nothing to probe.
-
     Only the first two are evidence about a model, and only the coordinator
     writes them.  Everything else leaves the catalog's verification history
     exactly as it was, which is the difference between "this model is broken"
@@ -754,7 +751,7 @@ async def run_verify_all_models(
 
     if not rows:
         await audit.append(pool, audit_actor, "models.verify_all", result="success")
-        return VerifyAllResult(accepted=True, total=0, ok=0, failed=0, skipped=0)
+        return VerifyAllResult(accepted=True, total=0, ok=0, failed=0)
 
     client = _probe_client(caller)
     sem = asyncio.Semaphore(_VERIFY_ALL_CONCURRENCY)
@@ -793,7 +790,6 @@ async def run_verify_all_models(
         total=len(results),
         ok=ok_count,
         failed=failed_count,
-        skipped=0,
         unavailable=unavailable_count,
     )
 

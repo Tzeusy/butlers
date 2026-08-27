@@ -328,8 +328,10 @@ async def test_verify_all_rate_limit(app, audit_append_spy, monkeypatch):
     assert route_calls[0].kwargs["result"] == "success"
 
 
-async def test_verify_all_accepted_after_interval(app, audit_append_spy, monkeypatch):
-    """POST /api/settings/models/verify-all is accepted once the 60s window passes."""
+async def test_verify_all_accepted_after_interval_returns_current_result_shape(
+    app, audit_append_spy, monkeypatch
+):
+    """The accepted API response exposes only meaningful verification buckets."""
     import butlers.api.routers.model_settings as _ms
 
     # Simulate last run well in the past
@@ -344,7 +346,13 @@ async def test_verify_all_accepted_after_interval(app, audit_append_spy, monkeyp
         resp = await client.post("/api/settings/models/verify-all")
 
     assert resp.status_code == 200
-    assert resp.json()["data"]["accepted"] is True
+    assert resp.json()["data"] == {
+        "accepted": True,
+        "total": 0,
+        "ok": 0,
+        "failed": 0,
+        "unavailable": 0,
+    }
 
 
 # ---------------------------------------------------------------------------
