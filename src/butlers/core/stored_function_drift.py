@@ -83,6 +83,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import textwrap
 from collections.abc import Mapping, Sequence
@@ -98,6 +99,19 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 #: The committed authority for every managed stored-function body.
 INIT_DB_SQL_PATH = _REPO_ROOT / "scripts" / "init-db.sql"
+
+#: Optional source override for installations that mount the privileged bootstrap
+#: outside the package. This diagnostic remains advisory: an unreadable configured
+#: source produces an unavailable report rather than blocking startup, because the
+#: comparison is evidence about deployment state, not an enforcement authority.
+STORED_FUNCTION_DRIFT_INIT_DB_SQL_PATH_ENV = "STORED_FUNCTION_DRIFT_INIT_DB_SQL_PATH"
+
+
+def _configured_init_db_sql_path() -> Path:
+    """Return the operator override, or the package-relative committed source."""
+    configured_path = os.environ.get(STORED_FUNCTION_DRIFT_INIT_DB_SQL_PATH_ENV)
+    return Path(configured_path) if configured_path is not None else INIT_DB_SQL_PATH
+
 
 #: Deployed body matches one of the committed definitions.
 MATCHED = "matched"
@@ -320,7 +334,10 @@ async def compute_stored_function_drift(
     false all-clear.
     """
     checked_at = datetime.now(UTC)
-    source = init_db_path or INIT_DB_SQL_PATH
+    # Read the environment at comparison time so the live endpoint and the
+    # one-shot startup probe use the same configured source. An explicit
+    # argument remains the narrow test/one-off override.
+    source = init_db_path if init_db_path is not None else _configured_init_db_sql_path()
 
     def _degraded(reason: str) -> StoredFunctionDriftReport:
         return StoredFunctionDriftReport(checked_at=checked_at, entries=(), check_error=reason)
@@ -391,6 +408,7 @@ __all__ = [
     "INIT_DB_SQL_PATH",
     "MATCHED",
     "NOT_DEPLOYED",
+    "STORED_FUNCTION_DRIFT_INIT_DB_SQL_PATH_ENV",
     "FunctionDefinition",
     "StoredFunctionDriftReport",
     "StoredFunctionEntry",

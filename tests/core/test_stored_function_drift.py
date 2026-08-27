@@ -10,6 +10,7 @@ to exhibit.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -18,6 +19,7 @@ from butlers.core.stored_function_drift import (
     INIT_DB_SQL_PATH,
     MATCHED,
     NOT_DEPLOYED,
+    STORED_FUNCTION_DRIFT_INIT_DB_SQL_PATH_ENV,
     FunctionDefinition,
     StoredFunctionDriftReport,
     compare_stored_functions,
@@ -101,4 +103,55 @@ async def test_an_unreadable_committed_source_degrades_rather_than_reporting_all
     assert not report.is_available
     assert report.check_error
     assert report.entries == ()
+    assert not report.is_drifted
+
+
+async def test_configured_committed_source_path_is_used(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit source path takes precedence over the package-relative default."""
+    configured_source = tmp_path / "mounted-init-db.sql"
+    configured_source.write_text(
+        """
+        CREATE FUNCTION public.configured_probe()
+        RETURNS void
+        LANGUAGE plpgsql
+        AS $body$
+        BEGIN
+        END;
+        $body$;
+        """,
+        encoding="utf-8",
+    )
+    connection = MagicMock()
+    connection.fetch = AsyncMock(return_value=[])
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=connection)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setenv(STORED_FUNCTION_DRIFT_INIT_DB_SQL_PATH_ENV, str(configured_source))
+
+    report = await compute_stored_function_drift(pool)
+
+    assert report.is_available
+    entry = report.entry("public.configured_probe")
+    assert entry is not None
+    assert entry.status == NOT_DEPLOYED
+    connection.fetch.assert_awaited_once()
+
+
+async def test_missing_configured_committed_source_degrades_with_a_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A missing configured source is unknown, never an all-clear result."""
+    missing_source = tmp_path / "not-mounted-init-db.sql"
+    monkeypatch.setenv(STORED_FUNCTION_DRIFT_INIT_DB_SQL_PATH_ENV, str(missing_source))
+
+    report: StoredFunctionDriftReport = await compute_stored_function_drift(
+        None  # type: ignore[arg-type]
+    )
+
+    assert not report.is_available
+    assert report.check_error == "cannot read not-mounted-init-db.sql: FileNotFoundError"
+    assert report.entries == ()
+    assert report.drifted == ()
     assert not report.is_drifted
