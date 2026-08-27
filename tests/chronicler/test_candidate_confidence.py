@@ -439,7 +439,9 @@ async def test_late_hr_on_an_empty_movement_tick_promotes_existing_exercise() ->
         )
 
     assert first.rows_projected == 0
+    assert second.rows_projected == 0
     assert second.episodes_closed == 1
+    assert captured[0].source_ref == f"chronicler.episodes:{movement['id']}:exercise"
     assert [episode.evidence_refs for episode in captured] == [[str(late_hr_id)]]
 
 
@@ -486,6 +488,7 @@ async def test_exercise_late_hr_recheck_is_bounded_and_shares_the_hr_predicate()
     assert predicate.await_count == 2
     query, *args = conn.fetch.await_args_list[0].args
     assert "e.start_at >= $5" in query and "LIMIT $8" in query
+    assert "'chronicler.episodes:' || e.id::text || ':exercise'" in query
     assert args[4] == _NOW - timedelta(hours=CORROBORATION_RECHECK_LOOKBACK_HOURS)
     assert args[7] == CORROBORATION_RECHECK_LIMIT
 
