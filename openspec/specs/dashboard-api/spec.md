@@ -1056,7 +1056,7 @@ All endpoints under the new `/api/secrets/*` namespace and the generalised `/api
 - **AND** no array or scalar is returned at the top level of the response body
 
 ### Requirement: Pricing and Cost Estimation
-`src/butlers/api/pricing.py` SHALL load per-model token pricing from `pricing.toml` and expose cost estimation for session cost calculation.
+`src/butlers/core/pricing.py` SHALL load per-model token pricing from `pricing.toml` and expose cost estimation for session cost calculation.
 
 #### Scenario: Pricing config loading
 - **WHEN** `load_pricing()` is called at startup

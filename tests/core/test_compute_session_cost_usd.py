@@ -35,7 +35,7 @@ pytestmark = pytest.mark.unit
 
 def _make_pricing(model_id: str = "claude-test", price_per_token: float = 1e-6):
     """Build a minimal PricingConfig with a single model entry."""
-    from butlers.api.pricing import ModelPricing, PricingConfig
+    from butlers.core.pricing import ModelPricing, PricingConfig
 
     return PricingConfig({model_id: ModelPricing(price_per_token, price_per_token * 2)})
 
