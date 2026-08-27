@@ -35,14 +35,20 @@ Scope and limits, stated so nobody mistakes a pass here for proof:
   positional scan would need per-callee signatures to know which argument it is.
 - One level of local binding, so ``now = datetime.now(UTC)`` followed by
   ``f(now=now)`` is caught. Two hops through helper functions are not.
-- It cannot know whether the callee is actually clock-gated; it asks the
-  question at the only place the answer is available.
+- Production-owned registries identify the small set of time-gated entry
+  points whose optional ``now`` defaults must not be used by a test asserting
+  their time-selected branch. The guard resolves direct imports and aliases to
+  the registry's exact module; it does not infer clock-gating from a matching
+  function name or a ``now`` signature.
 """
 
 from __future__ import annotations
 
 import ast
 import textwrap
+from functools import cache
+from importlib import import_module
+from inspect import signature
 from pathlib import Path
 
 import pytest
@@ -81,6 +87,8 @@ _LIVE_CLOCK_READS = frozenset(
     }
 )
 _MAX_BINDING_HOPS = 2
+_BROKER_MODULE = "butlers.tools.switchboard.insight.broker"
+_EXPECTED_CLOCK_GATED_CALLEES = frozenset({"delivery_cycle", "get_suppressing_context_signal"})
 
 
 def _attribute_owner(node: ast.AST) -> str | None:
@@ -121,18 +129,101 @@ def _live_clock_source(
     return None
 
 
+@cache
+def _clock_gated_callees_by_module() -> dict[str, frozenset[str]]:
+    """Load production-owned clock-gated names without guessing from signatures."""
+    broker = import_module(_BROKER_MODULE)
+    return {
+        _BROKER_MODULE: frozenset(getattr(broker, "CLOCK_GATED_CALLEES", ())),
+    }
+
+
+def _clock_gated_import_bindings(
+    nodes: list[ast.AST],
+    inherited_callees: dict[str, str],
+    inherited_modules: dict[str, str],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Resolve local names only when their import names a registered callee."""
+    callees = dict(inherited_callees)
+    modules = dict(inherited_modules)
+    registered_by_module = _clock_gated_callees_by_module()
+    for node in nodes:
+        if isinstance(node, ast.ImportFrom) and node.module in registered_by_module:
+            registered = registered_by_module[node.module]
+            for alias in node.names:
+                if alias.name in registered:
+                    callees[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in registered_by_module:
+                    modules[alias.asname or alias.name] = alias.name
+    return callees, modules
+
+
+def _dotted_name(node: ast.AST) -> str | None:
+    """Return an attribute chain's source spelling, such as ``pkg.module.call``."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _dotted_name(node.value)
+        return f"{parent}.{node.attr}" if parent is not None else None
+    return None
+
+
+def _registered_clock_gated_callee(
+    node: ast.Call,
+    imported_callees: dict[str, str],
+    imported_modules: dict[str, str],
+) -> str | None:
+    """Return the registered production callee reached by *node*, if any."""
+    if isinstance(node.func, ast.Name):
+        return imported_callees.get(node.func.id)
+    dotted_call = _dotted_name(node.func)
+    if dotted_call is not None:
+        for imported_name, module in imported_modules.items():
+            prefix = f"{imported_name}."
+            if dotted_call.startswith(prefix):
+                callee_name = dotted_call.removeprefix(prefix)
+                if callee_name in _clock_gated_callees_by_module()[module]:
+                    return callee_name
+    return None
+
+
 def injected_clock_findings(path: Path, source: str) -> list[str]:
-    """Report every ``now=<live clock>`` argument in *source* lacking a declaration."""
+    """Report live clock injection and omitted ``now=`` on registered callees."""
     tree = ast.parse(source)
     lines = source.splitlines()
     parents = parent_map(tree)
     findings: dict[int, str] = {}
+    module_callees, module_aliases = _clock_gated_import_bindings(scope_nodes(tree), {}, {})
     for scope in scopes(tree):
         nodes = scope_nodes(scope)
         bindings = local_bindings(nodes)
+        imported_callees, imported_modules = _clock_gated_import_bindings(
+            nodes, module_callees, module_aliases
+        )
         for node in nodes:
             if not isinstance(node, ast.Call):
                 continue
+            registered_callee = _registered_clock_gated_callee(
+                node, imported_callees, imported_modules
+            )
+            if registered_callee is not None and not any(
+                keyword.arg == _INJECTED_CLOCK_KEYWORD for keyword in node.keywords
+            ):
+                statement = enclosing_statement(node, parents)
+                marker, reason = pragma_declaration(statement, lines, _LIVE_CLOCK_PRAGMA)
+                if not (marker and reason):
+                    detail = (
+                        f" (its '# {_LIVE_CLOCK_PRAGMA}' comment states no reason)"
+                        if marker
+                        else ""
+                    )
+                    call = ast.unparse(node.func)
+                    findings[statement.lineno] = (
+                        f"{path}:{statement.lineno} calls registered clock-gated callee "
+                        f"{registered_callee} via {call} without now={detail}"
+                    )
             for keyword in node.keywords:
                 if keyword.arg != _INJECTED_CLOCK_KEYWORD:
                     continue
@@ -167,20 +258,26 @@ def _guarded_test_sources() -> list[Path]:
     )
 
 
-def test_no_test_passes_a_live_clock_to_an_injected_now_parameter():
+def test_no_test_uses_a_live_clock_or_omits_now_for_a_registered_callee():
     """A test must name the instant it is asserting about, or say why it cannot."""
     findings: list[str] = []
+    clock_gated_names = {
+        callee for callees in _clock_gated_callees_by_module().values() for callee in callees
+    }
     for path in _guarded_test_sources():
         source = path.read_text(encoding="utf-8")
-        # The detector needs a `now=` keyword spelled in the source, so a file
-        # without one cannot produce a finding.
-        if f"{_INJECTED_CLOCK_KEYWORD}=" not in source:
+        # A registered callee can be wrong precisely because it omits `now=`;
+        # keep the cheap prefilter, but never let it hide that new guard shape.
+        if f"{_INJECTED_CLOCK_KEYWORD}=" not in source and not any(
+            callee in source for callee in clock_gated_names
+        ):
             continue
         findings.extend(injected_clock_findings(path, source))
 
     assert findings == [], (
-        "Tests pass a live clock into an injectable `now=` parameter. Pin the "
-        "instant (and, where the instant's meaning depends on persisted state "
+        "Tests either pass a live clock into an injectable `now=` parameter or "
+        "omit `now=` for a registered clock-gated callee. Pin the instant (and, "
+        "where the instant's meaning depends on persisted state "
         "such as the Owner Attention Policy, pin that state too) so the "
         "assertion means the same thing at every hour of the day. A test that "
         "genuinely needs the real clock keeps it and says why with a "
@@ -273,3 +370,84 @@ def test_guard_ignores_a_live_clock_that_is_not_an_injected_instant():
             assert fetch_recent(pool) == [observed]
     """)
     assert injected_clock_findings(Path("tests/test_example.py"), source) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        from butlers.tools.switchboard.insight.broker import delivery_cycle
+
+        async def test_delivery_branch(pool):
+            await delivery_cycle(pool, notify_fn=notify)
+        """,
+        """
+        from butlers.tools.switchboard.insight.broker import delivery_cycle as run_cycle
+
+        async def test_delivery_branch(pool):
+            await run_cycle(pool, notify_fn=notify)
+        """,
+        """
+        import butlers.tools.switchboard.insight.broker as insight_broker
+
+        async def test_delivery_branch(pool):
+            await insight_broker.delivery_cycle(pool, notify_fn=notify)
+        """,
+        """
+        import butlers.tools.switchboard.insight.broker
+
+        async def test_delivery_branch(pool):
+            await butlers.tools.switchboard.insight.broker.delivery_cycle(pool, notify_fn=notify)
+        """,
+    ],
+    ids=["direct-import", "import-alias", "module-alias", "fully-dotted-module"],
+)
+def test_guard_fires_when_a_registered_clock_gated_callee_omits_now(source):
+    findings = injected_clock_findings(Path("tests/test_example.py"), textwrap.dedent(source))
+
+    assert len(findings) == 1
+    assert "registered clock-gated callee" in findings[0]
+    assert "delivery_cycle" in findings[0]
+
+
+def test_guard_accepts_a_reasoned_omission_for_a_registered_clock_gated_callee():
+    source = textwrap.dedent("""
+        from butlers.tools.switchboard.insight.broker import delivery_cycle
+
+        async def test_default_time_is_wired(pool):
+            # live-clock: this test deliberately verifies the documented default-time path.
+            await delivery_cycle(pool, notify_fn=notify)
+    """)
+
+    assert injected_clock_findings(Path("tests/test_example.py"), source) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        """
+        from butlers.tools.switchboard.insight.broker import deduplicate_candidates
+
+        async def test_deduplicate(pool):
+            await deduplicate_candidates(pool, candidate_ids)
+        """,
+        """
+        from butlers.core.attention_ledger import get_suppressing_context_signal
+
+        async def test_shared_suppression_reader(pool):
+            await get_suppressing_context_signal(pool)
+        """,
+    ],
+    ids=["unregistered-broker-callee", "same-name-from-another-module"],
+)
+def test_guard_ignores_an_unregistered_callee_without_now(source):
+    assert injected_clock_findings(Path("tests/test_example.py"), textwrap.dedent(source)) == []
+
+
+def test_clock_gated_registry_lives_with_the_broker_callees():
+    broker = import_module(_BROKER_MODULE)
+    registered = frozenset(getattr(broker, "CLOCK_GATED_CALLEES", ()))
+
+    assert registered == _EXPECTED_CLOCK_GATED_CALLEES
+    for callee_name in registered:
+        assert "now" in signature(getattr(broker, callee_name)).parameters
