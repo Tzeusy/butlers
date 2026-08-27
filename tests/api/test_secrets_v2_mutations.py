@@ -123,13 +123,14 @@ def _make_shared_pool(
     async def _transaction():
         yield
 
-    fake_conn.transaction = _transaction
+    fake_conn.transaction = MagicMock(side_effect=_transaction)
 
     @asynccontextmanager
     async def _acquire():
         yield fake_conn
 
-    shared_pool.acquire = _acquire
+    shared_pool.acquire = MagicMock(side_effect=_acquire)
+    shared_pool._transaction_connection = fake_conn
 
     return shared_pool
 
@@ -269,6 +270,22 @@ def test_rotate_404_on_missing_credential():
     assert resp.status_code == 404
 
 
+def test_rotate_missing_non_spotify_credential_locks_then_returns_404_without_update(monkeypatch):
+    """The ordinary 404 is decided by the locked lookup before any write."""
+    _stub_revoke(monkeypatch)
+    mock_db = _make_db(user_row=None)
+    shared_pool = mock_db.credential_shared_pool()
+    client = _build_app(mock_db)
+
+    resp = client.post("/api/secrets/user/openai/rotate", json={"value": "replacement"})
+
+    assert resp.status_code == 404
+    entity_info_sql = _matching(shared_pool, _ENTITY_INFO_SQL)
+    assert len(entity_info_sql) == 1
+    assert "FOR UPDATE" in entity_info_sql[0]
+    assert not any("UPDATE public.entity_info" in sql for sql in entity_info_sql)
+
+
 def test_rotate_rejects_telegram_api_hash_via_telegram_bot_alias_before_update():
     """The generic rotate route must not bypass Telegram's guided setup.
 
@@ -295,6 +312,7 @@ def test_rotate_rejects_telegram_api_hash_via_telegram_bot_alias_before_update()
         "telegram_api_hash can only be updated through the guided Telegram session setup."
     )
     shared_pool.execute.assert_not_awaited()
+    assert not any("UPDATE public.entity_info" in sql for sql in _issued_sql(shared_pool))
 
 
 # ---------------------------------------------------------------------------
@@ -1388,15 +1406,21 @@ _GRANTED_SCOPES_SQL = "granted_scopes"
 _TEST_MODE_EXPIRY_SQL = "last_token_refresh_at"
 #: `_fetch_probe_log` — the aggregate, bare-key probe result used by detail reads.
 _AGGREGATE_PROBE_LOG_SQL = "AND credential_key = $2"
+_ENTITY_INFO_SQL = "public.entity_info"
 
 
 def _issued_sql(shared_pool: AsyncMock) -> list[str]:
-    """Every SQL string the route issued through ``pool.fetch*``."""
+    """Every SQL string issued through the shared-pool test double.
+
+    Mutation routes may use ``fetchrow``/``execute`` through an acquired
+    connection while read paths use ``fetch`` directly. Keeping all three here
+    makes a query-count assertion describe the route's actual round trips.
+    """
     return [
         call.args[0]
-        for fetch_method in (shared_pool.fetchrow, shared_pool.fetch)
-        for call in fetch_method.await_args_list
-        if call.args
+        for method in (shared_pool.fetch, shared_pool.fetchrow, shared_pool.execute)
+        for call in method.await_args_list
+        if call.args and isinstance(call.args[0], str)
     ]
 
 
@@ -1424,12 +1448,49 @@ def _stub_revoke(monkeypatch) -> None:
     monkeypatch.setattr(_secrets_v2, "_revoke_oauth_token", _skipped)
 
 
-def test_rotate_loads_scope_evidence_only_for_the_published_read(monkeypatch):
-    """rotate reads the credential twice; only the response read needs scopes.
+def test_rotate_uses_two_entity_info_round_trips_with_returning(monkeypatch):
+    """Rotation reads a locked row then updates it without a post-write re-read."""
+    _stub_revoke(monkeypatch)
+    mock_db = _make_db(user_row=_make_entity_info_row(info_type="google_oauth_refresh"))
+    shared_pool = mock_db.credential_shared_pool()
+    client = _build_app(mock_db)
 
-    The pre-update read supplies `id` and `type` for the in-place UPDATE and the
-    provider revoke — it never reaches `_content_blind_detail`.  So exactly one
-    catalogue read and one granted-scopes read may happen, not two.
+    response = client.post("/api/secrets/user/google/rotate", json={"value": "replacement"})
+
+    assert response.status_code == 200, response.text
+    entity_info_sql = _matching(shared_pool, _ENTITY_INFO_SQL)
+    assert len(entity_info_sql) == 2
+    assert "FOR UPDATE" in entity_info_sql[0]
+    assert "UPDATE" in entity_info_sql[1]
+    assert "RETURNING" in entity_info_sql[1]
+    assert "RETURNING value" not in entity_info_sql[1]
+    assert "replacement" not in response.text
+
+
+def test_rotate_locks_and_updates_on_one_transactional_connection(monkeypatch):
+    """The 404/type decision and write cannot be separated across pool calls."""
+    _stub_revoke(monkeypatch)
+    mock_db = _make_db(user_row=_make_entity_info_row(info_type="google_oauth_refresh"))
+    shared_pool = mock_db.credential_shared_pool()
+    client = _build_app(mock_db)
+
+    response = client.post("/api/secrets/user/google/rotate", json={"value": "replacement"})
+
+    assert response.status_code == 200, response.text
+    shared_pool.acquire.assert_called_once()
+    shared_pool._transaction_connection.transaction.assert_called_once()
+    entity_info_sql = _matching(shared_pool, _ENTITY_INFO_SQL)
+    assert "FOR UPDATE" in entity_info_sql[0]
+    assert "UPDATE" in entity_info_sql[1]
+
+
+def test_rotate_loads_scope_evidence_only_for_the_published_read(monkeypatch):
+    """The locked mutation read skips scopes; the response record loads them.
+
+    The lock/update unit supplies the old type and value for the in-place write
+    and provider revoke — it never reaches `_content_blind_detail`. The record
+    built from UPDATE RETURNING supplies the published capability evidence, so
+    exactly one catalogue read and one granted-scopes read may happen.
     """
     _stub_revoke(monkeypatch)
     row = _make_entity_info_row(info_type="google_oauth_refresh", value="old-tok")
