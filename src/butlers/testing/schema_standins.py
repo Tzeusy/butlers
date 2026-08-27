@@ -232,7 +232,7 @@ AUTONOMY_APPROVAL_HISTORY = TableStandin(
         ("pattern_fingerprint", "VARCHAR(64) NOT NULL"),
         ("tool_name", "TEXT NOT NULL"),
         ("tool_args", "JSONB NOT NULL"),
-        ("action_id", "UUID REFERENCES pending_actions(id) ON DELETE SET NULL"),
+        ("action_id", "UUID"),
         ("approved_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
         ("time_to_decision_seconds", "DOUBLE PRECISION"),
         ("fingerprint_version", "SMALLINT NOT NULL DEFAULT 1"),
@@ -272,11 +272,11 @@ AUTONOMY_SUGGESTIONS = TableStandin(
         ("created_at", "TIMESTAMPTZ NOT NULL DEFAULT now()"),
         ("decided_at", "TIMESTAMPTZ"),
         ("decided_by", "TEXT"),
-        ("resulting_rule_id", "UUID REFERENCES approval_rules(id) ON DELETE SET NULL"),
+        ("resulting_rule_id", "UUID"),
         ("cooldown_until", "TIMESTAMPTZ"),
         ("dismissal_reason", "TEXT"),
         ("fingerprint_version", "SMALLINT NOT NULL DEFAULT 1"),
-        ("action_id", "UUID REFERENCES pending_actions(id) ON DELETE SET NULL"),
+        ("action_id", "UUID"),
     ),
     table_constraints=(
         (
