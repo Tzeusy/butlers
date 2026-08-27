@@ -143,7 +143,7 @@ def _clock_gated_import_bindings(
     inherited_callees: dict[str, str],
     inherited_modules: dict[str, str],
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """Resolve local names only when their import names a registered callee."""
+    """Resolve imports only when they name a registered callee or module."""
     callees = dict(inherited_callees)
     modules = dict(inherited_modules)
     registered_by_module = _clock_gated_callees_by_module()
@@ -153,6 +153,11 @@ def _clock_gated_import_bindings(
             for alias in node.names:
                 if alias.name in registered:
                     callees[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                imported_module = f"{node.module}.{alias.name}"
+                if imported_module in registered_by_module:
+                    modules[alias.asname or alias.name] = imported_module
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name in registered_by_module:
@@ -399,8 +404,20 @@ def test_guard_ignores_a_live_clock_that_is_not_an_injected_instant():
         async def test_delivery_branch(pool):
             await butlers.tools.switchboard.insight.broker.delivery_cycle(pool, notify_fn=notify)
         """,
+        """
+        from butlers.tools.switchboard.insight import broker as insight_broker
+
+        async def test_delivery_branch(pool):
+            await insight_broker.delivery_cycle(pool, notify_fn=notify)
+        """,
     ],
-    ids=["direct-import", "import-alias", "module-alias", "fully-dotted-module"],
+    ids=[
+        "direct-import",
+        "import-alias",
+        "module-alias",
+        "fully-dotted-module",
+        "parent-module-alias",
+    ],
 )
 def test_guard_fires_when_a_registered_clock_gated_callee_omits_now(source):
     findings = injected_clock_findings(Path("tests/test_example.py"), textwrap.dedent(source))
@@ -426,10 +443,10 @@ def test_guard_accepts_a_reasoned_omission_for_a_registered_clock_gated_callee()
     "source",
     [
         """
-        from butlers.tools.switchboard.insight.broker import deduplicate_candidates
+        from butlers.tools.switchboard.insight.broker import expire_candidates
 
-        async def test_deduplicate(pool):
-            await deduplicate_candidates(pool, candidate_ids)
+        async def test_expiration(pool):
+            await expire_candidates(pool)
         """,
         """
         from butlers.core.attention_ledger import get_suppressing_context_signal
@@ -438,7 +455,7 @@ def test_guard_accepts_a_reasoned_omission_for_a_registered_clock_gated_callee()
             await get_suppressing_context_signal(pool)
         """,
     ],
-    ids=["unregistered-broker-callee", "same-name-from-another-module"],
+    ids=["unregistered-broker-now-helper", "same-name-from-another-module"],
 )
 def test_guard_ignores_an_unregistered_callee_without_now(source):
     assert injected_clock_findings(Path("tests/test_example.py"), textwrap.dedent(source)) == []
