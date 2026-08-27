@@ -31,6 +31,22 @@ its readers that UNKNOWN means "probably just a real failure". That is precisely
 the reflex `bu-5hp74` exists to prevent, and it only works while UNKNOWN is
 rare.
 
+## Baseline provenance
+
+`bu-5hp74` / PR #3861 added this requirement directly to
+`openspec/specs/testing/spec.md`, with its four positive-terminator scenarios.
+Its dependent `bu-ecizp` / PR #3869 then added the
+`Quality-gate make targets produce a receipt and a verdict` scenario directly
+to that same baseline requirement. Neither merge had a change-local delta.
+
+This is the sole active `## MODIFIED Requirements` block for the shared
+requirement. Its carried portion reproduces those five existing baseline
+scenarios verbatim; this change's own delta is limited to the exit-`2`
+refinement below. A second retroactive same-name block would collide at archive,
+so recording the earlier direct edits here preserves their provenance without
+introducing another future baseline rewrite. This maintenance leaves the
+canonical baseline untouched.
+
 ## The decision
 
 > Exit `2` is resolved against the log's last pytest summary line. Counts
