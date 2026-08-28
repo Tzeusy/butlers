@@ -23,6 +23,7 @@ openspec/changes/redesign-secrets-passport/specs/core-credentials/spec.md
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -79,6 +80,21 @@ def _make_entity_info_row(
     )
 
 
+def _make_rotate_returning_row(row: MagicMock) -> MagicMock:
+    """Build the deliberately non-secret row returned by rotation UPDATE."""
+    return _make_row(
+        id=row["id"],
+        entity_id=row["entity_id"],
+        type=row["type"],
+        label=row["label"],
+        created_at=row["created_at"],
+        last_verified=row["last_verified"],
+        last_test_ok=row["last_test_ok"],
+        last_test_code=row["last_test_code"],
+        last_test_message=row["last_test_message"],
+    )
+
+
 def _make_shared_pool(
     *,
     user_row: MagicMock | None = None,
@@ -95,6 +111,7 @@ def _make_shared_pool(
     pre-flights those before handing back a start URL.
     """
     shared_pool = AsyncMock()
+    rotate_returning_row = _make_rotate_returning_row(user_row) if user_row is not None else None
 
     async def _fetchrow(sql, *args):
         if "secret_probe_log" in sql:
@@ -114,8 +131,10 @@ def _make_shared_pool(
         shared_pool.execute = AsyncMock(side_effect=Exception("DB error"))
 
     async def _transaction_fetchrow(sql, *args):
-        if "UPDATE public.entity_info" in sql and rotate_update_error is not None:
-            raise rotate_update_error
+        if "UPDATE public.entity_info" in sql:
+            if rotate_update_error is not None:
+                raise rotate_update_error
+            return rotate_returning_row
         return await _fetchrow(sql, *args)
 
     # Keep transaction connection spies independent from the pool so tests can
@@ -143,6 +162,7 @@ def _make_shared_pool(
 
     shared_pool.acquire = MagicMock(side_effect=_acquire)
     shared_pool._transaction_connection = fake_conn
+    shared_pool._rotate_returning_row = rotate_returning_row
 
     return shared_pool
 
@@ -1421,6 +1441,21 @@ _TEST_MODE_EXPIRY_SQL = "last_token_refresh_at"
 #: `_fetch_probe_log` — the aggregate, bare-key probe result used by detail reads.
 _AGGREGATE_PROBE_LOG_SQL = "AND credential_key = $2"
 _ENTITY_INFO_SQL = "public.entity_info"
+_SAFE_ROTATE_RETURNING_COLUMNS = (
+    "id",
+    "entity_id",
+    "type",
+    "label",
+    "created_at",
+    "last_verified",
+    "last_test_ok",
+    "last_test_code",
+    "last_test_message",
+)
+_RETURNING_COLUMN = re.compile(
+    r'(?:[A-Za-z_][A-Za-z0-9_]*\.)?(?:"(?P<quoted>[A-Za-z_][A-Za-z0-9_]*)"|(?P<bare>[A-Za-z_][A-Za-z0-9_]*))\Z'
+)
+_RETURNING_PROJECTION = re.compile(r"\bRETURNING\b(?P<projection>.+)", re.IGNORECASE | re.DOTALL)
 
 
 def _issued_sql(shared_pool: AsyncMock) -> list[str]:
@@ -1463,6 +1498,19 @@ def _capability_probe_log_sql(shared_pool: AsyncMock) -> list[str]:
     ]
 
 
+def _assert_safe_rotate_returning_projection(sql: str) -> None:
+    """Require the rotation UPDATE to return exactly its safe internal record."""
+    match = _RETURNING_PROJECTION.search(sql)
+    assert match is not None, "rotation UPDATE must return a non-secret record"
+    projection = match.group("projection").strip().rstrip(";").strip()
+    columns: list[str] = []
+    for expression in projection.split(","):
+        column = _RETURNING_COLUMN.fullmatch(expression.strip())
+        assert column is not None, f"unsafe rotation RETURNING expression: {expression!r}"
+        columns.append((column.group("quoted") or column.group("bare")).lower())
+    assert tuple(columns) == _SAFE_ROTATE_RETURNING_COLUMNS
+
+
 def _stub_revoke(monkeypatch) -> None:
     """Keep provider revocation off the network; these tests only watch SQL."""
 
@@ -1470,6 +1518,34 @@ def _stub_revoke(monkeypatch) -> None:
         return "skipped"
 
     monkeypatch.setattr(_secrets_v2, "_revoke_oauth_token", _skipped)
+
+
+@pytest.mark.parametrize(
+    "unsafe_projection",
+    ("value", "ei.value", '"value"', "*", "ei.*"),
+)
+def test_rotate_returning_projection_guard_rejects_credential_bearing_forms(unsafe_projection):
+    """Every spelling that could return a credential value must fail the guard."""
+    sql = """
+        UPDATE public.entity_info
+        SET value = $1
+        WHERE id = $2
+        RETURNING
+            id,
+            entity_id,
+            type,
+            label,
+            created_at,
+            last_verified,
+            last_test_ok,
+            last_test_code,
+            last_test_message
+    """
+    _assert_safe_rotate_returning_projection(sql)
+    mutated = sql.replace("id,", f"id, {unsafe_projection},", 1)
+
+    with pytest.raises(AssertionError):
+        _assert_safe_rotate_returning_projection(mutated)
 
 
 def test_rotate_uses_two_entity_info_round_trips_with_returning(monkeypatch):
@@ -1486,8 +1562,10 @@ def test_rotate_uses_two_entity_info_round_trips_with_returning(monkeypatch):
     assert len(entity_info_sql) == 2
     assert "FOR UPDATE" in entity_info_sql[0]
     assert "UPDATE" in entity_info_sql[1]
-    assert "RETURNING" in entity_info_sql[1]
-    assert "RETURNING value" not in entity_info_sql[1]
+    _assert_safe_rotate_returning_projection(entity_info_sql[1])
+    with pytest.raises(KeyError):
+        shared_pool._rotate_returning_row["value"]
+    assert "value" not in response.json()["data"]
     assert "replacement" not in response.text
 
 
