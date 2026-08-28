@@ -11,8 +11,8 @@
       no clause.
 - [x] 1.2 Narrow the sentinel scenario's UNKNOWN list to `3`, `4`, `5`, and
       `128+signal`, keeping its name (OpenSpec's strict validator rejects a
-      scenario rename inside a MODIFIED block) and freezing the one replaced
-      clause in `scripts/spec-overwrite-baseline.json` as intended.
+      scenario rename inside a MODIFIED block), while the live-baseline rebuild
+      preserves the replaced clause without a frozen ratchet exception.
 - [x] 1.3 Add the interrupted-run scenario: exit `2` plus counts reporting
       failures is FAILED; exit `2` with no such counts stays UNKNOWN; the
       summary may never promote exit `2` to PASS.
