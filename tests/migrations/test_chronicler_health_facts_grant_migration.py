@@ -11,6 +11,7 @@ import pytest
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import Connection, create_engine, text
+from sqlalchemy.exc import ProgrammingError
 
 from butlers.migrations import run_migrations
 from butlers.testing.migration import (
@@ -163,6 +164,7 @@ def test_health_grant_is_select_only_usable_by_role_and_downgrade_is_scoped(
             connection.execute(text("CREATE TABLE health.facts (id INTEGER PRIMARY KEY)"))
             connection.execute(text("GRANT USAGE ON SCHEMA health TO butler_chronicler_rw"))
             _run_migration(connection, module, "upgrade", "health")
+            _run_migration(connection, module, "upgrade", "health")
 
             privileges = (
                 connection.execute(
@@ -175,7 +177,13 @@ def test_health_grant_is_select_only_usable_by_role_and_downgrade_is_scoped(
                         "has_table_privilege('butler_chronicler_rw', 'health.facts', 'UPDATE') "
                         "AS can_update, "
                         "has_table_privilege('butler_chronicler_rw', 'health.facts', 'DELETE') "
-                        "AS can_delete"
+                        "AS can_delete, "
+                        "has_table_privilege('butler_chronicler_rw', 'health.facts', 'TRUNCATE') "
+                        "AS can_truncate, "
+                        "has_table_privilege('butler_chronicler_rw', 'health.facts', 'REFERENCES') "
+                        "AS can_references, "
+                        "has_table_privilege('butler_chronicler_rw', 'health.facts', 'TRIGGER') "
+                        "AS can_trigger"
                     )
                 )
                 .mappings()
@@ -186,11 +194,16 @@ def test_health_grant_is_select_only_usable_by_role_and_downgrade_is_scoped(
                 "can_insert": False,
                 "can_update": False,
                 "can_delete": False,
+                "can_truncate": False,
+                "can_references": False,
+                "can_trigger": False,
             }
     finally:
         engine.dispose()
 
-    admin_engine = create_engine(migration_bootstrap_db_url(postgres_container, db_name))
+    admin_engine = create_engine(
+        migration_bootstrap_db_url(postgres_container, db_name), isolation_level="AUTOCOMMIT"
+    )
     try:
         with admin_engine.connect() as connection:
             connection.execute(text('SET ROLE "butler_chronicler_rw"'))
@@ -198,6 +211,12 @@ def test_health_grant_is_select_only_usable_by_role_and_downgrade_is_scoped(
                 assert (
                     connection.execute(text("SELECT count(*) FROM health.facts")).scalar_one() == 0
                 )
+                for statement in (
+                    "INSERT INTO health.facts (id) VALUES (1)",
+                    "TRUNCATE TABLE health.facts",
+                ):
+                    with pytest.raises(ProgrammingError, match="permission denied"):
+                        connection.execute(text(statement))
             finally:
                 connection.execute(text("RESET ROLE"))
     finally:
@@ -207,6 +226,7 @@ def test_health_grant_is_select_only_usable_by_role_and_downgrade_is_scoped(
     try:
         with engine.begin() as connection:
             connection.execute(text("GRANT INSERT ON TABLE health.facts TO butler_chronicler_rw"))
+            _run_migration(connection, module, "downgrade", "health")
             _run_migration(connection, module, "downgrade", "health")
 
             assert (
@@ -239,3 +259,21 @@ def test_health_grant_is_select_only_usable_by_role_and_downgrade_is_scoped(
             )
     finally:
         engine.dispose()
+
+    admin_engine = create_engine(
+        migration_bootstrap_db_url(postgres_container, db_name), isolation_level="AUTOCOMMIT"
+    )
+    try:
+        with admin_engine.connect() as connection:
+            connection.execute(text('SET ROLE "butler_chronicler_rw"'))
+            try:
+                with pytest.raises(ProgrammingError, match="permission denied"):
+                    connection.execute(text("SELECT count(*) FROM health.facts"))
+                assert (
+                    connection.execute(text("INSERT INTO health.facts (id) VALUES (1)")).rowcount
+                    == 1
+                )
+            finally:
+                connection.execute(text("RESET ROLE"))
+    finally:
+        admin_engine.dispose()
