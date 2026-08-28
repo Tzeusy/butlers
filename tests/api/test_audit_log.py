@@ -206,6 +206,29 @@ async def describe_async_guard():
     assert _audit_log_delete_violations(source, Path("prose.py")) == []
 
 
+def test_no_delete_from_audit_log_rejects_injected_repo_file(tmp_path, monkeypatch):
+    """The repository traversal, not only the literal helper, must stay causal."""
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (source_root / "prose.py").write_text(
+        '# DELETE FROM audit_log is forbidden.\n"""Documentation may mention DELETE FROM audit_log."""\n',
+        encoding="utf-8",
+    )
+    (source_root / "violating_audit_log_delete.py").write_text(
+        'sql = f"DELETE FROM public.audit_log WHERE id = {audit_id}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(globals(), "_REPO_ROOT", tmp_path)
+    monkeypatch.setitem(globals(), "_SOURCE_DIRS", [source_root])
+
+    with pytest.raises(AssertionError) as exc_info:
+        test_no_delete_from_audit_log_in_repo()
+
+    message = str(exc_info.value)
+    assert "src/violating_audit_log_delete.py:1: DELETE FROM public.audit_log" in message
+    assert "src/prose.py" not in message
+
+
 def test_no_delete_from_audit_log_in_repo():
     """Fail CI if a Python SQL literal deletes from the append-only audit_log.
 
