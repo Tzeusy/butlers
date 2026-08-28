@@ -1072,7 +1072,8 @@ All endpoints under the new `/api/secrets/*` namespace and the generalised `/api
 
 #### Scenario: Session cost estimation
 - **WHEN** `estimate_session_cost(config, model_id, input_tokens, output_tokens, cached_input_tokens=, cache_creation_tokens=)` is called
-- **THEN** it returns the estimated USD cost, or `0.0` for unknown models
+- **THEN** it returns the estimated USD cost, or `None` for an unknown model ID so callers can surface unpriced usage
+- **AND** an explicitly configured zero-rate model returns `0.0`, including subscription or local entries
 - **AND** a warning is logged once per unknown model ID
 
 #### Scenario: Spend endpoints use MCP fan-out
