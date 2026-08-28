@@ -38,8 +38,9 @@ Scope and limits, stated so nobody mistakes a pass here for proof:
 - Production-owned registries identify the small set of time-gated entry
   points whose optional ``now`` defaults must not be used by a test asserting
   their time-selected branch. The guard resolves direct imports and aliases to
-  the registry's exact module; it does not infer clock-gating from a matching
-  function name or a ``now`` signature.
+  the registry's exact module or explicitly mapped public re-export facade; it
+  does not infer clock-gating from a matching function name or a ``now``
+  signature.
 """
 
 from __future__ import annotations
@@ -88,6 +89,13 @@ _LIVE_CLOCK_READS = frozenset(
 )
 _MAX_BINDING_HOPS = 2
 _BROKER_MODULE = "butlers.tools.switchboard.insight.broker"
+# The public package re-exports selected broker entry points, but deliberately
+# does not expose the broker's test-source registry at runtime. This resolver
+# map keeps that production ownership while allowing the guard to recognize the
+# documented public import path without treating arbitrary packages as aliases.
+_CLOCK_GATED_REEXPORT_MODULES = {
+    "butlers.tools.switchboard.insight": _BROKER_MODULE,
+}
 _EXPECTED_CLOCK_GATED_CALLEES = frozenset(
     {"delivery_cycle", "expire_candidates", "get_suppressing_context_signal"}
 )
@@ -133,10 +141,17 @@ def _live_clock_source(
 
 @cache
 def _clock_gated_callees_by_module() -> dict[str, frozenset[str]]:
-    """Load production-owned clock-gated names without guessing from signatures."""
+    """Resolve registered names through their exact broker and public facade paths."""
     broker = import_module(_BROKER_MODULE)
-    return {
+    registered_by_module = {
         _BROKER_MODULE: frozenset(getattr(broker, "CLOCK_GATED_CALLEES", ())),
+    }
+    return registered_by_module | {
+        reexport_module: (
+            registered_by_module[registry_module]
+            & frozenset(getattr(import_module(reexport_module), "__all__", ()))
+        )
+        for reexport_module, registry_module in _CLOCK_GATED_REEXPORT_MODULES.items()
     }
 
 
@@ -159,15 +174,15 @@ def _clock_gated_import_bindings(
             modules[binding] = imported_module
 
     for node in nodes:
-        if isinstance(node, ast.ImportFrom) and node.module in registered_by_module:
-            registered = registered_by_module[node.module]
+        if isinstance(node, ast.ImportFrom) and node.module:
+            registered = registered_by_module.get(node.module, frozenset())
             for alias in node.names:
+                binding = alias.asname or alias.name
                 if alias.name in registered:
-                    callees[alias.asname or alias.name] = alias.name
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            for alias in node.names:
-                imported_module = f"{node.module}.{alias.name}"
-                register_module_binding(alias.asname or alias.name, imported_module)
+                    callees[binding] = alias.name
+                else:
+                    imported_module = f"{node.module}.{alias.name}"
+                    register_module_binding(binding, imported_module)
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 register_module_binding(alias.asname or alias.name, alias.name)
@@ -454,6 +469,101 @@ def test_guard_fires_when_a_registered_clock_gated_callee_omits_now(source):
     assert "delivery_cycle" in findings[0]
 
 
+@pytest.mark.parametrize(
+    ("callee", "source"),
+    [
+        (
+            "delivery_cycle",
+            """
+            from butlers.tools.switchboard.insight import delivery_cycle
+
+            async def test_delivery_branch(pool):
+                await delivery_cycle(pool, notify_fn=notify)
+            """,
+        ),
+        (
+            "delivery_cycle",
+            """
+            from butlers.tools.switchboard.insight import delivery_cycle as run_cycle
+
+            async def test_delivery_branch(pool):
+                await run_cycle(pool, notify_fn=notify)
+            """,
+        ),
+        (
+            "delivery_cycle",
+            """
+            import butlers.tools.switchboard.insight as insight
+
+            async def test_delivery_branch(pool):
+                await insight.delivery_cycle(pool, notify_fn=notify)
+            """,
+        ),
+        (
+            "delivery_cycle",
+            """
+            import butlers.tools.switchboard.insight
+
+            async def test_delivery_branch(pool):
+                await butlers.tools.switchboard.insight.delivery_cycle(pool, notify_fn=notify)
+            """,
+        ),
+        (
+            "expire_candidates",
+            """
+            from butlers.tools.switchboard.insight import expire_candidates
+
+            async def test_expiration_branch(pool):
+                await expire_candidates(pool)
+            """,
+        ),
+        (
+            "expire_candidates",
+            """
+            from butlers.tools.switchboard.insight import expire_candidates as expire
+
+            async def test_expiration_branch(pool):
+                await expire(pool)
+            """,
+        ),
+        (
+            "expire_candidates",
+            """
+            import butlers.tools.switchboard.insight as insight
+
+            async def test_expiration_branch(pool):
+                await insight.expire_candidates(pool)
+            """,
+        ),
+        (
+            "expire_candidates",
+            """
+            import butlers.tools.switchboard.insight
+
+            async def test_expiration_branch(pool):
+                await butlers.tools.switchboard.insight.expire_candidates(pool)
+            """,
+        ),
+    ],
+    ids=[
+        "public-direct-delivery-cycle",
+        "public-alias-delivery-cycle",
+        "public-package-alias-delivery-cycle",
+        "public-fully-dotted-delivery-cycle",
+        "public-direct-expire-candidates",
+        "public-alias-expire-candidates",
+        "public-package-alias-expire-candidates",
+        "public-fully-dotted-expire-candidates",
+    ],
+)
+def test_guard_fires_for_registered_public_insight_reexports_without_now(callee, source):
+    findings = injected_clock_findings(Path("tests/test_example.py"), textwrap.dedent(source))
+
+    assert len(findings) == 1
+    assert "registered clock-gated callee" in findings[0]
+    assert callee in findings[0]
+
+
 def test_guard_accepts_a_reasoned_omission_for_a_registered_clock_gated_callee():
     source = textwrap.dedent("""
         from butlers.tools.switchboard.insight.broker import delivery_cycle
@@ -510,3 +620,9 @@ def test_clock_gated_registry_lives_with_the_broker_callees():
     assert registered == _EXPECTED_CLOCK_GATED_CALLEES
     for callee_name in registered:
         assert "now" in signature(getattr(broker, callee_name)).parameters
+
+    public_insight = import_module("butlers.tools.switchboard.insight")
+    assert not hasattr(public_insight, "CLOCK_GATED_CALLEES")
+    assert _clock_gated_callees_by_module()["butlers.tools.switchboard.insight"] == (
+        registered & frozenset(public_insight.__all__)
+    )
