@@ -40,12 +40,12 @@ Its dependent `bu-ecizp` / PR #3869 then added the
 to that same baseline requirement. Neither merge had a change-local delta.
 
 This is the sole active `## MODIFIED Requirements` block for the shared
-requirement. Its carried portion reproduces those five existing baseline
-scenarios verbatim; this change's own delta is limited to the exit-`2`
-refinement below. A second retroactive same-name block would collide at archive,
-so recording the earlier direct edits here preserves their provenance without
-introducing another future baseline rewrite. This maintenance leaves the
-canonical baseline untouched.
+requirement. The four baseline scenarios unrelated to the exit-`2` refinement
+(including the quality-gate receipt) remain verbatim; the existing Sentinel
+scenario's exit-`2` clause is intentionally refined below. A second retroactive
+same-name block would collide at archive, so recording the earlier direct edits
+here preserves their provenance without introducing another future baseline
+rewrite. This maintenance leaves the canonical baseline untouched.
 
 ## The decision
 

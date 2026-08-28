@@ -2,10 +2,10 @@
 
 ## 1. Contract
 - [x] 1.0 Record the direct baseline provenance of `bu-5hp74` / PR #3861 and
-      `bu-ecizp` / PR #3869 in this sole active same-name change. Its carried
-      portion preserves the four original scenarios and the quality-gate receipt
-      scenario verbatim; this change's delta remains limited to the exit-`2`
-      refinement.
+      `bu-ecizp` / PR #3869 in this sole active same-name change. The four
+      baseline scenarios unrelated to exit-`2` (including the quality-gate
+      receipt) remain verbatim; the existing Sentinel scenario's exit-`2`
+      clause is intentionally refined.
 - [x] 1.1 MODIFY the `testing` requirement **Pytest Run Verdicts Require a
       Positive Terminator**, rebuilt on the live baseline so archiving it drops
       no clause.
