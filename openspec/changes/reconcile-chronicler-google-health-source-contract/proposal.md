@@ -1,15 +1,17 @@
 ## Why
 
 The accepted Chronicler RFC and two canonical capability specs still describe
-`google_health` as deferred, while the shipped source registry, scheduled
-adapters, and their regression tests project approved `health.facts` evidence.
-That mismatch makes a live, deterministic, retrospective projection look
-unsupported and obscures the much narrower truth about workouts.
+`google_health` as deferred, while the shipped source registry and scheduled
+adapters now have their migration-tracked `health.facts` read grant through
+Health memory `mem_011`. Their regression tests project that approved evidence.
+That mismatch makes a deterministic retrospective projection look unsupported
+and obscures the much narrower truth about workouts.
 
 ## What Changes
 
 - Record the already-shipped Google Health-to-Chronicler projection boundary in
-  RFC 0014 and the governing capability specs.
+  RFC 0014 and the governing capability specs, including the now-landed
+  migration-tracked read prerequisite.
 - Declare `google_health.measurements`, `health.steps`, and
   `health.heart_rate` as supported `health.facts` projection sources with their
   actual outputs, precision, privacy, idempotency, and optional-schema
@@ -19,8 +21,8 @@ unsupported and obscures the much narrower truth about workouts.
   `workout_session`; the existing workout adapter can project a separately
   present fact but does not make workout ingestion a connector capability.
 - Preserve the existing read-only, migration-tracked source boundary. This
-  change does not alter ACLs, migrations, connector polling, Health ingest,
-  credentials, deployment, or PR #3897.
+  change documents but does not alter `mem_011`, ACLs, migrations, connector
+  polling, Health ingest, credentials, deployment, or PR #3897.
 
 ## Capabilities
 
@@ -42,6 +44,6 @@ None.
 ## Impact
 
 Documentation and contract artifacts only: RFC 0014, the three OpenSpec
-capability specs, and no runtime source. Existing adapter schedules and tests
-remain the implementation evidence; no new API, schema, credential, or
-deployment behavior is introduced.
+capability specs, and no runtime source. Existing `mem_011`, adapter schedules,
+and tests remain the implementation evidence; no new API, schema, credential,
+or deployment behavior is introduced.

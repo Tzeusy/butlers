@@ -2,9 +2,11 @@
 
 This change reconciles documentation that predates two reviewed, owner-scoped
 deliveries: the sleep projection in PR #1216 and the expanded Health-fact
-adapters in PR #1489. See `proposal.md` for motivation. The live source
-boundary is intentionally two-stage: connector → Health fact writer →
-scheduled Chronicler adapter.
+adapters in PR #1489. The required read surface is now migration-tracked by
+Health memory `mem_011`, which grants `butler_chronicler_rw` only `SELECT` on
+`health.facts` after that table exists. See `proposal.md` for motivation. The
+live source boundary is intentionally three-stage: connector → Health fact
+writer → migration-tracked read grant → scheduled Chronicler adapter.
 
 ## Goals / Non-Goals
 
@@ -16,14 +18,15 @@ scheduled Chronicler adapter.
   distinct from an upstream Google Health connector that never emits such a
   resource.
 - Preserve a read-only, optional-schema source boundary and the existing
-  privacy and retention semantics.
+  privacy and retention semantics, including source-absence behavior for an
+  already-projected record.
 
 **Non-Goals:**
 
 - No code, migration, ACL, connector, credential, deployment, or runtime
   state change.
-- No change to PR #3897 or to the authority that grants the existing
-  cross-schema read surface.
+- No change to the merged PR #3897 or to the authority that grants the
+  existing cross-schema read surface.
 - No new Google Health workout API resource, wellness envelope, fact predicate
   registration, or dashboard behavior.
 
@@ -36,6 +39,15 @@ sources, and the reviewed implementation is already scheduled and regression
 tested. The discrepancy is therefore documentation drift, not an unapproved
 new behavior. The delta records the existing boundary and its limitation; it
 does not authorize implementation work.
+
+### Reconcile only after the read surface lands
+
+The prior documentation pass remained held while the required Health-to-
+Chronicler `SELECT` privilege was still pending. `mem_011` is now on the
+baseline and establishes that table-specific, read-only prerequisite. The
+reconciled `supported` declaration therefore describes an adapter that can use
+its approved surface; this documentation change neither grants privileges nor
+creates an alternate runtime fallback.
 
 ### Describe the fact boundary, not a raw-provider shortcut
 
@@ -64,8 +76,9 @@ either duplicate the contract or broaden the task.
 ## Risks / Trade-offs
 
 - [A `supported` registry label could be read as proof of live ingestion] →
-  The docs name the fact-level surface and state that connector heartbeat or
-  absence of a fact is separate from support.
+  The docs name the fact-level surface, its landed `mem_011` read prerequisite,
+  and state that connector heartbeat or absence of a fact is separate from
+  support.
 - [The dormant workout adapter could be mistaken for a connector feature] →
   Every changed contract states that it has no current upstream Google Health
   producer.

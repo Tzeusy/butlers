@@ -5,7 +5,8 @@
 The Google Health connector SHALL defer direct raw-event projection to
 Chronicler and SHALL defer Google Health workout ingestion. Its supported
 sleep and daily-summary envelopes continue through the Health fact pipeline,
-where Chronicler may later read approved durable facts asynchronously.
+where Chronicler may read approved durable facts asynchronously after Health
+`mem_011` applies its scoped `SELECT` read grant.
 
 ID: REQ-connector-google-health-015
 Source: RFC 0014 Amendment 1; [Observed] `src/butlers/connectors/google_health.py`
@@ -16,7 +17,8 @@ Scope: v1-mandatory
 - **WHEN** the Google Health connector emits wellness envelopes
 - **THEN** Chronicler SHALL NOT receive those raw connector events directly
 - **AND** any Chronicler projection SHALL run asynchronously from its
-  approved `health.facts` read surface rather than from a connector route
+  approved `health.facts` read surface, enabled by the existing Health
+  `mem_011` grant, rather than from a connector route
 - **AND** the connector SHALL NOT claim that its envelopes alone establish a
   Chronicler source adapter
 

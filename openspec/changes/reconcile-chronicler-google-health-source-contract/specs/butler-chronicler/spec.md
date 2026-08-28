@@ -4,8 +4,10 @@
 
 Every source adapter SHALL declare its chronicler compatibility status before
 projection runs against it. A supported Health source is a read-only projection
-of durable `health.facts` evidence, not direct delivery of a raw external
-event to Chronicler.
+of durable `health.facts` evidence after the Health memory `mem_011` migration
+has established its table-specific `SELECT` grant for
+`butler_chronicler_rw`, not direct delivery of a raw external event to
+Chronicler.
 
 ID: REQ-butler-chronicler-007
 Source: RFC 0014 Amendment 1; [Observed] `src/butlers/chronicler/contracts.py`
@@ -25,9 +27,12 @@ Scope: v1-mandatory
 
 #### Scenario: Health fact projection is not direct connector ingest
 
-- **WHEN** a supported Health source is projected
+- **WHEN** a supported Health source is projected after its Health memory
+  `mem_011` read prerequisite is applied
 - **THEN** Chronicler SHALL read only its approved `health.facts` surface on
   its scheduled adapter path
+- **AND** that surface SHALL be accessed through the existing, migration-
+  tracked `mem_011` `SELECT` grant rather than a direct runtime ACL fallback
 - **AND** Chronicler SHALL NOT receive or retain the raw Google Health
   connector envelope as a projection input
 - **AND** source availability SHALL remain independent of connector heartbeat

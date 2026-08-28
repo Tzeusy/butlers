@@ -131,6 +131,11 @@ Source declarations (v1, as amended):
 | `health.heart_rate` | supported | `health.facts` (`measurement_resting_hr`, `heart_rate_summary`, or `measurement_heart_rate`) |
 | TTL diagnostic process logs | not_time_bearing | — |
 
+The three Health declarations are supported only after the Health memory chain
+has applied `mem_011`, which grants `butler_chronicler_rw` only `SELECT` on
+`health.facts`. Without that optional read surface, their adapters report an
+inactive source state rather than taking a direct connector path.
+
 A lint/check MUST ensure any new OpenSpec source spec with timestamp fields
 declares either `chronicler_compatibility` or `not_time_bearing=true`.
 
@@ -236,11 +241,12 @@ ingest, or notify."
 as part of the reviewed delivery; PR #1216 introduced the sleep projection and
 PR #1489 added the Health fact adapters.
 
-The original `google_health.*` deferral described the pre-adapter source set.
-It does not describe the shipped boundary: Chronicler reads durable,
-Health-owned `health.facts` on scheduled, deterministic adapter paths. It does
-not receive raw Google Health connector events, call the Google Health API, or
-own the connector.
+The original `google_health.*` deferral described the pre-adapter, pre-grant
+source set. It does not describe the shipped boundary: after the Health memory
+chain applies `mem_011`, Chronicler reads durable, Health-owned `health.facts`
+through the migration-tracked `SELECT` grant for `butler_chronicler_rw` on
+scheduled, deterministic adapter paths. It does not receive raw Google Health
+connector events, call the Google Health API, or own the connector.
 
 The source declarations in D2 are updated accordingly. Sleep facts project to
 `sleep_episode`; step and heart-rate facts project to their documented point
@@ -250,10 +256,16 @@ Health connector does not poll a workout resource, emit a workout envelope, or
 write that predicate. Adapter capability is not a claim of connector workout
 ingestion.
 
+When a Health fact is later absent, inactive, or purged, the adapter does not
+delete, tombstone, or reduce the precision of an already-projected record solely
+because of that source absence. Normal Chronicler retention and explicit
+corrections remain separate lifecycle controls.
+
 This amendment changes no ACL, migration, credential, connector, deployment,
-or runtime behavior. Availability still depends on the existing approved
-read-only Health fact surface; a missing optional surface remains an inactive
-source state rather than a direct-ingestion fallback.
+or runtime behavior. It records the existing `mem_011` least-privilege grant;
+availability still depends on that approved read-only Health fact surface, and
+a missing optional surface remains an inactive source state rather than a
+direct-ingestion fallback.
 
 ## Non-Goals
 
