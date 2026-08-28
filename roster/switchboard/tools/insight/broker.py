@@ -1054,10 +1054,10 @@ async def _format_digest(
 # Test-source guard registry. These optional-``now`` entry points select
 # externally observable delivery/suppression branches from the instant. Keep
 # this explicit rather than inferring from every ``now`` signature: lower-level
-# helpers can have benign defaults, while these two are the test-facing gates
+# helpers can have benign defaults, while these three are the test-facing gates
 # where omitting ``now=`` can make an asserted branch depend on CI wall time.
 CLOCK_GATED_CALLEES: frozenset[str] = frozenset(
-    {"delivery_cycle", "get_suppressing_context_signal"}
+    {"delivery_cycle", "expire_candidates", "get_suppressing_context_signal"}
 )
 
 # Precedence when more than one signal is active: dnd (owner's explicit hard

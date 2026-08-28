@@ -88,7 +88,9 @@ _LIVE_CLOCK_READS = frozenset(
 )
 _MAX_BINDING_HOPS = 2
 _BROKER_MODULE = "butlers.tools.switchboard.insight.broker"
-_EXPECTED_CLOCK_GATED_CALLEES = frozenset({"delivery_cycle", "get_suppressing_context_signal"})
+_EXPECTED_CLOCK_GATED_CALLEES = frozenset(
+    {"delivery_cycle", "expire_candidates", "get_suppressing_context_signal"}
+)
 
 
 def _attribute_owner(node: ast.AST) -> str | None:
@@ -143,10 +145,19 @@ def _clock_gated_import_bindings(
     inherited_callees: dict[str, str],
     inherited_modules: dict[str, str],
 ) -> tuple[dict[str, str], dict[str, str]]:
-    """Resolve imports only when they name a registered callee or module."""
+    """Resolve imports only when they name a registered callee or its module tree."""
     callees = dict(inherited_callees)
     modules = dict(inherited_modules)
     registered_by_module = _clock_gated_callees_by_module()
+
+    def register_module_binding(binding: str, imported_module: str) -> None:
+        """Keep an exact registered module or an ancestor that reaches one."""
+        if any(
+            module == imported_module or module.startswith(f"{imported_module}.")
+            for module in registered_by_module
+        ):
+            modules[binding] = imported_module
+
     for node in nodes:
         if isinstance(node, ast.ImportFrom) and node.module in registered_by_module:
             registered = registered_by_module[node.module]
@@ -156,12 +167,10 @@ def _clock_gated_import_bindings(
         elif isinstance(node, ast.ImportFrom) and node.module:
             for alias in node.names:
                 imported_module = f"{node.module}.{alias.name}"
-                if imported_module in registered_by_module:
-                    modules[alias.asname or alias.name] = imported_module
+                register_module_binding(alias.asname or alias.name, imported_module)
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name in registered_by_module:
-                    modules[alias.asname or alias.name] = alias.name
+                register_module_binding(alias.asname or alias.name, alias.name)
     return callees, modules
 
 
@@ -185,12 +194,16 @@ def _registered_clock_gated_callee(
         return imported_callees.get(node.func.id)
     dotted_call = _dotted_name(node.func)
     if dotted_call is not None:
-        for imported_name, module in imported_modules.items():
+        for imported_name, imported_module in imported_modules.items():
             prefix = f"{imported_name}."
             if dotted_call.startswith(prefix):
-                callee_name = dotted_call.removeprefix(prefix)
-                if callee_name in _clock_gated_callees_by_module()[module]:
-                    return callee_name
+                absolute_call = f"{imported_module}.{dotted_call.removeprefix(prefix)}"
+                for module, registered in _clock_gated_callees_by_module().items():
+                    module_prefix = f"{module}."
+                    if absolute_call.startswith(module_prefix):
+                        callee_name = absolute_call.removeprefix(module_prefix)
+                        if callee_name in registered:
+                            return callee_name
     return None
 
 
@@ -410,6 +423,18 @@ def test_guard_ignores_a_live_clock_that_is_not_an_injected_instant():
         async def test_delivery_branch(pool):
             await insight_broker.delivery_cycle(pool, notify_fn=notify)
         """,
+        """
+        import butlers.tools.switchboard.insight as insight
+
+        async def test_delivery_branch(pool):
+            await insight.broker.delivery_cycle(pool, notify_fn=notify)
+        """,
+        """
+        from butlers.tools.switchboard import insight
+
+        async def test_delivery_branch(pool):
+            await insight.broker.delivery_cycle(pool, notify_fn=notify)
+        """,
     ],
     ids=[
         "direct-import",
@@ -417,6 +442,8 @@ def test_guard_ignores_a_live_clock_that_is_not_an_injected_instant():
         "module-alias",
         "fully-dotted-module",
         "parent-module-alias",
+        "true-parent-module-import-alias",
+        "true-parent-module-from-import-alias",
     ],
 )
 def test_guard_fires_when_a_registered_clock_gated_callee_omits_now(source):
@@ -443,10 +470,10 @@ def test_guard_accepts_a_reasoned_omission_for_a_registered_clock_gated_callee()
     "source",
     [
         """
-        from butlers.tools.switchboard.insight.broker import expire_candidates
+        from butlers.tools.switchboard.insight.broker import filter_by_cooldown
 
         async def test_expiration(pool):
-            await expire_candidates(pool)
+            await filter_by_cooldown(pool, candidate_ids=[])
         """,
         """
         from butlers.core.attention_ledger import get_suppressing_context_signal
@@ -459,6 +486,21 @@ def test_guard_accepts_a_reasoned_omission_for_a_registered_clock_gated_callee()
 )
 def test_guard_ignores_an_unregistered_callee_without_now(source):
     assert injected_clock_findings(Path("tests/test_example.py"), textwrap.dedent(source)) == []
+
+
+def test_guard_fires_when_registered_expiration_callee_omits_now():
+    source = textwrap.dedent("""
+        from butlers.tools.switchboard.insight.broker import expire_candidates
+
+        async def test_expiration_branch(pool):
+            await expire_candidates(pool)
+    """)
+
+    findings = injected_clock_findings(Path("tests/test_example.py"), source)
+
+    assert len(findings) == 1
+    assert "registered clock-gated callee" in findings[0]
+    assert "expire_candidates" in findings[0]
 
 
 def test_clock_gated_registry_lives_with_the_broker_callees():
