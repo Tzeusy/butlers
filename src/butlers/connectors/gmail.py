@@ -2754,9 +2754,13 @@ class GmailConnectorRuntime:
                     exc_info=True,
                 )
 
-        # Recurse into multipart children
-        for part in payload.get("parts", []):
-            await self._resolve_body_attachment_refs(message_id, part, depth + 1)
+        # Recurse only through provider-supplied MIME child mappings.
+        parts = payload.get("parts")
+        if not isinstance(parts, list):
+            return
+        for part in parts:
+            if isinstance(part, dict):
+                await self._resolve_body_attachment_refs(message_id, part, depth + 1)
 
     def _extract_body_from_payload(self, payload: dict[str, Any], depth: int = 0) -> str:
         """Recursively extract body text from Gmail message payload.
@@ -2892,7 +2896,9 @@ class GmailConnectorRuntime:
         mime_type = payload.get("mimeType", "")
 
         # Check if this part is an attachment
-        body = payload.get("body", {})
+        body = payload.get("body")
+        if not isinstance(body, dict):
+            body = {}
         attachment_id = body.get("attachmentId")
         size = body.get("size", 0)
 
@@ -2918,9 +2924,12 @@ class GmailConnectorRuntime:
             )
 
         # Recurse into multipart
-        parts = payload.get("parts", [])
+        parts = payload.get("parts")
+        if not isinstance(parts, list):
+            return attachments
         for part in parts:
-            attachments.extend(self._extract_attachments(part, depth + 1))
+            if isinstance(part, dict):
+                attachments.extend(self._extract_attachments(part, depth + 1))
 
         return attachments
 

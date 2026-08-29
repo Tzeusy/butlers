@@ -1021,6 +1021,60 @@ async def test_build_ingest_envelope_treats_non_mapping_body_as_empty(
     assert "(no body)" in envelope["payload"]["normalized_text"]
 
 
+async def test_build_ingest_envelope_skips_nested_multipart_parts_none(
+    gmail_runtime: GmailConnectorRuntime,
+) -> None:
+    """A null nested MIME parts collection does not drop the email."""
+    from butlers.tools.switchboard.routing.contracts import parse_ingest_envelope
+
+    message = _make_message()
+    message["payload"] = {
+        "headers": message["payload"]["headers"],
+        "mimeType": "multipart/mixed",
+        "body": {},
+        "parts": [
+            {
+                "mimeType": "multipart/alternative",
+                "body": {},
+                "parts": None,
+            }
+        ],
+    }
+
+    envelope = await gmail_runtime._build_ingest_envelope(message)
+
+    assert "(no body)" in envelope["payload"]["normalized_text"]
+    assert envelope["payload"]["attachments"] is None
+    parse_ingest_envelope(envelope)
+
+
+async def test_build_ingest_envelope_skips_nested_attachment_body_none(
+    gmail_runtime: GmailConnectorRuntime,
+) -> None:
+    """A null nested attachment body does not drop the email."""
+    from butlers.tools.switchboard.routing.contracts import parse_ingest_envelope
+
+    message = _make_message()
+    message["payload"] = {
+        "headers": message["payload"]["headers"],
+        "mimeType": "multipart/mixed",
+        "body": {},
+        "parts": [
+            {
+                "mimeType": "application/pdf",
+                "filename": "receipt.pdf",
+                "body": None,
+            }
+        ],
+    }
+
+    envelope = await gmail_runtime._build_ingest_envelope(message)
+
+    assert "(no body)" in envelope["payload"]["normalized_text"]
+    assert envelope["payload"]["attachments"] is None
+    parse_ingest_envelope(envelope)
+
+
 def test_extract_body_treats_non_mapping_body_as_no_body(
     gmail_runtime: GmailConnectorRuntime,
 ) -> None:
