@@ -180,6 +180,7 @@ def test_active_verify_all_delta_matches_the_signed_control_plane_cutover() -> N
         assert set(_scenario_names(canonical)).issubset(_scenario_names(changed))
         assert "CredentialStore" not in changed
         assert "dashboard-local" not in changed.lower()
+        assert "construct a Codex adapter" not in changed
         assert "switchboard" in changed.lower()
         assert "signed" in changed.lower()
         assert "runtime-probe" in changed.lower()
