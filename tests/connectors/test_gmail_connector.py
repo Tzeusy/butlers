@@ -1048,6 +1048,38 @@ async def test_build_ingest_envelope_skips_nested_multipart_parts_none(
     parse_ingest_envelope(envelope)
 
 
+@pytest.mark.parametrize(
+    "malformed_parts",
+    ["not-a-parts-list", {"not": "a-parts-list"}, [None]],
+)
+async def test_build_ingest_envelope_skips_nested_multipart_malformed_parts(
+    gmail_runtime: GmailConnectorRuntime,
+    malformed_parts: Any,
+) -> None:
+    """Malformed nested MIME parts do not prevent the email from reaching ingest."""
+    from butlers.tools.switchboard.routing.contracts import parse_ingest_envelope
+
+    message = _make_message()
+    message["payload"] = {
+        "headers": message["payload"]["headers"],
+        "mimeType": "multipart/mixed",
+        "body": {},
+        "parts": [
+            {
+                "mimeType": "multipart/alternative",
+                "body": {},
+                "parts": malformed_parts,
+            }
+        ],
+    }
+
+    envelope = await gmail_runtime._build_ingest_envelope(message)
+
+    assert "(no body)" in envelope["payload"]["normalized_text"]
+    assert envelope["payload"]["attachments"] is None
+    parse_ingest_envelope(envelope)
+
+
 async def test_build_ingest_envelope_skips_nested_attachment_body_none(
     gmail_runtime: GmailConnectorRuntime,
 ) -> None:

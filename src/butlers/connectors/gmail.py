@@ -2810,11 +2810,13 @@ class GmailConnectorRuntime:
         # prefer plain regardless of part ordering in the MIME tree.
         # For multipart/signed emails, skip detached-signature parts so only the
         # content part(s) contribute to the extracted body.
-        parts = payload.get("parts", [])
-        if parts:
+        parts = payload.get("parts")
+        if isinstance(parts, list):
             plain_candidate: str | None = None
             html_candidate: str | None = None
             for part in parts:
+                if not isinstance(part, dict):
+                    continue
                 child_mime = part.get("mimeType", "")
                 # Skip cryptographic signature parts — they carry no readable body.
                 if child_mime in self._SIGNATURE_MIME_TYPES:
