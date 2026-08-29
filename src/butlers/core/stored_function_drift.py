@@ -16,12 +16,15 @@ member of.
 So a deployed database can keep executing an old body indefinitely, and --
 before this module -- nothing anywhere reported that the deployed body and the
 committed body disagreed.  bu-95gq7 is the case that surfaced it; the problem
-generalises to every future body change.
+generalises to every future body change.  The source defaults to the committed
+``scripts/init-db.sql`` path and can be overridden with
+``STORED_FUNCTION_DRIFT_INIT_DB_SQL_PATH`` when that source is mounted
+elsewhere.
 
 This module does not converge anything.  It converts silent drift into a
 visible, actionable state: it parses the committed definitions out of
-``scripts/init-db.sql``, reads the deployed bodies out of ``pg_proc.prosrc``,
-and reports which functions disagree.
+the configured bootstrap source (``scripts/init-db.sql`` by default), reads the
+deployed bodies out of ``pg_proc.prosrc``, and reports which functions disagree.
 
 Reported, never fatal
 ---------------------
@@ -30,11 +33,12 @@ line at dashboard-api startup), never raised.  Refusing to boot over a
 cosmetic body difference would be strictly worse than the drift it complains
 about, and this probe's own comparison is the thing most likely to be wrong.
 
-Scope: every function ``init-db.sql`` defines
+Scope: every function the configured source defines
 ---------------------------------------------
 Scope is *discovered*, not declared: every ``CREATE [OR REPLACE] FUNCTION``
-statement in ``scripts/init-db.sql``, including the ones nested inside an
-installer body, is in scope.  There is deliberately no opt-in list, because an
+statement in the configured source (``scripts/init-db.sql`` by default),
+including the ones nested inside an installer body, is in scope.  There is
+deliberately no opt-in list, because an
 opt-in list is one more thing to forget to update -- a function added tomorrow
 is covered tomorrow.
 
@@ -176,6 +180,9 @@ class StoredFunctionDriftReport:
     #: Non-None when the check itself failed (source unreadable, catalog query
     #: refused).  A degraded check is never rendered as a truthful all-clear.
     check_error: str | None = None
+    #: Source used for this comparison, retained so logs can describe the
+    #: configured source rather than prescribing the package-relative default.
+    source_path: Path = INIT_DB_SQL_PATH
 
     @property
     def is_available(self) -> bool:
@@ -340,11 +347,16 @@ async def compute_stored_function_drift(
     source = init_db_path if init_db_path is not None else _configured_init_db_sql_path()
 
     def _degraded(reason: str) -> StoredFunctionDriftReport:
-        return StoredFunctionDriftReport(checked_at=checked_at, entries=(), check_error=reason)
+        return StoredFunctionDriftReport(
+            checked_at=checked_at,
+            entries=(),
+            check_error=reason,
+            source_path=source,
+        )
 
     try:
         sql = source.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         return _degraded(f"cannot read {source.name}: {type(exc).__name__}")
 
     try:
@@ -366,38 +378,52 @@ async def compute_stored_function_drift(
         deployed.setdefault(row["function_name"], []).append(row["body"])
 
     return StoredFunctionDriftReport(
-        checked_at=checked_at, entries=compare_stored_functions(definitions, deployed)
+        checked_at=checked_at,
+        entries=compare_stored_functions(definitions, deployed),
+        source_path=source,
     )
 
 
+def _source_reference(source: Path) -> str:
+    """Describe the source without implying the default when it was overridden."""
+    if source == INIT_DB_SQL_PATH:
+        return "scripts/init-db.sql"
+    return f"the configured source ({source}; via {STORED_FUNCTION_DRIFT_INIT_DB_SQL_PATH_ENV})"
+
+
 def log_stored_function_drift(report: StoredFunctionDriftReport) -> None:
-    """Emit one log line summarising *report*.  Names only -- never bodies."""
+    """Emit one log line summarising *report*.  Source reference and names only."""
+    source_reference = _source_reference(report.source_path)
     if not report.is_available:
         logger.warning(
             "Stored-function drift check unavailable: %s. "
-            "Deployed function bodies were NOT compared against scripts/init-db.sql.",
+            "Deployed function bodies were NOT compared against %s.",
             report.check_error,
+            source_reference,
         )
         return
 
     if report.is_drifted:
         logger.warning(
-            "Stored-function body drift: %d of %d functions defined by scripts/init-db.sql "
+            "Stored-function body drift: %d of %d functions defined by %s "
             "differ from the bodies deployed in this database (%s). "
-            "Re-run scripts/init-db.sql against this database to converge. "
+            "Re-run %s against this database to converge. "
             "Bodies are never logged; the digests identify the mismatch.",
             len(report.drifted),
             len(report.entries),
+            source_reference,
             ", ".join(
                 f"{entry.function} committed={'/'.join(entry.committed_digests)} "
                 f"deployed={'/'.join(entry.deployed_digests)}"
                 for entry in report.drifted
             ),
+            source_reference,
         )
         return
 
     logger.info(
-        "Stored-function bodies match scripts/init-db.sql (%d matched, %d not deployed).",
+        "Stored-function bodies match %s (%d matched, %d not deployed).",
+        source_reference,
         len(report.matched),
         len(report.not_deployed),
     )
