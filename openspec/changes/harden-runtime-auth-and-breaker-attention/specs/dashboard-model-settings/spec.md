@@ -2,49 +2,42 @@
 
 ### Requirement: Catalog Verify-All API
 
-The dashboard SHALL expose `POST /api/settings/models/verify-all` to re-verify every enabled model in parallel. The verification core is shared (`butlers.api.routers.model_settings.run_verify_all_models`) between this manual endpoint and the hourly automated sweep (see Hourly Automated Verification Sweep) so the two can never disagree about what "verified" means or how the result is persisted.
-
-For Codex adapter construction, the manual endpoint SHALL select its shared
-credential pool before constructing `CredentialStore(pool,
-system_global_pool=pool)` and pass that authority only to Codex adapter
-construction; non-Codex adapter construction retains its existing provider
-configuration behavior.
+The dashboard SHALL expose `POST /api/settings/models/verify-all` to re-verify every enabled model in parallel. The verification core is shared (`butlers.api.routers.model_settings.run_verify_all_models`) between this manual endpoint and the hourly automated sweep (see Hourly Automated Verification Sweep) so the two can never disagree about what "verified" means or how the result is persisted. The core requests each probe through the signed Switchboard runtime-probe control client; the dashboard process neither constructs a runtime adapter nor writes model verification evidence. Switchboard owns runtime construction and completed-probe persistence.
 
 #### Scenario: Verify-all parallel execution
 - **WHEN** `POST /api/settings/models/verify-all` is called
-- **THEN** the system issues a 1-token completion against each enabled model concurrently with a bounded concurrency of 8
-- **AND** for each model, `last_verified_at`, `last_verified_latency_ms`, `last_verified_ok`, and `last_verified_error` are persisted
-- **AND** `last_verified_error` is set to the truncated exception text on failure (or `"verification returned an empty response"` when the probe completed with no usable output) and cleared to `NULL` on success
+- **THEN** the system requests a signed Switchboard runtime probe for each enabled model concurrently with a bounded concurrency of 8
+- **AND** only a completed probe causes Switchboard to persist `last_verified_at`, `last_verified_latency_ms`, `last_verified_ok`, and `last_verified_error`
+- **AND** a control-plane unavailable result preserves the prior verification evidence and is reported separately from a completed failed probe
+- **AND** the response data contains exactly `accepted`, `total`, `ok`, `failed`, and `unavailable`
 - **AND** the call is rate-limited to once per minute system-wide; subsequent calls within the minute return `429 Too Many Requests`
 - **AND** `audit.append("models.verify_all", actor="owner")` is invoked once per accepted run.
 
 #### Scenario: Verify-all persists completed model probes
 
 - **WHEN** `POST /api/settings/models/verify-all` is called for an enabled
-  model whose runtime can be constructed with its required authority
-- **THEN** the system issues a 1-token completion with bounded concurrency of
-  eight and persists `last_verified_at`, `last_verified_latency_ms`,
+  model whose signed runtime probe completes
+- **THEN** Switchboard persists `last_verified_at`, `last_verified_latency_ms`,
   `last_verified_ok`, and `last_verified_error` for that model
 - **AND** `last_verified_error` is cleared on success and retains the existing
-  safe failure classification on a failed probe
+  safe failure classification on a completed failed probe
 - **AND** the call remains rate-limited to once per minute system-wide and
   appends one `models.verify_all` audit record for the accepted run
 
 #### Scenario: Unavailable Codex authority is unavailable without poisoning verification evidence
 
-- **WHEN** the shared verification core encounters an enabled Codex entry
-  without an explicitly selected system-global Codex `CredentialStore`
-  authority
-- **THEN** it SHALL neither construct a Codex adapter nor invoke a Codex
-  subprocess for that entry
+- **WHEN** the signed Switchboard runtime-probe coordinator cannot establish
+  the required runtime authority for an enabled Codex entry
+- **THEN** it SHALL report that probe as unavailable without producing a model
+  completion
 - **AND** it SHALL not write `last_verified_at`, `last_verified_latency_ms`,
   `last_verified_ok`, or `last_verified_error`, preserving the prior catalog
   evidence and routing eligibility
 - **AND** the accepted result increments `unavailable`, does not increment
   `failed`, and records only a categorical authority-unavailable audit note
   without provider diagnostic text
-- **AND** remaining eligible non-Codex and authorized Codex entries retain
-  their normal construction, invocation, and persistence behavior
+- **AND** remaining eligible entries continue through the same signed
+  Switchboard runtime-probe path
 
 ### Requirement: Hourly Automated Verification Sweep
 
@@ -52,26 +45,26 @@ The dashboard-api process SHALL run an hourly background sweep
 (`butlers.jobs.model_verify.run_model_verify_loop`, started from the FastAPI
 alongside the other periodic jobs) that calls the same verification core as the manual
 endpoint, so `last_verified_ok`/`last_verified_at` are never more than roughly one
-interval stale even when no operator visits the Models tab.
-
-Each sweep SHALL construct and pass `CredentialStore(pool,
-system_global_pool=pool)` from `DatabaseManager.credential_shared_pool()`; it
-SHALL not infer Codex authority from a schema-local or fallback pool.
+interval stale even when no operator visits the Models tab. The sweep uses its
+registered scheduler caller with the signed Switchboard runtime-probe control
+client; it does not construct a runtime adapter or persist verification evidence
+inside the dashboard process.
 
 #### Scenario: Hourly sweep runs independently of the manual rate limit
 - **WHEN** the sweep's interval (default `DEFAULT_MODEL_VERIFY_INTERVAL_S = 3600`,
   overridable via `MODEL_VERIFY_INTERVAL_S`) elapses
 - **THEN** the sweep calls `run_verify_all_models(pool, audit_actor="model_verify_sweep")`
-  directly, bypassing the manual endpoint's once-per-minute HTTP rate limit (that limit is
-  an HTTP-surface concern specific to the operator-facing route)
+  directly as the registered scheduler caller, bypassing the manual endpoint's
+  once-per-minute HTTP rate limit (that limit is an HTTP-surface concern
+  specific to the operator-facing route)
 - **AND** `audit.append("models.verify_all", actor="model_verify_sweep")` is invoked,
   distinguishing an automated run from an owner-initiated one in `public.audit_log`
 
 #### Scenario: Sweep sleeps first and tolerates a bad tick
 - **WHEN** the dashboard-api process starts
 - **THEN** the sweep loop sleeps for one interval before its first run (mirrors
-  `run_secrets_lifecycle_loop`), so it never fires real LLM-CLI verification calls during
-  a process boot or a test that exercises the full API lifespan
+  `run_secrets_lifecycle_loop`), so it never starts a runtime-probe request
+  during a process boot or a test that exercises the full API lifespan
 - **AND** a single sweep's failure is logged and swallowed; the loop continues on its
   next interval rather than dying
 - **AND** when no shared credential pool is configured, the sweep is a no-op tick (logged
@@ -79,8 +72,8 @@ SHALL not infer Codex authority from a schema-local or fallback pool.
 
 #### Scenario: Hourly sweep preserves authority-unavailable catalog entries
 
-- **WHEN** the shared verification core encounters an enabled Codex entry
-  without its required authority
+- **WHEN** the signed runtime-probe coordinator cannot run an enabled Codex
+  entry because its required authority is unavailable
 - **THEN** the sweep returns that safe `unavailable` count rather than recording a
   false model failure or excluding the entry from routing
 
