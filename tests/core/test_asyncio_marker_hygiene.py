@@ -38,6 +38,13 @@ def _is_pytest_mark(node: ast.expr, name: str) -> bool:
     )
 
 
+def _is_asyncio_decorator(decorator: ast.expr) -> bool:
+    marker = decorator.func if isinstance(decorator, ast.Call) else decorator
+    return (isinstance(marker, ast.Name) and marker.id == "_asyncio_session") or _is_pytest_mark(
+        marker, "asyncio"
+    )
+
+
 def _assert_marker_topology(tree: ast.Module, relative_path: str) -> None:
     """Verify session-loop, integration, and Docker marker semantics structurally."""
     module_marks = _assigned_value(tree, "pytestmark", relative_path)
@@ -90,14 +97,17 @@ def _assert_marker_topology(tree: ast.Module, relative_path: str) -> None:
     ]
     assert tests
     for test in tests:
-        has_session_marker = any(
+        has_session_alias = any(
             isinstance(decorator, ast.Name) and decorator.id == "_asyncio_session"
             for decorator in test.decorator_list
         )
-        assert has_session_marker is isinstance(test, ast.AsyncFunctionDef), (
-            relative_path,
-            test.name,
+        has_asyncio_marker = any(
+            _is_asyncio_decorator(decorator) for decorator in test.decorator_list
         )
+        if isinstance(test, ast.AsyncFunctionDef):
+            assert has_session_alias, (relative_path, test.name, "session-loop alias")
+        else:
+            assert not has_asyncio_marker, (relative_path, test.name, "asyncio marker on sync test")
 
 
 def test_session_asyncio_marker_is_explicit_on_async_core_tests_only() -> None:
@@ -130,3 +140,18 @@ def test_marker_topology_rejects_alias_and_module_mark_regressions() -> None:
     )
     with pytest.raises(AssertionError, match="integration marker"):
         _assert_marker_topology(ast.parse(removed_module_marks), relative_path)
+
+
+def test_marker_topology_rejects_direct_asyncio_marker_on_sync_test() -> None:
+    """A direct asyncio decorator must not evade the synchronous-test guard."""
+    relative_path = _TARGETS[1]
+    source = (_REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    direct_sync_marker = source.replace(
+        "def test_no_delete_or_truncate_in_sessions_module():",
+        '@pytest.mark.asyncio(loop_scope="session")\n'
+        "def test_no_delete_or_truncate_in_sessions_module():",
+        1,
+    )
+
+    with pytest.raises(AssertionError, match="asyncio marker on sync test"):
+        _assert_marker_topology(ast.parse(direct_sync_marker), relative_path)
