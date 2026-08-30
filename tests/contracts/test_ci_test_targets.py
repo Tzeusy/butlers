@@ -229,6 +229,8 @@ def test_ci_workflow_keeps_the_same_pytest_scope_and_combines_isolated_coverage(
     assert smoke_step["env"]["TESTCONTAINERS_RYUK_DISABLED"] == "true"
     assert smoke_step["env"]["SMOKE_EVIDENCE_DIR"].endswith("ci-artifacts/smoke")
     assert "--durations" not in smoke_step["run"]
+    assert "except (ET.ParseError, OSError) as exc:" in smoke_step["run"]
+    assert "print(exc, file=sys.stderr)" in smoke_step["run"]
 
     smoke_artifact = _workflow_step(job=unit_job, name="Upload smoke release evidence")
     assert smoke_artifact["with"]["name"] == "smoke-release-evidence"

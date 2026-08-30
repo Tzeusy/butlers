@@ -265,7 +265,8 @@ jobs:
 
   # Keep the historic `check` status as the fail-closed fan-in below.  The
   # expensive Python lanes run independently first, so their runner time no
-  # longer serializes on the critical path.
+  # longer serializes on the critical path. Advisory like every other check
+  # here.
   check-unit:
     runs-on: ubuntu-latest
 
@@ -389,7 +390,7 @@ jobs:
           SMOKE_CMD_VAL="$SMOKE_CMD" \
           SMOKE_EVIDENCE_DIR="$SMOKE_EVIDENCE_DIR" \
           python3 << 'PYEOF'
-          import json, os, xml.etree.ElementTree as ET
+          import json, os, sys, xml.etree.ElementTree as ET
 
           sha = os.environ["SMOKE_SHA"]
           duration_s = int(os.environ["SMOKE_DURATION"])
@@ -405,7 +406,8 @@ jobs:
                   for tc in root.findall(".//testcase")
                   if tc.find("skipped") is not None
               })
-          except (ET.ParseError, OSError):
+          except (ET.ParseError, OSError) as exc:
+              print(exc, file=sys.stderr)
               skipped_classes = ["unavailable"]
 
           evidence = {
@@ -576,10 +578,10 @@ jobs:
           overwrite: true
 
   check:
-    # Preserve the existing required-status name and make it fail when either
-    # parallel lane fails. A skipped fan-in can be treated as successful by
-    # branch protection, so this job runs after failed dependencies (but not a
-    # cancelled workflow) and rejects non-success.
+    # Preserve the existing `check` status name and make it fail when either
+    # parallel lane fails. This job runs after failed dependencies (but not a
+    # cancelled workflow) and rejects non-success. Advisory like every other
+    # check here; main is not branch-protected.
     needs: [check-unit, check-integration]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
