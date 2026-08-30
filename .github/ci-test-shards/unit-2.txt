@@ -112,6 +112,7 @@ tests/contracts/test_tool_surface_isolation.py
 tests/core/qa/test_dispatch_investigation_notes.py
 tests/core/qa/test_log_scanner.py
 tests/core/qa/test_provenance_and_dedup_linkage.py
+tests/core/test_asyncio_marker_hygiene.py
 tests/core/test_attention_ledger_suppression.py
 tests/core/test_core_sessions_unicode.py
 tests/core/test_corrections.py
