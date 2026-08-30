@@ -71,10 +71,10 @@ def _assert_marker_topology(tree: ast.Module, relative_path: str) -> None:
         and isinstance(condition.operand, ast.Name)
         and condition.operand.id == "docker_available"
     ), (relative_path, "Docker skip marker")
-    assert not any(
-        _is_pytest_mark(mark.func if isinstance(mark, ast.Call) else mark, "asyncio")
-        for mark in module_marks.elts
-    ), (relative_path, "module asyncio marker")
+    assert not any(_is_asyncio_decorator(mark) for mark in module_marks.elts), (
+        relative_path,
+        "module asyncio marker",
+    )
 
     asyncio_marker = _assigned_value(tree, "_asyncio_session", relative_path)
     assert isinstance(asyncio_marker, ast.Call) and _is_pytest_mark(
@@ -155,3 +155,19 @@ def test_marker_topology_rejects_direct_asyncio_marker_on_sync_test() -> None:
 
     with pytest.raises(AssertionError, match="asyncio marker on sync test"):
         _assert_marker_topology(ast.parse(direct_sync_marker), relative_path)
+
+
+def test_marker_topology_rejects_module_asyncio_alias() -> None:
+    """A module-level asyncio alias must not mark synchronous tests implicitly."""
+    relative_path = _TARGETS[0]
+    source = (_REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    module_alias = source.replace(
+        'pytest.mark.skipif(not docker_available, reason="Docker not available"),\n]',
+        'pytest.mark.skipif(not docker_available, reason="Docker not available"),\n'
+        "    _asyncio_session,\n"
+        "]",
+        1,
+    )
+
+    with pytest.raises(AssertionError, match="module asyncio marker"):
+        _assert_marker_topology(ast.parse(module_alias), relative_path)
