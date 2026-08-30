@@ -4,8 +4,8 @@ roster/education/tests/test_pedagogy.py
 roster/health/tests/test_wellness_ingest.py
 roster/lifestyle/tests/test_lifestyle_steam_integration.py
 roster/relationship/tests/test_dedup_contacts_drop_fks_migration.py
+roster/relationship/tests/test_entities_api.py
 roster/relationship/tests/test_entity_neighbours.py
-roster/relationship/tests/test_entity_tabs.py
 roster/relationship/tests/test_rel_034_migration.py
 roster/relationship/tests/test_warmth_interactions_overdue.py
 roster/switchboard/tests/test_route_transport_outcomes.py

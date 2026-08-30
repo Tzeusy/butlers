@@ -28,7 +28,6 @@ tests/api/test_activity_feed.py
 tests/api/test_api_approvals.py
 tests/api/test_api_google_health.py
 tests/api/test_api_issues_group_for_audit.py
-tests/api/test_api_qa.py
 tests/api/test_api_qa_cases.py
 tests/api/test_api_sessions_owner_tz.py
 tests/api/test_attention_ledger.py
