@@ -3200,7 +3200,8 @@ async def _fetch_single_user_secret(
     Mutation pre-reads pass all three as False: they do not publish that
     evidence. The record carries matching ``*_loaded=False`` sentinels so
     ``_content_blind_detail`` refuses it rather than projecting the gap. The
-    rotate route's post-update response re-read leaves the defaults intact.
+    rotate route's post-update response is built directly from its
+    ``UPDATE RETURNING`` row rather than calling this helper again.
 
     The result is an internal record, not a response payload — route it
     through ``_content_blind_detail`` before returning it to a client.

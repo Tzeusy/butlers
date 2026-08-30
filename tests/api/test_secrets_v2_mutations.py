@@ -1422,13 +1422,13 @@ def test_rotate_github_revoke_network_error_does_not_fail_rotation(monkeypatch):
 # ---------------------------------------------------------------------------
 # The content-blind projection turns `scopes_required` / `scopes_granted` into
 # `capabilities_required` / `capabilities_granted`, and only two callers
-# publish that: `GET /user/{provider}` and the post-update re-read inside
-# `/rotate`.  Every other user-credential mutation read discarded the two
-# queries behind those fields, so they no longer run there.
+# publish that: `GET /user/{provider}` and the content-blind response record
+# built after `/rotate`'s update. Every other user-credential mutation read
+# discards the two queries behind those fields, so they do not run there.
 #
-# These tests spy on the SQL actually issued (`pool.fetch*`) rather than on the
-# response shape: the responses were already correct before the skip, so only
-# the issued-SQL set can show the work stopped.
+# These tests spy on the SQL actually issued through the pool and acquired
+# connections rather than on the response shape: the responses were already
+# correct before the skip, so only the issued-SQL set can show the work stopped.
 # ---------------------------------------------------------------------------
 
 #: `_fetch_scopes_required_by_provider` — the provider→required-scopes catalogue.
@@ -1708,7 +1708,7 @@ def test_reauthorize_issues_no_scope_evidence_queries():
             {"value": "new-tok"},
             False,
             1,
-            id="rotate-keeps-only-published-reread",
+            id="rotate-keeps-only-published-response-evidence",
         ),
         pytest.param(
             "/api/secrets/user/google/disconnect",
@@ -1742,10 +1742,10 @@ def test_mutation_reads_skip_discarded_probe_and_capability_evidence(
 ):
     """Mutation pre-reads fetch only evidence their response can publish.
 
-    ``rotate`` re-reads after its update and publishes the content-blind detail,
-    so that second read still needs aggregate and capability probe evidence.
-    The initial lookup — and every read for the other three mutations —
-    discards both fields and must issue neither SQL query.
+    ``rotate`` builds its content-blind response from UPDATE RETURNING, so that
+    response build still needs aggregate and capability probe evidence. Its
+    locked lookup — and every read for the other three mutations — discards both
+    fields and must issue neither SQL query.
     """
     if path.endswith(("/rotate", "/disconnect")):
         _stub_revoke(monkeypatch)
