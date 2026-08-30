@@ -59,11 +59,17 @@ def _asyncio_alias_names(tree: ast.Module) -> set[str]:
     while changed:
         changed = False
         for statement in tree.body:
-            if not isinstance(statement, ast.Assign):
+            if isinstance(statement, ast.Assign):
+                targets = statement.targets
+                value = statement.value
+            elif isinstance(statement, ast.AnnAssign):
+                targets = (statement.target,)
+                value = statement.value
+            else:
                 continue
-            if not _is_asyncio_decorator(statement.value, aliases):
+            if value is None or not _is_asyncio_decorator(value, aliases):
                 continue
-            for target in statement.targets:
+            for target in targets:
                 if isinstance(target, ast.Name) and target.id not in aliases:
                     aliases.add(target.id)
                     changed = True
@@ -301,6 +307,21 @@ def test_marker_topology_rejects_module_asyncio_alias() -> None:
     )
     with pytest.raises(AssertionError, match="module asyncio marker"):
         _assert_marker_topology(ast.parse(indirect_module_alias), relative_path)
+
+    annotated_module_alias = source.replace(
+        '_asyncio_session = pytest.mark.asyncio(loop_scope="session")',
+        '_asyncio_session = pytest.mark.asyncio(loop_scope="session")\n'
+        "module_asyncio: pytest.MarkDecorator = _asyncio_session",
+        1,
+    ).replace(
+        'pytest.mark.skipif(not docker_available, reason="Docker not available"),\n]',
+        'pytest.mark.skipif(not docker_available, reason="Docker not available"),\n'
+        "    module_asyncio,\n"
+        "]",
+        1,
+    )
+    with pytest.raises(AssertionError, match="module asyncio marker"):
+        _assert_marker_topology(ast.parse(annotated_module_alias), relative_path)
 
     augmented_module_marks = source.replace(
         '_asyncio_session = pytest.mark.asyncio(loop_scope="session")',
