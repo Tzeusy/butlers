@@ -492,8 +492,8 @@ async def get_suppressing_context(
     context-bus query already excludes ``expires_at <= now()`` using the
     database clock, so re-checking here against the caller's instant is a
     no-op in production and is what lets a test pin the boundary --
-    the same now-relative filter the insight broker's own copy of this read
-    applies (``roster/switchboard/tools/insight/broker.py``).
+    a now-relative expiry filter distinct from the insight broker's max-hold
+    calculation (``roster/switchboard/tools/insight/broker.py``).
     """
     if pool is None:
         return None
