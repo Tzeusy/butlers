@@ -44,6 +44,7 @@ For a new reader, the recommended order follows data flow from startup through r
 | [0024](rfcs/0024-messenger-private-email-correspondence-ledger.md) | Messenger-Private Email Correspondence Ledger | **Proposed — planning only.** Defines a privacy-minimized Messenger-owned outbound evidence ledger and bounded, aggregate-only Relationship enrichment path; exact provider-Sent proof, same-account/peer inbound correlation, and 180-day coverage are required before a bidirectional result. |
 | [0025](rfcs/0025-tracker-host-beads-projection-exporter.md) | Tracker-Host Beads Projection Exporter | **Draft.** A deterministic tracker-host exporter publishes a minimal active Beads projection to PostgreSQL; bounded runtime readers receive atomic snapshots, fixed freshness/retention, and explicit JSONL rollback without tracker access. |
 | [0026](rfcs/0026-commitment-lifecycle.md) | Evidence-Backed Commitment Lifecycle | **Draft.** Extends the owner-condition ledger with explicit resolution, commitment metadata, closure receipts, escalation, and owner-confirmed lifecycle evidence. |
+| [0027](rfcs/0027-runtime-tool-surface-discovery.md) | Runtime Tool Surface Discovery and Exposure | **Draft.** Adds a runtime-neutral LLM tool-list projection, verified native deferred discovery, eager cross-CLI fallback, content-blind receipts, and measured rollout gates without changing MCP handler authority. |
 
 ## Related
 
