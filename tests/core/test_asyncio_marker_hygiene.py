@@ -17,12 +17,21 @@ _TARGETS = (
 )
 
 
+def _assignment_value(statement: ast.stmt, name: str) -> ast.expr | None:
+    if isinstance(statement, ast.Assign):
+        if any(isinstance(target, ast.Name) and target.id == name for target in statement.targets):
+            return statement.value
+    elif isinstance(statement, ast.AnnAssign):
+        if isinstance(statement.target, ast.Name) and statement.target.id == name:
+            return statement.value
+    return None
+
+
 def _assigned_values(tree: ast.Module, name: str) -> list[ast.expr]:
     return [
-        assignment.value
-        for assignment in tree.body
-        if isinstance(assignment, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id == name for target in assignment.targets)
+        value
+        for statement in tree.body
+        if (value := _assignment_value(statement, name)) is not None
     ]
 
 
@@ -169,15 +178,20 @@ def _assert_marker_topology(tree: ast.Module, relative_path: str) -> None:
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
-        class_pytestmarks = [
-            statement.value
-            for statement in node.body
-            if isinstance(statement, ast.Assign)
-            and any(
-                isinstance(target, ast.Name) and target.id == "pytestmark"
-                for target in statement.targets
-            )
-        ]
+        class_pytestmarks = []
+        for statement in node.body:
+            value = _assignment_value(statement, "pytestmark")
+            if value is not None:
+                class_pytestmarks.append(value)
+            if isinstance(statement, ast.AugAssign) and isinstance(statement.target, ast.Name):
+                if statement.target.id == "pytestmark":
+                    raise AssertionError((relative_path, node.name, "class pytestmark mutation"))
+            if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+                continue
+            callee = statement.value.func
+            if isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name):
+                if callee.value.id == "pytestmark":
+                    raise AssertionError((relative_path, node.name, "class pytestmark mutation"))
         assert not any(
             _contains_asyncio_marker(marker, asyncio_aliases)
             for marker in node.decorator_list + class_pytestmarks
@@ -331,3 +345,26 @@ def test_marker_topology_rejects_module_asyncio_alias() -> None:
     )
     with pytest.raises(AssertionError, match="module pytestmark mutation"):
         _assert_marker_topology(ast.parse(augmented_module_marks), relative_path)
+
+
+@pytest.mark.parametrize(
+    ("class_mark", "error_message"),
+    (
+        ("pytestmark: list = [_asyncio_session]", "asyncio marker on test class"),
+        ("pytestmark.append(_asyncio_session)", "class pytestmark mutation"),
+    ),
+    ids=("annotated-assignment", "append-mutation"),
+)
+def test_marker_topology_rejects_class_pytestmark_mutations(
+    class_mark: str, error_message: str
+) -> None:
+    """Class-body marks must not implicitly make synchronous methods async."""
+    relative_path = _TARGETS[0]
+    source = (_REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    class_marks = source.replace(
+        "class TestDecodeJsonb:",
+        f"class TestDecodeJsonb:\n    {class_mark}",
+        1,
+    )
+    with pytest.raises(AssertionError, match=error_message):
+        _assert_marker_topology(ast.parse(class_marks), relative_path)
