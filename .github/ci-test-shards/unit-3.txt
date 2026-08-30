@@ -1,4 +1,5 @@
 roster/chronicler/tests/test_mcp_module_config.py
+roster/education/tests/test_api.py
 roster/education/tests/test_curriculum_request_drain.py
 roster/education/tests/test_mastery.py
 roster/education/tests/test_mind_maps.py
@@ -104,6 +105,7 @@ tests/contracts/test_ci_test_targets.py
 tests/contracts/test_connector_no_fact_writes.py
 tests/contracts/test_context_bus.py
 tests/contracts/test_credential_tier_resolution.py
+tests/contracts/test_degraded_envelope.py
 tests/contracts/test_email_correspondence_aggregate_schedule.py
 tests/contracts/test_identity_resolution.py
 tests/contracts/test_module_boundaries.py

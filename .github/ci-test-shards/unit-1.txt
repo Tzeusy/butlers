@@ -107,7 +107,6 @@ tests/contracts/test_approval_delivery_recovery_plan_contract.py
 tests/contracts/test_channel_egress_ownership.py
 tests/contracts/test_connector_as_transport.py
 tests/contracts/test_cross_butler_briefing_exception.py
-tests/contracts/test_degraded_envelope.py
 tests/contracts/test_doctrine_drift.py
 tests/contracts/test_fact_extraction_skill_predicates.py
 tests/contracts/test_health_medication_travel_contract.py

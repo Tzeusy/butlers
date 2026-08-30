@@ -1,8 +1,6 @@
-roster/education/tests/test_api.py
 roster/education/tests/test_curriculum.py
 roster/messenger/tests/test_migration_metadata.py
 roster/relationship/tests/test_dunbar_engine_leak_guard.py
-roster/relationship/tests/test_entities_api.py
 roster/relationship/tests/test_entity_tab_writes.py
 roster/relationship/tests/test_owner_authz_guardrail.py
 roster/switchboard/tests/test_identity_injection.py
