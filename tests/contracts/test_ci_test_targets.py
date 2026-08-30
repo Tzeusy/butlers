@@ -154,8 +154,8 @@ def test_ci_workflow_keeps_the_same_pytest_scope_and_combines_isolated_coverage(
     badge_step = _workflow_step(job=check_job, name="Update coverage badge")
     assert badge_step["if"] == "github.ref == 'refs/heads/main' && github.event_name == 'push'"
 
-    artifact_names = {
-        step["with"]["name"]
+    artifact_steps = {
+        step["with"]["name"]: step
         for job in (unit_job, integration_job, check_job)
         for step in job["steps"]
         if step.get("uses") == "actions/upload-artifact@v4"
@@ -163,10 +163,21 @@ def test_ci_workflow_keeps_the_same_pytest_scope_and_combines_isolated_coverage(
     assert {
         "ci-unit-test-evidence",
         "ci-unit-coverage-data",
+        "ci-smoke-test-evidence",
         "ci-integration-test-evidence",
         "ci-integration-coverage-data",
         "ci-combined-coverage-report",
-    } <= artifact_names
+    } <= artifact_steps.keys()
+    for artifact_name in (
+        "ci-unit-test-evidence",
+        "ci-unit-coverage-data",
+        "smoke-release-evidence",
+        "ci-smoke-test-evidence",
+        "ci-integration-test-evidence",
+        "ci-integration-coverage-data",
+        "ci-combined-coverage-report",
+    ):
+        assert artifact_steps[artifact_name]["with"]["overwrite"] is True
 
     for job, artifact_name in (
         (unit_job, "ci-unit-test-evidence"),

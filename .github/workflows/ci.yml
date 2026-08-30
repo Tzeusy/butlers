@@ -351,6 +351,7 @@ jobs:
             ${{ runner.temp }}/ci-artifacts/unit/top-durations.txt
           retention-days: 14
           if-no-files-found: error
+          overwrite: true
 
       - name: Upload unit coverage data
         if: always()
@@ -360,6 +361,7 @@ jobs:
           path: ${{ runner.temp }}/ci-coverage/coverage-unit.data
           retention-days: 7
           if-no-files-found: error
+          overwrite: true
 
       - name: Smoke tests (fast gate + release evidence)
         id: smoke
@@ -441,6 +443,7 @@ jobs:
           path: ${{ runner.temp }}/ci-artifacts/smoke/release-evidence.json
           retention-days: 30
           if-no-files-found: warn
+          overwrite: true
 
       - name: Upload smoke test evidence
         if: ${{ always() && steps.smoke.outcome != 'skipped' }}
@@ -452,6 +455,7 @@ jobs:
             ${{ runner.temp }}/ci-artifacts/smoke/top-durations.txt
           retention-days: 14
           if-no-files-found: error
+          overwrite: true
 
   check-integration:
     runs-on: ubuntu-latest
@@ -559,6 +563,7 @@ jobs:
             ${{ runner.temp }}/ci-artifacts/integration/top-durations.txt
           retention-days: 14
           if-no-files-found: error
+          overwrite: true
 
       - name: Upload integration coverage data
         if: always()
@@ -568,6 +573,7 @@ jobs:
           path: ${{ runner.temp }}/ci-coverage/coverage-integration.data
           retention-days: 7
           if-no-files-found: error
+          overwrite: true
 
   check:
     # Preserve the existing required-status name and make it fail when either
@@ -646,6 +652,7 @@ jobs:
           path: ${{ runner.temp }}/ci-artifacts/coverage/coverage.json
           retention-days: 14
           if-no-files-found: warn
+          overwrite: true
 
       - name: Update coverage badge
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'

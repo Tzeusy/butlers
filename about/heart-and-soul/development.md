@@ -211,6 +211,8 @@ commands and therefore use `--cov-append` within their single worktree.
 The lane JUnit files in the commands above are runner-local raw inputs. CI
 derives its retained timing evidence from them, but uploads only the sanitized
 JUnit metadata and top-duration table; it never uploads raw JUnit or test logs.
+Each named evidence artifact is overwrite-safe so rerunning a failed job within
+one workflow run can recover instead of colliding with an immutable v4 artifact.
 
 `frontend` (Node 24, `frontend/`) runs `npm ci`, `npm run lint`
    (`eslint .`), `npm run build` (`tsc -b && vite build`), and `npm run test`
