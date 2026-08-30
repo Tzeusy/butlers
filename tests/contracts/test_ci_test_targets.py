@@ -1,4 +1,4 @@
-"""Keep local CI lanes and their isolated hosted coverage handoff aligned."""
+"""Keep local CI lanes and hosted file shards contractually aligned."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
         ),
     ],
 )
-def test_ci_test_targets_are_receipt_producing_and_keep_ci_pytest_scope(
+def test_local_ci_targets_are_receipt_producing_and_keep_full_lane_scope(
     target: str, fragments: tuple[str, ...]
 ) -> None:
     dry_run = subprocess.run(
@@ -81,157 +81,150 @@ def _workflow_step(*, job: dict, name: str) -> dict:
     raise AssertionError(f"Missing {name!r} step")
 
 
-def test_ci_workflow_keeps_the_same_pytest_scope_and_combines_isolated_coverage() -> None:
+def _artifact_step(*, job: dict, artifact_name: str) -> dict:
+    return next(
+        step
+        for step in job["steps"]
+        if step.get("uses") == "actions/upload-artifact@v4"
+        and step["with"]["name"] == artifact_name
+    )
+
+
+def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> None:
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
-    unit_job = jobs["check-unit"]
-    integration_job = jobs["check-integration"]
+    preflight = jobs["check-preflight"]
+    unit_jobs = [jobs[f"check-unit-{index}"] for index in range(1, 5)]
+    integration_jobs = [jobs[f"check-integration-{index}"] for index in range(1, 4)]
     check_job = jobs["check"]
 
-    assert check_job["needs"] == ["check-unit", "check-integration"]
+    assert "needs" not in preflight  # Verify/smoke and shards overlap to protect the budget.
+    assert check_job["needs"] == [
+        "check-preflight",
+        "check-unit-1",
+        "check-unit-2",
+        "check-unit-3",
+        "check-unit-4",
+        "check-integration-1",
+        "check-integration-2",
+        "check-integration-3",
+    ]
     assert check_job["if"] == "${{ always() && !cancelled() }}"
+
     for step_name in (
         "Check lock file is up to date",
         "Install dependencies",
         "Lint",
         "Format check",
         "SQL safety check (FOR UPDATE + outer join)",
+        "Verify CI test shard manifests",
         "Smoke tests (fast gate + release evidence)",
     ):
-        _workflow_step(job=unit_job, name=step_name)
-    _workflow_step(job=integration_job, name="Integration test path coverage guard")
+        _workflow_step(job=preflight, name=step_name)
+    assert (
+        "check_ci_test_shards.py verify"
+        in _workflow_step(job=preflight, name="Verify CI test shard manifests")["run"]
+    )
+    assert "check_integration_coverage.py" not in str(preflight)
 
-    for job in (unit_job, integration_job):
+    for job in [preflight, *unit_jobs, *integration_jobs]:
         assert job["services"]["postgres"]["image"] == "postgres:16"
         assert job["env"]["DATABASE_URL"] == "postgresql://postgres:test@localhost:5432/postgres"
 
-    unit_step = _workflow_step(job=unit_job, name="Unit tests")
-    integration_step = _workflow_step(
-        job=integration_job, name="Integration tests (testcontainers)"
-    )
-    unit_run = unit_step["run"]
-    integration_run = integration_step["run"]
+    expected_coverage_artifacts: list[tuple[str, str, str, str]] = []
+    for index, job in enumerate(unit_jobs, start=1):
+        run_step = _workflow_step(job=job, name=f"Unit tests (shard {index})")
+        assert run_step["run"] == (
+            f"uv run python scripts/check_ci_test_shards.py run --lane unit --shard {index}"
+        )
+        assert run_step["env"]["COVERAGE_FILE"].endswith(f"coverage-unit-{index}.data")
+        assert run_step["env"]["TEST_EVIDENCE_DIR"].endswith(f"ci-artifacts/unit-{index}")
+        expected_coverage_artifacts.append(
+            (
+                f"ci-unit-{index}-coverage-data",
+                f"coverage-unit-{index}.data",
+                f"Download unit shard {index} coverage data",
+                f"ci-coverage/unit-{index}",
+            )
+        )
 
-    for fragment in (
-        "tests/ roster/ -q --maxfail=1 --tb=short --ignore=tests/e2e",
-        "not integration and not e2e and not nightly and not bench and not perf",
-        "--cov=src/butlers",
-        "--cov-report=term-missing",
-        "--junitxml=",
-    ):
-        assert fragment in unit_run
-
-    for fragment in (
-        "tests/ roster/ -q --maxfail=5 --tb=short",
-        "integration and not nightly and not bench and not perf",
-        "--cov=src/butlers",
-        "--cov-report=term-missing",
-        "--junitxml=",
-    ):
-        assert fragment in integration_run
-
-    # Local targets intentionally use --cov-append because they run on one
-    # machine. Hosted lanes cannot share a filesystem, so CI must combine
-    # independently named artifacts and never pretend append crosses jobs.
-    assert "--cov-append" not in unit_run
-    assert "--cov-append" not in integration_run
-    assert "--durations" not in unit_run
-    assert "--durations" not in integration_run
-    assert unit_step["env"]["COVERAGE_FILE"].endswith("coverage-unit.data")
-    assert integration_step["env"]["COVERAGE_FILE"].endswith("coverage-integration.data")
-
-    combine_step = _workflow_step(
-        job=check_job, name="Combine coverage from independent test lanes"
-    )
-    combine_run = combine_step["run"]
-    assert "coverage combine --data-file=" in combine_run
-    assert combine_step["env"]["UNIT_COVERAGE"].endswith("coverage-unit.data")
-    assert combine_step["env"]["INTEGRATION_COVERAGE"].endswith("coverage-integration.data")
-
-    fan_in_gate = _workflow_step(job=check_job, name="Require unit and integration lanes to pass")
-    assert "UNIT_RESULT" in fan_in_gate["run"]
-    assert "INTEGRATION_RESULT" in fan_in_gate["run"]
-    badge_step = _workflow_step(job=check_job, name="Update coverage badge")
-    assert badge_step["if"] == "github.ref == 'refs/heads/main' && github.event_name == 'push'"
+    for index, job in enumerate(integration_jobs, start=1):
+        _workflow_step(job=job, name="Free disk space before testcontainers")
+        run_step = _workflow_step(job=job, name=f"Integration tests (shard {index})")
+        assert run_step["run"] == (
+            f"uv run python scripts/check_ci_test_shards.py run --lane integration --shard {index}"
+        )
+        assert run_step["env"]["COVERAGE_FILE"].endswith(f"coverage-integration-{index}.data")
+        assert run_step["env"]["TEST_EVIDENCE_DIR"].endswith(f"ci-artifacts/integration-{index}")
+        assert run_step["env"]["TESTCONTAINERS_RYUK_DISABLED"] == "true"
+        expected_coverage_artifacts.append(
+            (
+                f"ci-integration-{index}-coverage-data",
+                f"coverage-integration-{index}.data",
+                f"Download integration shard {index} coverage data",
+                f"ci-coverage/integration-{index}",
+            )
+        )
 
     artifact_steps = {
         step["with"]["name"]: step
-        for job in (unit_job, integration_job, check_job)
+        for job in [preflight, *unit_jobs, *integration_jobs, check_job]
         for step in job["steps"]
         if step.get("uses") == "actions/upload-artifact@v4"
     }
-    assert {
-        "ci-unit-test-evidence",
-        "ci-unit-coverage-data",
-        "ci-smoke-test-evidence",
-        "ci-integration-test-evidence",
-        "ci-integration-coverage-data",
-        "ci-combined-coverage-report",
-    } <= artifact_steps.keys()
-    for artifact_name in (
-        "ci-unit-test-evidence",
-        "ci-unit-coverage-data",
+    expected_artifacts = {
         "smoke-release-evidence",
         "ci-smoke-test-evidence",
-        "ci-integration-test-evidence",
-        "ci-integration-coverage-data",
         "ci-combined-coverage-report",
-    ):
-        assert artifact_steps[artifact_name]["with"]["overwrite"] is True
+        *{name for name, _, _, _ in expected_coverage_artifacts},
+        *{
+            f"ci-{lane}-{index}-test-evidence"
+            for lane, count in (("unit", 4), ("integration", 3))
+            for index in range(1, count + 1)
+        },
+    }
+    assert expected_artifacts <= artifact_steps.keys()
+    for artifact_name in expected_artifacts:
+        artifact = artifact_steps[artifact_name]
+        assert artifact["with"]["overwrite"] is True
+        assert ".tmp" not in artifact["with"]["path"]
+        assert "raw-junit.xml" not in artifact["with"]["path"]
 
-    for job, artifact_name in (
-        (unit_job, "ci-unit-test-evidence"),
-        (integration_job, "ci-integration-test-evidence"),
-    ):
-        evidence_step = next(
-            step
-            for step in job["steps"]
-            if step.get("uses") == "actions/upload-artifact@v4"
-            and step["with"]["name"] == artifact_name
-        )
-        assert evidence_step["if"] == "always()"
-        assert evidence_step["with"]["retention-days"] == 14
-        assert ".tmp" not in evidence_step["with"]["path"]
-        assert "raw-junit.xml" not in evidence_step["with"]["path"]
-
-    for source_job, artifact_name, suffix, download_step_name, download_suffix in (
-        (
-            unit_job,
-            "ci-unit-coverage-data",
-            "ci-coverage/coverage-unit.data",
-            "Download unit coverage data",
-            "ci-coverage/unit",
-        ),
-        (
-            integration_job,
-            "ci-integration-coverage-data",
-            "ci-coverage/coverage-integration.data",
-            "Download integration coverage data",
-            "ci-coverage/integration",
-        ),
-    ):
-        coverage_upload = next(
-            step
-            for step in source_job["steps"]
-            if step.get("uses") == "actions/upload-artifact@v4"
-            and step["with"]["name"] == artifact_name
-        )
+    for coverage_name, filename, download_name, directory in expected_coverage_artifacts:
+        coverage_upload = artifact_steps[coverage_name]
         assert coverage_upload["if"] == "always()"
-        assert coverage_upload["with"]["path"].endswith(suffix)
         assert coverage_upload["with"]["if-no-files-found"] == "error"
+        assert coverage_upload["with"]["path"].endswith(filename)
+        download = _workflow_step(job=check_job, name=download_name)
+        assert download["uses"] == "actions/download-artifact@v4"
+        assert download["with"] == {
+            "name": coverage_name,
+            "path": "${{ runner.temp }}/" + directory,
+        }
 
-        coverage_download = _workflow_step(job=check_job, name=download_step_name)
-        assert coverage_download["uses"] == "actions/download-artifact@v4"
-        assert coverage_download["with"]["name"] == artifact_name
-        assert coverage_download["with"]["path"].endswith(download_suffix)
+    gate = _workflow_step(job=check_job, name="Require preflight and every test shard to pass")
+    for result_name in (
+        "CHECK_PREFLIGHT_RESULT",
+        *[f"CHECK_UNIT_{index}_RESULT" for index in range(1, 5)],
+        *[f"CHECK_INTEGRATION_{index}_RESULT" for index in range(1, 4)],
+    ):
+        assert result_name in gate["run"]
 
-    smoke_step = _workflow_step(job=unit_job, name="Smoke tests (fast gate + release evidence)")
-    assert smoke_step["env"]["TESTCONTAINERS_RYUK_DISABLED"] == "true"
-    assert smoke_step["env"]["SMOKE_EVIDENCE_DIR"].endswith("ci-artifacts/smoke")
-    assert "--durations" not in smoke_step["run"]
-    assert "except (ET.ParseError, OSError) as exc:" in smoke_step["run"]
-    assert "print(exc, file=sys.stderr)" in smoke_step["run"]
+    combine = _workflow_step(
+        job=check_job, name="Combine coverage from all independent test shards"
+    )
+    assert "coverage combine --data-file=" in combine["run"]
+    for prefix, count in (("UNIT", 4), ("INTEGRATION", 3)):
+        for index in range(1, count + 1):
+            assert f"{prefix}_{index}_COVERAGE" in combine["run"]
+    assert 'test -s "$coverage_file"' in combine["run"]
 
-    smoke_artifact = _workflow_step(job=unit_job, name="Upload smoke release evidence")
-    assert smoke_artifact["with"]["name"] == "smoke-release-evidence"
-    assert ".tmp" not in smoke_artifact["with"]["path"]
+    smoke = _workflow_step(job=preflight, name="Smoke tests (fast gate + release evidence)")
+    assert smoke["env"]["TESTCONTAINERS_RYUK_DISABLED"] == "true"
+    assert smoke["env"]["SMOKE_EVIDENCE_DIR"].endswith("ci-artifacts/smoke")
+    assert "--durations" not in smoke["run"]
+    smoke_artifact = artifact_steps["smoke-release-evidence"]
+    assert smoke_artifact["with"]["path"].endswith("smoke/release-evidence.json")
+
+    badge = _workflow_step(job=check_job, name="Update coverage badge")
+    assert badge["if"] == "github.ref == 'refs/heads/main' && github.event_name == 'push'"

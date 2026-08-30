@@ -162,57 +162,34 @@ the nullable side of an outer join at runtime, and mock-based tests silently
 bypass it, so it is enforced statically.
 
 **CI pipeline** (GitHub Actions, runs automatically on push/PR). The core
-Python gate is a three-job fan-out/fan-in:
+Python gate is a duration-balanced fan-out/fan-in:
 
-1. `check-unit` verifies the uv lock file (`uv lock --check`), installs with
-   `uv sync --frozen --dev`, then runs lint, the format check, the SQL safety
-   check, non-integration tests, and smoke/release evidence.
-2. `check-integration` independently installs the same locked environment,
-   runs the integration path-coverage guard, and runs the Docker/testcontainers
-   lane. The two test jobs write separate coverage data artifacts and each
-   uploads a privacy-minimal JUnit report plus the 25 slowest test durations.
-3. `check` runs after either failed or successful lanes (except when the
-   workflow is cancelled) and fails unless both succeeded. It
-   combines their coverage artifacts, publishes the combined report, and only
-   updates the main-push coverage badge.
+1. `check-preflight` runs the lock, lint, format, SQL-safety, exact-shard
+   verification, and smoke/release-evidence checks once.
+2. Four `check-unit-N` jobs and three `check-integration-N` jobs start on
+   independent runners. Each keeps whole test files together with xdist's
+   `--dist loadfile`; the integration shards retain Docker/testcontainers.
+3. `check` always evaluates every preflight/shard result (except on workflow
+   cancellation), fails on any non-success, then combines all seven coverage
+   artifacts and updates the main-push badge.
 
-The lane selectors are:
-
-```bash
-# Unit tests: excludes E2E, selects non-integration/non-e2e markers.
-# A command-line -m REPLACES addopts' own `-m` rather than ANDing with it, so
-# the nightly/bench/perf exclusion from addopts must be restated here too, or
-# nightly adapter tests (real creds/binaries) leak into this fast lane
-# (bu-y189y).
-mkdir -p ci-coverage
-COVERAGE_FILE=ci-coverage/coverage-unit.data \
-uv run pytest tests/ roster/ -q --maxfail=1 --tb=short --ignore=tests/e2e \
-  -m "not integration and not e2e and not nightly and not bench and not perf" \
-  --cov=src/butlers --junitxml=unit-junit.xml
-
-# Smoke tests: fast operational gate plus release evidence
-uv run pytest tests/ --ignore=tests/e2e -m smoke -q --tb=short
-
-# Integration tests: requires Docker (testcontainers), runs in parallel.
-# Same restatement applies: "not bench and not perf" keeps perf-opt-in tests
-# that are also marked integration (e.g. test_audit_log_index_perf.py) out of
-# this lane (bu-y189y).
-mkdir -p ci-coverage
-COVERAGE_FILE=ci-coverage/coverage-integration.data \
-uv run pytest tests/ roster/ -q --maxfail=5 --tb=short \
-  -m "integration and not nightly and not bench and not perf" \
-  -n auto --dist loadfile --cov=src/butlers --junitxml=integration-junit.xml
-```
+The checked-in file manifests live in `.github/ci-test-shards/`. The sole
+selector, `scripts/check_ci_test_shards.py`, owns the exact current unit and
+integration marker expressions. Its `verify` command derives pytest's actual
+selected node IDs and refuses a stale manifest, missing file/node, duplicate
+within a lane, or zero-selected shard. A file can correctly appear once in
+each independent lane when it contains both unit and integration items.
 
 `coverage combine` runs only in the fan-in job because runners do not share a
 filesystem. The local `make test-ci-*` targets remain sequential convenience
 commands and therefore use `--cov-append` within their single worktree.
 
-The lane JUnit files in the commands above are runner-local raw inputs. CI
-derives its retained timing evidence from them, but uploads only the sanitized
-JUnit metadata and top-duration table; it never uploads raw JUnit or test logs.
-Each named evidence artifact is overwrite-safe so rerunning a failed job within
-one workflow run can recover instead of colliding with an immutable v4 artifact.
+Each shard emits a unique non-hidden coverage artifact plus runner-local raw
+JUnit input. CI derives retained timing evidence from that input, but uploads
+only the sanitized JUnit metadata and top-duration table; it never uploads raw
+JUnit or test logs. Each named artifact is overwrite-safe so rerunning a failed
+job within one workflow run can recover instead of colliding with an immutable
+v4 artifact.
 
 `frontend` (Node 24, `frontend/`) runs `npm ci`, `npm run lint`
    (`eslint .`), `npm run build` (`tsc -b && vite build`), and `npm run test`
