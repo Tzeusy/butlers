@@ -43,17 +43,18 @@ The dashboard SHALL expose `POST /api/settings/models/verify-all` to re-verify e
 
 The dashboard-api process SHALL run an hourly background sweep
 (`butlers.jobs.model_verify.run_model_verify_loop`, started from the FastAPI
-alongside the other periodic jobs) that calls the same verification core as the manual
-endpoint, so `last_verified_ok`/`last_verified_at` are never more than roughly one
-interval stale even when no operator visits the Models tab. The sweep uses its
-registered scheduler caller with the signed Switchboard runtime-probe control
-client; it does not construct a runtime adapter or persist verification evidence
+lifespan alongside the other periodic jobs). Each interval tick SHALL call the
+same verification core as the manual endpoint through the registered `scheduler`
+caller and signed Switchboard runtime-probe control client, so verification is
+attempted roughly once per interval even when no operator visits the Models tab.
+A control-plane-unavailable result preserves prior verification evidence. The
+sweep does not construct a runtime adapter or persist verification evidence
 inside the dashboard process.
 
 #### Scenario: Hourly sweep runs independently of the manual rate limit
 - **WHEN** the sweep's interval (default `DEFAULT_MODEL_VERIFY_INTERVAL_S = 3600`,
   overridable via `MODEL_VERIFY_INTERVAL_S`) elapses
-- **THEN** the sweep calls `run_verify_all_models(pool, audit_actor="model_verify_sweep")`
+- **THEN** the sweep calls `run_verify_all_models(pool, audit_actor="model_verify_sweep", caller="scheduler")`
   directly as the registered scheduler caller, bypassing the manual endpoint's
   once-per-minute HTTP rate limit (that limit is an HTTP-surface concern
   specific to the operator-facing route)

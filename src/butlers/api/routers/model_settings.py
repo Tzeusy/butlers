@@ -795,7 +795,7 @@ async def run_verify_all_models(
 
 
 # ---------------------------------------------------------------------------
-# POST /api/settings/models/verify-all — parallel 1-token verification
+# POST /api/settings/models/verify-all — parallel signed runtime-probe requests
 # ---------------------------------------------------------------------------
 
 
@@ -803,11 +803,13 @@ async def run_verify_all_models(
 async def verify_all_models(
     db: DatabaseManager = Depends(_get_db_manager),
 ) -> ApiResponse[VerifyAllResult]:
-    """Issue a 1-token completion against every enabled model in parallel.
+    """Request a signed Switchboard runtime probe for every enabled model in parallel.
 
     Rate-limited to once per minute system-wide: subsequent calls within the
     window return HTTP 429. Delegates the actual verification work to
     ``run_verify_all_models`` (shared with the hourly automated sweep).
+    Switchboard performs runtime construction and verification persistence; this
+    route returns only the coordinator's summary.
     """
     global _verify_all_last_run  # noqa: PLW0603
 
