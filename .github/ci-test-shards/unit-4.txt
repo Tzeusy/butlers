@@ -16,7 +16,6 @@ tests/api/test_actor_attribution_sweep.py
 tests/api/test_api_butler_specific.py
 tests/api/test_api_health_measurements.py
 tests/api/test_api_issues_window.py
-tests/api/test_api_qa.py
 tests/api/test_api_qa_allowed_repos.py
 tests/api/test_bulk_ingestion_rules.py
 tests/api/test_butler_logs.py

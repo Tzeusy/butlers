@@ -264,7 +264,7 @@ jobs:
         run: python3 scripts/check_duplicate_toplevel_names.py
 
   # Preserve the historic `check` status as a fail-closed fan-in. The
-  # one-time preflight and nine duration-balanced file shards all begin
+  # one-time preflight and ten duration-balanced file shards all begin
   # independently; no broad lane serializes the backend critical path.
   check-preflight:
     runs-on: ubuntu-latest
@@ -696,6 +696,78 @@ jobs:
         with:
           name: ci-unit-4-coverage-data
           path: ${{ runner.temp }}/ci-coverage/coverage-unit-4.data
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+  check-unit-5:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install dependencies
+        run: uv sync --frozen --dev
+
+      - name: Unit tests (shard 5)
+        # File-only manifests preserve whole-file fixture lifetime. The selector
+        # owns the current marker expression and explicitly keeps xdist loadfile.
+        env:
+          COVERAGE_FILE: ${{ runner.temp }}/ci-coverage/coverage-unit-5.data
+          TEST_EVIDENCE_DIR: ${{ runner.temp }}/ci-artifacts/unit-5
+        run: uv run python scripts/check_ci_test_shards.py run --lane unit --shard 5
+
+      - name: Prepare unit shard 5 duration evidence
+        if: always()
+        run: |
+          python3 scripts/summarize_junit_durations.py \
+            --input "${RUNNER_TEMP}/ci-artifacts/unit-5/raw-junit.xml" \
+            --sanitized-junit "${RUNNER_TEMP}/ci-artifacts/unit-5/junit.xml" \
+            --durations-output "${RUNNER_TEMP}/ci-artifacts/unit-5/top-durations.txt" \
+            --limit 25
+
+      - name: Upload unit shard 5 test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-unit-5-test-evidence
+          path: |
+            ${{ runner.temp }}/ci-artifacts/unit-5/junit.xml
+            ${{ runner.temp }}/ci-artifacts/unit-5/top-durations.txt
+          retention-days: 14
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Upload unit shard 5 coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-unit-5-coverage-data
+          path: ${{ runner.temp }}/ci-coverage/coverage-unit-5.data
           retention-days: 7
           if-no-files-found: error
           overwrite: true
@@ -1225,10 +1297,10 @@ jobs:
 
   check:
     # Do not allow a green historic check status when a preflight or any shard
-    # failed, was skipped, or was cancelled. The fan-in also requires all nine
+    # failed, was skipped, or was cancelled. The fan-in also requires all ten
     # coverage files. `always()` is deliberate: a skipped historical check can
     # read as green to branch protection after a cancelled prerequisite.
-    needs: [check-preflight, check-unit-1, check-unit-2, check-unit-3, check-unit-4, check-integration-1, check-integration-2, check-integration-3, check-integration-4, check-integration-5]
+    needs: [check-preflight, check-unit-1, check-unit-2, check-unit-3, check-unit-4, check-unit-5, check-integration-1, check-integration-2, check-integration-3, check-integration-4, check-integration-5]
     if: ${{ always() }}
     runs-on: ubuntu-latest
 
@@ -1240,6 +1312,7 @@ jobs:
           CHECK_UNIT_2_RESULT: ${{ needs.check-unit-2.result }}
           CHECK_UNIT_3_RESULT: ${{ needs.check-unit-3.result }}
           CHECK_UNIT_4_RESULT: ${{ needs.check-unit-4.result }}
+          CHECK_UNIT_5_RESULT: ${{ needs.check-unit-5.result }}
           CHECK_INTEGRATION_1_RESULT: ${{ needs.check-integration-1.result }}
           CHECK_INTEGRATION_2_RESULT: ${{ needs.check-integration-2.result }}
           CHECK_INTEGRATION_3_RESULT: ${{ needs.check-integration-3.result }}
@@ -1253,6 +1326,7 @@ jobs:
             "check-unit-2=$CHECK_UNIT_2_RESULT" \
             "check-unit-3=$CHECK_UNIT_3_RESULT" \
             "check-unit-4=$CHECK_UNIT_4_RESULT" \
+            "check-unit-5=$CHECK_UNIT_5_RESULT" \
             "check-integration-1=$CHECK_INTEGRATION_1_RESULT" \
             "check-integration-2=$CHECK_INTEGRATION_2_RESULT" \
             "check-integration-3=$CHECK_INTEGRATION_3_RESULT" \
@@ -1305,6 +1379,12 @@ jobs:
           name: ci-unit-4-coverage-data
           path: ${{ runner.temp }}/ci-coverage/unit-4
 
+      - name: Download unit shard 5 coverage data
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-unit-5-coverage-data
+          path: ${{ runner.temp }}/ci-coverage/unit-5
+
       - name: Download integration shard 1 coverage data
         uses: actions/download-artifact@v4
         with:
@@ -1342,6 +1422,7 @@ jobs:
           UNIT_2_COVERAGE: ${{ runner.temp }}/ci-coverage/unit-2/coverage-unit-2.data
           UNIT_3_COVERAGE: ${{ runner.temp }}/ci-coverage/unit-3/coverage-unit-3.data
           UNIT_4_COVERAGE: ${{ runner.temp }}/ci-coverage/unit-4/coverage-unit-4.data
+          UNIT_5_COVERAGE: ${{ runner.temp }}/ci-coverage/unit-5/coverage-unit-5.data
           INTEGRATION_1_COVERAGE: ${{ runner.temp }}/ci-coverage/integration-1/coverage-integration-1.data
           INTEGRATION_2_COVERAGE: ${{ runner.temp }}/ci-coverage/integration-2/coverage-integration-2.data
           INTEGRATION_3_COVERAGE: ${{ runner.temp }}/ci-coverage/integration-3/coverage-integration-3.data
@@ -1356,6 +1437,7 @@ jobs:
             $UNIT_2_COVERAGE \
             $UNIT_3_COVERAGE \
             $UNIT_4_COVERAGE \
+            $UNIT_5_COVERAGE \
             $INTEGRATION_1_COVERAGE \
             $INTEGRATION_2_COVERAGE \
             $INTEGRATION_3_COVERAGE \
@@ -1368,6 +1450,7 @@ jobs:
             $UNIT_2_COVERAGE \
             $UNIT_3_COVERAGE \
             $UNIT_4_COVERAGE \
+            $UNIT_5_COVERAGE \
             $INTEGRATION_1_COVERAGE \
             $INTEGRATION_2_COVERAGE \
             $INTEGRATION_3_COVERAGE \

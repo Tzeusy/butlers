@@ -1,5 +1,4 @@
 roster/chronicler/tests/test_mcp_module_config.py
-roster/education/tests/test_api.py
 roster/education/tests/test_curriculum_request_drain.py
 roster/education/tests/test_mastery.py
 roster/education/tests/test_mind_maps.py

@@ -40,7 +40,7 @@ class LaneConfig:
 LANES: dict[str, LaneConfig] = {
     "unit": LaneConfig(
         marker="not integration and not e2e and not nightly and not bench and not perf",
-        shard_count=4,
+        shard_count=5,
         maxfail=1,
         ignore_e2e=True,
         workers="3",
