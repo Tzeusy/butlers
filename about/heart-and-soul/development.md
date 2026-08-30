@@ -169,9 +169,9 @@ Python gate is a duration-balanced fan-out/fan-in:
 2. Four `check-unit-N` jobs and three `check-integration-N` jobs start on
    independent runners. Each keeps whole test files together with xdist's
    `--dist loadfile`; the integration shards retain Docker/testcontainers.
-3. `check` always evaluates every preflight/shard result (except on workflow
-   cancellation), fails on any non-success, then combines all seven coverage
-   artifacts and updates the main-push badge.
+3. `check` always evaluates every preflight/shard result, including a
+   cancellation result, fails on any non-success, then combines all seven
+   coverage artifacts and updates the main-push badge.
 
 The checked-in file manifests live in `.github/ci-test-shards/`. The sole
 selector, `scripts/check_ci_test_shards.py`, owns the exact current unit and

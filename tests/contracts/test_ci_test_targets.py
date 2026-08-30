@@ -109,7 +109,8 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
         "check-integration-2",
         "check-integration-3",
     ]
-    assert check_job["if"] == "${{ always() && !cancelled() }}"
+    assert check_job["if"] == "${{ always() }}"
+    assert "cancelled" not in check_job["if"]
 
     for step_name in (
         "Check lock file is up to date",

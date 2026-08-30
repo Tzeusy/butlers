@@ -987,9 +987,11 @@ jobs:
 
   check:
     # Do not allow a green historic check status when a preflight or any shard
-    # failed or was skipped. The fan-in also requires all seven coverage files.
+    # failed, was skipped, or was cancelled. The fan-in also requires all seven
+    # coverage files. `always()` is deliberate: a skipped historical check can
+    # read as green to branch protection after a cancelled prerequisite.
     needs: [check-preflight, check-unit-1, check-unit-2, check-unit-3, check-unit-4, check-integration-1, check-integration-2, check-integration-3]
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
 
     steps:
