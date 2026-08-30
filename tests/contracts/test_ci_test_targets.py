@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -90,6 +91,94 @@ def _artifact_step(*, job: dict, artifact_name: str) -> dict:
     )
 
 
+def _integration_cleanup_script(shard: int) -> str:
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    return _workflow_step(
+        job=workflow["jobs"][f"check-integration-{shard}"],
+        name="Free disk space before testcontainers",
+    )["run"]
+
+
+def _run_cleanup_script(
+    *, tmp_path: Path, shard: int, available_kib: str
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(parents=True)
+    sentinel = tmp_path / "sudo-called"
+    (fake_bin / "df").write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = "-h" ]; then\n'
+        "  printf '%s\\n' 'Filesystem Size Used Avail Use% Mounted on'\n"
+        "  printf '%s\\n' '/dev/root 145G 65G 80G 45% /'\n"
+        "else\n"
+        "  printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'\n"
+        "  printf '/dev/root 152043520 68157440 %s 45%% /\\n' \"$DF_AVAILABLE_KIB\"\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "sudo").write_text(
+        '#!/usr/bin/env bash\nprintf "called\\n" > "$SUDO_SENTINEL"\nexit 99\n',
+        encoding="utf-8",
+    )
+    for command in (fake_bin / "df", fake_bin / "sudo"):
+        command.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", "-e", "-c", _integration_cleanup_script(shard)],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "DF_AVAILABLE_KIB": available_kib,
+            "SUDO_SENTINEL": str(sentinel),
+        },
+    )
+    return result, sentinel
+
+
+def test_ci_cleanup_skips_reclamation_when_each_runner_has_safe_free_space(
+    tmp_path: Path,
+) -> None:
+    for shard in range(1, 6):
+        result, sentinel = _run_cleanup_script(
+            tmp_path=tmp_path / f"shard-{shard}",
+            shard=shard,
+            available_kib=str(80 * 1024 * 1024),
+        )
+        assert result.returncode == 0, result.stderr
+        assert "Skipping disk cleanup:" in result.stdout
+        assert not sentinel.exists()
+
+
+def test_ci_cleanup_reclaims_when_each_runner_is_below_the_safe_floor(tmp_path: Path) -> None:
+    for shard in range(1, 6):
+        result, sentinel = _run_cleanup_script(
+            tmp_path=tmp_path / f"shard-{shard}",
+            shard=shard,
+            available_kib=str(29 * 1024 * 1024),
+        )
+        assert result.returncode == 99
+        assert "Cleaning disk:" in result.stdout
+        assert sentinel.exists()
+
+
+@pytest.mark.parametrize("available_kib", ["", "-1", "30.5", "N/A", "abc"])
+def test_ci_cleanup_refuses_malformed_free_space_before_reclamation(
+    tmp_path: Path, available_kib: str
+) -> None:
+    result, sentinel = _run_cleanup_script(
+        tmp_path=tmp_path,
+        shard=1,
+        available_kib=available_kib,
+    )
+    assert result.returncode == 1
+    assert "could not determine free disk space" in result.stdout
+    assert not sentinel.exists()
+
+
 def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> None:
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
@@ -155,7 +244,9 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
         cleanup = _workflow_step(job=job, name="Free disk space before testcontainers")
         for fragment in (
             "MIN_FREE_GB=30",
-            "df -Pk /",
+            "available_kib=$(df -Pk / | awk 'NR == 2 {print $4}')",
+            'case "$available_kib" in',
+            "available_gb=$((available_kib / 1024 / 1024))",
             'if [ "$available_gb" -lt "$MIN_FREE_GB" ]; then',
             "sudo rm -rf /usr/local/lib/android",
             "Skipping disk cleanup:",
