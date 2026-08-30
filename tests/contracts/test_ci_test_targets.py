@@ -152,7 +152,16 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
         )
 
     for index, job in enumerate(integration_jobs, start=1):
-        _workflow_step(job=job, name="Free disk space before testcontainers")
+        cleanup = _workflow_step(job=job, name="Free disk space before testcontainers")
+        for fragment in (
+            "MIN_FREE_GB=30",
+            "df -Pk /",
+            'if [ "$available_gb" -lt "$MIN_FREE_GB" ]; then',
+            "sudo rm -rf /usr/local/lib/android",
+            "Skipping disk cleanup:",
+            "could not determine free disk space",
+        ):
+            assert fragment in cleanup["run"]
         run_step = _workflow_step(job=job, name=f"Integration tests (shard {index})")
         assert run_step["run"] == (
             f"uv run python scripts/check_ci_test_shards.py run --lane integration --shard {index}"

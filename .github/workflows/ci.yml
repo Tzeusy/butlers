@@ -734,25 +734,34 @@ jobs:
         run: uv sync --frozen --dev
 
       - name: Free disk space before testcontainers
-        # ubuntu-latest runners arrive with ~14 GB free. Testcontainers pulls
-        # pgvector/pgvector:pg17 (~442 MB compressed) and multiple modules spin
-        # up independent containers concurrently under -n auto. Removing
-        # pre-installed tools that are unused by this job (Android SDK, .NET,
-        # Haskell, Swift, large apt caches) reclaims 10-15 GB and eliminates
-        # the intermittent "no space left on device" / asyncpg pool timeout
-        # failures seen in PRs #2052 and #2055.
+        # Runner disk capacity varies. Preserve the cleanup that eliminated
+        # no-space/asyncpg failures on small runners, but do not spend minutes
+        # deleting 20+ GiB of tools when the runner already has a safe floor.
         run: |
           echo "Disk usage before cleanup:"
           df -h /
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/.ghcup
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /usr/local/share/boost
-          sudo apt-get clean -q
-          docker image prune -f --filter "until=1h" || true
-          echo "Disk usage after cleanup:"
+          MIN_FREE_GB=30
+          available_gb=$(df -Pk / | awk 'NR == 2 {print int($4 / 1024 / 1024)}')
+          case "$available_gb" in
+            ''|*[!0-9]*)
+              echo "::error::could not determine free disk space"
+              exit 1
+              ;;
+          esac
+          if [ "$available_gb" -lt "$MIN_FREE_GB" ]; then
+            echo "Cleaning disk: ${available_gb} GiB is below ${MIN_FREE_GB} GiB."
+            sudo rm -rf /usr/local/lib/android
+            sudo rm -rf /usr/share/dotnet
+            sudo rm -rf /opt/ghc
+            sudo rm -rf /usr/local/.ghcup
+            sudo rm -rf /usr/share/swift
+            sudo rm -rf /usr/local/share/boost
+            sudo apt-get clean -q
+            docker image prune -f --filter "until=1h" || true
+          else
+            echo "Skipping disk cleanup: ${available_gb} GiB meets ${MIN_FREE_GB} GiB floor."
+          fi
+          echo "Disk usage after cleanup decision:"
           df -h /
 
       - name: Integration tests (shard 1)
@@ -829,25 +838,34 @@ jobs:
         run: uv sync --frozen --dev
 
       - name: Free disk space before testcontainers
-        # ubuntu-latest runners arrive with ~14 GB free. Testcontainers pulls
-        # pgvector/pgvector:pg17 (~442 MB compressed) and multiple modules spin
-        # up independent containers concurrently under -n auto. Removing
-        # pre-installed tools that are unused by this job (Android SDK, .NET,
-        # Haskell, Swift, large apt caches) reclaims 10-15 GB and eliminates
-        # the intermittent "no space left on device" / asyncpg pool timeout
-        # failures seen in PRs #2052 and #2055.
+        # Runner disk capacity varies. Preserve the cleanup that eliminated
+        # no-space/asyncpg failures on small runners, but do not spend minutes
+        # deleting 20+ GiB of tools when the runner already has a safe floor.
         run: |
           echo "Disk usage before cleanup:"
           df -h /
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/.ghcup
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /usr/local/share/boost
-          sudo apt-get clean -q
-          docker image prune -f --filter "until=1h" || true
-          echo "Disk usage after cleanup:"
+          MIN_FREE_GB=30
+          available_gb=$(df -Pk / | awk 'NR == 2 {print int($4 / 1024 / 1024)}')
+          case "$available_gb" in
+            ''|*[!0-9]*)
+              echo "::error::could not determine free disk space"
+              exit 1
+              ;;
+          esac
+          if [ "$available_gb" -lt "$MIN_FREE_GB" ]; then
+            echo "Cleaning disk: ${available_gb} GiB is below ${MIN_FREE_GB} GiB."
+            sudo rm -rf /usr/local/lib/android
+            sudo rm -rf /usr/share/dotnet
+            sudo rm -rf /opt/ghc
+            sudo rm -rf /usr/local/.ghcup
+            sudo rm -rf /usr/share/swift
+            sudo rm -rf /usr/local/share/boost
+            sudo apt-get clean -q
+            docker image prune -f --filter "until=1h" || true
+          else
+            echo "Skipping disk cleanup: ${available_gb} GiB meets ${MIN_FREE_GB} GiB floor."
+          fi
+          echo "Disk usage after cleanup decision:"
           df -h /
 
       - name: Integration tests (shard 2)
@@ -924,25 +942,34 @@ jobs:
         run: uv sync --frozen --dev
 
       - name: Free disk space before testcontainers
-        # ubuntu-latest runners arrive with ~14 GB free. Testcontainers pulls
-        # pgvector/pgvector:pg17 (~442 MB compressed) and multiple modules spin
-        # up independent containers concurrently under -n auto. Removing
-        # pre-installed tools that are unused by this job (Android SDK, .NET,
-        # Haskell, Swift, large apt caches) reclaims 10-15 GB and eliminates
-        # the intermittent "no space left on device" / asyncpg pool timeout
-        # failures seen in PRs #2052 and #2055.
+        # Runner disk capacity varies. Preserve the cleanup that eliminated
+        # no-space/asyncpg failures on small runners, but do not spend minutes
+        # deleting 20+ GiB of tools when the runner already has a safe floor.
         run: |
           echo "Disk usage before cleanup:"
           df -h /
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/.ghcup
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /usr/local/share/boost
-          sudo apt-get clean -q
-          docker image prune -f --filter "until=1h" || true
-          echo "Disk usage after cleanup:"
+          MIN_FREE_GB=30
+          available_gb=$(df -Pk / | awk 'NR == 2 {print int($4 / 1024 / 1024)}')
+          case "$available_gb" in
+            ''|*[!0-9]*)
+              echo "::error::could not determine free disk space"
+              exit 1
+              ;;
+          esac
+          if [ "$available_gb" -lt "$MIN_FREE_GB" ]; then
+            echo "Cleaning disk: ${available_gb} GiB is below ${MIN_FREE_GB} GiB."
+            sudo rm -rf /usr/local/lib/android
+            sudo rm -rf /usr/share/dotnet
+            sudo rm -rf /opt/ghc
+            sudo rm -rf /usr/local/.ghcup
+            sudo rm -rf /usr/share/swift
+            sudo rm -rf /usr/local/share/boost
+            sudo apt-get clean -q
+            docker image prune -f --filter "until=1h" || true
+          else
+            echo "Skipping disk cleanup: ${available_gb} GiB meets ${MIN_FREE_GB} GiB floor."
+          fi
+          echo "Disk usage after cleanup decision:"
           df -h /
 
       - name: Integration tests (shard 3)
@@ -1019,19 +1046,33 @@ jobs:
         run: uv sync --frozen --dev
 
       - name: Free disk space before testcontainers
-        # Every Docker-heavy shard has its own runner and needs this preflight.
+        # Every Docker-heavy shard needs a small-runner guard, but runners that
+        # already meet the floor skip the costly reclamation work.
         run: |
           echo "Disk usage before cleanup:"
           df -h /
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/.ghcup
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /usr/local/share/boost
-          sudo apt-get clean -q
-          docker image prune -f --filter "until=1h" || true
-          echo "Disk usage after cleanup:"
+          MIN_FREE_GB=30
+          available_gb=$(df -Pk / | awk 'NR == 2 {print int($4 / 1024 / 1024)}')
+          case "$available_gb" in
+            ''|*[!0-9]*)
+              echo "::error::could not determine free disk space"
+              exit 1
+              ;;
+          esac
+          if [ "$available_gb" -lt "$MIN_FREE_GB" ]; then
+            echo "Cleaning disk: ${available_gb} GiB is below ${MIN_FREE_GB} GiB."
+            sudo rm -rf /usr/local/lib/android
+            sudo rm -rf /usr/share/dotnet
+            sudo rm -rf /opt/ghc
+            sudo rm -rf /usr/local/.ghcup
+            sudo rm -rf /usr/share/swift
+            sudo rm -rf /usr/local/share/boost
+            sudo apt-get clean -q
+            docker image prune -f --filter "until=1h" || true
+          else
+            echo "Skipping disk cleanup: ${available_gb} GiB meets ${MIN_FREE_GB} GiB floor."
+          fi
+          echo "Disk usage after cleanup decision:"
           df -h /
 
       - name: Integration tests (shard 4)
@@ -1108,19 +1149,33 @@ jobs:
         run: uv sync --frozen --dev
 
       - name: Free disk space before testcontainers
-        # Every Docker-heavy shard has its own runner and needs this preflight.
+        # Every Docker-heavy shard needs a small-runner guard, but runners that
+        # already meet the floor skip the costly reclamation work.
         run: |
           echo "Disk usage before cleanup:"
           df -h /
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/.ghcup
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /usr/local/share/boost
-          sudo apt-get clean -q
-          docker image prune -f --filter "until=1h" || true
-          echo "Disk usage after cleanup:"
+          MIN_FREE_GB=30
+          available_gb=$(df -Pk / | awk 'NR == 2 {print int($4 / 1024 / 1024)}')
+          case "$available_gb" in
+            ''|*[!0-9]*)
+              echo "::error::could not determine free disk space"
+              exit 1
+              ;;
+          esac
+          if [ "$available_gb" -lt "$MIN_FREE_GB" ]; then
+            echo "Cleaning disk: ${available_gb} GiB is below ${MIN_FREE_GB} GiB."
+            sudo rm -rf /usr/local/lib/android
+            sudo rm -rf /usr/share/dotnet
+            sudo rm -rf /opt/ghc
+            sudo rm -rf /usr/local/.ghcup
+            sudo rm -rf /usr/share/swift
+            sudo rm -rf /usr/local/share/boost
+            sudo apt-get clean -q
+            docker image prune -f --filter "until=1h" || true
+          else
+            echo "Skipping disk cleanup: ${available_gb} GiB meets ${MIN_FREE_GB} GiB floor."
+          fi
+          echo "Disk usage after cleanup decision:"
           df -h /
 
       - name: Integration tests (shard 5)
