@@ -102,7 +102,10 @@ test-e2e-frontend:
 QG_GATE = uv run python scripts/pytest_gate.py
 QG_LOG = .tmp/test-logs/pytest-$@-$$(date +%Y%m%d-%H%M%S)-$$$$.log
 
-# Mirrors the pytest-and-coverage portions of CI's `check` job. The smoke
+# Mirrors CI's pytest selectors and coverage semantics on one local filesystem.
+# Hosted CI runs the unit and integration lanes independently, then combines
+# their separate coverage artifacts in its fail-closed `check` fan-in; these
+# sequential convenience targets use --cov-append instead. The smoke
 # release-evidence step, static checks, and throwaway-runner Ryuk override stay
 # CI-only; local testcontainers keep Ryuk enabled for cleanup. These targets use
 # pytest_gate so a killed foreground process never looks green.

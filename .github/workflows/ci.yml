@@ -263,7 +263,10 @@ jobs:
       - name: Check for duplicate module-level names
         run: python3 scripts/check_duplicate_toplevel_names.py
 
-  check:
+  # Keep the historic `check` status as the fail-closed fan-in below.  The
+  # expensive Python lanes run independently first, so their runner time no
+  # longer serializes on the critical path.
+  check-unit:
     runs-on: ubuntu-latest
 
     services:
@@ -319,17 +322,57 @@ jobs:
         # therefore restate those exclusions itself, or nightly adapter tests
         # (real creds/binaries) silently get collected in the fast/no-Docker
         # lane.
-        run: uv run pytest tests/ roster/ -q --maxfail=1 --tb=short --ignore=tests/e2e -m "not integration and not e2e and not nightly and not bench and not perf" --cov=src/butlers --cov-report=json:coverage.json --cov-report=term-missing
+        # Each runner writes a distinct, non-hidden coverage data file. The
+        # fan-in `check` job combines those files; --cov-append only works
+        # inside one filesystem and must not imply cross-job persistence.
+        env:
+          COVERAGE_FILE: ${{ runner.temp }}/ci-coverage/coverage-unit.data
+          TEST_EVIDENCE_DIR: ${{ runner.temp }}/ci-artifacts/unit
+        run: |
+          mkdir -p "$TEST_EVIDENCE_DIR" "$(dirname "$COVERAGE_FILE")"
+          uv run pytest tests/ roster/ -q --maxfail=1 --tb=short --ignore=tests/e2e -m "not integration and not e2e and not nightly and not bench and not perf" --cov=src/butlers --cov-report=json:"$TEST_EVIDENCE_DIR/coverage.json" --cov-report=term-missing --junitxml="$TEST_EVIDENCE_DIR/raw-junit.xml"
+
+      - name: Prepare unit test duration evidence
+        if: always()
+        run: |
+          python3 scripts/summarize_junit_durations.py \
+            --input "${RUNNER_TEMP}/ci-artifacts/unit/raw-junit.xml" \
+            --sanitized-junit "${RUNNER_TEMP}/ci-artifacts/unit/junit.xml" \
+            --durations-output "${RUNNER_TEMP}/ci-artifacts/unit/top-durations.txt" \
+            --limit 25
+
+      - name: Upload unit test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-unit-test-evidence
+          path: |
+            ${{ runner.temp }}/ci-artifacts/unit/junit.xml
+            ${{ runner.temp }}/ci-artifacts/unit/top-durations.txt
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload unit coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-unit-coverage-data
+          path: ${{ runner.temp }}/ci-coverage/coverage-unit.data
+          retention-days: 7
+          if-no-files-found: error
 
       - name: Smoke tests (fast gate + release evidence)
         id: smoke
+        env:
+          SMOKE_EVIDENCE_DIR: ${{ runner.temp }}/ci-artifacts/smoke
+          TESTCONTAINERS_RYUK_DISABLED: "true"
         run: |
-          mkdir -p .tmp/smoke
+          mkdir -p "$SMOKE_EVIDENCE_DIR"
           SMOKE_CMD="uv run pytest tests/ --ignore=tests/e2e -m smoke -q --tb=short"
 
           START_TS=$(date +%s)
           set +e
-          $SMOKE_CMD --junit-xml=.tmp/smoke/junit.xml 2>&1 | tee .tmp/smoke/smoke.log
+          $SMOKE_CMD --junit-xml="$SMOKE_EVIDENCE_DIR/raw-junit.xml" 2>&1 | tee "$SMOKE_EVIDENCE_DIR/smoke.log"
           SMOKE_EXIT=${PIPESTATUS[0]}
           set -e
           END_TS=$(date +%s)
@@ -342,6 +385,7 @@ jobs:
           SMOKE_DURATION=$DURATION_S \
           SMOKE_STATUS=$STATUS \
           SMOKE_CMD_VAL="$SMOKE_CMD" \
+          SMOKE_EVIDENCE_DIR="$SMOKE_EVIDENCE_DIR" \
           python3 << 'PYEOF'
           import json, os, xml.etree.ElementTree as ET
 
@@ -350,16 +394,17 @@ jobs:
           exit_code = int(os.environ["SMOKE_EXIT_VAL"])
           status = os.environ["SMOKE_STATUS"]
           cmd = os.environ["SMOKE_CMD_VAL"]
+          evidence_dir = os.environ["SMOKE_EVIDENCE_DIR"]
 
           try:
-              root = ET.parse(".tmp/smoke/junit.xml").getroot()
+              root = ET.parse(os.path.join(evidence_dir, "raw-junit.xml")).getroot()
               skipped_classes = sorted({
                   tc.get("classname") or tc.get("name", "unknown")
                   for tc in root.findall(".//testcase")
                   if tc.find("skipped") is not None
               })
-          except Exception as exc:
-              skipped_classes = [f"parse-error:{exc}"]
+          except (ET.ParseError, OSError):
+              skipped_classes = ["unavailable"]
 
           evidence = {
               "cmd": cmd,
@@ -369,7 +414,7 @@ jobs:
               "exit_code": exit_code,
               "skipped_classes": skipped_classes,
           }
-          with open(".tmp/smoke/release-evidence.json", "w") as f:
+          with open(os.path.join(evidence_dir, "release-evidence.json"), "w") as f:
               json.dump(evidence, f, indent=2)
 
           print(f"SMOKE-RELEASE-EVIDENCE cmd={cmd!r} sha={sha!r} duration={duration_s}s status={status!r} skipped_classes={skipped_classes!r}")
@@ -378,16 +423,71 @@ jobs:
           PYEOF
 
           exit $SMOKE_EXIT
-        env:
-          TESTCONTAINERS_RYUK_DISABLED: "true"
+
+      - name: Prepare smoke test duration evidence
+        if: ${{ always() && steps.smoke.outcome != 'skipped' }}
+        run: |
+          python3 scripts/summarize_junit_durations.py \
+            --input "${RUNNER_TEMP}/ci-artifacts/smoke/raw-junit.xml" \
+            --sanitized-junit "${RUNNER_TEMP}/ci-artifacts/smoke/junit.xml" \
+            --durations-output "${RUNNER_TEMP}/ci-artifacts/smoke/top-durations.txt" \
+            --limit 25
 
       - name: Upload smoke release evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: smoke-release-evidence
-          path: .tmp/smoke/
+          path: ${{ runner.temp }}/ci-artifacts/smoke/release-evidence.json
           retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload smoke test evidence
+        if: ${{ always() && steps.smoke.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-smoke-test-evidence
+          path: |
+            ${{ runner.temp }}/ci-artifacts/smoke/junit.xml
+            ${{ runner.temp }}/ci-artifacts/smoke/top-durations.txt
+          retention-days: 14
+          if-no-files-found: error
+
+  check-integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Check lock file is up to date
+        run: uv lock --check
+
+      - name: Install dependencies
+        run: uv sync --frozen --dev
 
       - name: Free disk space before testcontainers
         # ubuntu-latest runners arrive with ~14 GB free. Testcontainers pulls
@@ -431,15 +531,103 @@ jobs:
         # tests/migrations/test_audit_log_index_perf.py, which is
         # `pytest.mark.perf` + `pytest.mark.integration`) would otherwise
         # leak into this lane despite its docstring declaring it opt-in only.
-        run: uv run pytest tests/ roster/ -q --maxfail=5 --tb=short -m "integration and not nightly and not bench and not perf" -n auto --dist loadfile --cov=src/butlers --cov-append --cov-report=json:coverage.json --cov-report=term-missing
         env:
+          COVERAGE_FILE: ${{ runner.temp }}/ci-coverage/coverage-integration.data
+          TEST_EVIDENCE_DIR: ${{ runner.temp }}/ci-artifacts/integration
           # Testcontainers uses the Docker socket directly — no DOCKER_HOST needed on ubuntu-latest
           TESTCONTAINERS_RYUK_DISABLED: "true"
-
-      - name: Extract coverage percentage
-        id: coverage
         run: |
-          COVERAGE=$(python -c "import json; print(round(json.load(open('coverage.json'))['totals']['percent_covered']))")
+          mkdir -p "$TEST_EVIDENCE_DIR" "$(dirname "$COVERAGE_FILE")"
+          uv run pytest tests/ roster/ -q --maxfail=5 --tb=short -m "integration and not nightly and not bench and not perf" -n auto --dist loadfile --cov=src/butlers --cov-report=json:"$TEST_EVIDENCE_DIR/coverage.json" --cov-report=term-missing --junitxml="$TEST_EVIDENCE_DIR/raw-junit.xml"
+
+      - name: Prepare integration test duration evidence
+        if: always()
+        run: |
+          python3 scripts/summarize_junit_durations.py \
+            --input "${RUNNER_TEMP}/ci-artifacts/integration/raw-junit.xml" \
+            --sanitized-junit "${RUNNER_TEMP}/ci-artifacts/integration/junit.xml" \
+            --durations-output "${RUNNER_TEMP}/ci-artifacts/integration/top-durations.txt" \
+            --limit 25
+
+      - name: Upload integration test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-integration-test-evidence
+          path: |
+            ${{ runner.temp }}/ci-artifacts/integration/junit.xml
+            ${{ runner.temp }}/ci-artifacts/integration/top-durations.txt
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload integration coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-integration-coverage-data
+          path: ${{ runner.temp }}/ci-coverage/coverage-integration.data
+          retention-days: 7
+          if-no-files-found: error
+
+  check:
+    # Preserve the existing required-status name and make it fail when either
+    # parallel lane fails. A skipped fan-in can be treated as successful by
+    # branch protection, so this job runs after failed dependencies (but not a
+    # cancelled workflow) and rejects non-success.
+    needs: [check-unit, check-integration]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Require unit and integration lanes to pass
+        env:
+          UNIT_RESULT: ${{ needs.check-unit.result }}
+          INTEGRATION_RESULT: ${{ needs.check-integration.result }}
+        run: |
+          if [ "$UNIT_RESULT" != "success" ] || [ "$INTEGRATION_RESULT" != "success" ]; then
+            echo "::error::check-unit=$UNIT_RESULT; check-integration=$INTEGRATION_RESULT"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install dependencies for coverage aggregation
+        run: uv sync --frozen --dev
+
+      - name: Download unit coverage data
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-unit-coverage-data
+          path: ${{ runner.temp }}/ci-coverage/unit
+
+      - name: Download integration coverage data
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-integration-coverage-data
+          path: ${{ runner.temp }}/ci-coverage/integration
+
+      - name: Combine coverage from independent test lanes
+        id: coverage
+        env:
+          UNIT_COVERAGE: ${{ runner.temp }}/ci-coverage/unit/coverage-unit.data
+          INTEGRATION_COVERAGE: ${{ runner.temp }}/ci-coverage/integration/coverage-integration.data
+          COMBINED_COVERAGE: ${{ runner.temp }}/ci-coverage/coverage-combined.data
+          COMBINED_REPORT: ${{ runner.temp }}/ci-artifacts/coverage/coverage.json
+        run: |
+          mkdir -p "$(dirname "$COMBINED_COVERAGE")" "$(dirname "$COMBINED_REPORT")"
+          uv run coverage combine --data-file="$COMBINED_COVERAGE" "$UNIT_COVERAGE" "$INTEGRATION_COVERAGE"
+          uv run coverage json --data-file="$COMBINED_COVERAGE" -o "$COMBINED_REPORT"
+          uv run coverage report --data-file="$COMBINED_COVERAGE" --show-missing
+          export COMBINED_REPORT
+          COVERAGE=$(python3 -c 'import json, os; print(round(json.load(open(os.environ["COMBINED_REPORT"]))["totals"]["percent_covered"]))')
           echo "percentage=$COVERAGE" >> "$GITHUB_OUTPUT"
           # Color thresholds: green ≥80, yellow ≥60, red <60
           if [ "$COVERAGE" -ge 80 ]; then
@@ -449,6 +637,15 @@ jobs:
           else
             echo "color=red" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Upload combined coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-combined-coverage-report
+          path: ${{ runner.temp }}/ci-artifacts/coverage/coverage.json
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: Update coverage badge
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
