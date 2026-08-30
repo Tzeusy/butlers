@@ -579,6 +579,18 @@ async def test_core_only_database_has_guarded_outbox_without_specialist_schema(
                 AND lease_guard.proconfig = ARRAY[
                     'search_path=pg_catalog, public, pg_temp'
                 ]::text[] AS fixed_lease_guard_path,
+            operator_upgrade.prosecdef
+                AND pg_get_userbyid(operator_upgrade.proowner)
+                    = 'runtime_attention_outbox_owner'
+                AND operator_upgrade.proconfig = ARRAY[
+                    'search_path=pg_catalog, pg_temp'
+                ]::text[] AS fenced_operator_upgrade,
+            operator_deactivate.prosecdef
+                AND pg_get_userbyid(operator_deactivate.proowner)
+                    = 'runtime_attention_outbox_owner'
+                AND operator_deactivate.proconfig = ARRAY[
+                    'search_path=pg_catalog, pg_temp'
+                ]::text[] AS fenced_operator_deactivate,
             has_table_privilege(owner_role.oid, 'public.model_catalog'::regclass, 'SELECT')
                 AND has_table_privilege(
                     owner_role.oid, 'public.model_dispatch_attempts'::regclass, 'SELECT'
@@ -652,6 +664,10 @@ async def test_core_only_database_has_guarded_outbox_without_specialist_schema(
           ON fleet_halt.oid = 'public.append_runtime_attention_fleet_halt()'::regprocedure
         JOIN pg_proc AS lease_guard
           ON lease_guard.oid = 'public.runtime_attention_delivery_lease_guard()'::regprocedure
+        JOIN pg_proc AS operator_upgrade
+          ON operator_upgrade.oid = 'public.runtime_attention_upgrade_operator_v3()'::regprocedure
+        JOIN pg_proc AS operator_deactivate
+          ON operator_deactivate.oid = 'public.runtime_attention_deactivate_operator_v3()'::regprocedure
         JOIN pg_namespace AS admin_schema
           ON admin_schema.nspname = 'runtime_attention_admin'
         JOIN pg_roles AS bootstrap_owner ON bootstrap_owner.oid = admin_schema.nspowner

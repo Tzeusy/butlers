@@ -3075,6 +3075,15 @@ BEGIN
         'REVOKE ALL PRIVILEGES ON FUNCTION public.runtime_attention_upgrade_operator_v3() FROM %I',
         v_migration_role
     );
+    -- The upgrader needs bootstrap authority while it creates and finalizes
+    -- the v3 interface.  Once that one-shot work succeeds, fence both public
+    -- entry points behind the dedicated no-login owner so a backup restore
+    -- cannot leave either SECURITY DEFINER function running as the restoring
+    -- login.  The finalizer reasserts this on later init-db reruns.
+    ALTER FUNCTION public.runtime_attention_deactivate_operator_v3()
+        OWNER TO runtime_attention_outbox_owner;
+    ALTER FUNCTION public.runtime_attention_upgrade_operator_v3()
+        OWNER TO runtime_attention_outbox_owner;
 END;
 $runtime_attention_operator_v3$;
 
@@ -3588,7 +3597,9 @@ BEGIN
        OR to_regprocedure('public.append_runtime_attention_fleet_halt()') IS NULL
        OR to_regprocedure('public.runtime_attention_active_switchboard_role()') IS NULL
        OR to_regprocedure('public.runtime_attention_outbox_guard()') IS NULL
-       OR to_regprocedure('public.runtime_attention_delivery_lease_guard()') IS NULL THEN
+       OR to_regprocedure('public.runtime_attention_delivery_lease_guard()') IS NULL
+       OR to_regprocedure('public.runtime_attention_upgrade_operator_v3()') IS NULL
+       OR to_regprocedure('public.runtime_attention_deactivate_operator_v3()') IS NULL THEN
         RAISE EXCEPTION 'runtime-attention interface is incomplete';
     END IF;
     IF EXISTS (
@@ -3607,7 +3618,9 @@ BEGIN
             'public.append_runtime_attention_fleet_halt()'::regprocedure,
             'public.runtime_attention_active_switchboard_role()'::regprocedure,
             'public.runtime_attention_outbox_guard()'::regprocedure,
-            'public.runtime_attention_delivery_lease_guard()'::regprocedure
+            'public.runtime_attention_delivery_lease_guard()'::regprocedure,
+            'public.runtime_attention_upgrade_operator_v3()'::regprocedure,
+            'public.runtime_attention_deactivate_operator_v3()'::regprocedure
         )
           AND interface_function.proowner NOT IN (v_bootstrap_owner, v_outbox_owner)
     ) THEN
@@ -3623,6 +3636,15 @@ BEGIN
     EXECUTE 'ALTER FUNCTION public.runtime_attention_active_switchboard_role() OWNER TO runtime_attention_outbox_owner';
     EXECUTE 'ALTER FUNCTION public.runtime_attention_outbox_guard() OWNER TO runtime_attention_outbox_owner';
     EXECUTE 'ALTER FUNCTION public.runtime_attention_delivery_lease_guard() OWNER TO runtime_attention_outbox_owner';
+    -- The v3 upgrader is bootstrap-owned until its one-shot migration has
+    -- created the operator control table.  Moving it earlier would make its
+    -- DDL execute with the least-privilege outbox owner.  The deactivator only
+    -- updates the outbox-owned control table and can be fenced immediately.
+    EXECUTE 'ALTER FUNCTION public.runtime_attention_deactivate_operator_v3() OWNER TO runtime_attention_outbox_owner';
+    IF to_regclass('public.runtime_attention_operator_control') IS NOT NULL THEN
+        EXECUTE 'ALTER TABLE public.runtime_attention_operator_control OWNER TO runtime_attention_outbox_owner';
+        EXECUTE 'ALTER FUNCTION public.runtime_attention_upgrade_operator_v3() OWNER TO runtime_attention_outbox_owner';
+    END IF;
     EXECUTE 'ALTER FUNCTION public.append_runtime_attention_model_breaker(bigint) SET search_path = pg_catalog, public, pg_temp';
     EXECUTE 'ALTER FUNCTION public.append_runtime_attention_fleet_halt() SET search_path = pg_catalog, public, pg_temp';
     EXECUTE 'ALTER FUNCTION public.runtime_attention_active_switchboard_role() SET search_path = pg_catalog, public, pg_temp';
@@ -3712,6 +3734,8 @@ BEGIN
     EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION public.runtime_attention_active_switchboard_role() FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION public.runtime_attention_outbox_guard() FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION public.runtime_attention_delivery_lease_guard() FROM PUBLIC';
+    EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION public.runtime_attention_upgrade_operator_v3() FROM PUBLIC';
+    EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION public.runtime_attention_deactivate_operator_v3() FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON SCHEMA runtime_attention_admin FROM PUBLIC';
     EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE runtime_attention_admin.bootstrap_configuration FROM PUBLIC';
 
