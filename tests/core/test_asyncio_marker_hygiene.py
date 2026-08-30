@@ -93,11 +93,29 @@ def _contains_asyncio_marker(node: ast.expr, asyncio_aliases: set[str]) -> bool:
     )
 
 
+def _assert_static_module_pytestmark(tree: ast.Module, relative_path: str) -> None:
+    for statement in tree.body:
+        if isinstance(statement, ast.AugAssign) and isinstance(statement.target, ast.Name):
+            if statement.target.id == "pytestmark":
+                raise AssertionError((relative_path, "module pytestmark mutation"))
+        if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+            continue
+        callee = statement.value.func
+        if isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name):
+            if callee.value.id == "pytestmark":
+                raise AssertionError((relative_path, "module pytestmark mutation"))
+
+
 def _assert_marker_topology(tree: ast.Module, relative_path: str) -> None:
     """Verify session-loop, integration, and Docker marker semantics structurally."""
+    _assert_static_module_pytestmark(tree, relative_path)
     asyncio_aliases = _asyncio_alias_names(tree)
     module_marks = _assigned_value(tree, "pytestmark", relative_path)
     assert isinstance(module_marks, ast.List | ast.Tuple), (relative_path, "module pytestmark")
+    assert not any(isinstance(node, ast.Starred) for node in ast.walk(module_marks)), (
+        relative_path,
+        "module pytestmark unpacking",
+    )
     assert any(_is_pytest_mark(mark, "integration") for mark in module_marks.elts), (
         relative_path,
         "integration marker",
@@ -283,3 +301,12 @@ def test_marker_topology_rejects_module_asyncio_alias() -> None:
     )
     with pytest.raises(AssertionError, match="module asyncio marker"):
         _assert_marker_topology(ast.parse(indirect_module_alias), relative_path)
+
+    augmented_module_marks = source.replace(
+        '_asyncio_session = pytest.mark.asyncio(loop_scope="session")',
+        '_asyncio_session = pytest.mark.asyncio(loop_scope="session")\n'
+        "pytestmark += [_asyncio_session]",
+        1,
+    )
+    with pytest.raises(AssertionError, match="module pytestmark mutation"):
+        _assert_marker_topology(ast.parse(augmented_module_marks), relative_path)
