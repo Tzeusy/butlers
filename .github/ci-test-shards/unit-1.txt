@@ -90,6 +90,7 @@ tests/config/test_runtime_probe_control_production_mount.py
 tests/config/test_secrets_credentials.py
 tests/connectors/live_listener/test_connector_health_state.py
 tests/connectors/test_cursor_store_contract.py
+tests/connectors/test_cursor_store_fakes.py
 tests/connectors/test_discord_user_connector.py
 tests/connectors/test_gmail_charset_parsing.py
 tests/connectors/test_google_health_connector.py
