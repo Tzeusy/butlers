@@ -30,7 +30,6 @@ tests/config/test_init_db_bootstrap.py
 tests/config/test_init_db_runtime_attention_interface_version.py
 tests/config/test_schema_acl_isolation.py
 tests/config/test_stored_function_body_drift.py
-tests/config/test_switchboard_connector_operational_role_migration.py
 tests/config/test_switchboard_notifications_migration.py
 tests/contracts/test_chronicler_schema_drift.py
 tests/core/healing/test_circuit_breaker_reset_db.py
@@ -54,7 +53,6 @@ tests/integration/test_infra_conditions_roundtrip.py
 tests/integration/test_ingestion_events_histogram_db.py
 tests/integration/test_ingestion_replay_policy_db.py
 tests/integration/test_owner_conditions_roundtrip.py
-tests/integration/test_runtime_attention_delivery_worker.py
 tests/integration/test_schema_isolation.py
 tests/jobs/test_context_producers.py
 tests/migrations/test_audit_log_metadata_repair_migration.py
@@ -78,4 +76,3 @@ tests/modules/test_calendar_reminder_integration.py
 tests/modules/test_insight_attention_ledger.py
 tests/modules/test_insight_engine.py
 tests/scripts/test_pg_dump_backup.py
-tests/scripts/test_pg_restore_definer_ownership.py

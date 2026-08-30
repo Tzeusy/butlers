@@ -2,6 +2,7 @@ roster/chronicler/tests/test_config.py
 roster/chronicler/tests/test_interpretation_guardrails.py
 roster/finance/tests/test_account_type_inference.py
 roster/finance/tests/test_anomaly_detection.py
+roster/finance/tests/test_facts.py
 roster/finance/tests/test_integration.py
 roster/finance/tests/test_pattern_recognition.py
 roster/finance/tests/test_payee_match.py
@@ -19,7 +20,6 @@ roster/switchboard/tests/test_identity_notification_claim_integration.py
 roster/switchboard/tests/test_ingest_api.py
 roster/switchboard/tests/test_ingest_tier.py
 tests/api/test_audit_grouping_credential_blind_db.py
-tests/api/test_optional_schema_lifecycle_db.py
 tests/api/test_relationship_entities_search_db.py
 tests/cli/test_runtime_cli_sandbox.py
 tests/config/test_dashboard_turn_cancellation_migration.py

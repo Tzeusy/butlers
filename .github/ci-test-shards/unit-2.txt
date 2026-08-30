@@ -4,7 +4,6 @@ roster/education/tests/test_pedagogy.py
 roster/health/tests/test_wellness_ingest.py
 roster/lifestyle/tests/test_lifestyle_steam_integration.py
 roster/relationship/tests/test_dedup_contacts_drop_fks_migration.py
-roster/relationship/tests/test_entities_api.py
 roster/relationship/tests/test_entity_neighbours.py
 roster/relationship/tests/test_entity_tabs.py
 roster/relationship/tests/test_rel_034_migration.py
@@ -18,6 +17,7 @@ tests/adapters/test_adapter_contract.py
 tests/adapters/test_api_adapter.py
 tests/adapters/test_gemini_adapter.py
 tests/api/test_api_health_briefing.py
+tests/api/test_api_health_facts_reads.py
 tests/api/test_api_health_medication_doses_nutrition.py
 tests/api/test_api_issues_degraded.py
 tests/api/test_api_issues_dismiss.py

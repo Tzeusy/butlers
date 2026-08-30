@@ -47,7 +47,7 @@ LANES: dict[str, LaneConfig] = {
     ),
     "integration": LaneConfig(
         marker="integration and not nightly and not bench and not perf",
-        shard_count=4,
+        shard_count=5,
         maxfail=5,
         ignore_e2e=False,
         workers="auto",

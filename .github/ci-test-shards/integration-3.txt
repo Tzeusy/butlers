@@ -1,6 +1,5 @@
 roster/chronicler/tests/test_switchboard_routing.py
 roster/education/tests/test_evaluator_notes_schema.py
-roster/finance/tests/test_facts.py
 roster/finance/tests/test_feed_reconciliation.py
 roster/finance/tests/test_track_d_sweep.py
 roster/health/tests/test_measurement_sources.py
@@ -14,7 +13,6 @@ roster/relationship/tests/test_finder_no_llm_guardrail.py
 roster/relationship/tests/test_loans_entity_id.py
 roster/relationship/tests/test_merge_cardinality_single_resolution.py
 roster/relationship/tests/test_spo_tools.py
-roster/relationship/tests/test_tools.py
 roster/switchboard/tests/test_correct_route.py
 roster/switchboard/tests/test_strip_null_bytes.py
 roster/travel/tests/test_bookings.py
