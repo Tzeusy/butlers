@@ -50,6 +50,11 @@ def test_read_manifest_rejects_unsorted_files(tmp_path: Path) -> None:
         shards._read_manifest(manifest=manifest, repo_root=tmp_path)
 
 
+def test_no_subcommand_defaults_to_verify(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["check_ci_test_shards.py"])
+    assert shards._parse_args().command is None
+
+
 def test_validate_lane_rejects_missing_and_duplicate_selected_files(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

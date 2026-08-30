@@ -161,7 +161,7 @@ check-for-update-joins:
 # Collects the real unit and integration marker populations and rejects stale,
 # missing, overlapping, or zero-selected checked-in file manifests.
 check-ci-test-shards:
-	uv run --no-sync python scripts/check_ci_test_shards.py verify
+	uv run --no-sync python scripts/check_ci_test_shards.py
 
 # Non-negotiable #6: no em-dashes in doctrine or dashboard copy. Ratchets a
 # per-file baseline (scripts/em-dash-baseline.json) so pre-existing debt is

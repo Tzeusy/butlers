@@ -324,7 +324,7 @@ def run_shard(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    subcommands = parser.add_subparsers(dest="command", required=True)
+    subcommands = parser.add_subparsers(dest="command")
     subcommands.add_parser("verify", help="fail closed unless every lane manifest is exact")
     run_parser = subcommands.add_parser("run", help="run one CI-owned file shard")
     run_parser.add_argument("--lane", choices=sorted(LANES), required=True)
@@ -335,7 +335,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     try:
-        if args.command == "verify":
+        if args.command in (None, "verify"):
             verify()
             return 0
         coverage_file = Path(os.environ["COVERAGE_FILE"])

@@ -123,7 +123,7 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
     ):
         _workflow_step(job=preflight, name=step_name)
     assert (
-        "check_ci_test_shards.py verify"
+        "check_ci_test_shards.py"
         in _workflow_step(job=preflight, name="Verify CI test shard manifests")["run"]
     )
     assert "check_integration_coverage.py" not in str(preflight)

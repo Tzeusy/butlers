@@ -315,7 +315,7 @@ jobs:
         # This replaces the old integration-only path guard. It derives both
         # marker selections with pytest --collect-only and rejects gaps,
         # duplicates, stale files, and zero-selected manifests.
-        run: uv run python scripts/check_ci_test_shards.py verify
+        run: uv run python scripts/check_ci_test_shards.py
 
       - name: Smoke tests (fast gate + release evidence)
         id: smoke
