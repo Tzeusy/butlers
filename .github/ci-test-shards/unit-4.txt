@@ -2,6 +2,7 @@ roster/education/tests/test_api.py
 roster/education/tests/test_curriculum.py
 roster/messenger/tests/test_migration_metadata.py
 roster/relationship/tests/test_dunbar_engine_leak_guard.py
+roster/relationship/tests/test_entities_api.py
 roster/relationship/tests/test_entity_tab_writes.py
 roster/relationship/tests/test_owner_authz_guardrail.py
 roster/switchboard/tests/test_identity_injection.py
@@ -37,6 +38,7 @@ tests/api/test_memory_episode_provenance.py
 tests/api/test_model_settings_signed_probe_cutover.py
 tests/api/test_no_reveal_route_contract.py
 tests/api/test_oauth.py
+tests/api/test_oauth_generic_profile_identity.py
 tests/api/test_oauth_probe_scope_payload.py
 tests/api/test_oauth_secret_redaction.py
 tests/api/test_oauth_toml_scopes.py
@@ -70,6 +72,7 @@ tests/chronicler/test_gap_interview.py
 tests/chronicler/test_meals_adapter.py
 tests/chronicler/test_narration_scheduling.py
 tests/chronicler/test_occupation_adapter.py
+tests/chronicler/test_ops_sessions_api.py
 tests/chronicler/test_owner_outbound_adapter.py
 tests/chronicler/test_owntracks_place_cluster_adapter.py
 tests/chronicler/test_projection_health_api.py

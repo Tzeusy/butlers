@@ -6,7 +6,6 @@ roster/finance/tests/test_data_import.py
 roster/finance/tests/test_import_transactions_blobstore.py
 roster/lifestyle/tests/test_lifestyle_spotify_integration.py
 roster/relationship/tests/test_dunbar_ranking_api.py
-roster/relationship/tests/test_entities_api.py
 roster/relationship/tests/test_entity_facts_repoint_on_merge.py
 roster/relationship/tests/test_plex_halo.py
 roster/switchboard/tests/test_contract_models.py
@@ -182,6 +181,7 @@ tests/migrations/test_drop_dead_feature_tables.py
 tests/migrations/test_migrate_interaction_subjects.py
 tests/migrations/test_model_catalog_verify_error_migration.py
 tests/migrations/test_model_dispatch_attempts_migration.py
+tests/migrations/test_runtime_attention_producer_upgrade.py
 tests/migrations/test_runtime_probe_control_receipts_migration.py
 tests/migrations/test_seed_long_tail_relational_predicates_migration.py
 tests/migrations/test_seed_works_at_member_of_migration.py

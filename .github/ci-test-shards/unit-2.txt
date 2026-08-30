@@ -39,7 +39,6 @@ tests/api/test_ingestion_bulk_retry.py
 tests/api/test_ingestion_events.py
 tests/api/test_latency_stats.py
 tests/api/test_notifications.py
-tests/api/test_oauth_generic_profile_identity.py
 tests/api/test_oauth_integration.py
 tests/api/test_pricing.py
 tests/api/test_priority_contacts_entity_facts.py
@@ -69,7 +68,6 @@ tests/chronicler/test_episode_category_field.py
 tests/chronicler/test_flags.py
 tests/chronicler/test_google_health_adapter.py
 tests/chronicler/test_home_assistant_sensor_activity_adapter.py
-tests/chronicler/test_ops_sessions_api.py
 tests/chronicler/test_owner_entity_id.py
 tests/chronicler/test_owntracks_adapter.py
 tests/chronicler/test_privacy_defaults.py

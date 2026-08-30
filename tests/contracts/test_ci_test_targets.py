@@ -95,7 +95,7 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
     jobs = workflow["jobs"]
     preflight = jobs["check-preflight"]
     unit_jobs = [jobs[f"check-unit-{index}"] for index in range(1, 5)]
-    integration_jobs = [jobs[f"check-integration-{index}"] for index in range(1, 4)]
+    integration_jobs = [jobs[f"check-integration-{index}"] for index in range(1, 5)]
     check_job = jobs["check"]
 
     assert "needs" not in preflight  # Verify/smoke and shards overlap to protect the budget.
@@ -108,6 +108,7 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
         "check-integration-1",
         "check-integration-2",
         "check-integration-3",
+        "check-integration-4",
     ]
     assert check_job["if"] == "${{ always() }}"
     assert "cancelled" not in check_job["if"]
@@ -180,7 +181,7 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
         *{name for name, _, _, _ in expected_coverage_artifacts},
         *{
             f"ci-{lane}-{index}-test-evidence"
-            for lane, count in (("unit", 4), ("integration", 3))
+            for lane, count in (("unit", 4), ("integration", 4))
             for index in range(1, count + 1)
         },
     }
@@ -207,7 +208,7 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
     for result_name in (
         "CHECK_PREFLIGHT_RESULT",
         *[f"CHECK_UNIT_{index}_RESULT" for index in range(1, 5)],
-        *[f"CHECK_INTEGRATION_{index}_RESULT" for index in range(1, 4)],
+        *[f"CHECK_INTEGRATION_{index}_RESULT" for index in range(1, 5)],
     ):
         assert result_name in gate["run"]
 
@@ -215,7 +216,7 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
         job=check_job, name="Combine coverage from all independent test shards"
     )
     assert "coverage combine --data-file=" in combine["run"]
-    for prefix, count in (("UNIT", 4), ("INTEGRATION", 3)):
+    for prefix, count in (("UNIT", 4), ("INTEGRATION", 4)):
         for index in range(1, count + 1):
             assert f"{prefix}_{index}_COVERAGE" in combine["run"]
     assert 'test -s "$coverage_file"' in combine["run"]

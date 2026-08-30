@@ -264,7 +264,7 @@ jobs:
         run: python3 scripts/check_duplicate_toplevel_names.py
 
   # Preserve the historic `check` status as a fail-closed fan-in. The
-  # one-time preflight and seven duration-balanced file shards all begin
+  # one-time preflight and eight duration-balanced file shards all begin
   # independently; no broad lane serializes the backend critical path.
   check-preflight:
     runs-on: ubuntu-latest
@@ -985,12 +985,101 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
+  check-integration-4:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install dependencies
+        run: uv sync --frozen --dev
+
+      - name: Free disk space before testcontainers
+        # Every Docker-heavy shard has its own runner and needs this preflight.
+        run: |
+          echo "Disk usage before cleanup:"
+          df -h /
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/share/boost
+          sudo apt-get clean -q
+          docker image prune -f --filter "until=1h" || true
+          echo "Disk usage after cleanup:"
+          df -h /
+
+      - name: Integration tests (shard 4)
+        # The preflight job proves all integration-selected files belong to
+        # exactly one manifest before these Docker/testcontainers shards run.
+        env:
+          COVERAGE_FILE: ${{ runner.temp }}/ci-coverage/coverage-integration-4.data
+          TEST_EVIDENCE_DIR: ${{ runner.temp }}/ci-artifacts/integration-4
+          TESTCONTAINERS_RYUK_DISABLED: "true"
+        run: uv run python scripts/check_ci_test_shards.py run --lane integration --shard 4
+
+      - name: Prepare integration shard 4 duration evidence
+        if: always()
+        run: |
+          python3 scripts/summarize_junit_durations.py \
+            --input "${RUNNER_TEMP}/ci-artifacts/integration-4/raw-junit.xml" \
+            --sanitized-junit "${RUNNER_TEMP}/ci-artifacts/integration-4/junit.xml" \
+            --durations-output "${RUNNER_TEMP}/ci-artifacts/integration-4/top-durations.txt" \
+            --limit 25
+
+      - name: Upload integration shard 4 test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-integration-4-test-evidence
+          path: |
+            ${{ runner.temp }}/ci-artifacts/integration-4/junit.xml
+            ${{ runner.temp }}/ci-artifacts/integration-4/top-durations.txt
+          retention-days: 14
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Upload integration shard 4 coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-integration-4-coverage-data
+          path: ${{ runner.temp }}/ci-coverage/coverage-integration-4.data
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
   check:
     # Do not allow a green historic check status when a preflight or any shard
-    # failed, was skipped, or was cancelled. The fan-in also requires all seven
+    # failed, was skipped, or was cancelled. The fan-in also requires all eight
     # coverage files. `always()` is deliberate: a skipped historical check can
     # read as green to branch protection after a cancelled prerequisite.
-    needs: [check-preflight, check-unit-1, check-unit-2, check-unit-3, check-unit-4, check-integration-1, check-integration-2, check-integration-3]
+    needs: [check-preflight, check-unit-1, check-unit-2, check-unit-3, check-unit-4, check-integration-1, check-integration-2, check-integration-3, check-integration-4]
     if: ${{ always() }}
     runs-on: ubuntu-latest
 
@@ -1005,6 +1094,7 @@ jobs:
           CHECK_INTEGRATION_1_RESULT: ${{ needs.check-integration-1.result }}
           CHECK_INTEGRATION_2_RESULT: ${{ needs.check-integration-2.result }}
           CHECK_INTEGRATION_3_RESULT: ${{ needs.check-integration-3.result }}
+          CHECK_INTEGRATION_4_RESULT: ${{ needs.check-integration-4.result }}
         run: |
           failed=0
           for named_result in \
@@ -1015,7 +1105,8 @@ jobs:
             "check-unit-4=$CHECK_UNIT_4_RESULT" \
             "check-integration-1=$CHECK_INTEGRATION_1_RESULT" \
             "check-integration-2=$CHECK_INTEGRATION_2_RESULT" \
-            "check-integration-3=$CHECK_INTEGRATION_3_RESULT"; do
+            "check-integration-3=$CHECK_INTEGRATION_3_RESULT" \
+            "check-integration-4=$CHECK_INTEGRATION_4_RESULT"; do
             case "$named_result" in
               *=success) ;;
               *)
@@ -1081,6 +1172,12 @@ jobs:
           name: ci-integration-3-coverage-data
           path: ${{ runner.temp }}/ci-coverage/integration-3
 
+      - name: Download integration shard 4 coverage data
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-integration-4-coverage-data
+          path: ${{ runner.temp }}/ci-coverage/integration-4
+
       - name: Combine coverage from all independent test shards
         id: coverage
         env:
@@ -1091,6 +1188,7 @@ jobs:
           INTEGRATION_1_COVERAGE: ${{ runner.temp }}/ci-coverage/integration-1/coverage-integration-1.data
           INTEGRATION_2_COVERAGE: ${{ runner.temp }}/ci-coverage/integration-2/coverage-integration-2.data
           INTEGRATION_3_COVERAGE: ${{ runner.temp }}/ci-coverage/integration-3/coverage-integration-3.data
+          INTEGRATION_4_COVERAGE: ${{ runner.temp }}/ci-coverage/integration-4/coverage-integration-4.data
           COMBINED_COVERAGE: ${{ runner.temp }}/ci-coverage/coverage-combined.data
           COMBINED_REPORT: ${{ runner.temp }}/ci-artifacts/coverage/coverage.json
         run: |
@@ -1102,7 +1200,8 @@ jobs:
             $UNIT_4_COVERAGE \
             $INTEGRATION_1_COVERAGE \
             $INTEGRATION_2_COVERAGE \
-            $INTEGRATION_3_COVERAGE; do
+            $INTEGRATION_3_COVERAGE \
+            $INTEGRATION_4_COVERAGE; do
             test -s "$coverage_file"
           done
           uv run coverage combine --data-file="$COMBINED_COVERAGE" \
@@ -1112,7 +1211,8 @@ jobs:
             $UNIT_4_COVERAGE \
             $INTEGRATION_1_COVERAGE \
             $INTEGRATION_2_COVERAGE \
-            $INTEGRATION_3_COVERAGE
+            $INTEGRATION_3_COVERAGE \
+            $INTEGRATION_4_COVERAGE
           uv run coverage json --data-file="$COMBINED_COVERAGE" -o "$COMBINED_REPORT"
           uv run coverage report --data-file="$COMBINED_COVERAGE" --show-missing
           export COMBINED_REPORT

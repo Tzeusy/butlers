@@ -180,7 +180,6 @@ tests/migrations/test_message_inbox_scanner_index_migration.py
 tests/migrations/test_predicate_registry_migration.py
 tests/migrations/test_rehome_contact_profile_migration.py
 tests/migrations/test_relationship_facts_migration.py
-tests/migrations/test_runtime_attention_producer_upgrade.py
 tests/migrations/test_runtime_config_migration.py
 tests/migrations/test_secrets_be1_migration.py
 tests/migrations/test_tombstone_memory_calendar_episodes_migration.py
