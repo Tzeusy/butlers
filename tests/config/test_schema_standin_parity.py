@@ -39,6 +39,7 @@ from butlers.testing.migration import create_migrated_test_db, migration_db_name
 from butlers.testing.schema_standins import (
     AUTONOMY_APPROVAL_HISTORY,
     AUTONOMY_SUGGESTIONS,
+    CONTACT_ENTITY_MAP,
     PENDING_ACTIONS,
     STANDINS,
     TableStandin,
@@ -221,6 +222,26 @@ def test_the_index_diff_can_fail(parity_db_url: str):
         "The parity guard did not notice a missing unique partial index. "
         f"It reported: {problems or 'no drift at all'}"
     )
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not docker_available, reason="Docker not available")
+def test_chain_schema_metadata_can_fail(parity_db_url: str):
+    """A wrong real schema must fail loudly instead of making parity vacuous."""
+    engine = create_engine(parity_db_url, isolation_level="AUTOCOMMIT")
+    try:
+        with engine.connect() as conn:
+            with pytest.raises(
+                AssertionError,
+                match=r"public\.contact_entity_map was not created by chains",
+            ):
+                _drift(
+                    conn,
+                    replace(CONTACT_ENTITY_MAP, real_schema="public"),
+                    _BLINDED_SCHEMA,
+                )
+    finally:
+        engine.dispose()
 
 
 def _exempted(lines: list[str], match_line_index: int) -> bool:

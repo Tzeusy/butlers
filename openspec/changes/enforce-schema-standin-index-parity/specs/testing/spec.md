@@ -10,6 +10,11 @@ accepts writes production rejects while every assertion about it passes.
 Foreign keys and triggers SHALL remain excluded, and the reason SHALL remain
 documented where an engineer reconciling a stand-in will read it.
 
+A stand-in whose migration chain owns a schema SHALL declare the chain/schema
+pair used to materialise the real table, and the parity guard SHALL fail loudly
+when that metadata does not place the real table in the stand-in's
+`real_schema`.
+
 #### Scenario: An index the chain has and the stand-in lacks fails the guard
 - **WHEN** the migration chain creates an index on a stand-in's table that the
   stand-in does not declare
@@ -47,3 +52,10 @@ documented where an engineer reconciling a stand-in will read it.
   reimplemented in plpgsql — which read a sibling table unqualified and would
   resolve against whatever `search_path` reached first — from self-contained
   ones
+
+#### Scenario: A schema-owning chain is checked in its declared schema
+- **WHEN** a stand-in's migration chain must run under a non-default schema
+- **THEN** the parity fixture migrates that chain under the declared schema and
+  compares the real table there with the stand-in
+- **AND** a wrong chain/schema declaration fails loudly instead of passing with
+  an empty real-table comparison

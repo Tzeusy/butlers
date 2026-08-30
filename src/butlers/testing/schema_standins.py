@@ -395,8 +395,8 @@ ENTITY_PREDICATE_REGISTRY = TableStandin(
     real_schema="relationship",
     chain_schemas=(("relationship", "relationship"),),
     constant_path="src/butlers/testing/schema_standins.py::ENTITY_PREDICATE_REGISTRY",
-    # roster/relationship/migrations: rel_014 (base table), rel_021 (cardinality,
-    # and the 'state' kind), rel_022 (widens nothing -- it only seeds a row).
+    # roster/relationship/migrations: rel_014 (base table), rel_015 (widens the
+    # kind CHECK with 'state'), rel_021 (cardinality), rel_022 (seeds a row).
     columns=(
         ("predicate", "TEXT NOT NULL PRIMARY KEY"),
         (

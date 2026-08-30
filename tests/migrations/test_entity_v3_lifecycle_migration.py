@@ -270,9 +270,9 @@ async def _provision_prerequisites(pool) -> None:
             updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     """)
-    # schema-standin-exempt: the pre-rel_021 registry this migration upgrades,
-    # so it must NOT have cardinality or the widened kind CHECK -- adding them
-    # would make the test assert that rel_021 did what the fixture had done.
+    # schema-standin-exempt: a deliberately minimal pre-rel_021 registry for
+    # testing rel_021's upgrade; it must not include cardinality, and current-
+    # chain constraints are intentionally outside this migration fixture.
     await pool.execute("""
         CREATE TABLE IF NOT EXISTS relationship.entity_predicate_registry (
             predicate   TEXT        NOT NULL PRIMARY KEY,
