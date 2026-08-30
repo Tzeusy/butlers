@@ -375,6 +375,8 @@ restore, development, and merge paths. The commands below are also direct
 maintainer or operator entry points. Their entries name the purpose and boundary;
 read the script's own usage text and the linked runbook before running a command
 that changes infrastructure or historical data.
+Scripts whose only callers are Docker, Compose, or CI plumbing are intentionally
+omitted from this human command index; they are not maintainer entry points.
 
 ### Quality and review guards
 
@@ -383,15 +385,15 @@ that changes infrastructure or historical data.
 | [`check-no-em-dashes.py`](check-no-em-dashes.py) | Ratchets prohibited em dashes in doctrine and roster prose; frontend user-facing copy is enforced separately by ESLint. Use `make check-em-dashes` or the script while editing the scanned prose. |
 | [`check_archived_requirements_landed.py`](check_archived_requirements_landed.py) | Confirms archived OpenSpec requirements reached their canonical specs; run as the archived-requirements CI guard. |
 | [`check_cited_requirements_resolve.py`](check_cited_requirements_resolve.py) | Confirms requirement IDs cited by tests resolve to a live or active definition; run as the cited-requirements CI guard. |
-| [`check_countable_tasks.py`](check_countable_tasks.py) | Fails when an unarchived change's tasks cannot be counted by the archive gate; run before archival work. |
-| [`check_duplicate_toplevel_names.py`](check_duplicate_toplevel_names.py) | Finds module-level Python definitions that would silently shadow each other after a merge; run as the duplicate-name CI guard. |
+| [`check_countable_tasks.py`](check_countable_tasks.py) | Fails when an unarchived change's tasks cannot be counted by the archive gate; use `make check-countable-tasks` before archival work. |
+| [`check_duplicate_toplevel_names.py`](check_duplicate_toplevel_names.py) | Finds module-level Python definitions that would silently shadow each other after a merge; use `make check-duplicate-names` as the local or CI duplicate-name guard. |
 | [`check_for_update_joins.py`](check_for_update_joins.py) | Statically rejects `FOR UPDATE` on nullable outer-join sides; use `make check-for-update-joins` after SQL query changes. |
 | [`check_integration_coverage.py`](check_integration_coverage.py) | Checks that the Integration tests CI step collects every integration-marked test; run when that workflow command changes. |
 | [`check_spec_overwrites.py`](check_spec_overwrites.py) | Compares active OpenSpec MODIFIED blocks against current canonical bodies; run `make check-spec-overwrites` before archival work. |
 | [`extract-frontend-copy.py`](extract-frontend-copy.py) | Regenerates the checked-in frontend copy inventory; run it only when the inventory guard reports the generated file stale. |
 | [`lint_decision_beads.py`](lint_decision_beads.py) | Validates the structured decision-bead convention; run through the `lint-decision-beads` Make targets when working that workflow. |
 | [`pytest_gate.py`](pytest_gate.py) | Records a positive pytest completion receipt and classifies it as PASS, FAILED, or UNKNOWN; use its `run` and `verdict` subcommands through the quality-gate recipes rather than grepping a log. |
-| [`session_link_guard.py`](session_link_guard.py) | Scans supplied PR metadata, commit ranges, and review-comment data for prohibited tool-session links; CI and PR review tooling provide its scoped inputs. |
+| [`session_link_guard.py`](session_link_guard.py) | Scans supplied PR metadata, commit ranges, and review-comment data for prohibited tool-session links; run `make check-session-links` before pushing, while CI and PR review tooling provide the broader scoped inputs. |
 | [`reap_orphaned_testcontainers.py`](reap_orphaned_testcontainers.py) | Reports Docker testcontainers left behind by dead pytest runs; use `--reap` only after reviewing the reported orphan candidates. |
 
 ### Development, release, and recovery commands
@@ -426,4 +428,4 @@ applying it to a database.
 | [`migrate_blobs_to_s3.py`](migrate_blobs_to_s3.py) | Moves scoped local attachment blobs to the configured S3-compatible backend. |
 | [`migrate_fact_subjects.py`](migrate_fact_subjects.py) | Normalizes historical fact subjects and backfills their entity links. |
 | [`reconcile_whatsapp_entities.py`](reconcile_whatsapp_entities.py) | Runs the content-blind WhatsApp entity reconciliation maintenance pass. |
-| [`retract_digest_measurements.py`](retract_digest_measurements.py) | Retracts measurements created from butler-generated digest or briefing text. |
+| [`retract_digest_measurements.py`](retract_digest_measurements.py) | Retracts measurement-weight facts created from butler-generated digest or briefing text. |
