@@ -108,17 +108,36 @@ def _contains_asyncio_marker(node: ast.expr, asyncio_aliases: set[str]) -> bool:
     )
 
 
+def _is_pytestmark_subscript(node: ast.expr) -> bool:
+    return isinstance(node, ast.Subscript) and (
+        (isinstance(node.value, ast.Name) and node.value.id == "pytestmark")
+        or _is_pytestmark_subscript(node.value)
+    )
+
+
+def _is_pytestmark_mutation(statement: ast.stmt) -> bool:
+    if isinstance(statement, ast.Assign):
+        return any(_is_pytestmark_subscript(target) for target in statement.targets)
+    if isinstance(statement, ast.AnnAssign):
+        return _is_pytestmark_subscript(statement.target)
+    if isinstance(statement, ast.AugAssign):
+        return (
+            isinstance(statement.target, ast.Name) and statement.target.id == "pytestmark"
+        ) or _is_pytestmark_subscript(statement.target)
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return False
+    callee = statement.value.func
+    return (
+        isinstance(callee, ast.Attribute)
+        and isinstance(callee.value, ast.Name)
+        and callee.value.id == "pytestmark"
+    )
+
+
 def _assert_static_module_pytestmark(tree: ast.Module, relative_path: str) -> None:
     for statement in tree.body:
-        if isinstance(statement, ast.AugAssign) and isinstance(statement.target, ast.Name):
-            if statement.target.id == "pytestmark":
-                raise AssertionError((relative_path, "module pytestmark mutation"))
-        if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
-            continue
-        callee = statement.value.func
-        if isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name):
-            if callee.value.id == "pytestmark":
-                raise AssertionError((relative_path, "module pytestmark mutation"))
+        if _is_pytestmark_mutation(statement):
+            raise AssertionError((relative_path, "module pytestmark mutation"))
 
 
 def _assert_marker_topology(tree: ast.Module, relative_path: str) -> None:
@@ -183,15 +202,8 @@ def _assert_marker_topology(tree: ast.Module, relative_path: str) -> None:
             value = _assignment_value(statement, "pytestmark")
             if value is not None:
                 class_pytestmarks.append(value)
-            if isinstance(statement, ast.AugAssign) and isinstance(statement.target, ast.Name):
-                if statement.target.id == "pytestmark":
-                    raise AssertionError((relative_path, node.name, "class pytestmark mutation"))
-            if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
-                continue
-            callee = statement.value.func
-            if isinstance(callee, ast.Attribute) and isinstance(callee.value, ast.Name):
-                if callee.value.id == "pytestmark":
-                    raise AssertionError((relative_path, node.name, "class pytestmark mutation"))
+            if _is_pytestmark_mutation(statement):
+                raise AssertionError((relative_path, node.name, "class pytestmark mutation"))
         assert not any(
             _contains_asyncio_marker(marker, asyncio_aliases)
             for marker in node.decorator_list + class_pytestmarks
@@ -348,12 +360,78 @@ def test_marker_topology_rejects_module_asyncio_alias() -> None:
 
 
 @pytest.mark.parametrize(
+    "assignment",
+    (
+        "pytestmark = [pytest.mark.integration, "
+        'pytest.mark.skipif(not docker_available, reason="Docker not available"), '
+        "_asyncio_session]",
+        "pytestmark: list = [pytest.mark.integration, "
+        'pytest.mark.skipif(not docker_available, reason="Docker not available"), '
+        "_asyncio_session]",
+    ),
+    ids=("direct-assignment", "annotated-assignment"),
+)
+def test_marker_topology_rejects_module_pytestmark_assignments(assignment: str) -> None:
+    """Static module assignments must not leak asyncio to synchronous tests."""
+    relative_path = _TARGETS[0]
+    source = (_REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    original_assignment = (
+        "pytestmark = [\n"
+        "    pytest.mark.integration,\n"
+        '    pytest.mark.skipif(not docker_available, reason="Docker not available"),\n'
+        "]"
+    )
+    assigned_marks = source.replace(original_assignment, assignment, 1)
+
+    with pytest.raises(AssertionError, match="module asyncio marker"):
+        _assert_marker_topology(ast.parse(assigned_marks), relative_path)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "pytestmark += [_asyncio_session]",
+        "pytestmark.append(_asyncio_session)",
+        "pytestmark[0] = _asyncio_session",
+        "pytestmark[0:0] = [_asyncio_session]",
+    ),
+    ids=("augmented-assignment", "append-mutation", "index-assignment", "slice-assignment"),
+)
+def test_marker_topology_rejects_module_pytestmark_mutations(mutation: str) -> None:
+    """Runtime writes must not mutate module marks after static inspection."""
+    relative_path = _TARGETS[0]
+    source = (_REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    mutated_marks = source.replace(
+        '_asyncio_session = pytest.mark.asyncio(loop_scope="session")',
+        '_asyncio_session = pytest.mark.asyncio(loop_scope="session")\n' + mutation,
+        1,
+    )
+
+    with pytest.raises(AssertionError, match="module pytestmark mutation"):
+        _assert_marker_topology(ast.parse(mutated_marks), relative_path)
+
+
+@pytest.mark.parametrize(
     ("class_mark", "error_message"),
     (
+        ("pytestmark = [_asyncio_session]", "asyncio marker on test class"),
         ("pytestmark: list = [_asyncio_session]", "asyncio marker on test class"),
+        (
+            "pytestmark = [pytest.mark.unit]\n    pytestmark += [_asyncio_session]",
+            "class pytestmark mutation",
+        ),
         ("pytestmark.append(_asyncio_session)", "class pytestmark mutation"),
+        ("pytestmark[0] = _asyncio_session", "class pytestmark mutation"),
+        ("pytestmark[0:0] = [_asyncio_session]", "class pytestmark mutation"),
     ),
-    ids=("annotated-assignment", "append-mutation"),
+    ids=(
+        "direct-assignment",
+        "annotated-assignment",
+        "augmented-assignment",
+        "append-mutation",
+        "index-assignment",
+        "slice-assignment",
+    ),
 )
 def test_marker_topology_rejects_class_pytestmark_mutations(
     class_mark: str, error_message: str
