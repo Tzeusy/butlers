@@ -1010,16 +1010,16 @@ make test-qg
 
 ### No local gate command matches CI's scope — check which one produced a number
 
-Verified 2026-08-22. The commands called "the full gate" are each narrower than CI's `check` job,
-on different axes. Treating any of them as equivalent to CI is how a green local run precedes a red
-required check.
+Verified 2026-08-22. The commands called "the full gate" are each narrower than CI's hosted Python
+test lanes on different axes. Treating any of them as equivalent to those lanes is how a green local
+run precedes a red hosted run.
 
 | what | actual scope |
 | --- | --- |
 | `make test-qg` (called "full-scope" above) | `pytest tests/` minus `test_db.py`, `test_migrations.py`, `tests/e2e` |
 | CLAUDE.md low-context gate | `pytest tests/ --ignore=tests/e2e` |
-| CI `check`, unit lane (`ci.yml:154`) | `pytest tests/ roster/ --ignore=tests/e2e -m "not integration and not e2e and not nightly and not bench and not perf"` |
-| CI `check`, integration lane (`ci.yml:266`) | `pytest tests/ roster/ -m "integration and not nightly and not bench and not perf" -n auto --dist loadfile` |
+| CI `check-unit` job | `pytest tests/ roster/ --ignore=tests/e2e -m "not integration and not e2e and not nightly and not bench and not perf"` |
+| CI `check-integration` job | `pytest tests/ roster/ -m "integration and not nightly and not bench and not perf" -n auto --dist loadfile` |
 
 **`tests/` does not collect `roster/`.** They are sibling top-level directories, so any local command
 rooted at `tests/` runs *nothing* under `roster/<butler>/tests/`. A change whose tests live there can
@@ -1762,7 +1762,7 @@ Modules receive the audit pool via `Module.wire_audit_pool(pool)` — a post-sta
   report that no verdict exists, and counts printed before that cannot contradict them.
 - **The `pytest_sessionfinish` crash itself cannot usefully be hardened from this repo** (bu-5hp74, reproduced: `setsid .venv/bin/python -m pytest . -n 2 --dist loadfile -q &` then `kill -USR1` the controller). Two reasons, both checked rather than assumed. First, xdist ships `remote.py` to each worker via `gateway.remote_exec(xdist.remote)`, which executes the module *source* under a synthetic name; the worker's `WorkerInteractor` is therefore a different class object from the imported `xdist.remote.WorkerInteractor`, and monkeypatching the latter from a conftest or `-p` plugin is a verified no-op (both were tried; byte-identical logs). Second, even a successful patch via the `pytest_xdist_getremotemodule` hook would not restore a summary line, because the summary is written by the *controller*, which is the process that died. It would only delete the `cannot send (already closed?)` line, which is currently the only evidence distinguishing a killed run from a hung one. Harden the *reader*, not the teardown.
 
-- **Do not run two full backend gates concurrently on this machine.** They starve the Docker daemon and the second one reports `ERROR` at *setup* of testcontainers-backed tests, which reads like a broken suite but is pure contention (observed 2026-08-22: `13727 passed, 21 skipped, 10 errors in 25:02` where the baseline pass count was 13737 — the 10 errors are exactly the missing passes). The signature is unmistakable: every traceback bottoms out in `urllib3`/`requests` against `UnixHTTPConnectionPool(host='localhost', port=None)` — that is `/var/run/docker.sock` — with `ReadTimeout (read timeout=60)`, the failures cluster in one testcontainers-heavy file (here all 10 in `tests/config/test_init_db_bootstrap.py`), and there is **no `FAILURES` section and no `N failed`** because nothing got far enough to assert. Triage it with `sed -n '/short test summary/,$p' LOG | grep '^ERROR' | sed 's/::.*//' | sort | uniq -c`: errors confined to one or two container-heavy files, plus `passed + errors == baseline`, means infrastructure, not code. Serialize the gates and re-run, or trust the hosted `check` job, which runs on an uncontended runner.
+- **Do not run two full backend gates concurrently on this machine.** They starve the Docker daemon and the second one reports `ERROR` at *setup* of testcontainers-backed tests, which reads like a broken suite but is pure contention (observed 2026-08-22: `13727 passed, 21 skipped, 10 errors in 25:02` where the baseline pass count was 13737 — the 10 errors are exactly the missing passes). The signature is unmistakable: every traceback bottoms out in `urllib3`/`requests` against `UnixHTTPConnectionPool(host='localhost', port=None)` — that is `/var/run/docker.sock` — with `ReadTimeout (read timeout=60)`, the failures cluster in one testcontainers-heavy file (here all 10 in `tests/config/test_init_db_bootstrap.py`), and there is **no `FAILURES` section and no `N failed`** because nothing got far enough to assert. Triage it with `sed -n '/short test summary/,$p' LOG | grep '^ERROR' | sed 's/::.*//' | sort | uniq -c`: errors confined to one or two container-heavy files, plus `passed + errors == baseline`, means infrastructure, not code. Serialize the gates and re-run, or trust the hosted `check-unit` and `check-integration` lanes plus their fail-closed `check` fan-in; the hosted lanes run on uncontended runners.
 
 - **A baseline spec that contradicts the code is NOT drift while its OpenSpec change is open.** `openspec/` is delta-based: proposals live in `openspec/changes/<change>/specs/<capability>/spec.md` as `## ADDED` / `## MODIFIED` / `## REMOVED` blocks, and `openspec archive` is what rewrites the baselines under `openspec/specs/`. So a baseline lagging an in-flight PR is the *normal* mid-change state, not a defect — before filing spec drift or blocking a merge on it, grep `openspec/changes/` for a staged delta that already covers it (observed 2026-08-22: a fleet-halt requirement flagged as drift was already retracted verbatim in the open change's `## MODIFIED` block). Two corollaries: hand-editing a baseline while a change is open risks colliding at archive, so only do it for a requirement that change does not touch; and never "refresh" a superseded baseline requirement cosmetically — repointing a module name without correcting the THEN clauses makes a stale guarantee look freshly verified, which is worse than leaving it visibly stale.
 - **`cmd 2>&1 > file` does NOT capture stderr** — it points stderr at the *terminal* and only stdout at the file. Redirection is evaluated left to right, so the correct form is `cmd > file 2>&1`. This bites hardest with tools that report on stderr (`openspec validate` among them): a before/after comparison written the wrong way diffs two empty files and returns a confident, entirely vacuous "identical". Same shape as the killed-gate-with-no-summary trap above — absence of output read as a clean result. When a check's value depends on its output, assert the output is non-empty before trusting what it says.
@@ -1775,12 +1775,13 @@ a red `check` will not stop `gh pr merge`. Waiting for green is a discipline, no
 Do not describe a CI job as "required" or "blocking"; when adding a new job, "advisory like every
 other check here" is the accurate phrasing.
 
-### CI's `check` job runs named make targets, NOT `make check`
+### CI's Python jobs run named commands, NOT `make check`
 
-`.github/workflows/ci.yml` invokes individual targets (`make check-for-update-joins`, an explicit
-`uv run pytest tests/ roster/ ...` step, a smoke step) rather than `make check` wholesale.
-**Adding a target to the `check` aggregate in the Makefile does NOT make it run in CI** -- that needs
-a dedicated job. Verify by reading the job's `run:` steps, never by reading the Makefile.
+`.github/workflows/ci.yml` invokes individual commands in `check-unit` and `check-integration`
+(`make check-for-update-joins`, explicit `uv run pytest tests/ roster/ ...` steps, and a smoke step)
+rather than `make check` wholesale. **Adding a target to the `check` aggregate in the Makefile does
+NOT make it run in CI** -- that needs an explicit workflow step in the appropriate job. Verify by
+reading the jobs' `run:` steps, never by reading the Makefile.
 
 Scope table, because the four "run the tests" incantations differ and are easy to conflate:
 
@@ -1788,8 +1789,8 @@ Scope table, because the four "run the tests" incantations differ and are easy t
 | --- | --- |
 | `make test-qg` | `pytest tests/` minus `test_db.py`, `test_migrations.py`, `tests/e2e` |
 | CLAUDE.md low-context gate | `pytest tests/ --ignore=tests/e2e` |
-| CI `check` unit lane | `pytest tests/ roster/ --ignore=tests/e2e -m "not integration and not e2e and not nightly and not bench and not perf"` |
-| CI `check` integration lane | `pytest tests/ roster/ -m "integration and not nightly and not bench and not perf" -n auto --dist loadfile` |
+| CI `check-unit` job | `pytest tests/ roster/ --ignore=tests/e2e -m "not integration and not e2e and not nightly and not bench and not perf"` |
+| CI `check-integration` job | `pytest tests/ roster/ -m "integration and not nightly and not bench and not perf" -n auto --dist loadfile` |
 
 `make lint` is only `ruff check src/ tests/` -- it omits `roster/` and `conftest.py`. The 21-vs-113
 skip-count gap between gate runs is `tests/e2e`, not `roster/`. **Exit 0 is the only acceptance
@@ -2346,8 +2347,8 @@ concurrency.
 `testcontainers-ryuk-<SESSION_ID>`, which holds a TCP socket and reaps by session-id label when the
 socket drops (a SIGKILL closes it via the kernel). Note the exception before you grep and conclude
 otherwise: CI **does** set `TESTCONTAINERS_RYUK_DISABLED: "true"` (`.github/workflows/ci.yml` in the
-`check` job's smoke and integration steps, and `nightly.yml`). That is fine there and cannot leak
-here, because those jobs are `runs-on: ubuntu-latest` — throwaway VMs. The `gha-runner-*` containers
+`check-unit` smoke step and `check-integration` test step, plus `nightly.yml`). That is fine there
+and cannot leak here, because those jobs are `runs-on: ubuntu-latest` — throwaway VMs. The `gha-runner-*` containers
 on this box belong to a different project, not to butlers CI.
 
 Ryuk's one real gap: it runs with `auto_remove=True` (`testcontainers/core/container.py:348`) and
