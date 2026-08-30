@@ -1,6 +1,6 @@
 ## 1. Contract and Baseline Gates
 
-- [ ] 1.1 Confirm owner sign-off on the proposal, RFC 0027 decisions, v1 non-goals, and the `eager_filtered`/`auto` operational policy before implementation begins.
+- [x] 1.1 Record owner sign-off on the proposal, RFC 0027 decisions, v1 non-goals, and the `eager_filtered`/`auto` operational policy; approval was granted on 2026-08-30 for commit `3448804aaff7b163b4b81deb646db2c9f4ae1397`.
 - [ ] 1.2 Refresh the implementation branch from the approved baseline, re-run active-change overlap and body-overwrite checks, and rebuild any affected MODIFIED requirement against the then-current main spec.
 - [ ] 1.3 Convert every `core-tool-discovery` requirement into cited test targets and keep code-mode, caller-authentication, generic gateway, and automatic binary-upgrade work outside this changeset.
 

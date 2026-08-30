@@ -102,3 +102,15 @@ with a conservative cross-CLI fallback.
 - Automatically upgrading Codex, OpenCode, Claude Code, or Gemini binaries.
 - Enabling programmatic/code-mode execution in v1; it remains reserved until a
   separate isolation design proves nested code cannot reach broader authority.
+
+## Owner Sign-off
+
+- **Status:** Approved
+- **Approved by:** owner
+- **Date:** 2026-08-30
+- **Approved artifact:** commit `3448804aaff7b163b4b81deb646db2c9f4ae1397`
+- **Approval scope:** proposal, RFC 0027 decisions, v1 non-goals, and the
+  `eager_filtered`/`auto` operational policy
+- **Authority:** clears the specification gate and permits handoff for
+  sequencing; it does not itself request implementation, merge, deployment,
+  runtime binary upgrades, or live canary activation

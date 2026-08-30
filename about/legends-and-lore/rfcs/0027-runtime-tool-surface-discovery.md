@@ -1,9 +1,14 @@
 # RFC 0027: Runtime Tool Surface Discovery and Exposure
 
-**Status:** Draft
+**Status:** Accepted
 **Date:** 2026-08-30
 **Baseline:** `ba1c55c31056af5eaa362a254193bbf43741e86a`
 **Related:** RFC 0001, RFC 0002, RFC 0005, RFC 0008
+
+**Owner approval:** 2026-08-30, artifact
+`3448804aaff7b163b4b81deb646db2c9f4ae1397`. Approval adopts this design and
+permits sequencing; it does not request implementation, merge, deployment,
+runtime binary upgrades, or live canary activation.
 
 ## Summary
 

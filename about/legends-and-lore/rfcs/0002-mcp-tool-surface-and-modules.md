@@ -309,8 +309,8 @@ applied once per process from `ButlerDaemon._build_mcp_http_app`.
 
 ## Proposed Amendment 1 (2026-08-30) — LLM Presentation and Native Deferred Discovery
 
-**Status:** Proposed; governed by Draft RFC 0027 and not adopted until the
-paired OpenSpec change receives owner sign-off.
+**Status:** Owner-approved on 2026-08-30 with RFC 0027; effective in the
+canonical contract when the paired OpenSpec/RFC change is merged.
 
 If accepted, RFC 0027 changes only how registered tools are presented to LLM
 runtimes:
