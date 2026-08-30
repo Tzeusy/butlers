@@ -12,7 +12,7 @@ runtime binary upgrades, or live canary activation.
 
 ## Summary
 
-If accepted, this RFC lets each butler present an LLM-oriented projection of
+This RFC lets each butler present an LLM-oriented projection of
 its canonical MCP tool registry. The projection omits infrastructure-only
 definitions and lets verified runtime hosts defer full schemas until the model
 searches for them. Runtimes without verified deferred discovery use an eager
@@ -25,7 +25,7 @@ schema validation, egress ownership, tracing, and tool-call capture remain the
 execution authority. The unfiltered MCP endpoint remains available to existing
 infrastructure clients.
 
-If accepted, this RFC supersedes RFC 0002's assumption that every registered
+This RFC supersedes RFC 0002's assumption that every registered
 tool definition must be fully serialized into every LLM session and resolves
 its deferred registered-but-LLM-hidden presentation tier. It does not supersede
 RFC 0002's registration, module, approval, skills, or MCP-only communication

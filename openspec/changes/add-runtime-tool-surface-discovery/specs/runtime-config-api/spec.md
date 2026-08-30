@@ -41,8 +41,8 @@ Scope: v1-mandatory
 
 #### Scenario: All managed fields are cold
 - **WHEN** a PATCH request updates any of `core_groups`, `max_concurrent`, or `max_queued`
-- **THEN** the response SHALL include `restart_required` listing exactly the changed fields, because all three require a daemon restart to take effect (there are no hot fields on this surface)
-- **AND** this historical scenario applies to those three fields; `tool_exposure_policy` is the new hot-field exception
+- **THEN** the response SHALL include `restart_required` listing exactly the changed fields, because those three cold fields require a daemon restart to take effect
+- **AND** this historical scenario applies only to those three fields; hot `tool_exposure_policy` takes effect for subsequent invocations and SHALL NOT appear in `restart_required`
 
 #### Scenario: Invalid field value — negative concurrency
 - **WHEN** a PATCH request sets `max_concurrent` to a negative number or zero

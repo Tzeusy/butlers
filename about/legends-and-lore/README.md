@@ -8,11 +8,12 @@ For a new reader, the recommended order follows data flow from startup through r
 
 1. **RFC 0001** -- Daemon startup, trigger dispatch, and session lifecycle
 2. **RFC 0002** -- MCP tool surface, module system, and skills infrastructure
-3. **RFC 0003** -- Switchboard ingestion, triage, classification, and routing
-4. **RFC 0004** -- Identity resolution and contact model
-5. **RFC 0005** -- Observability, tracing, and metrics
-6. **RFC 0006** -- Database schema isolation and migration machinery
-7. **RFC 0007** -- Dashboard API and frontend architecture
+3. **RFC 0027** -- LLM tool presentation, portable eager filtering, and verified native deferred discovery
+4. **RFC 0003** -- Switchboard ingestion, triage, classification, and routing
+5. **RFC 0004** -- Identity resolution and contact model
+6. **RFC 0005** -- Observability, tracing, and metrics
+7. **RFC 0006** -- Database schema isolation and migration machinery
+8. **RFC 0007** -- Dashboard API and frontend architecture
 
 ## Index
 

@@ -11,8 +11,9 @@ Source: [Observed] session-process-logs table schema; RFC 0027 §Observability a
 Scope: v1-mandatory
 
 #### Scenario: Table created by migration
-- **WHEN** migration core_022 runs on a butler schema
-- **THEN** the `session_process_logs` table is created with the specified schema and index
+- **WHEN** migrations run from `core_022` through the additive tool-surface migration on a fresh butler schema
+- **THEN** `core_022` creates the base `session_process_logs` table and expiry index
+- **AND** the later migration adds non-null `tool_surface_attempts` with an empty-array default, yielding the specified current schema without rewriting `core_022`
 
 #### Scenario: CASCADE delete on session removal
 - **WHEN** a session row is deleted from the `sessions` table

@@ -307,12 +307,12 @@ applied once per process from `ButlerDaemon._build_mcp_http_app`.
 
 **Dynamic tool registration after server start.** Rejected because FastMCP does not support hot-adding tools to a running SSE server. All tools MUST be registered before the server begins accepting connections.
 
-## Proposed Amendment 1 (2026-08-30) — LLM Presentation and Native Deferred Discovery
+## Accepted Amendment 1 (2026-08-30) — LLM Presentation and Native Deferred Discovery
 
 **Status:** Owner-approved on 2026-08-30 with RFC 0027; effective in the
 canonical contract when the paired OpenSpec/RFC change is merged.
 
-If accepted, RFC 0027 changes only how registered tools are presented to LLM
+RFC 0027 changes only how registered tools are presented to LLM
 runtimes:
 
 - The registered/callable set remains governed by core groups, module groups,

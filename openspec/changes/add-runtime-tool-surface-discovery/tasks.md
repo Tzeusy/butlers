@@ -49,7 +49,8 @@
 
 ## 7. Documentation and Rollout Handoff
 
-- [ ] 7.1 After owner adoption, mark RFC 0027 and RFC 0002's amendment consistently, then update `about/lay-and-land/integration.md`, `docs/concepts/mcp-model.md`, lifecycle/trigger docs, and runtime adapter documentation with current shipped behavior.
-- [ ] 7.2 Document the distinction between registered, LLM-presentable, and initially loaded sets; state explicitly that hidden presentation is not authorization and eager-only runtimes receive no guaranteed large token reduction.
-- [ ] 7.3 Produce a canary/rollback runbook that keeps all existing rows eager, requires separate operator authorization before setting one live butler to `auto`, and returns to eager on any CLI/profile mismatch or task-quality regression.
-- [ ] 7.4 Verify no implementation task added a generic gateway, Code Mode, caller authentication, semantic daemon routing, or automatic binary upgrade; route any such discovery through a separate spec-first change.
+- [x] 7.1 Record owner adoption by marking RFC 0027 and RFC 0002's amendment consistently.
+- [ ] 7.2 Update `about/lay-and-land/integration.md`, `docs/concepts/mcp-model.md`, lifecycle/trigger docs, and runtime adapter documentation with current shipped behavior.
+- [ ] 7.3 Document the distinction between registered, LLM-presentable, and initially loaded sets; state explicitly that hidden presentation is not authorization and eager-only runtimes receive no guaranteed large token reduction.
+- [ ] 7.4 Produce a canary/rollback runbook that keeps all existing rows eager, requires separate operator authorization before setting one live butler to `auto`, and returns to eager on any CLI/profile mismatch or task-quality regression.
+- [ ] 7.5 Verify no implementation task added a generic gateway, Code Mode, caller authentication, semantic daemon routing, or automatic binary upgrade; route any such discovery through a separate spec-first change.
