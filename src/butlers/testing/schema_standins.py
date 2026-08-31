@@ -383,12 +383,14 @@ APPROVAL_EVENTS = TableStandin(
 )
 
 
-# The relationship chain owns its own schema, so both tables below only land in
-# ``relationship`` when that chain is migrated with that ``search_path`` -- hence
-# ``chain_schemas``. That mapping is for the parity fixture; each test fixture
-# chooses DDL qualification for its own pool. The registry is qualified at every
-# call site; ``contact_entity_map`` is qualified in relationship-schema fixtures
-# and left unqualified only where the test pool's default schema is public.
+# The relationship chain owns its own schema. rel_014 explicitly qualifies
+# ``entity_predicate_registry``; rel_029 leaves ``contact_entity_map``
+# unqualified, so it lands in ``relationship`` only when the chain is migrated
+# with that ``search_path``. ``chain_schemas`` records that chain-level
+# requirement for the parity fixture; each test fixture chooses DDL
+# qualification for its own pool. The registry is qualified at every call
+# site; ``contact_entity_map`` is qualified in relationship-schema fixtures and
+# left unqualified only where the test pool's default schema is public.
 ENTITY_PREDICATE_REGISTRY = TableStandin(
     table="entity_predicate_registry",
     chains=("core", "relationship"),
