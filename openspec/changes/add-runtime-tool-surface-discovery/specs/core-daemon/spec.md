@@ -27,12 +27,13 @@ Name-gated tools (messenger-only, switchboard-only) are gated by butler name as 
 
 RFC 0027 supersedes the historical deferral in the preceding paragraph. Core
 tool registration SHALL remain group/type/name gated exactly as above, while a
-separate LLM-presentation layer SHALL hide infrastructure-only handlers from LLM
-listing without removing the handler needed by its infrastructure caller.
-The presentation layer is not a new caller-authentication boundary and does not
-replace the handler's existing validation. `route.execute` is the first
-mandatory infrastructure-only classification; the complete inventory is
-governed by `core-tool-discovery`.
+separate adapter-rendered LLM-presentation layer SHALL hide
+infrastructure-only handlers from model context/native search without removing
+them from canonical FastMCP `tools/list` or the handler needed by an
+infrastructure caller. The presentation layer is not a new caller-
+authentication boundary and does not replace existing handler validation.
+`route.execute` is the first mandatory infrastructure-only classification; the
+complete inventory is governed by `core-tool-discovery`.
 
 #### Scenario: core_groups filters tool registration
 - **WHEN** a butler daemon starts with `core_groups = ['infra', 'notifications']` in runtime_config
@@ -47,7 +48,7 @@ governed by `core-tool-discovery`.
 - **WHEN** any butler daemon starts, regardless of core_groups value
 - **THEN** `route.execute` SHALL be registered on the MCP server
 - **AND** it SHALL be callable by the Switchboard for routed message delivery
-- **AND** it SHALL be absent from the LLM-facing tool-list projection
+- **AND** it SHALL remain present in canonical `tools/list` but absent from the adapter-rendered model presentation
 
 #### Scenario: Switchboard-only tools name-gated
 - **WHEN** a non-switchboard butler has `switchboard_routing` in its core_groups
@@ -66,7 +67,7 @@ governed by `core-tool-discovery`.
 
 - **WHEN** a core handler is registered for infrastructure use but excluded from LLM presentation
 - **THEN** the existing infrastructure caller retains the canonical handler and schema
-- **AND** the LLM projection omits its name and schema without claiming new call-time authorization
+- **AND** the adapter artifact omits its name and schema before model serialization/search without claiming new call-time authorization
 
 ### Requirement: Config loading parses runtime_seed section
 The daemon config loader SHALL parse `[butler.runtime_seed]` from the toml and return a `RuntimeSeedConfig` dataclass. The old `[butler.runtime]` and `[butler.seed_configs]` sections SHALL be rejected with a clear error.

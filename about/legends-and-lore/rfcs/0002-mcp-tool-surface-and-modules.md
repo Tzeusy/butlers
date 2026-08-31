@@ -338,3 +338,33 @@ zero non-MCP effect-capable actions. Plain-text and successful shell-only
 completions without such failure evidence are valid; a failed attempt that ran
 shell/command execution is not replayable. RFC 0027 defines the shared trigger
 vocabulary and effect predicate for every presentation mode.
+
+## Accepted Amendment 2 (2026-08-31) — Adapter-Owned Presentation and Complete MCP Listing
+
+**Status:** Owner-selected Option B in `bu-g5fha`; effective in the canonical
+contract when the paired RFC/OpenSpec amendment merges.
+
+Amendment 2 supersedes Amendment 1 only on where LLM projection occurs and how
+opaque runtime-host MCP pagination is treated:
+
+- FastMCP `tools/list` remains the complete registered protocol surface over
+  streamable HTTP and SSE for every client.
+- The post-approval catalog retains immutable definitions, names, and digests,
+  never handler callables.
+- Each runtime attempt receives a plan-digest-bound canonical-name allowlist;
+  the adapter renders it through supported public host configuration before
+  definitions enter model context or a native search index.
+- Runtime-host MCP enumeration and pagination remain internal to that
+  invocation and are not represented as Butlers-owned cursors. Conformance must
+  prove hidden definitions, schemas, and counts never reach model-visible
+  input.
+- Model-visible omission is not call-time authorization. Direct calls continue
+  through the complete canonical MCP endpoint and final wrapped handler.
+- A tuple that cannot prevent its host from independently serializing the
+  complete list is ineligible for tool-bearing work. The complete list is not a
+  presentation fallback.
+- Private FastMCP hooks, monkeypatches, duplicate filtered servers, proxies,
+  and JSON-RPC/SSE frame rewriting remain prohibited.
+
+Registration, module groups, approval wrapping, skills, schemas, logging,
+attribution, and MCP-only communication are unchanged.

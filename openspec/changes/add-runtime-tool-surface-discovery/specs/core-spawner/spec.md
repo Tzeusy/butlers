@@ -2,22 +2,25 @@
 
 ### Requirement: Ephemeral MCP Config Generation
 Each invocation SHALL generate a locked-down MCP configuration pointing exclusively at this butler's MCP server URL. The runtime session ID SHALL be appended as a query parameter to the MCP URL for tool-call-to-session correlation.
-The generated runtime URL SHALL also identify that `tools/list` uses the
-LLM-presentable projection. That presentation marker and the existing session
-and trigger query values are untrusted correlation/presentation inputs, not
-caller authentication. A runtime/model failover attempt SHALL rebuild its
-tool-surface plan and adapter assets for the newly resolved tuple rather than
-reusing native-discovery configuration from the preceding attempt.
+The canonical MCP endpoint SHALL retain its complete `tools/list` surface. The
+runtime session and trigger query values are untrusted correlation inputs, not
+caller authentication. After resolving each runtime/model candidate, the
+spawner SHALL build an immutable adapter presentation asset containing the
+attempt plan digest and exact canonical-name allowlist. The adapter SHALL render
+that asset through supported public host configuration before definitions enter
+model context or native search. A failover attempt SHALL rebuild its plan and
+assets rather than reuse the preceding attempt's filter or native state.
 
 ID: REQ-core-spawner-001
-Source: RFC 0001 §Trigger Dispatch; RFC 0002 §Ephemeral MCP Config Generation; RFC 0027 §LLM Tool-List Projection
+Source: RFC 0001 §Trigger Dispatch; RFC 0002 §Ephemeral MCP Config Generation; RFC 0027 §Adapter-Owned LLM Projection
 Scope: v1-mandatory
 
 #### Scenario: MCP config includes only butler's server
 - **WHEN** the spawner prepares an invocation
 - **THEN** the `mcp_servers` dict contains exactly one entry keyed by the butler's name
 - **AND** the entry's URL points to `http://localhost:<port>/sse` (or `/mcp`) with the runtime session ID as a query parameter
-- **AND** the URL selects the LLM-presentable tool-list projection without adding any other MCP server
+- **AND** the URL exposes the complete canonical list without adding any other MCP server
+- **AND** the separately rendered adapter asset restricts model-visible tools to the attempt allowlist
 
 #### Scenario: Every candidate uses matching presentation capabilities
 
@@ -27,9 +30,16 @@ Scope: v1-mandatory
 
 #### Scenario: Infrastructure client remains on the complete surface
 
-- **WHEN** an existing Switchboard, connector, scheduler, dashboard, or recovery client connects without the LLM-presentation marker
+- **WHEN** an existing Switchboard, connector, scheduler, dashboard, recovery, or runtime host connects to the canonical endpoint
 - **THEN** it receives the complete registered MCP list governed by its existing endpoint contract
-- **AND** the runtime projection does not remove or rename its tools
+- **AND** adapter presentation does not remove or rename canonical handlers
+
+#### Scenario: Adapter assets carry the immutable presentation plan
+
+- **WHEN** the spawner prepares a tool-bearing runtime/model candidate
+- **THEN** its adapter asset binds attempt identity, catalog generation, enabled-module snapshot, policy, compatibility key, and canonical-name allowlist
+- **AND** conflicting runtime arguments cannot replace the generated MCP or host-filter configuration
+- **AND** the asset and any host-internal pagination state are never reused by another plan
 
 ### Requirement: Runtime Failure Classification
 The spawner SHALL classify runtime failures before deciding whether automatic model
@@ -68,7 +78,8 @@ Scope: v1-mandatory
 
 - **WHEN** the adapter reports a closed native transport or discovery-protocol failure
 - **THEN** the classifier merges daemon MCP capture with every parsed non-MCP effect-capable host action
-- **AND** presentation fallback remains ineligible unless effect evidence is complete and both effect counts are zero
+- **AND** presentation fallback remains ineligible unless the same candidate has a separately verified eager-capable profile, effect evidence is complete, and both effect counts are zero
+- **AND** without that eager profile no presentation replay occurs; ordinary candidate failover remains governed by its separate eligibility rules
 
 #### Scenario: Shell activity makes presentation replay ineligible
 

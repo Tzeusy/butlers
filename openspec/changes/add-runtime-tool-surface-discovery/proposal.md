@@ -19,18 +19,21 @@ with a conservative cross-CLI fallback.
   already registered on each butler's FastMCP server. The catalog distinguishes
   the executable set, LLM-eligible set, discoverable set, and initially
   loaded set without broadening existing butler, group, or module ownership.
-- Classify tools by LLM visibility and load posture so runtime sessions do not
-  discover infrastructure-only tools, while Switchboard, connector,
-  scheduler, dashboard, and recovery callers retain their existing endpoints.
+- Classify tools by LLM visibility and load posture. Canonical FastMCP
+  `tools/list` remains complete for every caller; each runtime adapter renders
+  a plan-bound allowlist before definitions enter model context or native
+  search. Switchboard, connector, scheduler, dashboard, and recovery callers
+  retain their existing endpoints.
 - Build a per-invocation tool-surface plan after runtime/model resolution. The
   plan selects `none`, `eager_filtered`, or `native_deferred` from
   the intersection of trigger policy, configured exposure policy, verified CLI
   capabilities, and provider/model support.
-- Add runtime capability probing and invocation preparation as explicit adapter
-  responsibilities. Unsupported, unknown, or failed discovery capabilities fall
-  back to `eager_filtered` before launch or only under the explicit complete-
-  evidence zero-effect replay predicate; healing and QA isolation continues to
-  select `none`.
+- Add runtime capability probing, allowlist rendering, and invocation
+  preparation as explicit adapter responsibilities. Unsupported or unknown
+  model-presentation filters make a tuple ineligible rather than exposing the
+  complete list. Verified eager or native failures follow the explicit
+  complete-evidence zero-effect replay predicate; healing and QA isolation
+  continues to select `none`.
 - Preserve call-time module-state checks, existing handler authorization, approval gates,
   schema validation, telemetry, and canonical tool-call attribution regardless
   of how a tool was discovered or loaded.
@@ -60,9 +63,9 @@ with a conservative cross-CLI fallback.
   behavior.
 - `core-modules`: Add the module-author contract for exposure metadata without
   changing existing argument-sensitivity or group-registration semantics.
-- `core-spawner`: Add the LLM-presentation marker and require the tool-surface
-  plan to be rebuilt for each runtime/model attempt while preserving one-butler
-  MCP isolation.
+- `core-spawner`: Require an immutable adapter presentation asset to be rebuilt
+  for each runtime/model attempt while preserving one-butler MCP isolation and
+  the complete canonical MCP endpoint. No LLM URL marker is added.
 - `runtime-config-table`: Persist the conservative/automatic tool exposure
   policy as DB-backed per-butler operational tuning.
 - `runtime-config-api`: Read, validate, and update the exposure policy as a hot
@@ -78,7 +81,8 @@ with a conservative cross-CLI fallback.
   `src/butlers/mcp_wrappers.py`, `src/butlers/guards.py`,
   `src/butlers/core/spawner.py`, and `src/butlers/core/runtime_config.py`.
 - Runtime adapters: the base adapter contract plus Codex, OpenCode, Claude Code,
-  and Gemini invocation/configuration paths.
+  and Gemini invocation/configuration paths, including exact public host-filter
+  dialects and canonical-to-host name mappings.
 - Module contracts: `ToolMeta` gains LLM-visibility and load-posture metadata;
   existing argument-sensitivity metadata and approval behavior remain intact.
 - Operations and observability: runtime configuration/API projection, session
@@ -94,6 +98,9 @@ with a conservative cross-CLI fallback.
 - Exposing every fleet tool to every butler or runtime session.
 - Replacing typed MCP calls with a generic `search_tools` plus `invoke_tool`
   gateway.
+- Overriding private FastMCP handlers, running a second filtered MCP server,
+  proxying/re-writing JSON-RPC or SSE frames, or treating opaque host cursors as
+  Butlers-owned plan state.
 - Treating tool discovery, skill loading, descriptions, or MCP annotations as
   authorization.
 - Adding fleet-wide MCP caller authentication or claiming that LLM-hidden
@@ -114,3 +121,24 @@ with a conservative cross-CLI fallback.
 - **Authority:** clears the specification gate and permits handoff for
   sequencing; it does not itself request implementation, merge, deployment,
   runtime binary upgrades, or live canary activation
+
+## Owner Amendment — Option B
+
+- **Status:** Selected; amendment integration pending
+- **Selected by:** owner
+- **Date:** 2026-08-31
+- **Decision bead:** `bu-g5fha`
+- **Decision:** Keep canonical FastMCP listing complete and move model-visible
+  projection to a fresh per-attempt adapter allowlist rendered through public
+  runtime-host configuration.
+- **Reason:** No supported FastMCP request-aware pagination seam or committed
+  upstream roadmap justifies holding delivery. Private hooks, duplicate
+  servers, proxies, and wire rewriting remain rejected.
+- **Cursor refinement:** Adapters do not own opaque host MCP cursors.
+  Host-internal pagination is invocation-local and non-model-visible;
+  conformance proves hidden definitions never enter model context/search.
+- **Strict policy:** A host that mandates native deferral cannot satisfy
+  `eager_filtered` and is ineligible under that policy.
+- **Authority:** authorizes RFC/OpenSpec/Beads amendment only. Implementation,
+  dependency upgrades, amendment merge, provider evaluation, policy activation,
+  deployment, and canary retain separate gates.
