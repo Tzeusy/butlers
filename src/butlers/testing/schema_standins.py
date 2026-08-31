@@ -384,11 +384,11 @@ APPROVAL_EVENTS = TableStandin(
 
 
 # The relationship chain owns its own schema, so both tables below only land in
-# ``relationship`` when that chain is migrated with that search_path -- hence
-# ``chain_schemas``.  Test fixtures still call ``ddl()`` with whatever schema
-# their own pool uses; ``relationship.entity_predicate_registry`` is spelled out
-# in the roster tests, ``contact_entity_map`` is left unqualified because those
-# fixtures run with the relationship butler's search_path pointing at public.
+# ``relationship`` when that chain is migrated with that ``search_path`` -- hence
+# ``chain_schemas``. That mapping is for the parity fixture; each test fixture
+# chooses DDL qualification for its own pool. The registry is qualified at every
+# call site; ``contact_entity_map`` is qualified in relationship-schema fixtures
+# and left unqualified only where the test pool's default schema is public.
 ENTITY_PREDICATE_REGISTRY = TableStandin(
     table="entity_predicate_registry",
     chains=("core", "relationship"),

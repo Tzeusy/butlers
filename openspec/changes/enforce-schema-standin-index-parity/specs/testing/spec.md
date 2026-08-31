@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-### Requirement: Schema Stand-In Parity Covers Indexes
+### Requirement: Schema Stand-In Parity Is Complete
 A hand-provisioned table stand-in SHALL mirror the indexes its migration chain
 creates, and the parity guard SHALL diff them against the real table in both
 directions. An index is not decoration: a unique or partial index decides which
