@@ -1,7 +1,7 @@
 """Install the runtime-attention operator projection and reissue operation.
 
-Revision ID: core_207
-Revises: core_206
+Revision ID: core_208
+Revises: core_207
 Create Date: 2026-08-26 00:00:00.000000
 
 The migration login invokes a bootstrap-owned fixed upgrader and never receives
@@ -15,13 +15,13 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "core_207"
-down_revision = "core_206"
+revision = "core_208"
+down_revision = "core_207"
 branch_labels = None
 depends_on = None
 
 _LOCK = """
-SELECT pg_advisory_xact_lock(hashtextextended('butlers:core_207:runtime_attention_operator', 0))
+SELECT pg_advisory_xact_lock(hashtextextended('butlers:core_208:runtime_attention_operator', 0))
 """
 
 
@@ -90,6 +90,6 @@ def downgrade() -> None:
     )
     if not trusted:
         raise RuntimeError(
-            "core_207 downgrade requires the managed privileged bootstrap deactivator"
+            "core_208 downgrade requires the managed privileged bootstrap deactivator"
         )
     bind.execute(sa.text("SELECT public.runtime_attention_deactivate_operator_v3()"))
