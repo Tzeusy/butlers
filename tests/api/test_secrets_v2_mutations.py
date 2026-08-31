@@ -130,7 +130,17 @@ def _make_shared_pool(
     else:
         shared_pool.execute = AsyncMock(side_effect=Exception("DB error"))
 
+    acquired_active = False
+    transaction_active = False
+    transaction_query_trace: list[tuple[str, bool, bool]] = []
+
     async def _transaction_fetchrow(sql, *args):
+        if "public.entity_info" not in sql:
+            return await _fetchrow(sql, *args)
+        transaction_query_trace.append((sql, acquired_active, transaction_active))
+        assert acquired_active and transaction_active, (
+            "transaction fetchrow must run while the acquired transaction is active"
+        )
         if "UPDATE public.entity_info" in sql:
             if rotate_update_error is not None:
                 raise rotate_update_error
@@ -152,16 +162,27 @@ def _make_shared_pool(
     # Fake transaction() context manager.
     @asynccontextmanager
     async def _transaction():
-        yield
+        nonlocal transaction_active
+        transaction_active = True
+        try:
+            yield
+        finally:
+            transaction_active = False
 
     fake_conn.transaction = MagicMock(side_effect=_transaction)
 
     @asynccontextmanager
     async def _acquire():
-        yield fake_conn
+        nonlocal acquired_active
+        acquired_active = True
+        try:
+            yield fake_conn
+        finally:
+            acquired_active = False
 
     shared_pool.acquire = MagicMock(side_effect=_acquire)
     shared_pool._transaction_connection = fake_conn
+    shared_pool._transaction_query_trace = transaction_query_trace
     shared_pool._rotate_returning_row = rotate_returning_row
 
     return shared_pool
@@ -1590,6 +1611,9 @@ def test_rotate_locks_and_updates_on_one_transactional_connection(monkeypatch):
     assert len(entity_info_sql) == 2
     assert "FOR UPDATE" in entity_info_sql[0]
     assert "UPDATE" in entity_info_sql[1] and "RETURNING" in entity_info_sql[1]
+    transaction_query_trace = shared_pool._transaction_query_trace
+    assert [query for query, _, _ in transaction_query_trace] == entity_info_sql
+    assert all(acquired and active for _, acquired, active in transaction_query_trace)
     pool_entity_info_sql = [
         call.args[0]
         for call in shared_pool.fetchrow.await_args_list
