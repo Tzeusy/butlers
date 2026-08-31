@@ -1637,10 +1637,10 @@ def test_rotate_loads_scope_evidence_only_for_the_published_read(monkeypatch):
 
     assert resp.status_code == 200, resp.text
     assert len(_matching(shared_pool, _CATALOGUE_SQL)) == 1, (
-        "rotate must read the scope catalogue only for the response re-read"
+        "rotate must read the scope catalogue only for the response built from UPDATE RETURNING"
     )
     assert len(_matching(shared_pool, _GRANTED_SCOPES_SQL)) == 1, (
-        "rotate must read granted scopes only for the response re-read"
+        "rotate must read granted scopes only for the response built from UPDATE RETURNING"
     )
     # The evidence still ships: an unloaded record would have raised instead.
     assert "capabilities_required" in resp.json()["data"]
