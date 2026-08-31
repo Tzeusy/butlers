@@ -181,15 +181,15 @@ describe("CARTO basemap authentication", () => {
   ]
 
   it.each([
-    ["light", false, "absent", undefined, lightTilesWithoutKey],
-    ["light", false, "empty", "", lightTilesWithoutKey],
-    ["light", false, "whitespace-only", "  ", lightTilesWithoutKey],
-    ["dark", true, "absent", undefined, darkTilesWithoutKey],
-    ["dark", true, "empty", "", darkTilesWithoutKey],
-    ["dark", true, "whitespace-only", "  ", darkTilesWithoutKey],
+    ["absent", "light", false, undefined, lightTilesWithoutKey],
+    ["empty", "light", false, "", lightTilesWithoutKey],
+    ["whitespace-only", "light", false, "  ", lightTilesWithoutKey],
+    ["absent", "dark", true, undefined, darkTilesWithoutKey],
+    ["empty", "dark", true, "", darkTilesWithoutKey],
+    ["whitespace-only", "dark", true, "  ", darkTilesWithoutKey],
   ] as const)(
-    "leaves %s raster tile URLs unchanged when the key is %s",
-    (_theme, isDark, _case, apiKey, expectedTiles) => {
+    "leaves raster tile URLs unchanged for the %s key in the %s theme",
+    (_case, _theme, isDark, apiKey, expectedTiles) => {
       const style = cartoStyle(isDark, apiKey)
       const source = style.sources.basemap
 
