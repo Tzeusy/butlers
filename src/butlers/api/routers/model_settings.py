@@ -53,7 +53,10 @@ _COMPLEXITY_TIERS = ("reasoning", "workhorse", "cheap", "specialty", "local", "l
 _verify_all_last_run: float = 0.0
 _VERIFY_ALL_MIN_INTERVAL_S = 60.0
 _VERIFY_ALL_CONCURRENCY = 8
-_verify_all_gate = asyncio.Lock()
+# This flag is checked and set before the first await in the route, so a
+# concurrent request is rejected immediately instead of waiting behind a
+# long-running verification sweep.
+_verify_all_in_flight = False
 
 
 def _get_db_manager() -> DatabaseManager:
@@ -812,20 +815,25 @@ async def verify_all_models(
     Switchboard performs runtime construction and verification persistence; this
     route returns only the coordinator's summary.
     """
-    global _verify_all_last_run  # noqa: PLW0603
+    global _verify_all_in_flight, _verify_all_last_run  # noqa: PLW0603
 
-    async with _verify_all_gate:
-        now = time.monotonic()
-        if now - _verify_all_last_run < _VERIFY_ALL_MIN_INTERVAL_S:
-            raise HTTPException(
-                status_code=429,
-                detail="verify-all was called recently — wait at least 60 seconds between runs",
-            )
+    now = time.monotonic()
+    if _verify_all_in_flight or now - _verify_all_last_run < _VERIFY_ALL_MIN_INTERVAL_S:
+        raise HTTPException(
+            status_code=429,
+            detail="verify-all was called recently — wait at least 60 seconds between runs",
+        )
 
+    # Admission is synchronous on the event loop, so no second request can
+    # pass this check before the first one marks itself in flight.
+    _verify_all_in_flight = True
+    try:
         pool = _shared_pool(db)
         result = await run_verify_all_models(pool, audit_actor="owner")
         _verify_all_last_run = now
         return ApiResponse[VerifyAllResult](data=result)
+    finally:
+        _verify_all_in_flight = False
 
 
 # ---------------------------------------------------------------------------

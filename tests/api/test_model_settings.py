@@ -11,6 +11,7 @@ server sort order, failures tail.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -356,6 +357,46 @@ async def test_verify_all_pool_failure_does_not_consume_rate_limit(
         "failed": 0,
         "unavailable": 0,
     }
+
+
+async def test_verify_all_rejects_concurrent_arrival_while_run_is_in_flight(app, monkeypatch):
+    """A second request is rejected while the accepted run is still running."""
+    import butlers.api.routers.model_settings as _ms
+
+    monkeypatch.setattr(_ms, "_verify_all_last_run", 0.0)
+    monkeypatch.setattr(_ms, "_verify_all_in_flight", False)
+    _, mock_pool = _app_with_pool(app)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocked_verify_all(pool, *, audit_actor):
+        assert pool is mock_pool
+        assert audit_actor == "owner"
+        started.set()
+        await release.wait()
+        return _ms.VerifyAllResult(
+            accepted=True,
+            total=0,
+            ok=0,
+            failed=0,
+            unavailable=0,
+        )
+
+    monkeypatch.setattr(_ms, "run_verify_all_models", blocked_verify_all)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        first_task = asyncio.create_task(client.post("/api/settings/models/verify-all"))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=1)
+            concurrent = await client.post("/api/settings/models/verify-all")
+        finally:
+            release.set()
+        first = await first_task
+
+    assert concurrent.status_code == 429
+    assert first.status_code == 200
 
 
 async def test_verify_all_accepted_after_interval_returns_current_result_shape(
