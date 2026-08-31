@@ -388,7 +388,7 @@ omitted from this human command index; they are not maintainer entry points.
 | [`check_countable_tasks.py`](check_countable_tasks.py) | Fails when an unarchived change's tasks cannot be counted by the archive gate; use `make check-countable-tasks` before archival work. |
 | [`check_duplicate_toplevel_names.py`](check_duplicate_toplevel_names.py) | Finds module-level Python definitions that would silently shadow each other after a merge; use `make check-duplicate-names` as the local or CI duplicate-name guard. |
 | [`check_for_update_joins.py`](check_for_update_joins.py) | Statically rejects `FOR UPDATE` on nullable outer-join sides; use `make check-for-update-joins` after SQL query changes. |
-| [`check_integration_coverage.py`](check_integration_coverage.py) | Checks that the Integration tests CI step collects every integration-marked test; run when that workflow command changes. |
+| [`check_ci_test_shards.py`](check_ci_test_shards.py) | Verifies checked-in backend CI test-shard manifests cover the current unit and integration selections; run `make check-ci-test-shards` when changing the CI test lanes or manifests. |
 | [`check_spec_overwrites.py`](check_spec_overwrites.py) | Compares active OpenSpec MODIFIED blocks against current canonical bodies; run `make check-spec-overwrites` before archival work. |
 | [`extract-frontend-copy.py`](extract-frontend-copy.py) | Regenerates the checked-in frontend copy inventory; run it only when the inventory guard reports the generated file stale. |
 | [`lint_decision_beads.py`](lint_decision_beads.py) | Validates the structured decision-bead convention; run through the `lint-decision-beads` Make targets when working that workflow. |
