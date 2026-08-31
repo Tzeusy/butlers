@@ -725,7 +725,9 @@ label-free raster basemaps. The light theme SHALL use the label-free light
 style, the dark theme SHALL use the label-free dark style, and both SHALL show
 OpenStreetMap and CARTO attribution. An optional CARTO key SHALL remain
 browser-visible client configuration and MUST be domain-restricted at the
-provider rather than represented as a backend-only secret.
+provider rather than represented as a backend-only secret. Dependency
+rationale SHALL remain documented in this spec and in the change's
+`design.md`.
 
 ID: REQ-dashboard-chronicles-003
 Source: [Observed] `frontend/src/components/chronicles/carto-basemap.ts`; `docs/getting_started/dev-environment.md`

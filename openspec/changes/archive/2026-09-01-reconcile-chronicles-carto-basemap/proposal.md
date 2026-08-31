@@ -29,7 +29,8 @@ None.
 
 ## Impact
 
-OpenSpec contract artifacts only. The implementation and focused regression coverage already live
-in `frontend/src/components/chronicles/carto-basemap.ts` and
-`frontend/src/components/chronicles/MapWidget.test.tsx`; no frontend runtime, dependency,
-credential value, Compose wiring, deployment, or archived OpenSpec snapshot changes are in scope.
+OpenSpec contract artifacts plus focused regression assertions. The shipped implementation lives
+in `frontend/src/components/chronicles/carto-basemap.ts`, while the existing coverage is tightened
+in `frontend/src/components/chronicles/MapWidget.test.tsx`; no frontend runtime, dependency,
+credential value, Compose wiring, deployment, or pre-existing archived OpenSpec snapshot changes
+are in scope.

@@ -118,7 +118,7 @@ describe("MapWidgetInner with points", () => {
 // Spec: REQ-dashboard-chronicles-003
 describe("CARTO basemap authentication", () => {
   it("appends an encoded key to every light raster tile URL", () => {
-    const style = cartoStyle(false, "carto test/key")
+    const style = cartoStyle(false, "  carto test/key  ")
     const source = style.sources.basemap
 
     expect(source.type).toBe("raster")
@@ -139,7 +139,12 @@ describe("CARTO basemap authentication", () => {
     expect(source.type).toBe("raster")
     if (source.type !== "raster") return
 
-    expect(source.tiles?.every((tile) => tile.endsWith("?key=carto-test-key"))).toBe(true)
+    expect(
+      source.tiles?.every(
+        (tile) => tile.includes("/dark_nolabels/") && tile.endsWith("?key=carto-test-key"),
+      ),
+    ).toBe(true)
+    expect(source.tiles?.some((tile) => tile.includes("/light_nolabels/"))).toBe(false)
   })
 
   it("attributes both OpenStreetMap and CARTO", () => {
@@ -154,14 +159,23 @@ describe("CARTO basemap authentication", () => {
     expect(source.attribution).toContain("https://carto.com/attributions")
   })
 
-  it("leaves raster tile URLs unchanged when no key is configured", () => {
-    const style = cartoStyle(false, "  ")
+  it.each([
+    ["absent", undefined],
+    ["empty", ""],
+    ["whitespace-only", "  "],
+  ] as const)("leaves raster tile URLs unchanged when the key is %s", (_case, apiKey) => {
+    const style = cartoStyle(false, apiKey)
     const source = style.sources.basemap
 
     expect(source.type).toBe("raster")
     if (source.type !== "raster") return
 
-    expect(source.tiles?.every((tile) => !tile.includes("?key="))).toBe(true)
+    expect(source.tiles).toEqual([
+      "https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+      "https://b.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+      "https://c.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+      "https://d.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+    ])
   })
 })
 

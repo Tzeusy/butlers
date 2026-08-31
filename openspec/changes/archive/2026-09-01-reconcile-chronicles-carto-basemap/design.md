@@ -27,7 +27,7 @@ prose and tile-source scenario no longer landed.
 - No frontend, Compose, dependency, credential, BWS, deployment, or runtime
   changes.
 - No key values or environment-specific domains in tracked artifacts.
-- No rewrite of any file under `openspec/changes/archive/`.
+- No rewrite of any pre-existing file under `openspec/changes/archive/`.
 
 ## Decisions
 
