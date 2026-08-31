@@ -24,8 +24,8 @@ prose and tile-source scenario no longer landed.
 
 **Non-Goals:**
 
-- No frontend, Compose, dependency, credential, BWS, deployment, or runtime
-  changes.
+- No frontend runtime, Compose, dependency, credential, BWS, deployment, or
+  runtime changes.
 - No key values or environment-specific domains in tracked artifacts.
 - No rewrite of any pre-existing file under `openspec/changes/archive/`.
 
