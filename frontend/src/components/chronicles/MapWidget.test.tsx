@@ -8,8 +8,16 @@
 // (same pattern as existing component tests in this codebase).
 // ---------------------------------------------------------------------------
 
-import { describe, expect, it, vi } from "vitest"
+import { afterAll, describe, expect, it, vi } from "vitest"
 import { renderToStaticMarkup } from "react-dom/server"
+
+// cartoStyle defaults its key argument from import.meta.env. Clear that value
+// before module evaluation so the undefined fixture is genuinely absent.
+vi.hoisted(() => {
+  vi.stubEnv("VITE_CARTO_BASEMAP_API_KEY", undefined)
+})
+
+afterAll(() => vi.unstubAllEnvs())
 
 // ---------------------------------------------------------------------------
 // Mock maplibre-gl before any component imports.
@@ -139,12 +147,12 @@ describe("CARTO basemap authentication", () => {
     expect(source.type).toBe("raster")
     if (source.type !== "raster") return
 
-    expect(
-      source.tiles?.every(
-        (tile) => tile.includes("/dark_nolabels/") && tile.endsWith("?key=carto-test-key"),
-      ),
-    ).toBe(true)
-    expect(source.tiles?.some((tile) => tile.includes("/light_nolabels/"))).toBe(false)
+    expect(source.tiles).toEqual([
+      "https://a.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png?key=carto-test-key",
+      "https://b.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png?key=carto-test-key",
+      "https://c.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png?key=carto-test-key",
+      "https://d.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png?key=carto-test-key",
+    ])
   })
 
   it("attributes both OpenStreetMap and CARTO", () => {
@@ -159,24 +167,38 @@ describe("CARTO basemap authentication", () => {
     expect(source.attribution).toContain("https://carto.com/attributions")
   })
 
+  const lightTilesWithoutKey = [
+    "https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+    "https://b.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+    "https://c.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+    "https://d.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
+  ]
+  const darkTilesWithoutKey = [
+    "https://a.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png",
+    "https://b.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png",
+    "https://c.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png",
+    "https://d.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png",
+  ]
+
   it.each([
-    ["absent", undefined],
-    ["empty", ""],
-    ["whitespace-only", "  "],
-  ] as const)("leaves raster tile URLs unchanged when the key is %s", (_case, apiKey) => {
-    const style = cartoStyle(false, apiKey)
-    const source = style.sources.basemap
+    ["light", false, "absent", undefined, lightTilesWithoutKey],
+    ["light", false, "empty", "", lightTilesWithoutKey],
+    ["light", false, "whitespace-only", "  ", lightTilesWithoutKey],
+    ["dark", true, "absent", undefined, darkTilesWithoutKey],
+    ["dark", true, "empty", "", darkTilesWithoutKey],
+    ["dark", true, "whitespace-only", "  ", darkTilesWithoutKey],
+  ] as const)(
+    "leaves %s raster tile URLs unchanged when the key is %s",
+    (_theme, isDark, _case, apiKey, expectedTiles) => {
+      const style = cartoStyle(isDark, apiKey)
+      const source = style.sources.basemap
 
-    expect(source.type).toBe("raster")
-    if (source.type !== "raster") return
+      expect(source.type).toBe("raster")
+      if (source.type !== "raster") return
 
-    expect(source.tiles).toEqual([
-      "https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
-      "https://b.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
-      "https://c.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
-      "https://d.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png",
-    ])
-  })
+      expect(source.tiles).toEqual(expectedTiles)
+    },
+  )
 })
 
 // ---------------------------------------------------------------------------
