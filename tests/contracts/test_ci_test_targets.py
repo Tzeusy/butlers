@@ -91,6 +91,14 @@ def _artifact_step(*, job: dict, artifact_name: str) -> dict:
     )
 
 
+def test_smoke_ci_spec_matches_the_preflight_topology() -> None:
+    spec = (REPO_ROOT / "openspec/specs/testing/spec.md").read_text(encoding="utf-8")
+
+    assert "### Requirement: Smoke Tests Run In CI As A Fast Gate" in spec
+    assert "- **WHEN** the CI `check-preflight` job runs" in spec
+    assert "and run alongside the independent unit and integration shards" in spec
+
+
 def _integration_cleanup_script(shard: int) -> str:
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     return _workflow_step(
