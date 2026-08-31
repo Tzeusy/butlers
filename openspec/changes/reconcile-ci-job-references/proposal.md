@@ -1,20 +1,21 @@
 ## Why
 
-PR #3946 splits the hosted Python gate across `check-unit` and
-`check-integration`, with the historic `check` status retained as a fail-closed
-coverage fan-in. The testing capability and several operational references
-still describe smoke, unit, and integration tests as steps of the legacy
-single `check` job. Those claims erase the distinction between the jobs that
-execute tests and the status that aggregates their results.
+PR #3946 has landed the hosted Python gate as `check-preflight`, five
+`check-unit-N` shards, and five `check-integration-N` shards, with the historic
+`check` status retained as a fail-closed coverage fan-in. The testing baseline
+now records that topology, while several operational references still describe
+smoke, unit, and integration tests as steps of an older serialized CI job.
+Those claims erase the distinction between the jobs that execute tests and the
+status that aggregates their results.
 
 ## What Changes
 
-- Modify the testing capability's smoke-gate requirement so its CI scenario
-  names `check-unit`, the job that executes the smoke selection.
-- Reconcile the identified testing and agent guidance with the three-job
-  fan-out/fan-in topology.
+- Rebuild the active testing delta from the merged baseline so it remains
+  archive-safe and carries the current preflight and shard topology.
+- Reconcile the identified testing and agent guidance with the preflight plus
+  ten-shard fan-out/fan-in topology.
 - Preserve the distinction between local convenience targets and the hosted
-  `check-unit` / `check-integration` lanes.
+  `check-preflight`, `check-unit-N`, and `check-integration-N` lanes.
 - Leave workflow execution behavior unchanged.
 
 ## Capabilities
@@ -25,8 +26,8 @@ None.
 
 ### Modified Capabilities
 
-- `testing`: identify `check-unit` as the hosted smoke-test job while retaining
-  the existing smoke selection, E2E exclusion, and failure guarantees.
+- `testing`: carry the merged smoke-gate contract forward while retaining the
+  existing smoke selection, E2E exclusion, and failure guarantees.
 
 ## Impact
 

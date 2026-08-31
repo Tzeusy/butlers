@@ -1,7 +1,7 @@
 ## 1. Reconcile the testing contract
 
-- [x] 1.1 Add a `MODIFIED` block for `Smoke Tests Run In CI As A Fast Gate`
-  that names `check-unit` and carries every baseline scenario.
+- [x] 1.1 Rebuild the `MODIFIED` block for `Smoke Tests Run In CI As A Fast Gate`
+  from the merged baseline, preserving every scenario name and current clause.
 - [x] 1.2 Leave the live testing baseline untouched until archive.
 
 ## 2. Reconcile operational guidance
