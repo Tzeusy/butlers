@@ -115,6 +115,7 @@ describe("MapWidgetInner with points", () => {
 // CARTO basemap authentication
 // ---------------------------------------------------------------------------
 
+// Spec: REQ-dashboard-chronicles-003
 describe("CARTO basemap authentication", () => {
   it("appends an encoded key to every light raster tile URL", () => {
     const style = cartoStyle(false, "carto test/key")
@@ -139,6 +140,18 @@ describe("CARTO basemap authentication", () => {
     if (source.type !== "raster") return
 
     expect(source.tiles?.every((tile) => tile.endsWith("?key=carto-test-key"))).toBe(true)
+  })
+
+  it("attributes both OpenStreetMap and CARTO", () => {
+    const source = cartoStyle(false, "carto-test-key").sources.basemap
+
+    expect(source.type).toBe("raster")
+    if (source.type !== "raster") return
+
+    expect(source.attribution).toContain("OpenStreetMap")
+    expect(source.attribution).toContain("https://www.openstreetmap.org/copyright")
+    expect(source.attribution).toContain("CARTO")
+    expect(source.attribution).toContain("https://carto.com/attributions")
   })
 
   it("leaves raster tile URLs unchanged when no key is configured", () => {
