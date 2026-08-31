@@ -5,7 +5,7 @@
 The dashboard SHALL expose `POST /api/settings/models/verify-all` to re-verify every enabled model in parallel. The verification core is shared (`butlers.api.routers.model_settings.run_verify_all_models`) between this manual endpoint and the hourly automated sweep (see Hourly Automated Verification Sweep) so the two can never disagree about what "verified" means or how the result is persisted. The core requests each probe through the signed Switchboard runtime-probe control client; the dashboard process neither constructs a runtime adapter nor writes model verification evidence. Switchboard owns runtime construction and completed-probe persistence.
 
 #### Scenario: Verify-all parallel execution
-- **WHEN** `POST /api/settings/models/verify-all` is called
+- **WHEN** `POST /api/settings/models/verify-all` is accepted
 - **THEN** the system requests a signed Switchboard runtime probe for each enabled model concurrently with a bounded concurrency of 8
 - **AND** only a completed probe causes Switchboard to persist `last_verified_at`, `last_verified_latency_ms`, `last_verified_ok`, and `last_verified_error`
 - **AND** a control-plane unavailable result preserves the prior verification evidence and is reported separately from a completed failed probe

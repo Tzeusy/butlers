@@ -185,6 +185,9 @@ def test_active_verify_all_delta_matches_the_signed_control_plane_cutover() -> N
         assert "signed" in changed.lower()
         assert "runtime-probe" in changed.lower()
 
+    catalog_changed = _requirement_block(delta, "Catalog Verify-All API")
+    assert "- **WHEN** `POST /api/settings/models/verify-all` is accepted" in catalog_changed
+
     verify_all_source = source.split("async def run_verify_all_models(", 1)[1].split(
         "# ---------------------------------------------------------------------------\n# POST /api/settings/models/verify-all",
         1,

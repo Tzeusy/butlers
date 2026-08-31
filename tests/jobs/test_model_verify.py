@@ -64,10 +64,10 @@ async def test_sweep_returns_none_when_pool_missing():
 async def test_sweep_delegates_to_run_verify_all_models(monkeypatch):
     """One shared core, called as the scheduler, with the automated actor.
 
-    The summary reports ``unavailable`` rather than ``skipped`` since the
-    cutover: a sweep that could not reach the control plane has learned
-    nothing about those models, which is a different fact from a model that
-    answered badly, and the log line an operator reads must say which.
+    The summary reports ``unavailable`` when the control plane cannot be reached:
+    a sweep has learned nothing about those models, which is a different fact
+    from a model that answered badly, and the log line an operator reads must
+    say which.
     """
     verify_result = AsyncMock(
         return_value=type("R", (), {"total": 3, "ok": 2, "failed": 1, "unavailable": 0})()
