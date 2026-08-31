@@ -8,10 +8,10 @@ hide infrastructure-only handlers from LLM discovery or take advantage of modern
 runtime-native deferred loading without making one CLI the system's design
 centre.
 
-[Inferred] Butlers needs a runtime-neutral tool exposure contract that keeps MCP
-as the executable authority, separates callable tools from model-visible tools,
-and treats native deferred Tool Search as a negotiated presentation optimization
-with a conservative cross-CLI fallback.
+[Inferred] Butlers needs a runtime-neutral Tool Search contract that keeps MCP
+as the executable authority, searches a bounded corpus, and loads full typed
+schemas only when needed. Runtime-specific native search is the context-saving
+mechanism; eager filtering is the conservative cross-CLI compatibility path.
 
 ## What Changes
 
@@ -21,19 +21,20 @@ with a conservative cross-CLI fallback.
   loaded set without broadening existing butler, group, or module ownership.
 - Classify tools by LLM visibility and load posture. Canonical FastMCP
   `tools/list` remains complete for every caller; each runtime adapter renders
-  a plan-bound allowlist before definitions enter model context or native
-  search. Switchboard, connector, scheduler, dashboard, and recovery callers
-  retain their existing endpoints.
+  a plan-bound search corpus and, for verified native tuples, a small initial
+  summary plus on-demand full-schema loading. The allowlist bounds the corpus;
+  it is not the token-saving mechanism. Switchboard, connector, scheduler,
+  dashboard, and recovery callers retain their existing endpoints.
 - Build a per-invocation tool-surface plan after runtime/model resolution. The
   plan selects `none`, `eager_filtered`, or `native_deferred` from
   the intersection of trigger policy, configured exposure policy, verified CLI
   capabilities, and provider/model support.
-- Add runtime capability probing, allowlist rendering, and invocation
-  preparation as explicit adapter responsibilities. Unsupported or unknown
-  model-presentation filters make a tuple ineligible rather than exposing the
-  complete list. Verified eager or native failures follow the explicit
-  complete-evidence zero-effect replay predicate; healing and QA isolation
-  continues to select `none`.
+- Add runtime capability probing, search-corpus rendering, native search/load
+  preparation, and result parsing as explicit adapter responsibilities.
+  Unsupported or unknown model-presentation filters make a tuple ineligible
+  rather than exposing the complete list. Verified eager or native failures
+  follow the explicit complete-evidence zero-effect replay predicate; healing
+  and QA isolation continues to select `none`.
 - Preserve call-time module-state checks, existing handler authorization, approval gates,
   schema validation, telemetry, and canonical tool-call attribution regardless
   of how a tool was discovered or loaded.
@@ -44,16 +45,20 @@ with a conservative cross-CLI fallback.
 - Keep `.agents/skills/` as the canonical skill source and make adapter-specific
   skill projection explicit. Loading a skill remains guidance-only and cannot
   grant tool authority or widen the session's tool-surface plan.
-- Add a credential-free cross-runtime conformance harness and measured rollout
-  gates before enabling native discovery for any production runtime tuple.
+- Add a credential-free cross-runtime conformance harness that measures
+  intended-tool recall within a declared result limit, corpus-only results,
+  hidden-result exclusion, miss refinement, typed loading, and initial schema
+  bytes before admitting native search for any runtime tuple. Extra eligible
+  matches and precision remain diagnostics unless a threshold is approved.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `core-tool-discovery`: Defines LLM-facing MCP tool visibility, per-session
-  exposure planning, runtime capability negotiation, safe fallback, skill/tool
-  authority separation, and content-blind discovery evidence.
+- `core-tool-discovery`: Defines bounded native MCP Tool Search, per-session
+  corpus planning, on-demand typed schema loading, runtime capability
+  negotiation, safe fallback, skill/tool authority separation, and content-blind
+  discovery evidence.
 
 ### Modified Capabilities
 
@@ -128,9 +133,11 @@ with a conservative cross-CLI fallback.
 - **Selected by:** owner
 - **Date:** 2026-08-31
 - **Decision bead:** `bu-g5fha`
-- **Decision:** Keep canonical FastMCP listing complete and move model-visible
-  projection to a fresh per-attempt adapter allowlist rendered through public
-  runtime-host configuration.
+- **Decision:** Keep canonical FastMCP listing complete and make each adapter
+  render a fresh per-attempt search corpus through public runtime-host
+  configuration. Verified native tuples search that corpus and load typed
+  schemas on demand; the allowlist bounds eligibility but is not the
+  context-saving mechanism.
 - **Reason:** No supported FastMCP request-aware pagination seam or committed
   upstream roadmap justifies holding delivery. Private hooks, duplicate
   servers, proxies, and wire rewriting remain rejected.

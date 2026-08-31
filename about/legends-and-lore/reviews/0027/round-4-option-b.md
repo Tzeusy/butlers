@@ -36,13 +36,16 @@ amendment; it is not assumed unavailable forever.
 
 ## Selected Boundary
 
+- Runtime-native Tool Search and on-demand full-schema loading are the primary
+  product behavior and source of material context reduction.
 - FastMCP remains the complete canonical registry and complete HTTP/SSE
   `tools/list` source.
 - The daemon finalizes immutable post-approval definitions and digests, never
   handler callables.
-- Each spawner attempt creates a plan-digest-bound canonical-name allowlist.
-- The runtime adapter renders the allowlist through supported public host
-  configuration before definitions enter model context or native search.
+- Each spawner attempt creates a plan-digest-bound canonical-name search corpus.
+- The runtime adapter renders that corpus through supported public host
+  configuration and configures native search/load only for an exact verified
+  tuple. The allowlist is the corpus boundary, not the token-saving mechanism.
 - Opaque runtime-host MCP cursors remain invocation-local transport state. The
   amendment does not falsely claim that Butlers can inspect or validate them.
 - A tuple that cannot prove hidden definitions stay out of model-visible input
@@ -62,7 +65,11 @@ The amendment records these as compatibility candidates, not admission proof:
 | Gemini CLI | 0.28.2 | Per-server `includeTools` in invocation-local settings |
 
 Conformance must distinguish model availability from call permission. A
-permission-only control does not satisfy projection filtering.
+permission-only control does not satisfy corpus filtering. For native tuples it
+must also prove intended-tool recall within a declared result limit, corpus-only
+results, hidden-result exclusion, miss refinement, on-demand typed definition
+loading, and initial schema-byte savings. Extra eligible matches and precision
+remain diagnostics unless a threshold is approved.
 
 ## Eager Policy Refinement
 

@@ -6,13 +6,16 @@ The canonical MCP endpoint SHALL retain its complete `tools/list` surface. The
 runtime session and trigger query values are untrusted correlation inputs, not
 caller authentication. After resolving each runtime/model candidate, the
 spawner SHALL build an immutable adapter presentation asset containing the
-attempt plan digest and exact canonical-name allowlist. The adapter SHALL render
-that asset through supported public host configuration before definitions enter
-model context or native search. A failover attempt SHALL rebuild its plan and
-assets rather than reuse the preceding attempt's filter or native state.
+attempt plan digest and exact canonical-name search corpus. The adapter SHALL
+render that asset through supported public host configuration. When the selected
+mode is `native_deferred`, it SHALL prepare the verified native search/load path
+before model execution; when the mode is `eager_filtered`, it SHALL render every
+allowed full definition and SHALL NOT prepare native search. A failover attempt
+SHALL rebuild its plan and assets rather than reuse the preceding attempt's filter
+or native state.
 
 ID: REQ-core-spawner-001
-Source: RFC 0001 §Trigger Dispatch; RFC 0002 §Ephemeral MCP Config Generation; RFC 0027 §Adapter-Owned LLM Projection
+Source: RFC 0001 §Trigger Dispatch; RFC 0002 §Ephemeral MCP Config Generation; RFC 0027 §Adapter-Owned Search Corpus and Model Presentation
 Scope: v1-mandatory
 
 #### Scenario: MCP config includes only butler's server
@@ -20,7 +23,7 @@ Scope: v1-mandatory
 - **THEN** the `mcp_servers` dict contains exactly one entry keyed by the butler's name
 - **AND** the entry's URL points to `http://localhost:<port>/sse` (or `/mcp`) with the runtime session ID as a query parameter
 - **AND** the URL exposes the complete canonical list without adding any other MCP server
-- **AND** the separately rendered adapter asset restricts model-visible tools to the attempt allowlist
+- **AND** the separately rendered adapter asset restricts the searchable corpus to the attempt allowlist
 
 #### Scenario: Every candidate uses matching presentation capabilities
 
@@ -37,7 +40,7 @@ Scope: v1-mandatory
 #### Scenario: Adapter assets carry the immutable presentation plan
 
 - **WHEN** the spawner prepares a tool-bearing runtime/model candidate
-- **THEN** its adapter asset binds attempt identity, catalog generation, enabled-module snapshot, policy, compatibility key, and canonical-name allowlist
+- **THEN** its adapter asset binds attempt identity, catalog generation, enabled-module snapshot, policy, compatibility key, and canonical-name search corpus
 - **AND** conflicting runtime arguments cannot replace the generated MCP or host-filter configuration
 - **AND** the asset and any host-internal pagination state are never reused by another plan
 

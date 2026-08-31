@@ -13,8 +13,8 @@ in 3.4.7, 4.0.0b5, and pinned upstream main
 `977ba66c811728aff1522bca48e8cc86eb2aec15`. The dated source/release/search
 record in `about/legends-and-lore/reviews/0027/round-4-option-b.md` found no
 public commitment as of 2026-08-31. Owner-selected Option B therefore keeps
-FastMCP complete and makes adapter-rendered host filtering the presentation
-boundary.
+FastMCP complete, makes adapter-rendered filtering the search-corpus boundary,
+and uses verified runtime-native search/load for material context reduction.
 
 The implementation must preserve one canonical wrapped handler per tool,
 existing infrastructure clients, one-butler MCP isolation, approval behavior,
@@ -26,8 +26,10 @@ installed CLI generation matching current upstream documentation.
 **Goals:**
 
 - Separate the registered/callable surface from the LLM-presentable surface.
-- Make the semantic allowlist runtime-neutral, adapter rendering explicit, and
-  native deferred loading an exact-tuple optimization.
+- Make runtime-native Tool Search and deferred full-schema loading the primary
+  context-efficiency behavior over a runtime-neutral bounded corpus.
+- Make the corpus allowlist and adapter rendering explicit without treating
+  filtering alone as the optimization.
 - Recompute presentation per runtime attempt, including failover attempts.
 - Preserve typed direct MCP calls and all existing execution wrappers.
 - Give the owner a DB-backed `eager_filtered`/`auto` control with conservative
@@ -65,7 +67,7 @@ butler can use `auto`.
 Alternative rejected: registering copies on a second FastMCP server. That risks
 wrapper drift, duplicate names, and approval bypass.
 
-### Decision 2: Keep FastMCP listing complete; adapters own model presentation
+### Decision 2: Keep FastMCP listing complete; adapters own the search corpus
 
 FastMCP remains the complete canonical handler registry and `tools/list`
 surface over streamable HTTP and SSE. The runtime MCP URL carries only existing
@@ -75,10 +77,11 @@ filtered MCP endpoint.
 After runtime/model resolution, the spawner builds an immutable
 `ToolSurfacePlan` whose digest binds attempt identity, catalog generation,
 enabled-module snapshot, policy, and exact compatibility key. The plan contains
-the canonical-name allowlist plus immutable model-visible definitions or
-summaries. The adapter converts canonical names to host-native names and renders
-the allowlist through supported public host configuration before definitions
-enter model context or a native search index.
+the canonical-name search corpus plus immutable eager definitions or summaries.
+The adapter converts canonical names to host-native names, bounds the corpus
+through supported public host configuration, and configures verified native
+search/load behavior. Filtering determines eligibility; deferring full schemas
+until search time produces the material context savings.
 
 Runtime hosts remain opaque MCP clients and may internally enumerate/page the
 complete canonical list. Butlers does not own or validate those host cursors.
@@ -142,8 +145,9 @@ none exists, the tuple is ineligible rather than exposed unfiltered.
 The associated profile also records the public allowlist dialect,
 canonical-to-host name mapping, whether filtering changes model availability or
 only call permission, eager/native controllability, native deferral granularity,
-host-pagination isolation, and parser/receipt support. Permission-only controls
-do not satisfy model-presentation filtering.
+native search result-limit/ordering behavior, host-pagination isolation, and
+parser/receipt support. Permission-only controls do not satisfy
+model-presentation filtering.
 
 The adapter invocation-preparation step may reuse the existing
 `build_config_file()` method or its current runtime-specific writer. It also
@@ -169,12 +173,17 @@ and zero non-MCP effect-capable actions. Shell/command, file-edit/apply-patch,
 browser/computer, app, unknown, and parser-ambiguous actions block replay. A
 valid no-tool/plain-text response is not failure evidence.
 
-### Decision 6: Keep native deferred execution direct and typed
+### Decision 6: Search first, then load and call the direct typed tool
 
 Native search initially exposes adapter-rendered bounded namespace/server
 summaries and selected eager definitions. Its native index contains only the
-attempt allowlist. Search may load only presentable definitions. The eventual
-call uses the canonical name/schema and crosses the normal MCP wrapper.
+attempt corpus. For fixed manifest queries, every intended tool must appear
+within the profile-declared result limit, every result must belong to the corpus,
+and hidden matches must remain absent. Extra eligible matches and precision are
+reported diagnostics unless a separate threshold is approved. Search permits
+miss refinement without widening the corpus and may load only presentable full
+definitions. The eventual call uses the canonical name/schema and crosses the
+normal MCP wrapper.
 
 Namespaces reuse module/group concepts and target fewer than ten related tools
 where natural. They never rename handlers.
@@ -201,7 +210,7 @@ Alternative rejected: a new unbounded discovery-event table. Attempt-level
 receipts share the process log's 14-day lifecycle and do not need independent
 query semantics.
 
-### Decision 8: Native enablement is evidence-gated
+### Decision 8: Native Tool Search admission is evidence-gated
 
 The checked-in conformance manifest fixes scenario IDs, expected outcomes,
 runtime samples, allowed retries, cache conditions, malformed-schema
@@ -209,11 +218,12 @@ dispositions, and admission-report shape. The credential-free lane uses at
 least 100 synthetic tools and separately tests complete canonical HTTP/SSE
 listing plus adapter-rendered eager/native model input. A paginated hidden-
 sentinel server proves invocation-local host pagination cannot leak hidden
-definitions, schemas, or counts. It also tests malformed definitions, native
-search/load, canonical invocation, and receipt extraction. The authorized lane
-uses representative real runtime tuples and tests task success, no-tool
-completion, approval preservation, attribution, tokens, latency, and cache
-behavior without persisting sensitive content.
+definitions, schemas, or counts. It also tests intended-tool recall within the
+declared result limit, corpus-only results, hidden-result exclusion, miss refinement, malformed definitions,
+on-demand typed loading, canonical invocation, and receipt extraction. The
+authorized lane uses representative real runtime tuples and tests task success,
+no-tool completion, approval preservation, attribution, tokens, latency, and
+cache behavior without persisting sensitive content.
 
 A tuple is eligible only when every mandatory scenario passes with no new task,
 approval, attribution, replay, or final-outcome failure, and native mode reduces
@@ -227,6 +237,10 @@ are not pass/fail claims without a separately approved threshold.
 - **[Risk] Eager-only runtimes see modest savings.** → Document behavioral
   parity separately from token reduction; do not broaden surfaces on the
   assumption that eager filtering solves schema cost.
+- **[Risk] Native search misses or ranks the required tool poorly.** → Admit an
+  exact tuple only after representative top-k recall, corpus/hidden-boundary,
+  and miss-refinement cases pass; report precision, extra eligible matches, and
+  discovery misses during canary evaluation.
 - **[Risk] An opaque host MCP client serializes hidden definitions.** → Bind a
   fresh public host allowlist to every plan and use paginated hidden-sentinel
   conformance to prove hidden definitions, schemas, and counts never enter
@@ -258,13 +272,14 @@ are not pass/fail claims without a separately approved threshold.
    HTTP/SSE listing tests, and eager-filtered receipts. Keep every butler on
    `eager_filtered`.
 3. Move per-attempt preparation inside failover and render the immutable
-   canonical-name allowlist through each host's supported public configuration.
-   Prove hidden sentinels never reach model input/search and reject any tuple
-   that cannot enforce this boundary.
+   canonical-name search corpus through each host's supported public
+   configuration. Prove hidden sentinels never reach model input/search and
+   reject any tuple that cannot enforce this boundary.
 4. Produce compatibility records from the synthetic and authorized lanes,
-   including filter dialect, name mapping, eager/native controllability, and
-   host-pagination isolation. CLI binary upgrades, if needed, land as separate
-   reviewed dependency changes.
+   including top-k recall, corpus/hidden boundaries, miss behavior, precision
+   diagnostics, typed loading, initial-byte savings, filter dialect, name
+   mapping, eager/native controllability, and host-pagination isolation. CLI
+   binary upgrades, if needed, land as separate reviewed dependency changes.
 5. Produce a canary-ready compatibility record and rollback runbook. Setting a
    live butler to `auto` requires separate operator authorization.
 6. After an authorized canary, expand only if task success, discovery misses,

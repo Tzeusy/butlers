@@ -11,21 +11,29 @@ permits sequencing; it does not request implementation, merge, deployment,
 runtime binary upgrades, or live canary activation.
 
 **Owner amendment:** 2026-08-31, Option B from `bu-g5fha`. Canonical FastMCP
-listing remains complete; each runtime adapter owns the immutable, plan-bound
-model-visible allowlist rendered through supported public host configuration.
+listing remains complete; each runtime adapter turns an immutable, plan-bound
+search corpus into runtime-native Tool Search/deferred loading when the exact
+tuple is verified. The allowlist bounds that corpus; it is not the optimization.
 The amendment is reversible and authorizes contract and Beads updates only. It
 does not authorize implementation, dependency upgrades, merge, provider
 evaluation, policy activation, deployment, or live canary execution.
 
 ## Summary
 
-This RFC lets each butler present an LLM-oriented projection of its canonical
-MCP tool registry. FastMCP continues to expose the complete registered list to
-every MCP client. For each runtime attempt, the adapter renders an immutable
-allowlist that omits infrastructure-only definitions before they enter model
-context or a native search index. Verified runtime hosts may defer allowed full
-schemas until the model searches for them; other eligible hosts render the
-same allowed set eagerly.
+This RFC makes runtime-native Tool Search and deferred schema loading the
+primary context-efficiency mechanism over each butler's canonical MCP tool
+registry. FastMCP continues to expose the complete registered list to every MCP
+client. For a `native_deferred` attempt, the adapter renders a small initial
+working set plus a searchable corpus of eligible tools; the verified runtime
+host searches that corpus and loads a matching full typed definition only when
+needed. An `eager_filtered` attempt instead renders every allowed definition and
+prepares no native search path.
+
+The plan-bound allowlist defines the searchable corpus and keeps
+infrastructure-only definitions out of model-visible input. It does not itself
+deliver the material token reduction: an eager-only host still serializes every
+allowed schema. Such hosts use the same bounded corpus as a compatibility path,
+with deliberately modest context savings.
 
 This is a presentation contract, not a new authorization system. Every exposed
 definition still resolves to the original registered and wrapped FastMCP
@@ -52,8 +60,9 @@ the JSON-character/4 estimate. Recent use was much narrower: Health used 18 of
 The counts establish a context-efficiency opportunity, not permission to widen
 authority. Per-butler specialization, manifesto alignment, core and module
 groups, type/name gates, module state, and approval controls remain mandatory.
-The missing abstraction is a runtime-neutral presentation plan over the
-registered surface.
+The missing abstraction is a runtime-neutral searchable corpus over the
+registered surface, rendered into each host's native search/load mechanism
+without replacing typed MCP execution.
 
 Codex, OpenCode, Claude Code, Gemini, and future adapters differ in MCP
 configuration, feature maturity, provider/model support, tool naming, and event
@@ -174,7 +183,7 @@ The implementation must produce a checked-in LLM-presentation inventory
 covering every core tool name. CI fails if a new core tool lacks a classification
 or if a classification names no registered tool.
 
-## Adapter-Owned LLM Projection
+## Adapter-Owned Search Corpus and Model Presentation
 
 The generated runtime MCP URL carries only the existing
 `runtime_session_id` and `trigger_source` correlation parameters. FastMCP
@@ -185,10 +194,12 @@ endpoint into an LLM projection boundary.
 For each runtime/model candidate, the spawner creates an immutable
 `ToolSurfacePlan`. Its digest binds attempt identity, catalog generation,
 enabled-module snapshot, exposure policy, and resolved compatibility key. The
-plan contains the exact canonical-name allowlist and immutable model-visible
-definitions or summaries. The adapter renders that allowlist through the
-runtime host's supported public configuration before definitions enter model
-context or a native search index.
+plan contains the exact canonical-name search corpus plus immutable eager
+definitions or summaries. The adapter renders the corpus through the runtime
+host's supported public configuration and, for verified native tuples, configures
+the host's Tool Search/index/load path. The allowlist is the corpus boundary;
+search-driven omission of full schemas from the initial prompt is the
+context-efficiency feature.
 
 Host-native names are derived deterministically from canonical MCP names and
 recorded in the compatibility profile. A host may enumerate and paginate the
@@ -271,7 +282,8 @@ The profile associated with the key declares supported presentation modes,
 allowlist dialect, canonical-to-host tool-name mapping, whether the host filter
 changes availability or only permission, eager/native controllability, native
 granularity (`all_deferred` or selective), skill convention, host-pagination
-isolation, and discovery-event/receipt parser support. The normalized
+isolation, native search result-limit/ordering behavior, and
+discovery-event/receipt parser support. The normalized
 configuration digest uses canonical sorted-key serialization after replacing
 session IDs, temporary paths, tokens, credentials, and authorization headers
 with fixed typed sentinels.
@@ -297,13 +309,25 @@ that cannot prove a public model-presentation filter is ineligible for
 tool-bearing work. A runtime that cannot invoke MCP at all is likewise
 ineligible.
 
-## Native Deferred Contract
+## Native Tool Search and Deferred Loading Contract
 
 The adapter-owned initial artifact contains stable namespace/server summaries
-and any definitions explicitly classified eager. Native host search indexes
-only the immutable attempt allowlist, returns only definitions from the
-LLM-presentable set, and loads complete typed definitions through the host's
-native protocol. The eventual call uses the canonical MCP name and input schema.
+and any definitions explicitly classified eager. This deliberately small
+initial artifact is the source of the token-efficiency gain. Native host Tool
+Search indexes only the immutable attempt corpus, returns only LLM-presentable
+matches from that corpus, and loads complete typed definitions
+through the host's native protocol. For each fixed conformance query, every
+intended tool must appear within the profile-declared result limit, every result
+must belong to the immutable corpus, and infrastructure-only tools must remain
+absent. Extra eligible matches and precision are reported diagnostics unless a
+separate threshold is approved. The eventual call uses the canonical MCP name
+and input schema.
+
+Native conformance must establish useful search behavior, not merely the
+existence of an enablement flag: representative queries find the intended tool,
+all results stay within the corpus, infrastructure-only matches stay absent, a
+search miss can be refined without widening the corpus, and the loaded
+definition remains direct and typed.
 
 An `all_deferred` native host is eligible only when no allowed definition has
 `load_posture=eager`. Selective hosts must prove they preserve every eager
@@ -332,6 +356,7 @@ model serialization. The underlying MCP list remains complete. The adapter
 preserves canonical names, schemas, parser behavior, and the current direct-call
 flow on every eligible CLI.
 
+This is the compatibility and rollback path, not the token-efficiency feature.
 Its performance promise is deliberately limited. It removes definitions
 classified infrastructure-only but still serializes every LLM-presentable
 schema. Substantial context reduction on a high-surface butler requires a
@@ -465,7 +490,7 @@ Receipts follow existing process-log retention and create no unbounded history.
 Metrics use bounded labels only; model IDs and tool names stay out of metric
 labels where cardinality would grow without bound.
 
-## Conformance and Rollout Gate
+## Tool Search Conformance and Rollout Gate
 
 Every native tuple starts unverified. A checked-in, versioned conformance
 manifest defines scenario IDs, expected outcomes, runtime samples, allowed
@@ -475,8 +500,11 @@ report schema. Verification has two lanes:
 1. A credential-free synthetic MCP server with at least 100 tools across
    representative namespaces proves the canonical HTTP/SSE list remains
    complete, then proves each adapter's host filter keeps hidden sentinels out
-   of model-visible eager input and native search while preserving canonical
-   invocation, malformed-schema handling, fallback, and receipt extraction.
+   of model-visible eager input and native search. For native tuples it also
+   proves intended-tool recall within the declared result limit, corpus-only
+   results, exclusion of hidden matches, search-miss refinement, on-demand typed definition loading,
+   canonical invocation, malformed-schema handling, fallback, and receipt
+   extraction. Precision and extra eligible matches remain reported diagnostics.
 2. An authorized representative runtime evaluation proves task success,
    no-tool completion, approval preservation, call attribution, context cost,
    latency, and cache behavior without logging sensitive content.
@@ -484,8 +512,8 @@ report schema. Verification has two lanes:
 A compatibility record is immutable and contains the complete
 `CompatibilityKey` plus conformance-manifest digest, fixture digest, result
 digest, and verification timestamp. Evidence/result fields are not key fields.
-Any `CompatibilityKey` mismatch invalidates the record. Native enablement
-requires all mandatory manifest scenarios passing, no new task/approval/
+Any `CompatibilityKey` mismatch invalidates the record. Native Tool Search
+admission requires all mandatory manifest scenarios passing, no new task/approval/
 attribution/replay/final-outcome failure relative to eager mode, and at least
 50 percent fewer initially serialized tool-definition bytes than the tuple's
 eager-filtered synthetic baseline.
@@ -501,7 +529,7 @@ claims without a separately approved threshold.
 
 Rollout stages:
 
-1. Ship metadata, adapter-rendered LLM projection, receipts, and
+1. Ship metadata, adapter-rendered searchable-corpus boundaries, receipts, and
    `eager_filtered` only.
 2. Complete and test the exhaustive core presentation inventory.
 3. Verify candidate Codex and OpenCode tuples in isolation; a binary upgrade is
@@ -582,9 +610,11 @@ must prove the nested program cannot escape its narrower capability.
 
 V1 includes:
 
-- catalog metadata and an exhaustive registered-tool LLM-presentation classification before native enablement,
-- a stable adapter-owned model-visible projection bound to each attempt while
+- catalog metadata and an exhaustive registered-tool LLM-presentation classification before native Tool Search admission,
+- a stable adapter-owned searchable corpus bound to each attempt while
   canonical FastMCP `tools/list` remains complete,
+- verified runtime-native search, result selection, and on-demand loading of
+  original typed MCP definitions,
 - `eager_filtered` and `auto` DB-backed operational policy,
 - `none`, `eager_filtered`, and `native_deferred` plan modes,
 - per-attempt capability negotiation and exact-tuple compatibility records,

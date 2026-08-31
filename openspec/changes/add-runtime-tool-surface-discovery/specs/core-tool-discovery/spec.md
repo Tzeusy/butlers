@@ -1,10 +1,12 @@
 ## Purpose
 
-Defines how each ephemeral runtime receives an LLM-eligible, cross-CLI MCP
-tool surface without loading every registered tool schema into model context or
-weakening existing butler, module, approval, and infrastructure boundaries.
-Canonical FastMCP listing remains complete; adapters own the model-visible
-projection boundary.
+Defines how a `native_deferred` ephemeral runtime searches a bounded,
+LLM-eligible MCP corpus and loads full typed schemas only when needed, without
+weakening existing butler, module, approval, and infrastructure boundaries. An
+`eager_filtered` runtime instead receives every allowed full definition and no
+native search path. Canonical FastMCP listing remains complete; adapters own the
+search-corpus boundary and verified runtime-native Tool Search supplies the
+material context savings.
 
 ## ADDED Requirements
 
@@ -17,7 +19,8 @@ of the preceding set, and no discovery mode SHALL present a tool excluded by the
 butler's effective core groups, module groups, module state, type, or name.
 Each attempt SHALL materialize the latter sets as an immutable adapter artifact
 before the runtime host serializes definitions into model context or native
-search.
+search. The artifact SHALL distinguish the bounded searchable corpus from the
+potentially smaller set of full definitions loaded initially.
 
 ID: REQ-core-tool-discovery-001
 Source: RFC 0027 §Layered Surface Model; heart-and-soul/architecture.md §Why Tool Surface Discipline Matters
@@ -64,7 +67,7 @@ pagination SHALL remain invocation-local and SHALL NOT be represented as a
 Butlers-owned presentation cursor.
 
 ID: REQ-core-tool-discovery-002
-Source: RFC 0027 §LLM Visibility Classification, §Adapter-Owned LLM Projection; heart-and-soul/security.md §Session Sandboxing
+Source: RFC 0027 §LLM Visibility Classification, §Adapter-Owned Search Corpus and Model Presentation; heart-and-soul/security.md §Session Sandboxing
 Scope: v1-mandatory
 
 #### Scenario: Infrastructure handler is hidden from an LLM session
@@ -174,8 +177,9 @@ MCP list. The compatibility profile
 SHALL describe the public allowlist dialect, canonical-to-host name mapping,
 whether filtering changes model availability or only permission, eager/native
 controllability, native granularity, invocation-local host-pagination behavior,
-and parser/receipt support. A tuple without a verified model-presentation
-boundary SHALL be ineligible for tool-bearing work.
+native search result-limit/ordering behavior, and parser/receipt support. A
+tuple without a verified model-presentation boundary SHALL be ineligible for
+tool-bearing work.
 
 ID: REQ-core-tool-discovery-004
 Source: RFC 0027 §Capability Negotiation and Adapter Contract; craft-and-care/interfaces-and-dependencies.md §Compatibility Rules
@@ -224,18 +228,23 @@ Scope: v1-mandatory
 - **AND** an `all_deferred` host is ineligible when any presentable tool requires eager loading
 - **AND** the planner uses a separately verified eager candidate or treats the tuple as ineligible
 
-### Requirement: Deferred Discovery Preserves Typed MCP Execution
+### Requirement: Native Tool Search Loads Typed MCP Definitions on Demand
 
 When `native_deferred` is selected, the adapter SHALL render a plan-bound host
-artifact whose native index contains only the canonical allowlist. The runtime
-SHALL initially receive bounded namespace or server summaries instead of every
-deferred tool's full schema, SHALL load only LLM-eligible matches, and SHALL
-ultimately invoke the original typed MCP handler using its canonical schema and
-name. Host-internal MCP pagination SHALL remain invocation-local and outside the
-model-visible contract.
+artifact whose native search index contains only the canonical corpus. The
+runtime SHALL initially receive bounded namespace or server summaries instead
+of every deferred tool's full schema. For fixed manifest queries, search SHALL
+return every intended eligible tool within the profile-declared result limit,
+return no tool outside the immutable corpus, exclude infrastructure-only tools,
+permit query refinement after a miss without widening the corpus, load the
+selected full typed definition on demand, and ultimately invoke the original
+MCP handler using its canonical schema and name. Extra eligible matches and
+precision SHALL be reported diagnostics unless a separate threshold is
+approved. Host-internal MCP pagination SHALL remain invocation-local and outside
+the model-visible contract.
 
 ID: REQ-core-tool-discovery-005
-Source: RFC 0027 §Native Deferred Contract; RFC 0002 §Tool Call Logging Proxy
+Source: RFC 0027 §Native Tool Search and Deferred Loading Contract; RFC 0002 §Tool Call Logging Proxy
 Scope: v1-mandatory
 
 #### Scenario: Deferred tool is loaded before direct invocation
@@ -249,6 +258,12 @@ Scope: v1-mandatory
 - **WHEN** a discovery query would lexically match both LLM-visible and infrastructure-only tools
 - **THEN** only LLM-visible matches are returned
 - **AND** the response does not reveal hidden tool names, descriptions, parameter names, or counts
+
+#### Scenario: Search miss can be refined without widening the corpus
+
+- **WHEN** an initial discovery query does not return the required eligible tool
+- **THEN** the runtime may refine the query within the same immutable corpus
+- **AND** refinement does not expose the complete MCP list or any tool outside that corpus
 
 #### Scenario: Approval-sensitive actions keep their normal path
 
@@ -387,7 +402,7 @@ Scope: v1-mandatory
 - **THEN** the receipt preserves ordered candidate-attempt and presentation-subattempt identities
 - **AND** no later upsert overwrites an earlier presentation outcome
 
-### Requirement: Native Mode Verification Gate
+### Requirement: Native Tool Search Verification Gate
 
 The system SHALL keep a runtime tuple on `eager_filtered` until both a
 credential-free structural suite and an authorized representative-runtime
@@ -395,8 +410,8 @@ evaluation have passed a versioned, repo-owned conformance manifest covering
 discovery protocol, canonical invocation, infrastructure-tool omission from
 model-visible schemas, complete canonical HTTP/SSE listing, public host-filter
 behavior, invocation-local host pagination, approval preservation, receipt
-parsing, and fallback behavior. Enabling native
-mode SHALL require an immutable compatibility record tied to the tested CLI
+parsing, and fallback behavior. Admitting native Tool Search SHALL require an
+immutable compatibility record tied to the tested CLI
 runtime type, executable artifact digest/identity/exact version, adapter-profile
 revision, configuration dialect and normalized digest, transport/protocol
 version, and exact provider/model IDs. The record SHALL add
@@ -404,7 +419,7 @@ conformance-manifest, fixture, and result digests plus verification time as
 evidence fields outside that compatibility key.
 
 ID: REQ-core-tool-discovery-009
-Source: RFC 0027 §Conformance and Rollout Gate; craft-and-care/performance-discipline.md §Core Rules
+Source: RFC 0027 §Tool Search Conformance and Rollout Gate; craft-and-care/performance-discipline.md §Core Rules
 Scope: v1-mandatory
 
 #### Scenario: Unverified runtimes use the compatible fallback
@@ -420,11 +435,18 @@ Scope: v1-mandatory
 - **AND** the evaluation proves an LLM-visible tool can be found and invoked
 - **AND** it proves infrastructure-only names and schemas remain absent from deferred discovery without claiming direct-call denial
 
-#### Scenario: Deferred presentation materially reduces initial schema load
+#### Scenario: Native search materially reduces initial schema load
 
-- **WHEN** a runtime tuple is proposed for native-mode enablement
+- **WHEN** a runtime tuple is proposed for native Tool Search admission
 - **THEN** its synthetic large-surface evaluation shows at least a 50 percent reduction in initially serialized tool-definition bytes relative to its eager-filtered baseline
 - **AND** every required behavioral and safety scenario remains passing
+
+#### Scenario: Native search finds intended tools within its bounded result set
+
+- **WHEN** a runtime tuple runs the manifest's representative discovery queries and miss-refinement cases
+- **THEN** every required intended tool appears within the profile-declared result limit and is loadable through its typed definition
+- **AND** every result belongs to the immutable corpus and infrastructure-only matches remain absent
+- **AND** extra eligible matches and precision are reported diagnostics unless a separate threshold is approved
 
 #### Scenario: Native presentation introduces no behavioral regression
 
