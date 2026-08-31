@@ -328,6 +328,36 @@ async def test_verify_all_rate_limit(app, audit_append_spy, monkeypatch):
     assert route_calls[0].kwargs["result"] == "success"
 
 
+async def test_verify_all_pool_failure_does_not_consume_rate_limit(
+    app, audit_append_spy, monkeypatch
+):
+    """A rejected run remains eligible for retry once the pool is available."""
+    import butlers.api.routers.model_settings as _ms
+
+    monkeypatch.setattr(_ms, "_verify_all_last_run", 0.0)
+
+    app, mock_pool = _app_with_pool(app)
+    mock_pool.fetch = AsyncMock(return_value=[])
+    mock_db = app.dependency_overrides[_get_db_manager]()
+    mock_db.credential_shared_pool.side_effect = [KeyError("No shared pool"), mock_pool]
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        rejected = await client.post("/api/settings/models/verify-all")
+        accepted = await client.post("/api/settings/models/verify-all")
+
+    assert rejected.status_code == 503
+    assert accepted.status_code == 200
+    assert accepted.json()["data"] == {
+        "accepted": True,
+        "total": 0,
+        "ok": 0,
+        "failed": 0,
+        "unavailable": 0,
+    }
+
+
 async def test_verify_all_accepted_after_interval_returns_current_result_shape(
     app, audit_append_spy, monkeypatch
 ):

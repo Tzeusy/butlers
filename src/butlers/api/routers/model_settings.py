@@ -53,6 +53,7 @@ _COMPLEXITY_TIERS = ("reasoning", "workhorse", "cheap", "specialty", "local", "l
 _verify_all_last_run: float = 0.0
 _VERIFY_ALL_MIN_INTERVAL_S = 60.0
 _VERIFY_ALL_CONCURRENCY = 8
+_verify_all_gate = asyncio.Lock()
 
 
 def _get_db_manager() -> DatabaseManager:
@@ -813,17 +814,18 @@ async def verify_all_models(
     """
     global _verify_all_last_run  # noqa: PLW0603
 
-    now = time.monotonic()
-    if now - _verify_all_last_run < _VERIFY_ALL_MIN_INTERVAL_S:
-        raise HTTPException(
-            status_code=429,
-            detail="verify-all was called recently — wait at least 60 seconds between runs",
-        )
-    _verify_all_last_run = now
+    async with _verify_all_gate:
+        now = time.monotonic()
+        if now - _verify_all_last_run < _VERIFY_ALL_MIN_INTERVAL_S:
+            raise HTTPException(
+                status_code=429,
+                detail="verify-all was called recently — wait at least 60 seconds between runs",
+            )
 
-    pool = _shared_pool(db)
-    result = await run_verify_all_models(pool, audit_actor="owner")
-    return ApiResponse[VerifyAllResult](data=result)
+        pool = _shared_pool(db)
+        result = await run_verify_all_models(pool, audit_actor="owner")
+        _verify_all_last_run = now
+        return ApiResponse[VerifyAllResult](data=result)
 
 
 # ---------------------------------------------------------------------------
