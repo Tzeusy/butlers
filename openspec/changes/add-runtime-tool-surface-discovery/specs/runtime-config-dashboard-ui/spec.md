@@ -22,7 +22,10 @@ Scope: v1-mandatory
 
 - **WHEN** `tool_exposure_policy` is displayed or changed
 - **THEN** the card SHALL state that the setting applies to newly planned sessions without a daemon restart
-- **AND** `auto` SHALL be described as verified-native-when-available with eager fallback, not as a guarantee that native discovery will run
+- **AND** `auto` SHALL be described as verified-native-when-available with a
+  separately verified eager fallback only when one is available, otherwise the
+  tuple is unavailable/ineligible, not as a guarantee that native discovery
+  will run
 
 #### Scenario: Unavailable policy is not presented as active
 

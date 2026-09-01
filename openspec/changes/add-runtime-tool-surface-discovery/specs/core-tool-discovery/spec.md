@@ -170,8 +170,9 @@ Scope: v1-mandatory
 The system SHALL treat native discovery support as proven only for a specific
 runtime, CLI version, configuration dialect, and model/provider tuple. Unknown,
 unsupported, malformed, or stale native evidence SHALL select a separately
-verified `eager_filtered` profile/candidate rather than silently dropping tools
-or emitting unsupported configuration. Unknown or missing model-presentation
+verified `eager_filtered` profile/candidate when one is available, otherwise
+make the tuple ineligible, rather than silently dropping tools or emitting
+unsupported configuration. Unknown or missing model-presentation
 filter evidence SHALL make the tuple ineligible rather than expose the complete
 MCP list. The compatibility profile
 SHALL describe the public allowlist dialect, canonical-to-host name mapping,
@@ -281,11 +282,14 @@ Scope: v1-mandatory
 
 The system SHALL fall back or retry a failed native-discovery invocation only
 when a closed adapter failure category explicitly identifies native transport
-or native discovery protocol failure and complete effect evidence proves that
-no MCP tool or non-MCP side-effect-capable host action occurred. Missing,
-unknown, or parser-ambiguous effect evidence SHALL block replay. Once any effect
-is observed, the logical session SHALL not be automatically replayed through an
-eager or alternate discovery mode.
+or native discovery protocol failure, the same candidate has a separately
+verified eager-capable profile, and complete effect evidence proves that no MCP
+tool or non-MCP side-effect-capable host action occurred. `preparation_failed`
+MAY render eager assets without process replay only when that same profile
+exists. Missing, unknown, or parser-ambiguous effect evidence SHALL block
+replay. Without the verified eager-capable profile, no presentation fallback
+occurs. Once any effect is observed, the logical session SHALL not be
+automatically replayed through an eager or alternate discovery mode.
 
 ID: REQ-core-tool-discovery-006
 Source: RFC 0027 §Failure and Replay Safety; core-spawner Runtime Failure Classification
@@ -294,8 +298,11 @@ Scope: v1-mandatory
 #### Scenario: Pre-tool discovery initialization failure may fall back
 
 - **WHEN** native discovery fails before any MCP or other side-effect-capable call is observed
-- **THEN** the system can retry once with the verified eager-filtered plan
-- **AND** both attempts remain part of one logical session receipt
+- **THEN** the system can retry at most once with the same candidate's
+  separately verified eager-filtered plan only when complete zero-effect
+  evidence exists, otherwise no presentation replay occurs
+- **AND** if a retry occurs, both attempts remain part of one logical session
+  receipt
 
 #### Scenario: Partial tool execution blocks automatic replay
 
@@ -404,14 +411,16 @@ Scope: v1-mandatory
 
 ### Requirement: Native Tool Search Verification Gate
 
-The system SHALL keep a runtime tuple on `eager_filtered` until both a
+The system SHALL keep a runtime tuple out of `native_deferred` until both a
 credential-free structural suite and an authorized representative-runtime
 evaluation have passed a versioned, repo-owned conformance manifest covering
 discovery protocol, canonical invocation, infrastructure-tool omission from
 model-visible schemas, complete canonical HTTP/SSE listing, public host-filter
 behavior, invocation-local host pagination, approval preservation, receipt
-parsing, and fallback behavior. Admitting native Tool Search SHALL require an
-immutable compatibility record tied to the tested CLI
+parsing, and fallback behavior. Under `auto`, an unadmitted native tuple SHALL
+select a separately verified eager-filtered profile/candidate when one is
+available, otherwise it is ineligible. Admitting native Tool Search SHALL
+require an immutable compatibility record tied to the tested CLI
 runtime type, executable artifact digest/identity/exact version, adapter-profile
 revision, configuration dialect and normalized digest, transport/protocol
 version, and exact provider/model IDs. The record SHALL add

@@ -168,10 +168,12 @@ subattempt. Adapter-internal transport retries stay inside the same presentation
 subattempt and existing process diagnostics.
 
 Native-to-eager retry is allowed at most once and only for a closed native
-transport/protocol failure when merged evidence is complete and proves zero MCP
-and zero non-MCP effect-capable actions. Shell/command, file-edit/apply-patch,
-browser/computer, app, unknown, and parser-ambiguous actions block replay. A
-valid no-tool/plain-text response is not failure evidence.
+transport/protocol failure when the same candidate has a separately verified
+eager-capable profile and merged evidence is complete and proves zero MCP and
+zero non-MCP effect-capable actions. Without that profile, no presentation
+fallback occurs. Shell/command, file-edit/apply-patch, browser/computer, app,
+unknown, and parser-ambiguous actions block replay. A valid no-tool/plain-text
+response is not failure evidence.
 
 ### Decision 6: Search first, then load and call the direct typed tool
 

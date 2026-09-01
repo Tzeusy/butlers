@@ -53,5 +53,5 @@
 - [x] 7.1 Record owner adoption by marking RFC 0027 and RFC 0002's amendment consistently.
 - [ ] 7.2 Update `about/lay-and-land/integration.md`, `docs/concepts/mcp-model.md`, lifecycle/trigger docs, and runtime adapter docs with complete canonical MCP listing versus adapter-owned model presentation.
 - [ ] 7.3 Document registered, LLM-presentable, adapter-rendered initially loaded, and natively loaded sets; state that host filters are not authorization, host MCP pagination is internal, and eager-only runtimes receive no guaranteed large token reduction.
-- [ ] 7.4 Produce a canary/rollback runbook that keeps all existing rows eager, requires separate operator authorization before setting one live butler to `auto`, and returns to eager on any CLI/profile mismatch or task-quality regression.
+- [ ] 7.4 Produce a canary/rollback runbook that keeps all existing rows eager, requires separate operator authorization before setting one live butler to `auto`, and on any CLI/profile mismatch or task-quality regression selects a separately verified eager-capable profile/candidate when one is available, otherwise treats the tuple as unavailable/ineligible.
 - [ ] 7.5 Verify no implementation task added a generic gateway, Code Mode, caller authentication, semantic daemon routing, or automatic binary upgrade; route any such discovery through a separate spec-first change.
