@@ -324,8 +324,10 @@ runtimes:
 - The 30-50 target becomes an initially loaded working-set target rather than
   a hard ceiling on registered handlers. Manifesto and group pruning remain
   mandatory because they encode ownership, not just token cost.
-- Verified runtime tuples may use native deferred search; all others receive
-  the eager LLM-presentable projection with unchanged typed MCP calls.
+- Verified runtime tuples may use native deferred search. An unadmitted native
+  tuple uses a separately verified eager-capable profile/candidate when one is
+  available; otherwise it is ineligible for tool-bearing work. Every permitted
+  mode preserves unchanged typed MCP calls.
 - Tool descriptors are finalized only after approval wrapping, and invocation
   always returns to the final wrapped FastMCP registry.
 - Skills remain guidance-only and cannot register or present tools.
