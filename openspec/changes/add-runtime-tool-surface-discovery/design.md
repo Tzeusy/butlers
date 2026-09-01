@@ -254,8 +254,9 @@ are not pass/fail claims without a separately approved threshold.
   counts.
 - **[Risk] Upstream CLI behavior changes without a version bump.** → Bind the
   compatibility key to artifact, adapter-profile, and normalized-configuration
-  digests, retain fixture/manifest/result digests as evidence, and return to
-  eager on any key mismatch.
+  digests, retain fixture/manifest/result digests as evidence, and on any key
+  mismatch select a separately verified eager-capable profile/candidate when
+  one is available, otherwise mark the tuple ineligible.
 - **[Risk] Hidden presentation is mistaken for security.** → Keep host filters
   presentation-only, leave `tools/call` unchanged, use explicit UI/docs copy,
   and retain separate handler-specific authorization tests.
@@ -287,8 +288,10 @@ are not pass/fail claims without a separately approved threshold.
 6. After an authorized canary, expand only if task success, discovery misses,
    retries, tokens, latency, and approval evidence pass the recorded gate.
 
-Rollback sets the affected butler to `eager_filtered`. The next attempt uses an
-eager-capable adapter projection; a tuple that mandates native deferral is
-skipped under that policy. Registered handlers, session history, and in-flight
-plans are not rewritten. A migration downgrade removes the new fields only
-after all rows are returned to eager behavior.
+Rollback sets the affected butler policy to `eager_filtered`. The next attempt
+uses a separately verified eager-capable adapter projection only when a matching
+profile/candidate is available; otherwise its tuple is ineligible. A tuple that
+mandates native deferral is skipped under that policy. Registered handlers,
+session history, and in-flight plans are not rewritten. A migration downgrade
+removes the new fields only after all rows use verified eager behavior or are
+marked ineligible.
