@@ -1061,6 +1061,7 @@ files under `frontend/src/pages` and `frontend/src/components`.
 - Monthly ceiling updated
 - Failed to update ceiling
 - Enter a positive amount
+- Monthly spend is unavailable; try again when the forecast recovers
 - Rule created
 - Failed to create rule
 - Per-call cap must be a positive number
@@ -4158,4 +4159,4 @@ files under `frontend/src/pages` and `frontend/src/components`.
 - Preset windows
 
 ---
-*Total strings: 3257*
+*Total strings: 3258*
