@@ -44,7 +44,7 @@ Scope: v1-mandatory
 - **WHEN** a PATCH request updates `core_groups`
 - **THEN** the DB row SHALL be updated, `updated_at` SHALL be set to now, and the response SHALL include `restart_required: ["core_groups"]`
 
-#### Scenario: Restart-bound fields are cold
+#### Scenario: All managed fields are cold
 - **WHEN** a PATCH request updates any of `core_groups`, `max_concurrent`, or `max_queued`
 - **THEN** the response SHALL include `restart_required` listing exactly those changed fields, because those three require a daemon restart to take effect
 
