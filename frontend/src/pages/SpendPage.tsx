@@ -60,7 +60,11 @@ import {
   useSpendTicker,
   type LiveUnpricedSpendEvent,
 } from "@/hooks/use-spend-ticker";
-import { useFleetHaltStatus } from "@/hooks/use-fleet-halt";
+import {
+  FLEET_HALT_DISPATCH_ATTEMPTS_QUERY_KEY,
+  FLEET_HALT_QUERY_KEY,
+  useFleetHaltStatus,
+} from "@/hooks/use-fleet-halt";
 import { useModelCatalog } from "@/hooks/use-model-catalog";
 import { useBusAwarePollInterval } from "@/hooks/use-bus-aware-poll-interval";
 import {
@@ -565,20 +569,56 @@ function ForecastChart({ days, ceiling_usd }: ForecastChartProps) {
 // Posture — ceiling edit (inline)
 // ---------------------------------------------------------------------------
 
-function CeilingEdit({ currentCeiling }: { currentCeiling: number | null }) {
+function CeilingEdit({
+  currentCeiling,
+  currentMtdUsd,
+}: {
+  currentCeiling: number | null;
+  currentMtdUsd: number;
+}) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(String(currentCeiling ?? ""));
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    ceiling: number;
+    mtd: number;
+  } | null>(null);
 
   const mutation = useMutation({
     mutationFn: (usd: number) => updateCeiling(usd),
-    onSuccess: () => {
+    onSuccess: (_data, usd) => {
       queryClient.invalidateQueries({ queryKey: ["spend-forecast"] });
+      queryClient.invalidateQueries({
+        queryKey: FLEET_HALT_DISPATCH_ATTEMPTS_QUERY_KEY,
+      });
+      queryClient.invalidateQueries({ queryKey: FLEET_HALT_QUERY_KEY });
+      setValue(String(usd));
+      setPendingConfirmation(null);
       setEditing(false);
       toast.success("Monthly ceiling updated");
     },
     onError: () => toast.error("Failed to update ceiling"),
   });
+
+  const cancelEditing = () => {
+    setValue(String(currentCeiling ?? ""));
+    setPendingConfirmation(null);
+    setEditing(false);
+  };
+
+  const save = () => {
+    if (mutation.isPending) return;
+    const parsed = parseFloat(value);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      toast.error("Enter a positive amount");
+      return;
+    }
+    if (parsed <= currentMtdUsd) {
+      setPendingConfirmation({ ceiling: parsed, mtd: currentMtdUsd });
+      return;
+    }
+    mutation.mutate(parsed);
+  };
 
   if (!editing) {
     return (
@@ -586,7 +626,10 @@ function CeilingEdit({ currentCeiling }: { currentCeiling: number | null }) {
         variant="outline"
         size="sm"
         className="text-xs h-7"
-        onClick={() => setEditing(true)}
+        onClick={() => {
+          setValue(String(currentCeiling ?? ""));
+          setEditing(true);
+        }}
       >
         {currentCeiling != null
           ? `Edit ceiling (${formatCostUsd(currentCeiling)})`
@@ -604,21 +647,25 @@ function CeilingEdit({ currentCeiling }: { currentCeiling: number | null }) {
         value={value}
         min="0.01"
         step="0.01"
+        aria-label="Monthly ceiling (USD)"
         onChange={(e) => setValue(e.target.value)}
+        onFocus={(event) => event.currentTarget.select()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            save();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            cancelEditing();
+          }
+        }}
         autoFocus
       />
       <Button
         size="sm"
         className="text-xs h-7"
         disabled={mutation.isPending}
-        onClick={() => {
-          const parsed = parseFloat(value);
-          if (isNaN(parsed) || parsed <= 0) {
-            toast.error("Enter a positive amount");
-            return;
-          }
-          mutation.mutate(parsed);
-        }}
+        onClick={save}
       >
         Save
       </Button>
@@ -626,10 +673,28 @@ function CeilingEdit({ currentCeiling }: { currentCeiling: number | null }) {
         variant="ghost"
         size="sm"
         className="text-xs h-7"
-        onClick={() => setEditing(false)}
+        disabled={mutation.isPending}
+        onClick={cancelEditing}
       >
         Cancel
       </Button>
+      {pendingConfirmation && (
+        <ConfirmDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) cancelEditing();
+          }}
+          title="Set a ceiling at or below current spend?"
+          description={`This is at/below month-to-date spend of ${formatCostUsd(pendingConfirmation.mtd)} and will immediately deny every butler dispatch fleet-wide.`}
+          confirmLabel="Set ceiling"
+          pendingLabel="Saving…"
+          cancelLabel="Keep current ceiling"
+          variant="destructive"
+          pending={mutation.isPending}
+          onConfirm={() => mutation.mutate(pendingConfirmation.ceiling)}
+          testId="spend-ceiling-confirm-dialog"
+        />
+      )}
     </div>
   );
 }
@@ -2851,7 +2916,10 @@ export default function SpendPage() {
               </p>
             </div>
             {liveForecast && (
-              <CeilingEdit currentCeiling={liveForecast.ceiling_usd} />
+              <CeilingEdit
+                currentCeiling={liveForecast.ceiling_usd}
+                currentMtdUsd={liveForecast.mtd_usd}
+              />
             )}
           </div>
           <div className="p-4">
