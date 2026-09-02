@@ -3,10 +3,14 @@
 ### Requirement: Stale-contact claims require one authoritative producer
 
 Before classifying a contact as overdue, the Relationship butler MUST resolve exactly one
-server-attested expected-signal producer for that contact. A missing, unsupported, mixed,
-conflicting, caller-asserted, or otherwise unprovable source MUST be `unmeasurable` and MUST NOT
-produce a stale-contact candidate, overdue-contact result, reconnect suggestion, or scheduled
-relationship-maintenance nudge.
+server-attested expected-signal producer and, for connector producers, its exact endpoint identity
+for that contact. A missing, unsupported, mixed, conflicting, caller-asserted, or otherwise
+unprovable source/endpoint MUST be `unmeasurable` and MUST NOT produce a stale-contact candidate,
+overdue-contact result, reconnect suggestion, or scheduled relationship-maintenance nudge.
+
+For connector producers, continued adoption SHALL persist a non-empty
+`producer_endpoint_identity` on the shared expected signal and SHALL evaluate liveness by the exact
+`(connector_type, endpoint_identity)` pair. Owner-produced signals SHALL keep that field null.
 
 ID: REQ-butler-relationship-001
 Source: relationship-stale-contact-producer-mapping design §§1-6; RFC 0011
@@ -16,21 +20,27 @@ Scope: v1-mandatory
 
 - **WHEN** an email interaction is server-attested by the passive interaction writer and the
   contact has corroborating active email identity evidence
-- **THEN** its sole expected-signal producer MUST be `connector:gmail`
+- **THEN** its sole expected-signal producer MUST be `connector:gmail` bound to the exact
+  server-derived Gmail endpoint identity that received the interaction
 - **AND** no Telegram, WhatsApp, Discord, calendar, or generic connector health may authorize it
+- **AND** another healthy Gmail endpoint MUST NOT authorize it
 
 #### Scenario: Telegram user-client remains distinct from Telegram bot
 
 - **WHEN** a Telegram user-client interaction is server-attested and the contact has a
   corroborating active `telegram:<id>` identity
 - **THEN** its sole expected-signal producer MUST be `connector:telegram_user_client`
+- **AND** it MUST be bound to the exact server-derived Telegram user-client endpoint identity
 - **AND** `connector:telegram_bot` MUST NOT authorize the signal, even when that bot is healthy
+- **AND** another healthy Telegram user-client endpoint MUST NOT authorize it
 
 #### Scenario: WhatsApp user-client uses canonical identity corroboration
 
 - **WHEN** a WhatsApp user-client interaction is server-attested and the contact resolved through
   an exact WhatsApp JID identity or the canonical E.164 phone fallback
-- **THEN** its sole expected-signal producer MUST be `connector:whatsapp_user_client`
+- **THEN** its sole expected-signal producer MUST be `connector:whatsapp_user_client` bound to the
+  exact server-derived WhatsApp endpoint identity
+- **AND** another healthy WhatsApp user-client endpoint MUST NOT authorize it
 
 #### Scenario: Owner-entered manual source requires server attestation
 
@@ -51,10 +61,10 @@ Scope: v1-mandatory
 - **AND** the system MUST NOT infer a producer from its predicate, contact handle, row order, or any
   currently healthy connector
 
-#### Scenario: Mixed ownership is unmeasurable
+#### Scenario: Mixed ownership or endpoint identity is unmeasurable
 
 - **WHEN** the participating contact identities or latest authoritative observations resolve to
-  more than one expected-signal producer
+  more than one expected-signal producer or endpoint identity
 - **THEN** the contact's stale-contact signal MUST be `unmeasurable`
 - **AND** the evaluator MUST NOT choose one source by recency, primary flag, row order, or health
 
@@ -72,6 +82,8 @@ Scope: v1-mandatory
 - **WHEN** a mapped connector is stale, dead/offline, unhealthy, missing, or unreadable after the
   contact's cadence has elapsed
 - **THEN** the signal MUST be `unmeasurable`, never `absent`
+- **AND** a healthy sibling endpoint of the same connector type MUST NOT substitute for the exact
+  attested endpoint
 - **AND** `insight-scan`, `contacts_overdue`, scheduled relationship maintenance, and on-demand
   reconnect planning MUST emit no owner-facing stale-contact candidate or nudge for that contact
 

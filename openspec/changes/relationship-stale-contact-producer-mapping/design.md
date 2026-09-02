@@ -13,9 +13,9 @@ a server-attested authority boundary. The dashboard owner-write route, the MCP t
 fan-out also converge on `interaction_log()` without persisting a server-derived origin. Historic
 rows and migration backfills likewise carry no authoritative producer.
 
-PR #3965 owns the shared `public.expected_signals` primitive and RFC 0029. This prerequisite is
-based on current `main`, deliberately does not copy those pending artifacts, and defines the
-Relationship mapping they must consume after this change lands.
+PR #3965 merged the shared `public.expected_signals` primitive and RFC 0029 as commit
+`af3017cb0`. This prerequisite is rebased on that contract and defines the Relationship mapping
+that continued adoption under `bu-8cdl1.3` must consume in a new implementation PR.
 
 ## Goals / Non-Goals
 
@@ -27,11 +27,12 @@ Relationship mapping they must consume after this change lands.
   aggregate connector guess.
 - Make unmeasurable suppress all stale-contact candidate and nudge paths while preserving the
   existing policy for a healthy elapsed producer.
-- Give PR #3965 an implementation-ready provenance, liveness, API, dashboard, and test handoff.
+- Give continued `bu-8cdl1.3` adoption an implementation-ready provenance, liveness, API,
+  dashboard, and test handoff for a new PR.
 
 **Non-Goals:**
 
-- Implementing the shared expected-signals table/helper or copying RFC 0029 from PR #3965.
+- Reimplementing the shared expected-signals table/helper or rewriting merged PR #3965.
 - Backfilling producer claims onto legacy facts.
 - Adding Telegram bot or Discord to passive interaction sync.
 - Treating calendar availability as connector liveness without a separately proven calendar
@@ -63,9 +64,15 @@ identity/edge store and is not an interaction writer.
 ### 2. A reserved server attestation, not free-form metadata, proves the writer
 
 The downstream writer SHALL persist a reserved top-level
-`metadata.expected_signal_source` object containing `producer`, `source_channel`, and
-`writer="interaction_sync"`, or `producer="owner"` with a server-derived owner principal for a
-manual observation. Public API/MCP metadata MUST NOT be able to set or override this object.
+`metadata.expected_signal_source` object containing `producer`, `source_channel`, the exact
+server-derived `source_endpoint_identity`, and `writer="interaction_sync"`, or
+`producer="owner"` with a server-derived owner principal and no connector endpoint for a manual
+observation. `run_interaction_sync()` must preserve the endpoint identity already carried by each
+`message_inbox.request_context`; it must not infer it from the sender, contact identity, or another
+row. Its message query and grouping key must include
+`request_context->>'source_endpoint_identity'`; using `MAX`, the first row, or a thread/channel-only
+group would silently merge two accounts and is forbidden. Public API/MCP metadata MUST NOT be able
+to set or override this object.
 
 Existing `metadata.extra_metadata.source` values are not upgraded in place: the same field is
 caller-supplied through `interaction_log(metadata=...)`, so treating it as authority would allow a
@@ -111,6 +118,7 @@ participate only when its reserved server attestation and identity proof both ho
     "fact_predicate": "interaction_email",
     "identity_proof": "has-email exact match",
     "producer": "connector:gmail",
+    "endpoint_identity": "server-derived source_endpoint_identity",
     "mapping": "mapped",
     "kill_mode": "heartbeat"
   },
@@ -121,6 +129,7 @@ participate only when its reserved server attestation and identity proof both ho
     "fact_predicate": "interaction_telegram_user_client",
     "identity_proof": "has-handle telegram:<id>",
     "producer": "connector:telegram_user_client",
+    "endpoint_identity": "server-derived source_endpoint_identity",
     "mapping": "mapped",
     "kill_mode": "heartbeat"
   },
@@ -131,6 +140,7 @@ participate only when its reserved server attestation and identity proof both ho
     "fact_predicate": "interaction_whatsapp_user_client",
     "identity_proof": "exact WhatsApp JID handle or E.164 has-phone fallback",
     "producer": "connector:whatsapp_user_client",
+    "endpoint_identity": "server-derived source_endpoint_identity",
     "mapping": "mapped",
     "kill_mode": "heartbeat"
   },
@@ -141,6 +151,7 @@ participate only when its reserved server attestation and identity proof both ho
     "fact_predicate": "interaction_<type>",
     "identity_proof": "server-derived owner principal",
     "producer": "owner",
+    "endpoint_identity": null,
     "mapping": "mapped",
     "kill_mode": "attestation"
   },
@@ -151,6 +162,7 @@ participate only when its reserved server attestation and identity proof both ho
     "fact_predicate": "interaction_<type>",
     "identity_proof": "none persisted",
     "producer": null,
+    "endpoint_identity": null,
     "mapping": "unmeasurable",
     "kill_mode": "none"
   },
@@ -161,6 +173,7 @@ participate only when its reserved server attestation and identity proof both ho
     "fact_predicate": null,
     "identity_proof": "has-handle telegram:<id> is shared with user-client",
     "producer": null,
+    "endpoint_identity": null,
     "mapping": "unmeasurable",
     "kill_mode": "none"
   },
@@ -171,6 +184,7 @@ participate only when its reserved server attestation and identity proof both ho
     "fact_predicate": null,
     "identity_proof": "has-handle discord:<user_id>",
     "producer": null,
+    "endpoint_identity": null,
     "mapping": "unmeasurable",
     "kill_mode": "none"
   },
@@ -181,6 +195,7 @@ participate only when its reserved server attestation and identity proof both ho
     "fact_predicate": "interaction_calendar_event",
     "identity_proof": "has-email attendee match",
     "producer": null,
+    "endpoint_identity": null,
     "mapping": "unmeasurable",
     "kill_mode": "none"
   },
@@ -191,6 +206,7 @@ participate only when its reserved server attestation and identity proof both ho
     "fact_predicate": "interaction_%",
     "identity_proof": "missing or unprovable",
     "producer": null,
+    "endpoint_identity": null,
     "mapping": "unmeasurable",
     "kill_mode": "none"
   }
@@ -198,24 +214,33 @@ participate only when its reserved server attestation and identity proof both ho
 ```
 <!-- relationship-stale-contact-producer-map:end -->
 
-Gmail's connector liveness key is `gmail`; Telegram bot and Telegram user-client are deliberately
-not collapsed (`telegram_bot` versus `telegram_user_client`); WhatsApp's key is
-`whatsapp_user_client`. Discord's runtime heartbeat key is `discord`, but it is not a mapped
-stale-contact producer because the Relationship passive writer does not ingest that channel.
+Connector liveness is keyed by the exact pair `(connector_type, endpoint_identity)`. Gmail's type
+is `gmail`; Telegram bot and Telegram user-client are deliberately not collapsed (`telegram_bot`
+versus `telegram_user_client`); WhatsApp's type is `whatsapp_user_client`. A healthy sibling
+endpoint of the same connector type MUST NOT satisfy the attested endpoint's liveness check.
+Discord's runtime heartbeat type is `discord`, but it is not a mapped stale-contact producer
+because the Relationship passive writer does not ingest that channel.
+
+Continued adoption SHALL extend the shared expected-signal representation with nullable
+`producer_endpoint_identity`: it is required and non-empty whenever `producer` starts with
+`connector:`, and null for `owner`. Connector measurability must query
+`public.v_qa_connector_state` by both the producer's connector type and this exact endpoint value.
+It must not keep RFC 0029's initial type-only lookup for Relationship signals.
 
 ### 5. One producer or unmeasurable
 
-For each contact, adoption builds the producer set from:
+For each contact, adoption builds the producer/endpoint pair set from:
 
 1. the active contact identities whose configured source can write Relationship interactions; and
 2. the reserved producer attestation on the observation that establishes `last_observed_at`.
 
-The result is measurable only when the set contains exactly one producer, the attestation and
-identity agree, and no participating evidence is missing or unprovable. Zero producers, two or
-more producers, conflicting attestations, an unsupported identity path, tied latest observations
-from different producers, or an unreadable source all yield `unmeasurable`. The evaluator MUST NOT
-pick the first row, the newest healthy connector, a primary contact field, or any healthy connector
-of the same provider family.
+The result is measurable only when the set contains exactly one producer, the attestation's exact
+endpoint identity and contact identity agree, and no participating evidence is missing or
+unprovable. Zero producers, two or more producers, conflicting attestations, a missing/mixed
+endpoint identity, an unsupported identity path, tied latest observations from different
+producers/endpoints, or an unreadable source all yield `unmeasurable`. The evaluator MUST NOT pick
+the first row, the newest healthy connector, a primary contact field, or any healthy sibling
+endpoint of the same provider family.
 
 For a contact with no interaction fact, exactly one corroborated mapped contact identity may define
 the expected producer; otherwise the signal is unmeasurable. A legacy last-interaction row cannot
@@ -226,9 +251,9 @@ observation establishes the baseline.
 
 | Producer mapping | Producer evidence | Cadence | Signal result | Candidate / nudge |
 |---|---|---|---|---|
-| Exactly one mapped connector | healthy and heartbeat current | not elapsed | `present` | no |
-| Exactly one mapped connector | healthy and heartbeat current | elapsed | `absent` | existing policy may emit |
-| Exactly one mapped connector | stale, dead/offline, unhealthy, missing, or unreadable | any | `unmeasurable` | no |
+| Exactly one mapped connector + endpoint | that exact endpoint healthy and heartbeat current | not elapsed | `present` | no |
+| Exactly one mapped connector + endpoint | that exact endpoint healthy and heartbeat current | elapsed | `absent` | existing policy may emit |
+| Exactly one mapped connector + endpoint | exact endpoint stale, dead/offline, unhealthy, missing, or unreadable (even if a sibling endpoint is healthy) | any | `unmeasurable` | no |
 | Attested `owner` manual source | server attestation valid | not elapsed | `present` | no |
 | Attested `owner` manual source | server attestation valid | elapsed | `absent` | existing policy may emit |
 | Manual source | attestation missing or caller-asserted | any | `unmeasurable` | no |
@@ -259,18 +284,24 @@ live ranking path and must not portray the dead Contacts endpoint as evidence th
 contract is already satisfied; restoring or retiring that declared surface remains an explicit
 implementation choice within the approved dashboard requirement.
 
-### 7. Downstream PR #3965 handoff
+### 7. Continued `bu-8cdl1.3` adoption handoff
 
-After this prerequisite merges, PR #3965 SHALL rebase onto the resulting `main` and:
+After this prerequisite merges, continued Relationship adoption under `bu-8cdl1.3` SHALL open a
+new implementation PR from the resulting `main` and:
 
 1. extend RFC 0029's Relationship adoption section by reference to this mapping;
-2. reserve and protect `metadata.expected_signal_source` at the writer boundary;
+2. reserve and protect `metadata.expected_signal_source` at the writer boundary, including the
+   exact server-derived endpoint identity;
 3. derive one `relationship:stale-contact:{contact-id}` producer or `unmeasurable` without a
    cross-schema shortcut;
 4. persist the shared tri-state before every stale-contact consumer can emit owner-facing output;
 5. expose aggregate availability so both dashboard overdue surfaces avoid false all-clears; and
-6. convert this prerequisite's executable planning matrix into migrated-PostgreSQL integration
-   tests against the real expected-signals helper and liveness projection.
+6. add `producer_endpoint_identity` to the expected-signals producer representation and bind the
+   Relationship liveness lookup to `(connector_type, endpoint_identity)` without weakening existing
+   Health behavior; and
+7. convert this prerequisite's executable planning matrix into migrated-PostgreSQL integration
+   tests against the real expected-signals helper and liveness projection, including a two-endpoint
+   kill matrix where a healthy sibling cannot substitute.
 
 No source in this mapping is considered adopted merely because this planning change merges.
 
@@ -290,7 +321,7 @@ No source in this mapping is considered adopted merely because this planning cha
 ## Migration Plan
 
 1. Merge this main-based mapping prerequisite.
-2. Rebase PR #3965 onto that exact `main` head.
+2. Open a new Relationship adoption PR for `bu-8cdl1.3` from that exact `main` head.
 3. Implement the RFC 0029 Relationship adoption handoff above without backfilling legacy
    producer claims.
 4. Roll out writer attestation before enabling stale-contact expected-signal evaluation.

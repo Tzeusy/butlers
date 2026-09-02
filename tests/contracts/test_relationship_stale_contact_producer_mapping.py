@@ -2,10 +2,11 @@
 
 Spec: REQ-butler-relationship-001 and REQ-dashboard-domain-pages-049.
 
-This prerequisite intentionally does not import PR #3965's unmerged expected-signals helper. The
-tests execute the design's machine-readable producer and liveness matrix, and also bind its passive
-channel inventory to the current Relationship writer. PR #3965 must replace this planning harness
-with migrated-PostgreSQL integration coverage when it adopts the mapping.
+This prerequisite consumes the merged RFC 0029 contract without implementing Relationship
+adoption. The tests execute the design's machine-readable producer and endpoint-liveness matrix,
+and bind its passive channel inventory to the current Relationship writer. Continued
+``bu-8cdl1.3`` adoption must replace this planning harness with migrated-PostgreSQL integration
+coverage in a new PR.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ def _evaluate_contract(
     days_since: float,
     cadence_days: int,
 ) -> _Decision:
-    """Execute the target one-producer gate without depending on PR #3965 code."""
+    """Execute the target one-producer gate without implementing downstream adoption."""
     producers = {row["producer"] for row in rows if row.get("producer")}
     if any(row["mapping"] != "mapped" for row in rows) or len(producers) != 1:
         return _Decision("unmeasurable", False)
@@ -79,6 +80,19 @@ def test_current_passive_writer_channels_have_exactly_one_mapped_producer() -> N
     }
     assert set(_INTERACTION_SYNC_CHANNEL_MAP) == set(mapped)
 
+    connector_rows = [
+        row
+        for row in _producer_rows()
+        if row["mapping"] == "mapped" and row["kill_mode"] == "heartbeat"
+    ]
+    assert connector_rows
+    assert all(
+        row["endpoint_identity"] == "server-derived source_endpoint_identity"
+        for row in connector_rows
+    )
+    owner_row = next(row for row in _producer_rows() if row["producer"] == "owner")
+    assert owner_row["endpoint_identity"] is None
+
 
 @pytest.mark.parametrize(
     "evidence_state",
@@ -103,6 +117,60 @@ def test_killing_each_mapped_connector_after_cadence_is_unmeasurable_without_can
             cadence_days=14,
         )
         assert decision == _Decision("unmeasurable", False), row["source_id"]
+
+
+def _endpoint_is_measurable(
+    *,
+    producer: str,
+    endpoint_identity: str,
+    liveness_rows: list[dict[str, str]],
+) -> bool:
+    connector_type = producer.removeprefix("connector:")
+    return any(
+        row["connector_type"] == connector_type
+        and row["endpoint_identity"] == endpoint_identity
+        and row["state"] == "healthy_current"
+        for row in liveness_rows
+    )
+
+
+def test_healthy_sibling_endpoint_cannot_substitute_for_dead_attested_endpoint() -> None:
+    """Liveness authority is the exact connector-type/endpoint pair in either row order."""
+    connector_rows = [
+        row
+        for row in _producer_rows()
+        if row["mapping"] == "mapped" and row["kill_mode"] == "heartbeat"
+    ]
+
+    for row in connector_rows:
+        connector_type = row["producer"].removeprefix("connector:")
+        attested_endpoint = f"{connector_type}:account-a"
+        liveness_rows = [
+            {
+                "connector_type": connector_type,
+                "endpoint_identity": attested_endpoint,
+                "state": "dead_or_offline",
+            },
+            {
+                "connector_type": connector_type,
+                "endpoint_identity": f"{connector_type}:account-b",
+                "state": "healthy_current",
+            },
+        ]
+        for ordered_rows in (liveness_rows, list(reversed(liveness_rows))):
+            exact_endpoint_healthy = _endpoint_is_measurable(
+                producer=row["producer"],
+                endpoint_identity=attested_endpoint,
+                liveness_rows=ordered_rows,
+            )
+            assert not exact_endpoint_healthy, row["source_id"]
+            decision = _evaluate_contract(
+                [row],
+                evidence_state=("healthy_current" if exact_endpoint_healthy else "dead_or_offline"),
+                days_since=60,
+                cadence_days=14,
+            )
+            assert decision == _Decision("unmeasurable", False), row["source_id"]
 
 
 def test_removing_owner_attestation_after_cadence_is_unmeasurable_without_nudge() -> None:
@@ -198,8 +266,14 @@ def test_planning_packet_names_every_stale_contact_consumer_and_downstream_hando
         "reconnect-planner",
         "Relationship Contacts tab",
         'Plex "Worth attention" rail',
-        "PR #3965",
+        "bu-8cdl1.3",
+        "new implementation PR",
+        "producer_endpoint_identity",
+        "(connector_type, endpoint_identity)",
+        "request_context->>'source_endpoint_identity'",
+        "thread/channel-only",
         "RFC 0029",
     }
 
     assert not {phrase for phrase in required if phrase not in design}
+    assert "After this prerequisite merges, PR #3965 SHALL rebase" not in design

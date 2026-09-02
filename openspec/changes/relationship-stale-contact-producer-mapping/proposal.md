@@ -4,7 +4,7 @@ Relationship currently turns elapsed time since `MAX(interaction_*.valid_at)` in
 owner-facing stale-contact claim without proving which producer was expected to record the next
 interaction. A dead connector, a transport that never writes interaction facts, or a mixed legacy
 history can therefore look like owner neglect; this mapping is the prerequisite that lets the
-downstream expected-signals adoption in PR #3965 fail closed instead.
+continued expected-signals adoption under `bu-8cdl1.3` fail closed in a new PR instead.
 
 ## What Changes
 
@@ -17,8 +17,11 @@ downstream expected-signals adoption in PR #3965 fail closed instead.
   overdue counts, and false all-clear copy while the contact's signal is unmeasurable.
 - Preserve the existing Dunbar/`stay_in_touch_days` cadence and stale-contact priority policy once
   a single producer is measurable and the cadence has elapsed.
-- Record the exact downstream handoff to PR #3965: after this prerequisite lands, that branch
-  rebases onto `main`, extends RFC 0029 with this mapping, and performs the runtime/API/UI adoption.
+- Bind every mapped connector attestation and liveness decision to the exact server-derived
+  endpoint identity; a healthy sibling endpoint cannot substitute.
+- Record the exact downstream handoff to continued `bu-8cdl1.3` adoption: after this prerequisite
+  lands, a new branch/PR from `main` extends RFC 0029 with this mapping and performs the
+  runtime/API/UI adoption.
 
 Explicit non-goals:
 
@@ -48,5 +51,5 @@ The change constrains the Relationship interaction writer/provenance contract, t
 `insight-scan` candidate path, `contacts_overdue()` and its weekly reconnect consumer, and the two
 dashboard overdue surfaces (Relationship Contacts tab and Plex attention rail). It updates
 operator guidance and adds a planning-contract test that executes the full producer/liveness
-matrix without depending on the unmerged expected-signals implementation. PR #3965 is the named
-downstream implementation consumer.
+matrix against the merged expected-signals contract. The named downstream implementation consumer
+is a new Relationship adoption PR under `bu-8cdl1.3`; merged PR #3965 is not mutated.

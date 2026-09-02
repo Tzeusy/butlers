@@ -85,9 +85,9 @@ contact must have exactly one provable source that was expected to record the ne
 
 | Interaction input | Required identity corroboration | Expected producer | Current disposition |
 |---|---|---|---|
-| Gmail `email` | active exact `has-email` | `connector:gmail` | mapped after server attestation |
-| Telegram user-client | active `has-handle=telegram:<id>` | `connector:telegram_user_client` | mapped after server attestation |
-| WhatsApp user-client | exact WhatsApp JID or canonical E.164 `has-phone` fallback | `connector:whatsapp_user_client` | mapped after server attestation |
+| Gmail `email` | active exact `has-email` | `connector:gmail` + exact endpoint | mapped after server attestation |
+| Telegram user-client | active `has-handle=telegram:<id>` | `connector:telegram_user_client` + exact endpoint | mapped after server attestation |
+| WhatsApp user-client | exact WhatsApp JID or canonical E.164 `has-phone` fallback | `connector:whatsapp_user_client` + exact endpoint | mapped after server attestation |
 | Explicit owner manual entry | server-derived owner principal | `owner` | mapped after server attestation |
 | Current un-attested manual rows | none persisted | none | unmeasurable |
 | Telegram bot | Telegram handle is shared with user-client; no passive peer-interaction writer | none | unmeasurable |
@@ -95,21 +95,24 @@ contact must have exactly one provable source that was expected to record the ne
 | Calendar attendee interaction | attendee email does not prove the calendar event's producer | none | unmeasurable |
 | Legacy, missing, unknown, or mixed provenance | missing or more than one source | none | unmeasurable |
 
-A mapped connector may authorize absence only while its own heartbeat is healthy and current. A
-stale, dead/offline, unhealthy, missing, or unreadable producer makes the contact unmeasurable and
-pauses every stale-contact nudge. Mixed sources also fail closed; the system never picks the first
-row or substitutes another healthy connector. Healthy elapsed data keeps the existing Dunbar or
-`stay_in_touch_days` cadence, priorities, and ranking.
+A mapped connector may authorize absence only while the heartbeat for its exact server-attested
+endpoint identity is healthy and current. A healthy sibling endpoint of the same connector type
+cannot substitute. A stale, dead/offline, unhealthy, missing, or unreadable producer endpoint makes
+the contact unmeasurable and pauses every stale-contact nudge. Mixed sources also fail closed; the
+system never picks the first row or substitutes another healthy connector. Healthy elapsed data
+keeps the existing Dunbar or `stay_in_touch_days` cadence, priorities, and ranking.
 
 This is an adoption contract, not a claim that current rows are already safe. Existing free-form
-`extra_metadata.source` values are caller-settable and are not producer authority. PR #3965 is the
-downstream consumer: after this prerequisite lands, it rebases onto `main`, extends RFC 0029, adds
-the reserved server attestation, and wires the expected-signals state into every consumer above.
+`extra_metadata.source` values are caller-settable and are not producer authority. PR #3965 merged
+the shared RFC 0029 primitive. After this prerequisite lands, continued `bu-8cdl1.3` adoption opens
+a new PR from `main`, adds the reserved server attestation with exact endpoint identity, and wires
+the expected-signals state into every consumer above.
 
 For operator triage after adoption, check the contact's expected-signal state and exact producer,
-then the heartbeat for that same connector. Do not treat an absent ledger row, an empty overdue
-list, or a different connector's healthy heartbeat as an all-clear. `unmeasurable` is an instrument
-or provenance condition; it is not evidence about the owner's relationship behavior.
+then the heartbeat for that same connector and endpoint identity. Do not treat an absent ledger
+row, an empty overdue list, or a sibling endpoint's healthy heartbeat as an all-clear.
+`unmeasurable` is an instrument or provenance condition; it is not evidence about the owner's
+relationship behavior.
 
 ## Verification
 
