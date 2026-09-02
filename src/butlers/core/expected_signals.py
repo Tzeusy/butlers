@@ -179,17 +179,21 @@ def measurement_producer(sources: list[str | None]) -> str:
     histories remain measurable as owner-entered signals. Unknown provenance is
     deliberately unmeasurable.
     """
-    normalized = [
-        source.strip() for source in sources if isinstance(source, str) and source.strip()
-    ]
-    connector_sources = {
-        source for source in normalized if source in {"google_health", "home_assistant"}
-    }
+    connector_vocabulary = {"google_health", "home_assistant"}
+    manual_vocabulary = {"owner_log", "manual"}
+    recognized_vocabulary = connector_vocabulary | manual_vocabulary
+    normalized = [source.strip() for source in sources if isinstance(source, str)]
+    if len(normalized) != len(sources):
+        return "unknown"
+    if any(not source or source not in recognized_vocabulary for source in normalized):
+        return "unknown"
+
+    connector_sources = {source for source in normalized if source in connector_vocabulary}
     if len(connector_sources) == 1:
         return f"connector:{next(iter(connector_sources))}"
     if len(connector_sources) > 1:
         return "unknown"
-    if normalized and all(source in {"owner_log", "manual"} for source in normalized):
+    if normalized and all(source in manual_vocabulary for source in normalized):
         return "owner"
     return "unknown"
 

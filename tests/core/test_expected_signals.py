@@ -127,3 +127,16 @@ def test_mixed_connector_provenance_is_order_independently_unknown() -> None:
 
     assert measurement_producer(sources) == "unknown"
     assert measurement_producer(list(reversed(sources))) == "unknown"
+
+
+@pytest.mark.parametrize("known_source", ["google_health", "home_assistant"])
+@pytest.mark.parametrize("unproven_source", ["legacy_import", None], ids=["unknown", "null"])
+def test_known_connector_mixed_with_unproven_source_is_order_independently_unknown(
+    known_source: str,
+    unproven_source: str | None,
+) -> None:
+    for sources in (
+        [known_source, unproven_source],
+        [unproven_source, known_source],
+    ):
+        assert measurement_producer(sources) == "unknown"
