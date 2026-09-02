@@ -16,8 +16,17 @@ Scope: v1-mandatory
 
 - **WHEN** a recurrence or tracked renewal is supported by server-attested Gmail ingress
 - **THEN** its producer MUST be `connector:gmail`
+- **AND** its required `producer_endpoint_identity` MUST equal the exact server-derived
+  `source_endpoint_identity`
 - **AND** a `source_message_id`, merchant match, or generic `source` label alone MUST NOT establish
   Gmail authority
+
+#### Scenario: Healthy sibling Gmail endpoint cannot authorize absence
+
+- **WHEN** the attested Gmail endpoint is dead, stale, unhealthy, missing, or unreadable while a
+  different Gmail endpoint is healthy/current
+- **THEN** the signal MUST be `unmeasurable` regardless of liveness row order
+- **AND** the evaluator MUST NOT authorize absence from connector type alone
 
 #### Scenario: Explicit owner provenance remains semantically bounded
 
@@ -39,6 +48,14 @@ Scope: v1-mandatory
   or migrated rows without reserved server attestation
 - **THEN** it MUST be `unmeasurable`
 - **AND** caller metadata and schema source vocabulary MUST NOT be treated as liveness authority
+
+#### Scenario: Subscription property-fact writer is not a hidden recurrence input
+
+- **WHEN** `track_subscription_fact` writes its separate Finance subscription property fact
+- **THEN** current recurrence and renewal readers MUST NOT treat that fact as dedicated-table
+  subscription evidence
+- **AND** a future reader MUST classify its caller-supplied provenance as `unmeasurable` unless the
+  reserved server attestation contract is applied
 
 #### Scenario: Dead source past the expected date emits no absence claim
 

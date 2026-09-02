@@ -20,13 +20,16 @@ observation, evaluation time, and exactly one state:
 - `absent`: the producer is measurable and the cadence has elapsed;
 - `unmeasurable`: producer liveness or health cannot support an absence claim.
 
-Connector producers are written as `connector:<connector_type>` and join the
-existing read-only `public.v_qa_connector_state` projection. A connector is
-measurable only when at least one registered runtime is healthy with a heartbeat
-inside the canonical five-minute liveness window. Missing, stale, offline,
-paused, degraded, errored, or unreadable liveness is `unmeasurable`. The special
-`owner` producer covers explicitly owner-entered observations and has no external
-instrument dependency.
+Connector producers are written as `connector:<connector_type>` and carry a
+required `producer_endpoint_identity` copied from server-derived source
+provenance. They join the existing read-only `public.v_qa_connector_state`
+projection by the exact `(connector_type, endpoint_identity)` pair. A connector
+is measurable only when that exact registered runtime is healthy with a
+heartbeat inside the canonical five-minute liveness window. A healthy sibling
+endpoint never substitutes, regardless of row order. Missing, stale, offline,
+paused, degraded, errored, or unreadable exact-endpoint liveness is
+`unmeasurable`. The special `owner` producer covers explicitly owner-entered
+observations, has no external instrument dependency, and carries no endpoint.
 
 The table is globally keyed and row-level security binds updates to the runtime
 role that first claimed the key. All roles may read the tri-state projection;
@@ -51,13 +54,20 @@ unmeasurable; row order never selects authority.
 
 Finance recurrence and tracked-renewal absence use the mapping adopted by
 `finance-recurrence-producer-mapping` (bu-4gzka). A server-attested Gmail source
-maps to `connector:gmail`; an explicitly server-attested owner source maps to
+maps to `connector:gmail` plus the exact server-derived
+`producer_endpoint_identity`; an explicitly server-attested owner source maps to
 `owner`. `source_message_id`, generic transaction `source`, import metadata,
 merchant matching, and account freshness are not producer authority. SimpleFIN
 is an in-process scheduled sync without a connector heartbeat and remains
 unmeasurable. A recurring group must resolve the complete set of contributing
 transactions to exactly one producer; missing, unsupported, copied, mixed, or
 unreadable provenance is unmeasurable.
+
+The registered `track_subscription_fact` property-fact writer is outside current
+Finance recurrence inputs: `subscription_audit()` and renewal jobs read the
+dedicated subscription table. If a future consumer reads those property facts,
+their caller-supplied message ID and metadata are unmeasurable until reserved
+server producer and endpoint attestation is present.
 
 `subscriptions.next_renewal` is a declared schedule, not evidence that a charge
 was observed or missed. The existing forward-looking annual renewal reminder may

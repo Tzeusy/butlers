@@ -10,6 +10,11 @@ the owner's payment or subscription state.
 
 - Define the authoritative producer mapping for Gmail-ingested, explicitly owner-entered,
   SimpleFIN, CSV/bulk, API/bank-sync, legacy/backfill, and mixed Finance records.
+- Bind Gmail authority to the exact server-derived source endpoint; another healthy Gmail account
+  must never authorize absence for a dead sibling account.
+- Inventory the separately registered `track_subscription_fact` MCP writer and classify its
+  property facts as outside current recurrence readers, and unmeasurable if later consumed without
+  trusted provenance.
 - Require recurring-group producer resolution to use the complete contributing transaction source
   set; row order, merchant name, `source_message_id`, and a generic `source` label cannot choose
   authority.
@@ -44,11 +49,14 @@ None.
   Finance records.
 - `finance-alerts`: Preserve only the existing approved proactive policies and forbid inferred
   missed-renewal output from expected-signal absence.
+- `expected-signals`: Require connector-backed signals to carry and evaluate the exact producer
+  endpoint identity.
 
 ## Impact
 
 The contract covers transaction and subscription writers, `detect_recurring()`,
-`subscription_audit()`, `predict_bills()`, `run_bill_reconciliation_sweep()`, the daily
-subscription-renewal candidate path, RFC 0029 expected-signal adoption, and the Finance dashboard
-subscription/recurrence presentation. Runtime schema and behavior remain unchanged until a later
-approved apply task implements the active OpenSpec change.
+`subscription_audit()`, the separate `track_subscription_fact` property-fact surface,
+`predict_bills()`, `run_bill_reconciliation_sweep()`, the daily subscription-renewal candidate
+path, RFC 0029 expected-signal adoption, and the Finance dashboard subscription/recurrence
+presentation. Runtime schema and behavior remain unchanged until a later approved apply task
+implements the active OpenSpec change.

@@ -10,18 +10,19 @@ Finance has two different kinds of recurrence data:
    `source_message_id`, and free-form metadata. The annual `subscription-renewal` candidate is a
    forward-looking reminder about that declared date; it is not an absence detector.
 
-RFC 0029 now supplies connector and owner expected-signal producers. Its connector evaluation
-requires an exact `public.v_qa_connector_state.connector_type`; `owner` is reserved for an
-explicitly owner-entered observation. Finance must establish that authority before any elapsed
-recurrence date can mean absence.
+RFC 0029 now supplies connector and owner expected-signal producers. A connector runtime is
+identified by the exact `(connector_type, endpoint_identity)` pair in
+`public.v_qa_connector_state`; `owner` is reserved for an explicitly owner-entered observation.
+Finance must preserve the server-derived source endpoint and establish that full authority before
+any elapsed recurrence date can mean absence.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
 - Inventory every live transaction/subscription writer and the provenance that survives storage.
-- Define exactly when Finance can use `connector:gmail` or `owner`, and when it must use
-  `unknown` so RFC 0029 yields `unmeasurable`.
+- Define exactly when Finance can use an endpoint-bound `connector:gmail` or `owner`, and when it
+  must use `unknown` so RFC 0029 yields `unmeasurable`.
 - Bind derived recurring groups to the complete producer set of their contributing transactions.
 - Preserve tracked-renewal declarations and existing proactive policies without inferring payment
   or cancellation state.
@@ -43,8 +44,9 @@ recurrence date can mean absence.
 
 | Path | Current write/derivation | Provenance retained | Authority result |
 |---|---|---|---|
-| Routed Gmail extraction | Finance runtime calls public `record_transaction()` / `track_subscription()` | optional caller-supplied `source_message_id`; transaction `source` is still `manual`; free-form metadata | unprovable today; future server attestation may map to `connector:gmail` |
+| Routed Gmail extraction | Finance runtime calls public `record_transaction()` / `track_subscription()` | Switchboard has server-derived `source_endpoint_identity`, but the writers retain only optional caller-supplied `source_message_id`; transaction `source` is still `manual`; free-form metadata | unprovable today; future attestation must preserve the exact endpoint and may map to `connector:gmail` |
 | Conversational/manual tools | the same public writers | transaction `source=manual`; no server principal on transaction/subscription | unprovable today; future server-attested owner entry may map to `owner` |
+| Subscription property-fact MCP writer | registered `track_subscription_fact` calls `facts.track_subscription_fact()` and supersedes a `scope=finance`, `predicate=subscription` property fact | caller-supplied `source_message_id` and metadata are copied into fact metadata | outside current `subscription_audit()`/renewal inputs; unmeasurable if a future reader consumes it without reserved attestation |
 | Bulk/CSV import | `bulk_record_transactions()` loops through public `record_transaction()` | caller `source` becomes free-form `metadata.import_source`; transaction `source` remains `manual` | unmeasurable until server-attested owner provenance exists |
 | SimpleFIN | deterministic `simplefin-sync` calls internal `_record_transaction(source="aggregator")` | `source=aggregator`, provider name/binding metadata, stable external ID, account `last_synced_at` | unmeasurable: this in-process scheduled job has no RFC 0029 connector heartbeat |
 | API or bank-sync vocabulary | schema accepts `api` and `bank_sync` source labels | no current source-specific server attestation or liveness binding | unmeasurable |
@@ -62,14 +64,22 @@ can contain more than one account/source.
 ### 2. Reserved server attestation
 
 Future adoption SHALL use a reserved, server-written provenance object that public MCP/API input
-cannot set or override. For transaction observations it identifies `producer`, ingress/source kind,
-and the server writer. For subscription declarations it additionally distinguishes the source of
-the declared schedule from the producer expected to observe a charge.
+cannot set or override. For Gmail observations it preserves the exact server-derived
+`source_endpoint_identity`; the expected signal carries the same value as required
+`producer_endpoint_identity`. For transaction observations the attestation also identifies
+`producer`, ingress/source kind, and the server writer. For subscription declarations it
+additionally distinguishes the source of the declared schedule from the producer expected to
+observe a charge.
 
 The only currently supported expected-signal producer mappings are:
 
-- server-attested Gmail ingress -> `connector:gmail`;
+- server-attested Gmail ingress -> `connector:gmail` plus the exact Gmail
+  `producer_endpoint_identity`;
 - server-attested direct owner entry/import -> `owner`.
+
+For `connector:gmail`, liveness is queried by both `connector_type='gmail'` and the exact
+`endpoint_identity`. A healthy sibling endpoint cannot make a dead, stale, missing, or unreadable
+endpoint measurable, regardless of row order. Owner-backed signals carry no endpoint identity.
 
 The `owner` mapping means only that the ledger expected another explicitly owner-entered
 observation. It never authorizes wording that a merchant failed to charge, a payment failed, or a
@@ -91,6 +101,7 @@ The JSON block is the machine-readable planning contract used by
     "record_kind": "transaction_observation",
     "evidence": "reserved server Gmail ingress attestation",
     "producer": "connector:gmail",
+    "producer_endpoint_identity": "required:source_endpoint_identity",
     "mapping": "mapped",
     "kill_mode": "heartbeat"
   },
@@ -99,6 +110,7 @@ The JSON block is the machine-readable planning contract used by
     "record_kind": "transaction_observation",
     "evidence": "reserved server owner attestation",
     "producer": "owner",
+    "producer_endpoint_identity": null,
     "mapping": "mapped",
     "kill_mode": "attestation"
   },
@@ -107,6 +119,7 @@ The JSON block is the machine-readable planning contract used by
     "record_kind": "tracked_renewal_expectation",
     "evidence": "reserved server Gmail ingress attestation",
     "producer": "connector:gmail",
+    "producer_endpoint_identity": "required:source_endpoint_identity",
     "mapping": "mapped",
     "kill_mode": "heartbeat"
   },
@@ -115,6 +128,7 @@ The JSON block is the machine-readable planning contract used by
     "record_kind": "tracked_renewal_expectation",
     "evidence": "reserved server owner attestation",
     "producer": "owner",
+    "producer_endpoint_identity": null,
     "mapping": "mapped",
     "kill_mode": "attestation"
   },
@@ -123,6 +137,7 @@ The JSON block is the machine-readable planning contract used by
     "record_kind": "transaction_or_subscription",
     "evidence": "caller-supplied source_message_id without server ingress attestation",
     "producer": null,
+    "producer_endpoint_identity": null,
     "mapping": "unmeasurable",
     "kill_mode": "none"
   },
@@ -131,6 +146,7 @@ The JSON block is the machine-readable planning contract used by
     "record_kind": "transaction_or_subscription",
     "evidence": "source=manual or caller import_source without server owner attestation",
     "producer": null,
+    "producer_endpoint_identity": null,
     "mapping": "unmeasurable",
     "kill_mode": "none"
   },
@@ -139,6 +155,7 @@ The JSON block is the machine-readable planning contract used by
     "record_kind": "transaction_observation",
     "evidence": "source=aggregator and provider=simplefin without connector heartbeat",
     "producer": null,
+    "producer_endpoint_identity": null,
     "mapping": "unmeasurable",
     "kill_mode": "none"
   },
@@ -147,6 +164,7 @@ The JSON block is the machine-readable planning contract used by
     "record_kind": "transaction_observation",
     "evidence": "generic schema source label without exact registered producer",
     "producer": null,
+    "producer_endpoint_identity": null,
     "mapping": "unmeasurable",
     "kill_mode": "none"
   },
@@ -155,6 +173,7 @@ The JSON block is the machine-readable planning contract used by
     "record_kind": "transaction_observation",
     "evidence": "copied or defaulted provenance",
     "producer": null,
+    "producer_endpoint_identity": null,
     "mapping": "unmeasurable",
     "kill_mode": "none"
   },
@@ -163,6 +182,7 @@ The JSON block is the machine-readable planning contract used by
     "record_kind": "inferred_recurrence",
     "evidence": "derived dates without contributing producer set",
     "producer": null,
+    "producer_endpoint_identity": null,
     "mapping": "unmeasurable",
     "kill_mode": "none"
   },
@@ -171,6 +191,7 @@ The JSON block is the machine-readable planning contract used by
     "record_kind": "inferred_recurrence",
     "evidence": "two or more contributing producers",
     "producer": null,
+    "producer_endpoint_identity": null,
     "mapping": "unmeasurable",
     "kill_mode": "none"
   },
@@ -179,7 +200,17 @@ The JSON block is the machine-readable planning contract used by
     "record_kind": "tracked_renewal_expectation",
     "evidence": "next_renewal declaration without observation producer",
     "producer": null,
+    "producer_endpoint_identity": null,
     "mapping": "schedule_only",
+    "kill_mode": "none"
+  },
+  {
+    "source_id": "subscription_fact_writer",
+    "record_kind": "subscription_property_fact",
+    "evidence": "registered track_subscription_fact with caller source_message_id and metadata",
+    "producer": null,
+    "producer_endpoint_identity": null,
+    "mapping": "outside_current_inputs",
     "kill_mode": "none"
   }
 ]
@@ -188,11 +219,12 @@ The JSON block is the machine-readable planning contract used by
 
 ### 4. Recurring-group producer resolution
 
-Each `recurring_groups` signal derives its producer from every active debit transaction that
-contributed to the group and from no other field. Exactly one recognized, server-attested producer
-maps through to the expected signal. An empty set, a source-less row, unsupported source, copied
-provenance, or two or more producers yields `unknown`, which RFC 0029 persists as
-`unmeasurable`.
+Each `recurring_groups` signal derives its producer identity from every active debit transaction
+that contributed to the group and from no other field. Connector identity is the pair of producer
+and endpoint, so two Gmail endpoints are two producers for this purpose. Exactly one recognized,
+server-attested pair maps through to the expected signal. An empty set, a source-less row,
+unsupported source, copied provenance, or two or more producer/endpoint pairs yields `unknown`,
+which RFC 0029 persists as `unmeasurable`.
 
 The grouping key remains the existing merchant key in this change. Its breadth is a safety fact:
 same-merchant transactions from different accounts or sources make the group mixed. The evaluator
@@ -205,7 +237,13 @@ they do not identify the source and do not imply a payment state.
 
 ### 5. Tracked renewal versus inferred recurrence
 
-`subscriptions.next_renewal` is an explicit schedule declaration. The existing annual
+`subscriptions.next_renewal` is an explicit schedule declaration in the dedicated table. The
+separate `track_subscription_fact` MCP writer produces a Finance property fact that current
+`subscription_audit()` and renewal jobs do not read; it is outside current recurrence inputs, not a
+second authority. If a future consumer begins reading those facts, their caller-controlled
+`source_message_id` and metadata are unmeasurable until reserved server attestation is added.
+
+The existing annual
 `subscription-renewal` candidate (active yearly subscriptions within 14 days) may continue to use
 that declaration because it says what is scheduled, not that an expected observation is missing.
 The Finance dashboard may likewise display the declared date.
@@ -223,9 +261,9 @@ missed-renewal claim. `subscription_audit()` may continue to label it `detected_
 
 | Source resolution | Producer evidence | Expected date | RFC 0029 state | Owner-facing absence output |
 |---|---|---|---|---|
-| Exactly one mapped connector | healthy and current heartbeat | not elapsed | `present` | none |
-| Exactly one mapped connector | healthy and current heartbeat | elapsed | `absent` | none unless a separately approved existing policy consumes absence |
-| Exactly one mapped connector | stale, dead/offline, unhealthy, missing, or unreadable | any | `unmeasurable` | none |
+| Exactly one mapped connector endpoint | exact endpoint heartbeat healthy and current | not elapsed | `present` | none |
+| Exactly one mapped connector endpoint | exact endpoint heartbeat healthy and current | elapsed | `absent` | none unless a separately approved existing policy consumes absence |
+| Exactly one mapped connector endpoint | exact endpoint stale, dead/offline, unhealthy, missing, or unreadable; sibling health irrelevant | any | `unmeasurable` | none |
 | Exactly one attested `owner` source | attestation valid | not elapsed | `present` | none |
 | Exactly one attested `owner` source | attestation valid | elapsed | `absent` | none unless a separately approved existing policy consumes absence |
 | Owner source | attestation missing/caller-asserted | any | `unmeasurable` | none |
@@ -248,6 +286,7 @@ The downstream adoption uses stable keys:
 - `finance:recurrence:{recurring-group-id}` for inferred recurring groups;
 - `finance:subscription-renewal:{subscription-id}` for tracked renewal expectations.
 
+Connector-backed rows carry required `producer_endpoint_identity`; owner-backed rows carry null.
 An unmeasurable signal is an ingestion/provenance condition. APIs and the Finance tab MUST NOT
 render it as a missed charge, payment status, cancellation, stopped subscription, or calm complete
 all-clear. The declared next-renewal date and detected-untracked label remain visible as their own
@@ -268,10 +307,14 @@ facts, separate from measurability.
 ## Migration Plan
 
 1. Land this source mapping and RFC/OpenSpec contract without enabling runtime behavior.
-2. Add reserved server attestation to trusted Gmail and owner transaction/subscription entry paths.
-3. Derive the complete producer set for each recurring group and tracked renewal expectation.
-4. Persist the RFC 0029 tri-state under the defined signal keys.
-5. Add migrated-PostgreSQL tests for producer death, mixed sources, and elapsed dates before any
+2. Add `producer_endpoint_identity` to the expected-signals schema/API and make connector
+   measurability query the exact type/endpoint pair.
+3. Add reserved server attestation to trusted Gmail and owner transaction/subscription entry paths,
+   preserving server-derived `source_endpoint_identity` for Gmail.
+4. Derive the complete producer/endpoint set for each recurring group and tracked renewal
+   expectation; keep the property-fact writer outside current inputs unless explicitly adopted.
+5. Persist the RFC 0029 tri-state under the defined signal keys.
+6. Add migrated-PostgreSQL tests for endpoint-specific producer death, mixed sources, and elapsed dates before any
    consumer is allowed to read absence.
 
 Rollback disables Finance expected-signal evaluation while retaining provenance. It MUST NOT fall

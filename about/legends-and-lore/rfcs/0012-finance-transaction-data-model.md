@@ -308,8 +308,11 @@ RFC 0029 adoption, a recurring group derives its expected-signal producer from t
 transactions that contributed to the group. Exactly one reserved, server-attested producer may be
 used; a missing, unsupported, copied, mixed, or unreadable source makes the group unmeasurable.
 
-The initial Finance mapping recognizes server-attested Gmail ingress as `connector:gmail` and an
-explicitly server-attested owner entry as `owner`. Current `source_message_id`, transaction
+The initial Finance mapping recognizes server-attested Gmail ingress as `connector:gmail` bound to
+the exact server-derived source endpoint, and an explicitly server-attested owner entry as `owner`.
+The expected-signal row carries the Gmail endpoint as required `producer_endpoint_identity`, and
+liveness matches the exact type/endpoint pair; a healthy sibling Gmail account cannot substitute.
+Current `source_message_id`, transaction
 `source`, import metadata, SimpleFIN `source=aggregator`, account freshness, merchant matching, and
 legacy/backfill metadata do not establish an RFC 0029 producer. In particular, merchant-unique
 groups can span accounts and sources; neither row order nor a healthy Gmail runtime may resolve
@@ -319,6 +322,13 @@ Tracked `subscriptions.next_renewal` is a declared schedule, separate from evide
 charge occurred. It may drive the existing forward-looking renewal reminder, but an elapsed date
 does not prove payment, non-payment, cancellation, pause, or stopped state. See RFC 0029's Initial
 adoption section and the `finance-recurrence-producer-mapping` OpenSpec change.
+
+The separately registered `track_subscription_fact` MCP writer stores a `scope=finance`,
+`predicate=subscription` property fact with caller-supplied `source_message_id` and metadata.
+Current `subscription_audit()` and renewal jobs read the dedicated `finance.subscriptions` table,
+not this fact writer's rows, so it is outside current recurrence inputs. Any future recurrence
+consumer of those facts must treat them as unmeasurable until the same reserved server attestation
+and endpoint rules apply.
 
 #### `finance.import_batches` (New)
 

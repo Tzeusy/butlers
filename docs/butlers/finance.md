@@ -128,12 +128,13 @@ paused, or stopped.
 
 | Input | Expected-signal producer | Current disposition |
 |---|---|---|
-| Server-attested Gmail transaction/renewal evidence | `connector:gmail` | measurable only while the Gmail heartbeat is healthy/current |
+| Server-attested Gmail transaction/renewal evidence | `connector:gmail` plus exact `producer_endpoint_identity` | measurable only while that exact Gmail endpoint heartbeat is healthy/current; a healthy sibling account never substitutes |
 | Server-attested direct owner observation/declaration | `owner` | measurable only with server-derived owner attestation; semantics remain "not recorded by owner" |
 | Current `source_message_id` or `source=manual` row | none | unmeasurable; both values can arise through public tool inputs/defaults |
 | CSV/bulk, API/bank-sync, backfill, or split row | none | unmeasurable without reserved server attestation |
 | SimpleFIN `source=aggregator` row | none | unmeasurable under RFC 0029 because the scheduled bridge has no connector heartbeat |
 | Current or mixed `recurring_groups` row | none | unmeasurable until all contributing transactions prove exactly one producer |
+| `track_subscription_fact` property fact | none | outside current subscription audit/renewal readers; unmeasurable if later consumed without reserved attestation |
 
 Stale, dead/offline, unhealthy, missing, unsupported, mixed, or unreadable producer evidence is
 `unmeasurable`. It must not produce "missed renewal", owner-behavior, or inferred payment-state
@@ -148,9 +149,9 @@ and `detected_untracked` patterns, but must not turn missing instrumentation int
 payment result, cancellation, stopped-subscription verdict, or complete all-clear.
 
 After runtime adoption of this contract, operator triage starts with the expected signal's exact
-producer, then that same producer's liveness. Do not use a healthy Gmail heartbeat for
-SimpleFIN/manual/imported evidence, and do not infer authority from a message ID, merchant name,
-account freshness, or generic source label.
+producer and `producer_endpoint_identity`, then liveness for that exact pair. Do not use a healthy
+Gmail sibling endpoint for a dead account or for SimpleFIN/manual/imported evidence, and do not
+infer authority from a message ID, merchant name, account freshness, or generic source label.
 
 ## Verification
 

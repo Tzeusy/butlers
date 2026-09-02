@@ -16,5 +16,11 @@ joins connector producers to the canonical connector-liveness projection before
 upserting the producer-owned key. Only `absent` may create an owner-facing gap
 candidate. `unmeasurable` is shown as instrument failure and pauses the nudge.
 
+Connector-backed signals carry `producer_endpoint_identity` copied from
+server-derived source provenance. Liveness is authorized only by the exact
+`(connector_type, endpoint_identity)` pair; a healthy sibling endpoint never
+substitutes for a dead, stale, missing, or unreadable source. The `owner`
+producer has no connector endpoint.
+
 The ledger contains cadence and timestamps, not measurement values or candidate
 messages. See RFC 0029 for the schema, ownership, and failure contract.
