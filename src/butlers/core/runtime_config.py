@@ -48,11 +48,17 @@ def _row_to_config(row: asyncpg.Record) -> RuntimeConfig:
     """Convert an asyncpg Record to a RuntimeConfig dataclass."""
     raw_core_groups = row["core_groups"]
     core_groups = tuple(raw_core_groups) if raw_core_groups is not None else None
+    try:
+        catalog_read_sensitivity = row["catalog_read_sensitivity"]
+    except (KeyError, IndexError):
+        # Rolling startup can briefly project a pre-core_209 row shape. Missing
+        # authority must remain compatible without ever granting more access.
+        catalog_read_sensitivity = "normal"
 
     return RuntimeConfig(
         butler_name=row["butler_name"],
         core_groups=core_groups,
-        catalog_read_sensitivity=row["catalog_read_sensitivity"],
+        catalog_read_sensitivity=catalog_read_sensitivity,
         max_concurrent=row["max_concurrent"],
         max_queued=row["max_queued"],
         seeded_at=str(row["seeded_at"]) if row["seeded_at"] else None,

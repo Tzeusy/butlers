@@ -205,3 +205,12 @@ def test_row_to_config_preserves_catalog_read_sensitivity():
     config = _row_to_config(row)
 
     assert config.catalog_read_sensitivity == "internal"
+
+
+def test_row_to_config_missing_catalog_authority_fails_closed_normal():
+    row_data = _make_row()
+    del row_data["catalog_read_sensitivity"]
+
+    config = _row_to_config(_mock_record(row_data))
+
+    assert config.catalog_read_sensitivity == "normal"

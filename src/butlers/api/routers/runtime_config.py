@@ -116,11 +116,16 @@ def _get_db_manager() -> DatabaseManager:
 def _row_to_response(row: Any) -> RuntimeConfigResponse:
     """Convert an asyncpg Record to a RuntimeConfigResponse."""
     core_groups = list(row["core_groups"]) if row["core_groups"] is not None else None
+    try:
+        catalog_read_sensitivity = row["catalog_read_sensitivity"]
+    except (KeyError, IndexError):
+        # Legacy/partial rows have no evidence of elevated read authority.
+        catalog_read_sensitivity = "normal"
 
     return RuntimeConfigResponse(
         butler_name=row["butler_name"],
         core_groups=core_groups,
-        catalog_read_sensitivity=row["catalog_read_sensitivity"],
+        catalog_read_sensitivity=catalog_read_sensitivity,
         max_concurrent=row["max_concurrent"],
         max_queued=row["max_queued"],
         seeded_at=str(row["seeded_at"]) if row["seeded_at"] else None,

@@ -22,6 +22,7 @@ def _mock_row(
     butler_name: str = "test",
     core_groups: list[str] | None = None,
     catalog_read_sensitivity: str = "normal",
+    include_catalog_read_sensitivity: bool = True,
     max_concurrent: int = 3,
     max_queued: int = 10,
     seeded_at: str = "2026-01-01T00:00:00+00:00",
@@ -30,12 +31,13 @@ def _mock_row(
     data = {
         "butler_name": butler_name,
         "core_groups": core_groups,
-        "catalog_read_sensitivity": catalog_read_sensitivity,
         "max_concurrent": max_concurrent,
         "max_queued": max_queued,
         "seeded_at": seeded_at,
         "updated_at": updated_at,
     }
+    if include_catalog_read_sensitivity:
+        data["catalog_read_sensitivity"] = catalog_read_sensitivity
     row = MagicMock()
     row.__getitem__ = lambda self, key: data[key]
     row.keys = lambda: data.keys()
@@ -81,6 +83,17 @@ def test_get_success_returns_field_tiers():
     # Hot runtime-selection fields removed from this endpoint
     for field in ("model", "runtime_type", "args", "session_timeout_s"):
         assert field not in data
+
+
+def test_get_legacy_row_missing_catalog_authority_fails_closed_normal():
+    pool = AsyncMock()
+    pool.fetchrow = AsyncMock(return_value=_mock_row(include_catalog_read_sensitivity=False))
+    app = _make_app(_make_db_manager(pool=pool))
+
+    resp = TestClient(app).get("/api/butlers/test/runtime-config")
+
+    assert resp.status_code == 200
+    assert resp.json()["catalog_read_sensitivity"] == "normal"
 
 
 # ---------------------------------------------------------------------------
