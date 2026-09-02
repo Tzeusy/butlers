@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -35,6 +36,12 @@ from butlers.modules._roster_home.actuation import (
     classify_actuation,
     rollback_hint,
     verify_post_condition,
+)
+from butlers.modules.approvals.execution_context import (
+    ApprovalExecutionContext,
+    approval_tool_args_digest,
+    reset_approval_execution_context,
+    set_approval_execution_context,
 )
 from butlers.modules.base import Module, ToolMeta
 
@@ -522,6 +529,126 @@ class TestEntityCache:
 
 
 class TestToolBehaviors:
+    @pytest.mark.parametrize(
+        ("authorized_tool", "authorized_args"),
+        [
+            (
+                "ha_activate_scene",
+                {
+                    "domain": "lock",
+                    "service": "unlock",
+                    "target": {"entity_id": "lock.front_door"},
+                    "data": None,
+                },
+            ),
+            (
+                "ha_call_service",
+                {
+                    "domain": "lock",
+                    "service": "lock",
+                    "target": {"entity_id": "lock.front_door"},
+                    "data": None,
+                },
+            ),
+        ],
+    )
+    async def test_wrong_tool_or_args_cannot_bypass_home_physical_gate(
+        self,
+        ha_module: HomeAssistantModule,
+        authorized_tool: str,
+        authorized_args: dict[str, object],
+    ) -> None:
+        client = MagicMock()
+        client.post = AsyncMock()
+        pool = MagicMock()
+        db = MagicMock()
+        db.pool = pool
+        ha_module._db = db
+        ha_module._client = client
+        task = asyncio.current_task()
+        assert task is not None
+        context = ApprovalExecutionContext(
+            action_id=uuid.uuid4(),
+            session_id=None,
+            actor="human:owner",
+            tool_name=authorized_tool,
+            tool_args_digest=approval_tool_args_digest(authorized_args),
+            authorized_task=task,
+        )
+        token = set_approval_execution_context(context)
+        try:
+            with (
+                patch(
+                    "butlers.core.approvals_hooks.is_approval_parking_available",
+                    return_value=True,
+                ),
+                patch(
+                    "butlers.core.approvals_hooks.park_pending_action",
+                    new=AsyncMock(),
+                ),
+                patch(
+                    "butlers.modules._roster_home.record_approval_event",
+                    new=AsyncMock(),
+                ),
+            ):
+                result = await ha_module._call_service(
+                    "lock", "unlock", target={"entity_id": "lock.front_door"}
+                )
+        finally:
+            reset_approval_execution_context(token)
+
+        assert result["status"] == "pending_approval"
+        client.post.assert_not_awaited()
+
+    async def test_child_task_inheriting_context_cannot_bypass_home_physical_gate(
+        self, ha_module: HomeAssistantModule
+    ) -> None:
+        tool_args = {
+            "domain": "lock",
+            "service": "unlock",
+            "target": {"entity_id": "lock.front_door"},
+            "data": None,
+        }
+        client = MagicMock()
+        client.post = AsyncMock()
+        pool = MagicMock()
+        db = MagicMock()
+        db.pool = pool
+        ha_module._db = db
+        ha_module._client = client
+        task = asyncio.current_task()
+        assert task is not None
+        context = ApprovalExecutionContext(
+            action_id=uuid.uuid4(),
+            session_id=None,
+            actor="human:owner",
+            tool_name="ha_call_service",
+            tool_args_digest=approval_tool_args_digest(tool_args),
+            authorized_task=task,
+        )
+        token = set_approval_execution_context(context)
+        try:
+            with (
+                patch(
+                    "butlers.core.approvals_hooks.is_approval_parking_available",
+                    return_value=True,
+                ),
+                patch(
+                    "butlers.core.approvals_hooks.park_pending_action",
+                    new=AsyncMock(),
+                ),
+                patch(
+                    "butlers.modules._roster_home.record_approval_event",
+                    new=AsyncMock(),
+                ),
+            ):
+                result = await asyncio.create_task(ha_module._call_service(**tool_args))
+        finally:
+            reset_approval_execution_context(token)
+
+        assert result["status"] == "pending_approval"
+        client.post.assert_not_awaited()
+
     async def test_receipt_failure_refuses_physical_call(
         self, ha_module: HomeAssistantModule
     ) -> None:

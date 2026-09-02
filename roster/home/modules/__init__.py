@@ -1702,7 +1702,10 @@ class HomeAssistantModule(Module):
             payload["target"] = target
 
         risk = classify_actuation(domain, service)
-        approval_context = get_approval_execution_context()
+        approval_context = get_approval_execution_context(
+            tool_name="ha_call_service",
+            tool_args={"domain": domain, "service": service, "target": target, "data": data},
+        )
         session_id = self._runtime_session_uuid(
             approval_context.session_id
             if approval_context is not None
@@ -1725,6 +1728,28 @@ class HomeAssistantModule(Module):
                 "risk": risk.value,
                 "message": f"{domain}.{service} requires explicit owner approval",
             }
+
+        if approval_context is not None:
+            prior_uncertain = await pool.fetchrow(
+                "SELECT attempt_id, failure_reason FROM ha_command_log "
+                "WHERE approval_id = $1 AND status = 'unverified' "
+                "ORDER BY issued_at DESC LIMIT 1",
+                approval_context.action_id,
+            )
+            if prior_uncertain is not None:
+                return {
+                    "status": "unverified",
+                    "attempt_id": str(prior_uncertain["attempt_id"]),
+                    "risk": risk.value,
+                    "approval_id": str(approval_context.action_id),
+                    "error": (
+                        "This approval already has an ambiguous physical outcome; "
+                        "inspect the receipt and reconcile the device before issuing "
+                        "a new approved action."
+                    ),
+                    "failure_reason": prior_uncertain["failure_reason"],
+                    "attention_required": True,
+                }
 
         attempt_id = uuid.uuid4()
         actor = approval_context.actor if approval_context is not None else "system:home"
@@ -1762,7 +1787,45 @@ class HomeAssistantModule(Module):
 
         try:
             resp = await client.post(f"/api/services/{domain}/{service}", json=payload)
+        except Exception as exc:
+            if self._is_definitive_pre_send_failure(exc):
+                await self._settle_failed_actuation(
+                    pool=pool,
+                    attempt_id=attempt_id,
+                    domain=domain,
+                    service=service,
+                    risk=risk,
+                    error=exc,
+                )
+                raise
+            return await self._settle_ambiguous_actuation(
+                pool=pool,
+                attempt_id=attempt_id,
+                domain=domain,
+                service=service,
+                target=target,
+                data=data,
+                risk=risk,
+                approval_id=approval_id,
+                result=None,
+                context_id=None,
+                uncertainty=exc,
+            )
+
+        try:
             resp.raise_for_status()
+        except Exception as exc:
+            await self._settle_failed_actuation(
+                pool=pool,
+                attempt_id=attempt_id,
+                domain=domain,
+                service=service,
+                risk=risk,
+                error=exc,
+            )
+            raise
+
+        try:
             result = resp.json() if resp.content else {}
             # HA embeds the event context ID in the first state-change result entry.
             if isinstance(result, list) and result and isinstance(result[0], dict):
@@ -1770,25 +1833,19 @@ class HomeAssistantModule(Module):
             elif isinstance(result, dict):
                 context_id = result.get("context", {}).get("id")
         except Exception as exc:
-            await self._settle_actuation_receipt(
-                pool=pool,
-                attempt_id=attempt_id,
-                status="failed",
-                observed_state=None,
-                result={"error": str(exc)},
-                context_id=context_id,
-                failure_reason=str(exc),
-            )
-            await self._emit_actuation_event(
+            return await self._settle_ambiguous_actuation(
                 pool=pool,
                 attempt_id=attempt_id,
                 domain=domain,
                 service=service,
+                target=target,
+                data=data,
                 risk=risk,
-                status="failed",
-                attention_required=True,
+                approval_id=approval_id,
+                result=None,
+                context_id=context_id,
+                uncertainty=exc,
             )
-            raise
 
         observed_state = await self._observe_target_states(target)
         verification = verify_post_condition(domain, service, data, observed_state)
@@ -1831,6 +1888,105 @@ class HomeAssistantModule(Module):
             outcome["error"] = verification.reason
             outcome["attention_required"] = True
         return outcome
+
+    @staticmethod
+    def _is_definitive_pre_send_failure(exc: Exception) -> bool:
+        """Return true only when HTTPX proves no request reached Home Assistant."""
+        import httpx
+
+        return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+
+    async def _settle_failed_actuation(
+        self,
+        *,
+        pool: Any,
+        attempt_id: uuid.UUID,
+        domain: str,
+        service: str,
+        risk: ActuationRisk,
+        error: Exception,
+    ) -> None:
+        await self._settle_actuation_receipt(
+            pool=pool,
+            attempt_id=attempt_id,
+            status="failed",
+            observed_state=None,
+            result={"error": str(error)},
+            context_id=None,
+            failure_reason=str(error),
+        )
+        await self._emit_actuation_event(
+            pool=pool,
+            attempt_id=attempt_id,
+            domain=domain,
+            service=service,
+            risk=risk,
+            status="failed",
+            attention_required=True,
+        )
+
+    async def _settle_ambiguous_actuation(
+        self,
+        *,
+        pool: Any,
+        attempt_id: uuid.UUID,
+        domain: str,
+        service: str,
+        target: dict[str, Any] | None,
+        data: dict[str, Any] | None,
+        risk: ActuationRisk,
+        approval_id: uuid.UUID | None,
+        result: Any,
+        context_id: str | None,
+        uncertainty: Exception,
+    ) -> dict[str, Any]:
+        """Preserve post-dispatch uncertainty without authorizing a blind retry."""
+        observed_state = await self._observe_target_states(target)
+        verification = verify_post_condition(domain, service, data, observed_state)
+        verification_detail = (
+            "live post-condition matched"
+            if verification.verified
+            else verification.reason or "live post-condition did not verify"
+        )
+        reason = (
+            f"ambiguous Home Assistant outcome after request dispatch: "
+            f"{type(uncertainty).__name__}: {uncertainty}; {verification_detail}"
+        )
+        await self._settle_actuation_receipt(
+            pool=pool,
+            attempt_id=attempt_id,
+            status="unverified",
+            observed_state=observed_state,
+            result={"uncertainty": type(uncertainty).__name__, "response": result},
+            context_id=context_id,
+            failure_reason=reason,
+        )
+        await self._emit_actuation_event(
+            pool=pool,
+            attempt_id=attempt_id,
+            domain=domain,
+            service=service,
+            risk=risk,
+            status="unverified",
+            attention_required=True,
+        )
+        logger.warning(
+            "Home Assistant actuation outcome is ambiguous (attempt=%s, service=%s.%s): %s",
+            attempt_id,
+            domain,
+            service,
+            reason,
+        )
+        return {
+            "status": "unverified",
+            "attempt_id": str(attempt_id),
+            "risk": risk.value,
+            "approval_id": str(approval_id) if approval_id is not None else None,
+            "result": result,
+            "observed_state": observed_state,
+            "error": reason,
+            "attention_required": True,
+        }
 
     @staticmethod
     def _runtime_session_uuid(raw_session_id: Any) -> uuid.UUID | None:

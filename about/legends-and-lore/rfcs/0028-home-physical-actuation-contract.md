@@ -1,6 +1,7 @@
 # RFC 0028: Home Physical Actuation Contract
 
-**Status:** Accepted  
+**Status:** Accepted
+
 **Date:** 2026-09-03
 
 ## Context
@@ -23,7 +24,10 @@ Every `(domain, service)` pair passes an allowlisted risk map:
 Unknown pairs are `protected`. Consequential and protected requests are parked
 through the approvals module before any HA request. Approved replay receives
 its action, session, and actor lineage only from the shared executor's ambient
-context; caller arguments cannot assert it.
+context. That authorization is bound to the exact executor task, tool name, and
+canonical argument digest: caller arguments cannot assert it, a different call
+cannot reuse it, and an asynchronous child inheriting ContextVar storage has no
+authority after or during its parent's approved call.
 
 The module claims a unique `attempting` row in `home.ha_command_log` before the
 request leaves the process. If that write fails, no physical request is sent.
@@ -32,13 +36,17 @@ physical retry while pretending it happened. The receipt settles to exactly
 one of:
 
 - `succeeded`: a live read-back matches the declared post-condition;
-- `failed`: the HA request failed;
-- `unverified`: HA accepted the request, but no deterministic check exists or
-  the observed world does not match.
+- `failed`: connection establishment definitively failed or HA rejected the request;
+- `unverified`: HA may have accepted the request but the response timed out,
+  reset, or could not be parsed; no deterministic check exists; or the observed
+  world does not match.
 
 `unverified` requires operator attention and is never success. Reversible
-attempts carry a rollback hint. The receipt keeps requested and observed home
-state in the Home schema.
+attempts carry a rollback hint. A post-dispatch uncertainty still triggers live
+read-back, but remains unverified even if that state matches because the command
+response itself is incomplete. The same approval cannot retry an unverified
+attempt; the owner must reconcile the physical state and authorize a new action.
+The receipt keeps requested and observed home state in the Home schema.
 
 After settlement, Home publishes a minimized `home.actuation_executed` domain
 event containing only receipt identity, service classification, outcome, and
@@ -71,4 +79,3 @@ generic automation policy.
 - Treat HA HTTP success as outcome: confuses transport with physical state.
 - Deduplicate by requested command: a prior attempt does not prove a later
   physical request occurred.
-

@@ -91,9 +91,16 @@ class _Db:
 
 
 class _Response:
-    def __init__(self, payload: object, *, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        payload: object,
+        *,
+        error: Exception | None = None,
+        json_error: Exception | None = None,
+    ) -> None:
         self._payload = payload
         self._error = error
+        self._json_error = json_error
         self.content = b"json"
 
     def raise_for_status(self) -> None:
@@ -101,6 +108,8 @@ class _Response:
             raise self._error
 
     def json(self) -> object:
+        if self._json_error is not None:
+            raise self._json_error
         return self._payload
 
 
@@ -108,12 +117,16 @@ class _HaClient:
     def __init__(self) -> None:
         self.post_calls = 0
         self.post_error: Exception | None = None
+        self.post_exception: Exception | None = None
+        self.json_error: Exception | None = None
         self.observed_state = "off"
 
     async def post(self, path: str, *, json: object) -> _Response:
         del path, json
         self.post_calls += 1
-        return _Response([], error=self.post_error)
+        if self.post_exception is not None:
+            raise self.post_exception
+        return _Response([], error=self.post_error, json_error=self.json_error)
 
     async def get(self, path: str) -> _Response:
         entity_id = path.removeprefix("/api/states/")
@@ -305,6 +318,78 @@ async def test_each_reversible_retry_gets_its_own_receipt(home_pool: asyncpg.Poo
     assert first["status"] == second["status"] == "succeeded"
     assert first["attempt_id"] != second["attempt_id"]
     assert client.post_calls == 2
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_accepted_unparseable_response_is_unverified_not_failed(
+    home_pool: asyncpg.Pool,
+) -> None:
+    home = HomeAssistantModule()
+    home._db = _Db(home_pool)
+    client = _HaClient()
+    client.observed_state = "on"
+    client.json_error = ValueError("invalid response JSON")
+    home._client = client
+
+    outcome = await home._call_service("light", "turn_on", target={"entity_id": "light.kitchen"})
+
+    assert outcome["status"] == "unverified"
+    assert outcome["attention_required"] is True
+    receipt = await home_pool.fetchrow(
+        "SELECT status, observed_state, failure_reason FROM ha_command_log WHERE attempt_id = $1",
+        uuid.UUID(outcome["attempt_id"]),
+    )
+    assert receipt["status"] == "unverified"
+    assert receipt["observed_state"]["light.kitchen"]["state"] == "on"
+    assert "live post-condition matched" in receipt["failure_reason"]
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_post_send_timeout_is_unverified_and_same_approval_cannot_retry(
+    home_pool: asyncpg.Pool,
+) -> None:
+    db = _Db(home_pool)
+    approvals = ApprovalsModule()
+    await approvals.on_startup({}, db)
+    home = HomeAssistantModule()
+    client = _HaClient()
+    client.observed_state = "unlocked"
+    client.post_exception = TimeoutError("response timed out after send")
+    home._db = db
+    home._client = client
+
+    async def execute(tool_name: str, args: dict[str, object]) -> dict[str, object]:
+        assert tool_name == "ha_call_service"
+        return await home._call_service(**args)
+
+    approvals.set_tool_executor(execute)
+    parked = await home._call_service("lock", "unlock", target={"entity_id": "lock.front_door"})
+    approved = await approvals._approve_action(
+        parked["action_id"],
+        actor={"type": "human", "id": "owner", "authenticated": True},
+    )
+
+    assert approved["status"] == "approved"
+    assert client.post_calls == 1
+    receipt = await home_pool.fetchrow(
+        "SELECT status, observed_state, failure_reason FROM ha_command_log WHERE approval_id = $1",
+        uuid.UUID(parked["action_id"]),
+    )
+    assert receipt["status"] == "unverified"
+    assert receipt["observed_state"]["lock.front_door"]["state"] == "unlocked"
+    assert "ambiguous Home Assistant outcome" in receipt["failure_reason"]
+
+    retried = await approvals._dispatch_approved_action_by_id(parked["action_id"])
+    assert "ambiguous physical outcome" in retried["error"]
+    assert client.post_calls == 1
+    assert (
+        await home_pool.fetchval(
+            "SELECT count(*) FROM ha_command_log WHERE approval_id = $1",
+            uuid.UUID(parked["action_id"]),
+        )
+        == 1
+    )
+    await approvals.on_shutdown()
 
 
 def test_home_actuation_receipt_migration_up_down(postgres_container) -> None:

@@ -327,11 +327,18 @@ without evidence.
 - **AND** it SHALL record `succeeded` only when the declared post-condition matches
 - **AND** a missing verifier, unreadable observation, or mismatch SHALL record `unverified`, require attention, and never claim success
 
-#### Scenario: Home Assistant error is a failed attempt
+#### Scenario: Definitive Home Assistant rejection is a failed attempt
 
-- **WHEN** the Home Assistant request raises or returns an HTTP error
+- **WHEN** connection establishment definitively fails or Home Assistant returns an HTTP error
 - **THEN** the module SHALL settle the pre-existing receipt to `failed`
 - **AND** it SHALL re-raise the error after preserving the receipt
+
+#### Scenario: Post-dispatch uncertainty is unverified and fenced from retry
+
+- **WHEN** a request may have left the process but its response times out, resets, or cannot be parsed
+- **THEN** the module SHALL attempt the declared live state read-back
+- **AND** it SHALL settle the receipt to `unverified` even when the read-back matches
+- **AND** the same approval id SHALL NOT issue another physical request until the owner reconciles the receipt and creates a new approved action
 
 #### Scenario: Reversible action records a rollback hint
 

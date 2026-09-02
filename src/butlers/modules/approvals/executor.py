@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 from butlers.modules.approvals.events import ApprovalEventType, record_approval_event
 from butlers.modules.approvals.execution_context import (
     ApprovalExecutionContext,
+    approval_tool_args_digest,
     reset_approval_execution_context,
     set_approval_execution_context,
 )
@@ -233,10 +234,16 @@ async def execute_approved_action(
                     )
 
                 try:
+                    authorized_task = asyncio.current_task()
+                    if authorized_task is None:
+                        raise RuntimeError("Approved execution requires an active asyncio task")
                     execution_context = ApprovalExecutionContext(
                         action_id=action_id,
                         session_id=existing_row.get("session_id"),
                         actor=existing_row.get("decided_by") or "system:approval_executor",
+                        tool_name=tool_name,
+                        tool_args_digest=approval_tool_args_digest(tool_args),
+                        authorized_task=authorized_task,
                     )
                     context_token = set_approval_execution_context(execution_context)
                     try:

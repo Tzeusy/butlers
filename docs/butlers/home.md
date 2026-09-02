@@ -47,9 +47,12 @@ The butler's philosophy is that smart home technology should feel invisible: res
 `home.ha_command_log` is the authoritative actuation ledger. New rows carry a
 unique attempt id, declared risk, server-derived actor and session, approval
 lineage, requested and observed state, status, and rollback hint. The status is
-`succeeded` only after live read-back; HA errors are `failed`, and missing or
-mismatched proof is `unverified` and shown as requiring attention in Recent
-commands. Each retry creates a new attempt row.
+`succeeded` only after live read-back. A definitive connection failure or HA
+rejection is `failed`; post-send timeout, reset, response-parse uncertainty,
+missing proof, or mismatched proof is `unverified` and shown as requiring
+attention in Recent commands. An unverified approved attempt cannot be blindly
+retried with the same approval; the owner reconciles the device and issues a
+new approved action. Each permitted retry creates a new attempt row.
 
 Home also publishes the minimized `home.actuation_executed` event after a
 terminal attempt. The event deliberately excludes requested/observed home state
