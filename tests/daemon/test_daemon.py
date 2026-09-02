@@ -493,6 +493,7 @@ async def test_startup_sequence(butler_dir: Path) -> None:
     assert daemon.config is not None
     assert daemon.config.name == "test-butler"
     assert daemon.config.port == 9100
+    assert daemon.db.runtime_config_accessor is daemon._runtime_config_accessor
 
     # started_at is recorded
     assert daemon._started_at is not None

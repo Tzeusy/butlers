@@ -379,7 +379,7 @@ class MemoryModule(Module):
             # configured with a private memory schema. Context recall must use
             # the module-owned pool just like storage and consolidation do.
             memory_pool = module._get_pool()
-            catalog_read_policy = await _search_helper.load_catalog_read_policy(module._db.pool)
+            catalog_read_policy = await module._catalog_read_policy()
             result = await _context.memory_context(
                 memory_pool,
                 embedding_engine,
@@ -429,7 +429,7 @@ class MemoryModule(Module):
             import asyncio
 
             embedding_engine = await asyncio.to_thread(module._get_embedding_engine)
-            read_policy = await _search_helper.load_catalog_read_policy(module._db.pool)
+            read_policy = await module._catalog_read_policy()
             return await _search_catalog(
                 pool,
                 query,
@@ -659,6 +659,21 @@ class MemoryModule(Module):
             raise RuntimeError("MemoryModule not initialised — no DB available")
         return self._db.pool
 
+    async def _catalog_read_policy(self) -> Any:
+        """Resolve held authority without reading a domain or memory pool.
+
+        Normal daemon startup wires the DB-backed RuntimeConfigAccessor onto
+        ``Database`` after seeding. Lightweight module/isolation harnesses do
+        not hold that authority object and therefore fail closed to ``normal``.
+        """
+        from butlers.modules.memory.tools._helpers import _search as _search_helper
+
+        accessor = getattr(self._db, "runtime_config_accessor", None)
+        if accessor is None:
+            return _search_helper.resolve_catalog_read_policy("normal")
+        runtime_config = await accessor.get()
+        return _search_helper.resolve_catalog_read_policy(runtime_config.catalog_read_sensitivity)
+
     def _allows_failed_consolidation_retry(self) -> bool:
         """Return whether this module may automatically retry failed episodes.
 
@@ -804,7 +819,6 @@ class MemoryModule(Module):
         from butlers.modules.memory.tools import preferences as _preferences
         from butlers.modules.memory.tools import reading as _reading
         from butlers.modules.memory.tools import writing as _writing
-        from butlers.modules.memory.tools._helpers import _search as _search_helper
 
         # Build a group-aware tool decorator: returns @mcp.tool() when the
         # group is enabled, or a no-op passthrough when disabled.
@@ -1466,7 +1480,7 @@ class MemoryModule(Module):
             """
             catalog_read_policy = None
             if include_fleet_knowledge:
-                catalog_read_policy = await _search_helper.load_catalog_read_policy(module._db.pool)
+                catalog_read_policy = await module._catalog_read_policy()
             return await _context.memory_context(
                 module._get_pool(),
                 module._get_embedding_engine(),
@@ -1847,7 +1861,7 @@ class MemoryModule(Module):
             Sensitivity filtering uses the server-held runtime config value.
             No MCP argument can raise that authority.
             """
-            read_policy = await _search_helper.load_catalog_read_policy(module._db.pool)
+            read_policy = await module._catalog_read_policy()
             return await _reading.memory_catalog_search(
                 module._get_pool(),
                 module._get_embedding_engine(),

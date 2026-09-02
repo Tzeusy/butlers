@@ -310,6 +310,7 @@ class TestLifecycle:
         memory_pool = MagicMock(name="memory_pool")
         fake_db.pool = daemon_pool
         fake_db.schema = "general"
+        fake_db.runtime_config_accessor = None
 
         captured_hook: dict[str, Any] = {}
 
@@ -632,7 +633,10 @@ class TestRegisterTools:
         ):
             fake_db = MagicMock()
             fake_db.pool = AsyncMock()
-            fake_db.pool.fetchval = AsyncMock(return_value="internal")
+            fake_db.runtime_config_accessor = AsyncMock()
+            fake_db.runtime_config_accessor.get = AsyncMock(
+                return_value=SimpleNamespace(catalog_read_sensitivity="internal")
+            )
             await mod.register_tools(mcp=mcp, config=config, db=fake_db, butler_name="test-butler")
 
         return registered_tools
