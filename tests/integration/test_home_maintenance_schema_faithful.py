@@ -461,6 +461,106 @@ async def test_abandoned_attempting_receipt_fences_same_approval_after_crash(
     await approvals.on_shutdown()
 
 
+@pytest.mark.asyncio(loop_scope="session")
+async def test_succeeded_receipt_replay_finalizes_approval_without_second_post(
+    home_pool: asyncpg.Pool,
+) -> None:
+    db = _Db(home_pool)
+    approvals = ApprovalsModule()
+    await approvals.on_startup({}, db)
+    home = HomeAssistantModule()
+    client = _HaClient()
+    client.observed_state = "unlocked"
+    home._db = db
+    home._client = client
+
+    async def execute(tool_name: str, args: dict[str, object]) -> dict[str, object]:
+        assert tool_name == "ha_call_service"
+        return await home._call_service(**args)
+
+    approvals.set_tool_executor(execute)
+    target = {"entity_id": "lock.front_door"}
+    parked = await home._call_service("lock", "unlock", target=target)
+    action_id = uuid.UUID(parked["action_id"])
+    await home_pool.execute(
+        "UPDATE pending_actions SET status = 'approved', decided_by = 'human:owner' WHERE id = $1",
+        action_id,
+    )
+
+    attempt_id = uuid.uuid4()
+    requested_state = {
+        "domain": "lock",
+        "service": "unlock",
+        "target": target,
+        "data": None,
+    }
+    stored_result = {"value": [{"context": {"id": "ha-context-1"}}]}
+    stored_observed_state = {
+        "lock.front_door": {
+            "state": "unlocked",
+            "attributes": {"friendly_name": "Front Door"},
+            "last_updated": "2026-09-03T00:00:00Z",
+        }
+    }
+    await home._start_actuation_receipt(
+        pool=home_pool,
+        attempt_id=attempt_id,
+        domain="lock",
+        service="unlock",
+        target=target,
+        data=None,
+        risk=ActuationRisk.PROTECTED,
+        actor="human:owner",
+        session_id=None,
+        approval_id=action_id,
+        requested_state=requested_state,
+        rollback=None,
+    )
+    await client.post("/api/services/lock/unlock", json={"target": target})
+    await home._settle_actuation_receipt(
+        pool=home_pool,
+        attempt_id=attempt_id,
+        status="succeeded",
+        observed_state=stored_observed_state,
+        result=stored_result,
+        context_id="ha-context-1",
+        failure_reason=None,
+    )
+    assert client.post_calls == 1
+
+    replayed = await approvals._dispatch_approved_action_by_id(str(action_id))
+
+    assert client.post_calls == 1
+    assert replayed["status"] == "executed"
+    replay_result = replayed["execution_result"]
+    assert replay_result["success"] is True
+    assert replay_result["result"]["receipt_replay"] is True
+    assert replay_result["result"]["attempt_id"] == str(attempt_id)
+    assert replay_result["result"]["result"] == stored_result
+    assert replay_result["result"]["observed_state"] == stored_observed_state
+
+    receipt = await home_pool.fetchrow(
+        "SELECT status, result, observed_state FROM ha_command_log WHERE attempt_id = $1",
+        attempt_id,
+    )
+    assert receipt["status"] == "succeeded"
+    assert receipt["result"] == stored_result
+    assert receipt["observed_state"] == stored_observed_state
+    assert (
+        await home_pool.fetchval(
+            "SELECT count(*) FROM ha_command_log WHERE approval_id = $1", action_id
+        )
+        == 1
+    )
+
+    persisted_action = await home_pool.fetchrow(
+        "SELECT status, execution_result FROM pending_actions WHERE id = $1", action_id
+    )
+    assert persisted_action["status"] == "executed"
+    assert persisted_action["execution_result"] == replay_result
+    await approvals.on_shutdown()
+
+
 def test_home_actuation_receipt_migration_up_down(postgres_container) -> None:
     db_url = create_migrated_test_db(
         postgres_container,
