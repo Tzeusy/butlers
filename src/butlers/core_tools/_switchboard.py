@@ -201,7 +201,10 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
 
         channel = source.get("channel", "unknown")
         endpoint_identity = source.get("endpoint_identity", "unknown")
-        external_thread_id = event.get("external_thread_id")
+        external_conversation_id = event.get("external_conversation_id") or event.get(
+            "external_thread_id"
+        )
+        reply_target_ref = event.get("reply_target_ref") or event.get("external_thread_id")
         addressed = bool(source.get("addressed", False))
         request_context: dict[str, Any] = {
             "request_id": request_id,
@@ -209,7 +212,9 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
             "source_channel": channel,
             "source_endpoint_identity": f"{channel}:{endpoint_identity}",
             "source_sender_identity": sender.get("identity", "unknown"),
-            "source_thread_identity": external_thread_id,
+            "source_thread_identity": reply_target_ref,
+            "external_conversation_id": external_conversation_id,
+            "reply_target_ref": reply_target_ref,
             "trace_context": {},
         }
         if addressed:
@@ -232,7 +237,7 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
             if callable(_react_fn):
                 try:
                     await _react_fn(
-                        external_thread_id=external_thread_id,
+                        external_thread_id=reply_target_ref,
                         reaction=REACTION_IN_PROGRESS,
                     )
                 except Exception:
@@ -277,7 +282,9 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
             "source_endpoint_identity": f"{channel}:{endpoint_identity}",
             "sender_identity": _sender_identity,
             "external_event_id": event.get("external_event_id", ""),
-            "external_thread_id": external_thread_id,
+            "external_thread_id": reply_target_ref,
+            "external_conversation_id": external_conversation_id,
+            "reply_target_ref": reply_target_ref,
             "source_tool": "ingest",
             "request_id": request_id,
             "request_context": request_context,
@@ -337,7 +344,7 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
                 terminal_reaction = REACTION_FAILURE if routing_failed else REACTION_SUCCESS
                 try:
                     await _react_fn(
-                        external_thread_id=external_thread_id,
+                        external_thread_id=reply_target_ref,
                         reaction=terminal_reaction,
                     )
                 except Exception:
@@ -592,6 +599,11 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
             if isinstance(request_context, dict)
             else None
         )
+        external_conversation_id = (
+            request_context.get("external_conversation_id")
+            if isinstance(request_context, dict)
+            else None
+        )
 
         if dashboard_turn_id is not None:
             # This read is only a fast rejection. The target's route.execute
@@ -676,6 +688,7 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
             "source_endpoint_identity": "switchboard",
             "source_sender_identity": source_sender_identity,
             "source_thread_identity": source_thread_identity,
+            "external_conversation_id": external_conversation_id,
             "trace_context": {},
         }
         _src_contact_id = _routing_ctx.get("source_contact_id")
