@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 import butlers.api.routers.audit as audit
+from butlers.api.audit_emit import authenticated_principal
 from butlers.api.db import DatabaseManager
 from butlers.api.deps import get_pricing
 from butlers.api.models import ApiResponse, PaginatedResponse, PaginationMeta
@@ -711,6 +712,15 @@ async def create_catalog_entry(
     if row is None:
         raise HTTPException(status_code=500, detail="Insert returned no row")
 
+    await audit.append(
+        pool,
+        authenticated_principal(),
+        "model.create",
+        target=str(row["id"]),
+        note=body.alias,
+        result="success",
+    )
+
     return ApiResponse[ModelCatalogEntry](data=_row_to_catalog_entry(row))
 
 
@@ -799,14 +809,37 @@ async def delete_catalog_entry(
 ) -> ApiResponse[dict]:
     """Delete a catalog entry by ID. Cascades to butler_model_overrides."""
     pool = _shared_pool(db)
-    result = await pool.execute(
-        "DELETE FROM public.model_catalog WHERE id = $1",
+    deleted = await pool.fetchrow(
+        """
+        WITH target AS (
+            SELECT id, (
+                SELECT count(*)::integer
+                FROM public.butler_model_overrides
+                WHERE catalog_entry_id = $1
+            ) AS cascade_deleted_overrides
+            FROM public.model_catalog
+            WHERE id = $1
+        ), deleted AS (
+            DELETE FROM public.model_catalog AS catalog
+            USING target
+            WHERE catalog.id = target.id
+            RETURNING target.cascade_deleted_overrides
+        )
+        SELECT cascade_deleted_overrides FROM deleted
+        """,
         entry_id,
     )
-    # asyncpg returns "DELETE N" where N is the row count
-    deleted = int(result.split()[-1]) if result else 0
-    if deleted == 0:
+    if deleted is None:
         raise HTTPException(status_code=404, detail=f"Catalog entry not found: {entry_id}")
+
+    await audit.append(
+        pool,
+        authenticated_principal(),
+        "model.delete",
+        target=str(entry_id),
+        metadata={"cascade_deleted_overrides": deleted["cascade_deleted_overrides"]},
+        result="success",
+    )
 
     return ApiResponse[dict](data={"deleted": True, "id": str(entry_id)})
 
