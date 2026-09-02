@@ -338,7 +338,8 @@ without evidence.
 - **WHEN** a request may have left the process but its response times out, resets, or cannot be parsed
 - **THEN** the module SHALL attempt the declared live state read-back
 - **AND** it SHALL settle the receipt to `unverified` even when the read-back matches
-- **AND** the same approval id SHALL NOT issue another physical request until the owner reconciles the receipt and creates a new approved action
+- **AND** the same approval id SHALL NOT issue another physical request while a prior receipt remains `attempting` or `unverified`; the owner must reconcile it and create a new approved action
+- **AND** a prior `succeeded` receipt MAY be replayed to finalize approval bookkeeping without another physical request
 
 #### Scenario: Reversible action records a rollback hint
 

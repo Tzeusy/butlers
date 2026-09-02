@@ -50,9 +50,11 @@ lineage, requested and observed state, status, and rollback hint. The status is
 `succeeded` only after live read-back. A definitive connection failure or HA
 rejection is `failed`; post-send timeout, reset, response-parse uncertainty,
 missing proof, or mismatched proof is `unverified` and shown as requiring
-attention in Recent commands. An unverified approved attempt cannot be blindly
-retried with the same approval; the owner reconciles the device and issues a
-new approved action. Each permitted retry creates a new attempt row.
+attention in Recent commands. An approved attempt left `attempting` by a crash
+or settlement failure, or settled `unverified`, cannot be blindly retried with
+the same approval; the owner reconciles the device and issues a new approved
+action. A durable `succeeded` receipt can be replayed for approval bookkeeping
+without another HA call. Each permitted retry creates a new attempt row.
 
 Home also publishes the minimized `home.actuation_executed` event after a
 terminal attempt. The event deliberately excludes requested/observed home state

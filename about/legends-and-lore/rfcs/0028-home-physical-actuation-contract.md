@@ -44,8 +44,11 @@ one of:
 `unverified` requires operator attention and is never success. Reversible
 attempts carry a rollback hint. A post-dispatch uncertainty still triggers live
 read-back, but remains unverified even if that state matches because the command
-response itself is incomplete. The same approval cannot retry an unverified
-attempt; the owner must reconcile the physical state and authorize a new action.
+response itself is incomplete. The same approval cannot retry an `unverified`
+attempt or a receipt left `attempting` by process death or settlement failure;
+the owner must reconcile the physical state and authorize a new action. A
+durable `succeeded` receipt may finalize approval bookkeeping without repeating
+the physical request.
 The receipt keeps requested and observed home state in the Home schema.
 
 After settlement, Home publishes a minimized `home.actuation_executed` domain

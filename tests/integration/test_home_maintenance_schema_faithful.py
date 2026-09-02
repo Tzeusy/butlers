@@ -31,6 +31,7 @@ from butlers.db import register_jsonb_codec
 from butlers.jobs.home import run_maintenance_schedule_check
 from butlers.migrations import _build_alembic_config
 from butlers.modules._roster_home import HomeAssistantModule
+from butlers.modules._roster_home.actuation import ActuationRisk
 from butlers.modules.approvals.execution_context import get_approval_execution_context
 from butlers.modules.approvals.module import ApprovalsModule
 from butlers.testing.migration import create_migrated_test_db, migration_db_name
@@ -386,6 +387,74 @@ async def test_post_send_timeout_is_unverified_and_same_approval_cannot_retry(
         await home_pool.fetchval(
             "SELECT count(*) FROM ha_command_log WHERE approval_id = $1",
             uuid.UUID(parked["action_id"]),
+        )
+        == 1
+    )
+    await approvals.on_shutdown()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_abandoned_attempting_receipt_fences_same_approval_after_crash(
+    home_pool: asyncpg.Pool,
+) -> None:
+    db = _Db(home_pool)
+    approvals = ApprovalsModule()
+    await approvals.on_startup({}, db)
+    home = HomeAssistantModule()
+    client = _HaClient()
+    client.observed_state = "unlocked"
+    home._db = db
+    home._client = client
+
+    async def execute(tool_name: str, args: dict[str, object]) -> dict[str, object]:
+        assert tool_name == "ha_call_service"
+        return await home._call_service(**args)
+
+    approvals.set_tool_executor(execute)
+    target = {"entity_id": "lock.front_door"}
+    parked = await home._call_service("lock", "unlock", target=target)
+    action_id = uuid.UUID(parked["action_id"])
+    await home_pool.execute(
+        "UPDATE pending_actions SET status = 'approved', decided_by = 'human:owner' WHERE id = $1",
+        action_id,
+    )
+
+    attempt_id = uuid.uuid4()
+    await home._start_actuation_receipt(
+        pool=home_pool,
+        attempt_id=attempt_id,
+        domain="lock",
+        service="unlock",
+        target=target,
+        data=None,
+        risk=ActuationRisk.PROTECTED,
+        actor="human:owner",
+        session_id=None,
+        approval_id=action_id,
+        requested_state={
+            "domain": "lock",
+            "service": "unlock",
+            "target": target,
+            "data": None,
+        },
+        rollback=None,
+    )
+    # Simulate the only evidence left after a process dies between the POST and
+    # receipt settlement: one request left, while the durable row stays attempting.
+    await client.post("/api/services/lock/unlock", json={"target": target})
+    assert client.post_calls == 1
+
+    retried = await approvals._dispatch_approved_action_by_id(str(action_id))
+
+    assert "ambiguous physical outcome" in retried["error"]
+    assert client.post_calls == 1
+    receipt = await home_pool.fetchrow(
+        "SELECT status FROM ha_command_log WHERE attempt_id = $1", attempt_id
+    )
+    assert receipt["status"] == "attempting"
+    assert (
+        await home_pool.fetchval(
+            "SELECT count(*) FROM ha_command_log WHERE approval_id = $1", action_id
         )
         == 1
     )

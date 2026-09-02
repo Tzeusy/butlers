@@ -1730,16 +1730,28 @@ class HomeAssistantModule(Module):
             }
 
         if approval_context is not None:
-            prior_uncertain = await pool.fetchrow(
-                "SELECT attempt_id, failure_reason FROM ha_command_log "
-                "WHERE approval_id = $1 AND status = 'unverified' "
+            prior_effect_possible = await pool.fetchrow(
+                "SELECT attempt_id, status, result, observed_state, failure_reason "
+                "FROM ha_command_log "
+                "WHERE approval_id = $1 AND status IS DISTINCT FROM 'failed' "
                 "ORDER BY issued_at DESC LIMIT 1",
                 approval_context.action_id,
             )
-            if prior_uncertain is not None:
+            if prior_effect_possible is not None:
+                prior_status = prior_effect_possible["status"]
+                if prior_status == "succeeded":
+                    return {
+                        "status": "succeeded",
+                        "attempt_id": str(prior_effect_possible["attempt_id"]),
+                        "risk": risk.value,
+                        "approval_id": str(approval_context.action_id),
+                        "result": prior_effect_possible["result"],
+                        "observed_state": prior_effect_possible["observed_state"],
+                        "receipt_replay": True,
+                    }
                 return {
                     "status": "unverified",
-                    "attempt_id": str(prior_uncertain["attempt_id"]),
+                    "attempt_id": str(prior_effect_possible["attempt_id"]),
                     "risk": risk.value,
                     "approval_id": str(approval_context.action_id),
                     "error": (
@@ -1747,7 +1759,8 @@ class HomeAssistantModule(Module):
                         "inspect the receipt and reconcile the device before issuing "
                         "a new approved action."
                     ),
-                    "failure_reason": prior_uncertain["failure_reason"],
+                    "receipt_status": prior_status,
+                    "failure_reason": prior_effect_possible["failure_reason"],
                     "attention_required": True,
                 }
 
