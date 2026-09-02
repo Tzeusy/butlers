@@ -34,7 +34,7 @@
 // now accept from/to, mirroring /api/spend/daily).
 // ---------------------------------------------------------------------------
 
-import { useState, useMemo, useRef, useCallback } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { differenceInCalendarDays, isValid, parseISO, subDays } from "date-fns";
@@ -574,12 +574,14 @@ function CeilingEdit({
   currentMtdUsd,
 }: {
   currentCeiling: number | null;
-  currentMtdUsd: number;
+  /** Null means the ledger-backed MTD source is unavailable; zero is a real value. */
+  currentMtdUsd: number | null;
 }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(String(currentCeiling ?? ""));
   const editButtonRef = useRef<HTMLButtonElement | null>(null);
+  const restoreFocusOnExitRef = useRef(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<{
     ceiling: number;
     mtd: number;
@@ -595,6 +597,7 @@ function CeilingEdit({
       queryClient.invalidateQueries({ queryKey: FLEET_HALT_QUERY_KEY });
       setValue(String(usd));
       setPendingConfirmation(null);
+      restoreFocusOnExitRef.current = true;
       setEditing(false);
       toast.success("Monthly ceiling updated");
     },
@@ -602,15 +605,23 @@ function CeilingEdit({
   });
 
   const cancelEditing = () => {
+    if (mutation.isPending) return;
     setValue(String(currentCeiling ?? ""));
     setPendingConfirmation(null);
+    restoreFocusOnExitRef.current = true;
     setEditing(false);
   };
 
+  useEffect(() => {
+    if (editing || !restoreFocusOnExitRef.current) return;
+    restoreFocusOnExitRef.current = false;
+    editButtonRef.current?.focus();
+  }, [editing]);
+
   const restoreEditButtonFocus = (event: Event) => {
+    event.preventDefault();
     const editButton = editButtonRef.current;
     if (!editButton || !document.contains(editButton)) return;
-    event.preventDefault();
     editButton.focus();
   };
 
@@ -619,6 +630,12 @@ function CeilingEdit({
     const parsed = parseFloat(value);
     if (Number.isNaN(parsed) || parsed <= 0) {
       toast.error("Enter a positive amount");
+      return;
+    }
+    if (currentMtdUsd == null) {
+      toast.error(
+        "Monthly spend is unavailable; try again when the forecast recovers",
+      );
       return;
     }
     if (parsed <= currentMtdUsd) {
@@ -673,7 +690,7 @@ function CeilingEdit({
       <Button
         size="sm"
         className="text-xs h-7"
-        disabled={mutation.isPending}
+        disabled={mutation.isPending || currentMtdUsd == null}
         onClick={save}
       >
         Save
@@ -691,7 +708,7 @@ function CeilingEdit({
         <ConfirmDialog
           open
           onOpenChange={(open) => {
-            if (!open) cancelEditing();
+            if (!open && !mutation.isPending) cancelEditing();
           }}
           title="Set a ceiling at or below current spend?"
           description={`This is at/below month-to-date spend of ${formatCostUsd(pendingConfirmation.mtd)} and will immediately deny every butler dispatch fleet-wide.`}
@@ -700,7 +717,17 @@ function CeilingEdit({
           cancelLabel="Keep current ceiling"
           variant="destructive"
           pending={mutation.isPending}
-          onConfirm={() => mutation.mutate(pendingConfirmation.ceiling)}
+          onConfirm={() => {
+            // The forecast may degrade while the confirmation is open. Never
+            // let a stale dialog bypass the unavailable-MTD save guard.
+            if (currentMtdUsd == null) {
+              toast.error(
+                "Monthly spend is unavailable; try again when the forecast recovers",
+              );
+              return;
+            }
+            mutation.mutate(pendingConfirmation.ceiling);
+          }}
           onCloseAutoFocus={restoreEditButtonFocus}
           testId="spend-ceiling-confirm-dialog"
         />
@@ -2928,7 +2955,11 @@ export default function SpendPage() {
             {liveForecast && (
               <CeilingEdit
                 currentCeiling={liveForecast.ceiling_usd}
-                currentMtdUsd={liveForecast.mtd_usd}
+                currentMtdUsd={
+                  liveForecast.ceiling_source_error
+                    ? null
+                    : liveForecast.mtd_usd
+                }
               />
             )}
           </div>

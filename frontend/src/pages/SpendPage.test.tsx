@@ -509,6 +509,51 @@ describe("SpendPage — posture", () => {
     );
   });
 
+  it("does not compare against fabricated zero MTD or save while the ceiling source is degraded", async () => {
+    apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === "/spend/forecast") {
+        return Promise.resolve({
+          data: {
+            ...MOCK_FORECAST.data,
+            mtd_usd: 0,
+            projected_eom_usd: 0,
+            ceiling_usd: null,
+            ceiling_source_error: true,
+          },
+          meta: {},
+        });
+      }
+      if (path === "/spend/ceiling" && init?.method === "PUT") {
+        return Promise.resolve({ data: null, meta: {} });
+      }
+      return defaultApiFetch(path);
+    });
+
+    await act(async () => {
+      renderPage();
+    });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /set ceiling/i }),
+    );
+    const input = screen.getByRole("spinbutton", {
+      name: "Monthly ceiling (USD)",
+    });
+    fireEvent.change(input, { target: { value: "50" } });
+
+    expect(
+      (screen.getByRole("button", { name: /^save$/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.queryByTestId("spend-ceiling-confirm-dialog")).toBeNull();
+    expect(
+      apiFetchMock.mock.calls.filter(
+        ([path, init]) => path === "/spend/ceiling" && init?.method === "PUT",
+      ),
+    ).toHaveLength(0);
+  });
+
   it("requires confirmation at or below MTD and only mutates after confirmation", async () => {
     apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
       if (path === "/spend/forecast") {
@@ -573,6 +618,61 @@ describe("SpendPage — posture", () => {
     });
   });
 
+  it("keeps the confirmation dialog mounted when Escape is pressed during a pending PUT", async () => {
+    let resolvePut!: (value: unknown) => void;
+    const pendingPut = new Promise((resolve) => {
+      resolvePut = resolve;
+    });
+    apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === "/spend/forecast") {
+        return Promise.resolve(MOCK_FORECAST_WITH_CEILING);
+      }
+      if (path === "/spend/ceiling" && init?.method === "PUT") {
+        return pendingPut;
+      }
+      return defaultApiFetch(path);
+    });
+
+    await act(async () => {
+      renderPage();
+    });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /edit ceiling/i }),
+    );
+    const input = screen.getByRole("spinbutton", {
+      name: "Monthly ceiling (USD)",
+    });
+    fireEvent.change(input, { target: { value: "2.20" } });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    const dialog = await screen.findByTestId("spend-ceiling-confirm-dialog");
+
+    fireEvent.click(screen.getByTestId("spend-ceiling-confirm-dialog-confirm"));
+    await waitFor(() => {
+      expect(
+        (screen.getByRole("button", { name: "Saving…" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+    });
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.getByTestId("spend-ceiling-confirm-dialog")).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Saving…" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      document.querySelector('input[aria-label="Monthly ceiling (USD)"]'),
+    ).toBeTruthy();
+
+    await act(async () => {
+      resolvePut({ data: null, meta: {} });
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("spend-ceiling-confirm-dialog")).toBeNull();
+    });
+  });
+
   it("supports the ceiling input's accessible keyboard path", async () => {
     const select = vi.spyOn(HTMLInputElement.prototype, "select");
     apiFetchMock.mockImplementation((path: string) => {
@@ -597,6 +697,18 @@ describe("SpendPage — posture", () => {
     fireEvent.change(input, { target: { value: "5" } });
     fireEvent.keyDown(input, { key: "Escape" });
     expect(screen.queryByRole("spinbutton")).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: /edit ceiling/i }),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /edit ceiling/i }));
+    fireEvent.change(screen.getByRole("spinbutton"), {
+      target: { value: "5" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: /edit ceiling/i }),
+    );
 
     fireEvent.click(await screen.findByRole("button", { name: /edit ceiling/i }));
     expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("10");
@@ -612,6 +724,9 @@ describe("SpendPage — posture", () => {
         ),
       ).toHaveLength(1);
     });
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: /edit ceiling/i }),
+    );
 
     select.mockRestore();
   });
