@@ -230,6 +230,16 @@ A search function SHALL query `public.memory_catalog` to discover memory items a
   vocabulary
 - **AND** the MCP tool MUST NOT expose a caller-supplied sensitivity ceiling
 
+#### Scenario: Dashboard search uses one held authority source
+
+- **WHEN** `GET /api/memory/catalog/search` queries the fleet catalog
+- **THEN** it MUST load the held policy from
+  `switchboard.runtime_config.catalog_read_sensitivity`
+- **AND** a caller-supplied `max_sensitivity` query parameter MUST be ignored
+  rather than granting additional authority
+- **AND** if the Switchboard authority source is unavailable, the endpoint MUST
+  fail closed instead of selecting another butler's policy
+
 ### Requirement: Catalog provenance pointers are fetchable under held authority
 
 The memory module SHALL provide a read-only `memory_catalog_fetch` tool that

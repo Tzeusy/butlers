@@ -379,6 +379,7 @@ class MemoryModule(Module):
             # configured with a private memory schema. Context recall must use
             # the module-owned pool just like storage and consolidation do.
             memory_pool = module._get_pool()
+            catalog_read_policy = await _search_helper.load_catalog_read_policy(module._db.pool)
             result = await _context.memory_context(
                 memory_pool,
                 embedding_engine,
@@ -394,6 +395,7 @@ class MemoryModule(Module):
                 # conservative include_fleet_knowledge=False default so their
                 # deterministic output is unaffected unless requested.
                 include_fleet_knowledge=True,
+                catalog_read_policy=catalog_read_policy,
             )
             if isinstance(result, str) and result.strip():
                 return result
@@ -427,7 +429,15 @@ class MemoryModule(Module):
             import asyncio
 
             embedding_engine = await asyncio.to_thread(module._get_embedding_engine)
-            return await _search_catalog(pool, query, embedding_engine, limit=limit, mode=mode)
+            read_policy = await _search_helper.load_catalog_read_policy(module._db.pool)
+            return await _search_catalog(
+                pool,
+                query,
+                embedding_engine,
+                limit=limit,
+                mode=mode,
+                read_policy=read_policy,
+            )
 
         async def _consolidation_hook(
             *,
@@ -1454,6 +1464,9 @@ class MemoryModule(Module):
 
             Same inputs always produce identical output (deterministic section compiler).
             """
+            catalog_read_policy = None
+            if include_fleet_knowledge:
+                catalog_read_policy = await _search_helper.load_catalog_read_policy(module._db.pool)
             return await _context.memory_context(
                 module._get_pool(),
                 module._get_embedding_engine(),
@@ -1462,6 +1475,7 @@ class MemoryModule(Module):
                 token_budget=token_budget,
                 include_recent_episodes=include_recent_episodes,
                 include_fleet_knowledge=include_fleet_knowledge,
+                catalog_read_policy=catalog_read_policy,
                 request_context=request_context,
             )
 

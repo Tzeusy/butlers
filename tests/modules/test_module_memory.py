@@ -195,9 +195,11 @@ class TestLifecycle:
         general = MemoryModule()
         travel = MemoryModule()
         chronicler = MemoryModule()
-        general_domain_pool = object()
-        travel_domain_pool = object()
-        chronicler_domain_pool = object()
+        general_domain_pool = AsyncMock()
+        travel_domain_pool = AsyncMock()
+        chronicler_domain_pool = AsyncMock()
+        for domain_pool in (general_domain_pool, travel_domain_pool, chronicler_domain_pool):
+            domain_pool.fetchval = AsyncMock(return_value="normal")
         general_memory_pool = object()
         travel_memory_pool = object()
         chronicler_memory_pool = object()
@@ -303,7 +305,8 @@ class TestLifecycle:
         """
         mod = MemoryModule()
         fake_db = MagicMock()
-        daemon_pool = MagicMock(name="daemon_pool")
+        daemon_pool = AsyncMock(name="daemon_pool")
+        daemon_pool.fetchval = AsyncMock(return_value="normal")
         memory_pool = MagicMock(name="memory_pool")
         fake_db.pool = daemon_pool
         fake_db.schema = "general"
@@ -342,6 +345,7 @@ class TestLifecycle:
         assert context_mock.call_args.args[0] is memory_pool
         _, kwargs = context_mock.call_args
         assert kwargs.get("include_fleet_knowledge") is True
+        assert kwargs["catalog_read_policy"].authority == "normal"
         await mod.on_shutdown()
 
     async def test_on_startup_episode_hook_uses_private_memory_pool(self, monkeypatch) -> None:

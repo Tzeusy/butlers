@@ -952,8 +952,7 @@ async def search_catalog(
     memory_type: str | None = None,
     limit: int = 10,
     mode: str = "hybrid",
-    max_sensitivity: str = DEFAULT_CATALOG_SENSITIVITY,
-    read_policy: CatalogReadPolicy | None = None,
+    read_policy: CatalogReadPolicy,
 ) -> list[dict]:
     """Search ``public.memory_catalog`` for cross-butler memory discovery.
 
@@ -971,11 +970,8 @@ async def search_catalog(
             both types.
         limit: Maximum results to return (default 10).
         mode: Search mode — 'semantic', 'keyword', or 'hybrid' (default).
-        max_sensitivity: Highest sensitivity level the caller is authorized to
-            view. Results above this ceiling are excluded. Defaults to
-            ``'normal'`` (the most restrictive level); unknown values fail
-            closed to ``'normal'``-only. See ``CATALOG_SENSITIVITY_LEVELS``
-            for the ordered hierarchy.
+        read_policy: Server-held policy loaded from the calling butler's
+            runtime config. Callers cannot supply or raise this authority.
 
     Returns:
         List of dicts with catalog row fields plus ``similarity`` (semantic),
@@ -988,11 +984,7 @@ async def search_catalog(
     if mode not in _VALID_SEARCH_MODES:
         raise ValueError(f"Invalid mode: {mode!r}. Must be one of {sorted(_VALID_SEARCH_MODES)}")
 
-    allowed_sensitivities = list(
-        read_policy.allowed_sensitivities
-        if read_policy is not None
-        else resolve_allowed_sensitivities(max_sensitivity)
-    )
+    allowed_sensitivities = list(read_policy.allowed_sensitivities)
 
     semantic_results: list[dict] = []
     keyword_results: list[dict] = []

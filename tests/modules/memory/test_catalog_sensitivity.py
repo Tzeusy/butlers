@@ -133,6 +133,7 @@ class TestCatalogSensitivityFilteringIntegration:
             "alpha bravo charlie",
             engine,
             mode="keyword",
+            read_policy=catalog_search.resolve_catalog_read_policy("normal"),
         )
 
         sensitivities = {r["sensitivity"] for r in results}
@@ -150,6 +151,7 @@ class TestCatalogSensitivityFilteringIntegration:
             "delta echo foxtrot",
             engine,
             mode="keyword",
+            read_policy=catalog_search.resolve_catalog_read_policy("normal"),
         )
         assert len(results) == 1
         assert results[0]["sensitivity"] is None
@@ -168,7 +170,7 @@ class TestCatalogSensitivityFilteringIntegration:
             "golf hotel india",
             engine,
             mode="keyword",
-            max_sensitivity="confidential",
+            read_policy=catalog_search.resolve_catalog_read_policy("confidential"),
         )
 
         sensitivities = {r["sensitivity"] for r in results}
@@ -187,30 +189,26 @@ class TestCatalogSensitivityFilteringIntegration:
             "juliet kilo lima",
             engine,
             mode="keyword",
-            max_sensitivity="pii",
+            read_policy=catalog_search.resolve_catalog_read_policy("internal"),
         )
 
         sensitivities = {r["sensitivity"] for r in results}
         assert sensitivities == {"pii"}, sensitivities
 
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_internal_held_policy_overrides_confidential_caller_claim(
-        self, catalog_pool
-    ) -> None:
-        """The caller compatibility argument cannot raise held authority."""
+    async def test_catalog_search_rejects_caller_authority_argument(self, catalog_pool) -> None:
+        """The shared primitive has no caller-controlled authority fallback."""
         pool = catalog_pool
         await self._insert(pool, text="mike november oscar", sensitivity="normal")
         await self._insert(pool, text="mike november oscar", sensitivity="pii")
         await self._insert(pool, text="mike november oscar", sensitivity="confidential")
 
-        results = await catalog_search.search_catalog(
-            pool,
-            "mike november oscar",
-            MagicMock(),
-            mode="keyword",
-            max_sensitivity="confidential",
-            read_policy=catalog_search.resolve_catalog_read_policy("internal"),
-        )
-
-        sensitivities = {r["sensitivity"] for r in results}
-        assert sensitivities == {"normal", "pii"}, sensitivities
+        with pytest.raises(TypeError, match="max_sensitivity"):
+            await catalog_search.search_catalog(
+                pool,
+                "mike november oscar",
+                MagicMock(),
+                mode="keyword",
+                max_sensitivity="confidential",
+                read_policy=catalog_search.resolve_catalog_read_policy("internal"),
+            )

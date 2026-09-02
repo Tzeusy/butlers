@@ -47,8 +47,8 @@ Scope: v1-mandatory
 
 #### Scenario: All managed fields are cold
 - **WHEN** a PATCH request updates any of `core_groups`, `max_concurrent`, or `max_queued`
-- **THEN** the response SHALL include `restart_required` listing exactly those changed fields, because those three require a daemon restart to take effect
-- **AND** this historical scenario applies only to those three fields; hot `catalog_read_sensitivity` and `tool_exposure_policy` take effect for subsequent invocations and SHALL NOT appear in `restart_required`
+- **THEN** the response SHALL include `restart_required` listing exactly the changed fields, because all three require a daemon restart to take effect (there are no hot fields on this surface)
+- **AND** the historical no-hot-fields clause is superseded for new fields only: hot `catalog_read_sensitivity` and `tool_exposure_policy` take effect for subsequent invocations and SHALL NOT appear in `restart_required`
 
 #### Scenario: Invalid field value — negative concurrency
 - **WHEN** a PATCH request sets `max_concurrent` to a negative number or zero
