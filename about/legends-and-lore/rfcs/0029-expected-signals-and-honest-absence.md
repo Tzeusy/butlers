@@ -49,11 +49,28 @@ The boundary is inclusive: evaluation exactly at the expected timestamp is
 `absent`. A history containing both connector producers is unknown and therefore
 unmeasurable; row order never selects authority.
 
-Relationship interaction gaps and Finance recurrence gaps require a separate
-provenance decision before adoption. Their current rows do not identify one
-authoritative producer, so assigning a connector here would fabricate
-measurability. RFC 0029 supplies their shared primitive but does not introduce a
-new notification policy or guess a producer.
+Finance recurrence and tracked-renewal absence use the mapping adopted by
+`finance-recurrence-producer-mapping` (bu-4gzka). A server-attested Gmail source
+maps to `connector:gmail`; an explicitly server-attested owner source maps to
+`owner`. `source_message_id`, generic transaction `source`, import metadata,
+merchant matching, and account freshness are not producer authority. SimpleFIN
+is an in-process scheduled sync without a connector heartbeat and remains
+unmeasurable. A recurring group must resolve the complete set of contributing
+transactions to exactly one producer; missing, unsupported, copied, mixed, or
+unreadable provenance is unmeasurable.
+
+`subscriptions.next_renewal` is a declared schedule, not evidence that a charge
+was observed or missed. The existing forward-looking annual renewal reminder may
+continue unchanged. No current Finance policy turns an elapsed expected signal
+into missed-renewal, merchant-behavior, payment, cancellation, pause, or stopped
+wording; a healthy elapsed signal may be `absent` in the ledger but has no implicit
+candidate consumer.
+
+Relationship interaction gaps still require their separate provenance decision
+before adoption. Their current rows do not identify one authoritative producer,
+so assigning a connector here would fabricate measurability. RFC 0029 supplies
+the shared primitive but does not introduce a new notification policy or guess a
+producer.
 
 ## Failure properties
 

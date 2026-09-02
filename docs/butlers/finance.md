@@ -118,6 +118,40 @@ A `finance.budgets` table is defined for future implementation of category-perio
 
 **Spending queries.** Users ask "How much did I spend last month?" or "What are my active subscriptions?" and receive data-backed answers from the transaction ledger and subscription registry.
 
+## Recurrence and renewal source authority
+
+Finance keeps three ideas separate: a predicted next charge, a declared renewal date, and proof
+that the source which would observe a charge is working. `recurring_groups.last_seen_date` and
+`next_expected_date` are calculated from transaction intervals; `subscriptions.next_renewal` is a
+tracked declaration. None of those dates alone proves that a charge was missed, paid, cancelled,
+paused, or stopped.
+
+| Input | Expected-signal producer | Current disposition |
+|---|---|---|
+| Server-attested Gmail transaction/renewal evidence | `connector:gmail` | measurable only while the Gmail heartbeat is healthy/current |
+| Server-attested direct owner observation/declaration | `owner` | measurable only with server-derived owner attestation; semantics remain "not recorded by owner" |
+| Current `source_message_id` or `source=manual` row | none | unmeasurable; both values can arise through public tool inputs/defaults |
+| CSV/bulk, API/bank-sync, backfill, or split row | none | unmeasurable without reserved server attestation |
+| SimpleFIN `source=aggregator` row | none | unmeasurable under RFC 0029 because the scheduled bridge has no connector heartbeat |
+| Current or mixed `recurring_groups` row | none | unmeasurable until all contributing transactions prove exactly one producer |
+
+Stale, dead/offline, unhealthy, missing, unsupported, mixed, or unreadable producer evidence is
+`unmeasurable`. It must not produce "missed renewal", owner-behavior, or inferred payment-state
+copy. A healthy elapsed signal can be recorded as `absent`, but no current Finance alert consumes
+that state.
+
+The existing dashboard and alert behavior stays narrower. An active yearly subscription with a
+declared renewal inside 14 days may still show and emit the existing forward-looking
+`subscription-renewal` candidate. An untracked regular payment predicted inside 30 days may still
+produce the existing `bill-predicted` candidate. The Finance tab may show declared renewal dates
+and `detected_untracked` patterns, but must not turn missing instrumentation into a missed charge,
+payment result, cancellation, stopped-subscription verdict, or complete all-clear.
+
+After runtime adoption of this contract, operator triage starts with the expected signal's exact
+producer, then that same producer's liveness. Do not use a healthy Gmail heartbeat for
+SimpleFIN/manual/imported evidence, and do not infer authority from a message ID, merchant name,
+account freshness, or generic source label.
+
 ## Verification
 
 To confirm the Finance Butler's domain tables, scheduled tasks, and ingestion pipeline are working as described:

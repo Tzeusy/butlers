@@ -301,6 +301,25 @@ Detected recurring charge patterns linking multiple transactions.
 | `created_at` | `TIMESTAMPTZ DEFAULT now()` | Creation time |
 | `updated_at` | `TIMESTAMPTZ DEFAULT now()` | Last modification time |
 
+#### Expected-signal producer provenance
+
+`last_seen_date` and `next_expected_date` are recurrence-model outputs, not source authority. For
+RFC 0029 adoption, a recurring group derives its expected-signal producer from the complete set of
+transactions that contributed to the group. Exactly one reserved, server-attested producer may be
+used; a missing, unsupported, copied, mixed, or unreadable source makes the group unmeasurable.
+
+The initial Finance mapping recognizes server-attested Gmail ingress as `connector:gmail` and an
+explicitly server-attested owner entry as `owner`. Current `source_message_id`, transaction
+`source`, import metadata, SimpleFIN `source=aggregator`, account freshness, merchant matching, and
+legacy/backfill metadata do not establish an RFC 0029 producer. In particular, merchant-unique
+groups can span accounts and sources; neither row order nor a healthy Gmail runtime may resolve
+that ambiguity.
+
+Tracked `subscriptions.next_renewal` is a declared schedule, separate from evidence that a renewal
+charge occurred. It may drive the existing forward-looking renewal reminder, but an elapsed date
+does not prove payment, non-payment, cancellation, pause, or stopped state. See RFC 0029's Initial
+adoption section and the `finance-recurrence-producer-mapping` OpenSpec change.
+
 #### `finance.import_batches` (New)
 
 Audit trail for each data import operation.
