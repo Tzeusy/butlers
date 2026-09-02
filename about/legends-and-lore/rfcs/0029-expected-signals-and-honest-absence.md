@@ -20,16 +20,25 @@ observation, evaluation time, and exactly one state:
 - `absent`: the producer is measurable and the cadence has elapsed;
 - `unmeasurable`: producer liveness or health cannot support an absence claim.
 
-Connector producers are written as `connector:<connector_type>` and carry a
-required `producer_endpoint_identity` copied from server-derived source
-provenance. They join the existing read-only `public.v_qa_connector_state`
-projection by the exact `(connector_type, endpoint_identity)` pair. A connector
-is measurable only when that exact registered runtime is healthy with a
-heartbeat inside the canonical five-minute liveness window. A healthy sibling
-endpoint never substitutes, regardless of row order. Missing, stale, offline,
-paused, degraded, errored, or unreadable exact-endpoint liveness is
-`unmeasurable`. The special `owner` producer covers explicitly owner-entered
-observations, has no external instrument dependency, and carries no endpoint.
+**[TARGET-STATE — continued adoption owned by bu-8cdl1.3.]** Connector producers
+are written as `connector:<connector_type>` and carry a required
+`producer_endpoint_identity` copied from server-derived source provenance. They
+join the read-only `public.v_qa_connector_state` projection by the exact
+`(connector_type, endpoint_identity)` pair. A connector is measurable only when
+that exact registered runtime is healthy with a heartbeat inside the canonical
+five-minute liveness window. A healthy sibling endpoint never substitutes,
+regardless of row order. Missing, stale, offline, paused, degraded, errored, or
+unreadable exact-endpoint liveness is `unmeasurable`. The special `owner`
+producer covers explicitly owner-entered observations, has no external
+instrument dependency, and carries no endpoint.
+
+**Current implementation boundary (2026-09-03):** `core_210` has no
+`producer_endpoint_identity` column and `butlers.core.expected_signals` queries
+liveness by connector type only. Health is the only runtime adopter. Finance
+connector-backed signals MUST remain unadopted/unmeasurable until the continued
+bu-8cdl1.3 lane lands the shared schema/helper/API migration, transitions
+existing Health signals and call sites without a type-only fallback or guessed
+endpoint backfill, and proves exact-endpoint behavior in migrated PostgreSQL.
 
 The table is globally keyed and row-level security binds updates to the runtime
 role that first claimed the key. All roles may read the tri-state projection;
@@ -52,12 +61,13 @@ The boundary is inclusive: evaluation exactly at the expected timestamp is
 `absent`. A history containing both connector producers is unknown and therefore
 unmeasurable; row order never selects authority.
 
-Finance recurrence and tracked-renewal absence use the mapping adopted by
-`finance-recurrence-producer-mapping` (bu-4gzka). A server-attested Gmail source
-maps to `connector:gmail` plus the exact server-derived
-`producer_endpoint_identity`; an explicitly server-attested owner source maps to
-`owner`. `source_message_id`, generic transaction `source`, import metadata,
-merchant matching, and account freshness are not producer authority. SimpleFIN
+**[TARGET-STATE.]** Finance recurrence and tracked-renewal absence use the
+mapping defined by `finance-recurrence-producer-mapping` (bu-4gzka) only after
+continued bu-8cdl1.3 completes the shared endpoint-aware adoption above. A
+server-attested Gmail source maps to `connector:gmail` plus the exact
+server-derived `producer_endpoint_identity`; an explicitly server-attested owner
+source maps to `owner`. `source_message_id`, generic transaction `source`,
+import metadata, merchant matching, and account freshness are not producer authority. SimpleFIN
 is an in-process scheduled sync without a connector heartbeat and remains
 unmeasurable. A recurring group must resolve the complete set of contributing
 transactions to exactly one producer; missing, unsupported, copied, mixed, or
