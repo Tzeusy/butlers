@@ -26,6 +26,13 @@ owned by another runtime role.
 - **WHEN** a different runtime role attempts to update an existing signal key
 - **THEN** row-level policy SHALL refuse the write
 
+#### Scenario: Standard backup remains publishable
+
+- **WHEN** the standard non-privileged `pg_dump` backup runs
+- **THEN** it SHALL explicitly exclude the forced-RLS expected-signal projection
+- **AND** it SHALL NOT enable row security or abort the whole backup
+- **AND** source observations and connector liveness SHALL remain backed up so the next detector run can rebuild the projection
+
 ### Requirement: Liveness precedes absence
 
 An elapsed cadence SHALL be `absent` only while its producer is measurable.
@@ -35,7 +42,7 @@ evidence SHALL be `unmeasurable`, never `absent`.
 
 #### Scenario: Live elapsed signal is absent
 
-- **WHEN** a healthy connector heartbeat is current and the expected cadence elapsed
+- **WHEN** a healthy connector heartbeat is current and evaluation is at or after the exact expected-cadence boundary
 - **THEN** the signal SHALL be `absent`
 
 #### Scenario: Dead instrument makes the gap unmeasurable
@@ -43,6 +50,12 @@ evidence SHALL be `unmeasurable`, never `absent`.
 - **WHEN** connector liveness is killed or stale and the same cadence elapses
 - **THEN** the signal SHALL be `unmeasurable`
 - **AND** no owner-behavior gap candidate SHALL be emitted
+
+#### Scenario: Mixed connector provenance has no guessed authority
+
+- **WHEN** one signal history contains observations from both Google Health and Home Assistant
+- **THEN** producer resolution SHALL be order-independent and return unknown
+- **AND** the signal SHALL be `unmeasurable` unless a stronger authoritative mapping is defined
 
 ### Requirement: Expected-signal reads degrade honestly
 

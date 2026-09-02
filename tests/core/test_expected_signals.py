@@ -38,6 +38,21 @@ async def test_live_elapsed_connector_signal_is_absent() -> None:
     assert result.unmeasurable_reason is None
 
 
+async def test_exact_cadence_boundary_is_absent() -> None:
+    pool = AsyncMock()
+
+    result = await evaluate_expected_signal(
+        pool,
+        signal_key="health:measurement-gap:weight",
+        producer="owner",
+        expected_cadence=timedelta(days=14),
+        last_observed_at=_NOW - timedelta(days=14),
+        now=_NOW,
+    )
+
+    assert result.state is ExpectedSignalState.ABSENT
+
+
 async def test_stale_connector_makes_elapsed_signal_unmeasurable() -> None:
     pool = AsyncMock()
     pool.fetch.return_value = [
@@ -105,3 +120,10 @@ def test_measurement_producer_prefers_instrument_provenance() -> None:
     assert measurement_producer(["owner_log"]) == "owner"
     assert measurement_producer(["manual"]) == "owner"
     assert measurement_producer([None]) == "unknown"
+
+
+def test_mixed_connector_provenance_is_order_independently_unknown() -> None:
+    sources = ["google_health", "home_assistant"]
+
+    assert measurement_producer(sources) == "unknown"
+    assert measurement_producer(list(reversed(sources))) == "unknown"

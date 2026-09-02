@@ -397,7 +397,7 @@ async def run_insight_scan(
         expected_signal = await upsert_expected_signal(
             db_pool,
             signal_key=f"health:measurement-gap:{mtype}",
-            producer=measurement_producer([row["source"] for row in history_rows]),
+            producer=measurement_producer([row.get("source") for row in history_rows]),
             expected_cadence=timedelta(seconds=_GAP_WARNING_MULTIPLIER * median_cadence_seconds),
             last_observed_at=most_recent,
             now=now_utc,

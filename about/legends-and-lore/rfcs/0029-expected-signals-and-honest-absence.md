@@ -45,6 +45,9 @@ Health measurement gaps are the first adopted detector. Their expected cadence
 is the existing two-times-median warning boundary. Measurement provenance binds
 Google Health and Home Assistant observations to their connector liveness;
 purely manual histories use `owner`; unknown provenance is unmeasurable.
+The boundary is inclusive: evaluation exactly at the expected timestamp is
+`absent`. A history containing both connector producers is unknown and therefore
+unmeasurable; row order never selects authority.
 
 Relationship interaction gaps and Finance recurrence gaps require a separate
 provenance decision before adoption. Their current rows do not identify one
@@ -59,6 +62,9 @@ new notification policy or guess a producer.
 - Concurrent upserts converge on one key.
 - An unavailable API query is not represented as an empty signal list.
 - The ledger stores no measurement value or owner-facing message.
+- The standard backup excludes the forced-RLS ledger rather than enabling row
+  security or aborting the dump; source observations and liveness remain in the
+  artifact, and detector evaluation rebuilds the projection after restore.
 
 ## Alternatives rejected
 

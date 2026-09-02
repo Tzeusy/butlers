@@ -109,7 +109,7 @@ async def evaluate_expected_signal(
 
     if not measurable:
         state = ExpectedSignalState.UNMEASURABLE
-    elif observed_at is None or observed_at + expected_cadence < evaluated_at:
+    elif observed_at is None or observed_at + expected_cadence <= evaluated_at:
         state = ExpectedSignalState.ABSENT
         reason = None
     else:
@@ -182,9 +182,13 @@ def measurement_producer(sources: list[str | None]) -> str:
     normalized = [
         source.strip() for source in sources if isinstance(source, str) and source.strip()
     ]
-    for source in normalized:
-        if source in {"google_health", "home_assistant"}:
-            return f"connector:{source}"
+    connector_sources = {
+        source for source in normalized if source in {"google_health", "home_assistant"}
+    }
+    if len(connector_sources) == 1:
+        return f"connector:{next(iter(connector_sources))}"
+    if len(connector_sources) > 1:
+        return "unknown"
     if normalized and all(source in {"owner_log", "manual"} for source in normalized):
         return "owner"
     return "unknown"
