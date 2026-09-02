@@ -579,6 +579,7 @@ function CeilingEdit({
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(String(currentCeiling ?? ""));
+  const editButtonRef = useRef<HTMLButtonElement | null>(null);
   const [pendingConfirmation, setPendingConfirmation] = useState<{
     ceiling: number;
     mtd: number;
@@ -606,6 +607,13 @@ function CeilingEdit({
     setEditing(false);
   };
 
+  const restoreEditButtonFocus = (event: Event) => {
+    const editButton = editButtonRef.current;
+    if (!editButton || !document.contains(editButton)) return;
+    event.preventDefault();
+    editButton.focus();
+  };
+
   const save = () => {
     if (mutation.isPending) return;
     const parsed = parseFloat(value);
@@ -623,6 +631,7 @@ function CeilingEdit({
   if (!editing) {
     return (
       <Button
+        ref={editButtonRef}
         variant="outline"
         size="sm"
         className="text-xs h-7"
@@ -692,6 +701,7 @@ function CeilingEdit({
           variant="destructive"
           pending={mutation.isPending}
           onConfirm={() => mutation.mutate(pendingConfirmation.ceiling)}
+          onCloseAutoFocus={restoreEditButtonFocus}
           testId="spend-ceiling-confirm-dialog"
         />
       )}
