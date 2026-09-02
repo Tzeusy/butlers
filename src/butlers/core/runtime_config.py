@@ -1,7 +1,7 @@
 """RuntimeConfigAccessor — TTL-cached read/write accessor for per-butler runtime config.
 
-The ``runtime_config`` table stores operational tuning knobs (concurrency limits
-and core tool groups) in each butler's schema.
+The ``runtime_config`` table stores operational tuning knobs (concurrency limits,
+core tool groups, and catalog read authority) in each butler's schema.
 
 The accessor is created during daemon startup (phase 9b) and shared between:
 - The daemon (for ``core_groups`` at tool registration time)
@@ -37,6 +37,7 @@ class RuntimeConfig:
 
     butler_name: str
     core_groups: tuple[str, ...] | None = None
+    catalog_read_sensitivity: str = "normal"
     max_concurrent: int = 3
     max_queued: int = 10
     seeded_at: str | None = None
@@ -51,6 +52,7 @@ def _row_to_config(row: asyncpg.Record) -> RuntimeConfig:
     return RuntimeConfig(
         butler_name=row["butler_name"],
         core_groups=core_groups,
+        catalog_read_sensitivity=row["catalog_read_sensitivity"],
         max_concurrent=row["max_concurrent"],
         max_queued=row["max_queued"],
         seeded_at=str(row["seeded_at"]) if row["seeded_at"] else None,
@@ -131,12 +133,13 @@ class RuntimeConfigAccessor:
         await self._pool.execute(
             f"""
             INSERT INTO {self._schema}.runtime_config
-                (butler_name, core_groups, max_concurrent, max_queued)
-            VALUES ($1, $2, $3, $4)
+                (butler_name, core_groups, catalog_read_sensitivity, max_concurrent, max_queued)
+            VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (butler_name) DO NOTHING
             """,
             butler_name,
             core_groups_val,
+            seed.catalog_read_sensitivity,
             seed.max_concurrent_sessions,
             seed.max_queued_sessions,
         )

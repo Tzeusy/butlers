@@ -48,6 +48,22 @@ class TestResolveAllowedSensitivities:
         ]
 
 
+class TestServerDerivedCatalogReadPolicy:
+    """Held authority maps to the existing sensitivity vocabulary."""
+
+    def test_internal_authority_allows_normal_and_pii(self) -> None:
+        policy = catalog_search.resolve_catalog_read_policy("internal")
+
+        assert policy.authority == "internal"
+        assert policy.allowed_sensitivities == ("normal", "pii")
+
+    def test_unknown_authority_fails_closed(self) -> None:
+        policy = catalog_search.resolve_catalog_read_policy("caller-invented")
+
+        assert policy.authority == "normal"
+        assert policy.allowed_sensitivities == ("normal",)
+
+
 # ---------------------------------------------------------------------------
 # Integration tests — require Docker + Postgres
 # ---------------------------------------------------------------------------
@@ -176,3 +192,25 @@ class TestCatalogSensitivityFilteringIntegration:
 
         sensitivities = {r["sensitivity"] for r in results}
         assert sensitivities == {"pii"}, sensitivities
+
+    @pytest.mark.asyncio(loop_scope="session")
+    async def test_internal_held_policy_overrides_confidential_caller_claim(
+        self, catalog_pool
+    ) -> None:
+        """The caller compatibility argument cannot raise held authority."""
+        pool = catalog_pool
+        await self._insert(pool, text="mike november oscar", sensitivity="normal")
+        await self._insert(pool, text="mike november oscar", sensitivity="pii")
+        await self._insert(pool, text="mike november oscar", sensitivity="confidential")
+
+        results = await catalog_search.search_catalog(
+            pool,
+            "mike november oscar",
+            MagicMock(),
+            mode="keyword",
+            max_sensitivity="confidential",
+            read_policy=catalog_search.resolve_catalog_read_policy("internal"),
+        )
+
+        sensitivities = {r["sensitivity"] for r in results}
+        assert sensitivities == {"normal", "pii"}, sensitivities

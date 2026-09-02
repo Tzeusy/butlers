@@ -794,6 +794,7 @@ class MemoryModule(Module):
         from butlers.modules.memory.tools import preferences as _preferences
         from butlers.modules.memory.tools import reading as _reading
         from butlers.modules.memory.tools import writing as _writing
+        from butlers.modules.memory.tools._helpers import _search as _search_helper
 
         # Build a group-aware tool decorator: returns @mcp.tool() when the
         # group is enabled, or a no-op passthrough when disabled.
@@ -1811,17 +1812,6 @@ class MemoryModule(Module):
                 str,
                 Field(description="Search mode: 'hybrid' (default), 'semantic', or 'keyword'."),
             ] = "hybrid",
-            max_sensitivity: Annotated[
-                str,
-                Field(
-                    description=(
-                        "Highest sensitivity level the caller is authorized to view. "
-                        "Ordered low-to-high: 'normal', 'pii', 'confidential'. "
-                        "Defaults to 'normal' (excludes anything more sensitive); "
-                        "unknown values fail closed to 'normal'-only."
-                    )
-                ),
-            ] = "normal",
         ) -> list[dict[str, Any]]:
             """Search the shared memory catalog for cross-butler memory discovery.
 
@@ -1840,12 +1830,10 @@ class MemoryModule(Module):
             - ``memory_type``: 'fact' | 'rule' (omit to search both)
             - ``limit`` (int)
             - ``mode``: 'hybrid' | 'semantic' | 'keyword'
-            - ``max_sensitivity``: 'normal' (default) | 'pii' | 'confidential'
-
-            Sensitivity filtering: results above ``max_sensitivity`` are
-            excluded. The default ('normal') returns only non-sensitive
-            entries; request a higher level only when authorized.
+            Sensitivity filtering uses the server-held runtime config value.
+            No MCP argument can raise that authority.
             """
+            read_policy = await _search_helper.load_catalog_read_policy(module._db.pool)
             return await _reading.memory_catalog_search(
                 module._get_pool(),
                 module._get_embedding_engine(),
@@ -1853,7 +1841,7 @@ class MemoryModule(Module):
                 memory_type=memory_type,
                 limit=limit,
                 mode=mode,
-                max_sensitivity=max_sensitivity,
+                read_policy=read_policy,
             )
 
         # --- Preference tools ---
