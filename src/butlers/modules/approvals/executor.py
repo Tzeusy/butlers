@@ -26,6 +26,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from butlers.modules.approvals.events import ApprovalEventType, record_approval_event
+from butlers.modules.approvals.execution_context import (
+    ApprovalExecutionContext,
+    reset_approval_execution_context,
+    set_approval_execution_context,
+)
 from butlers.modules.approvals.models import ActionStatus
 
 if TYPE_CHECKING:
@@ -199,7 +204,8 @@ async def execute_approved_action(
         try:
             async with _approval_write_transaction(pool) as write_target:
                 existing_row = await write_target.fetchrow(
-                    "SELECT status, execution_result FROM pending_actions WHERE id = $1 FOR UPDATE",
+                    "SELECT status, execution_result, session_id, decided_by "
+                    "FROM pending_actions WHERE id = $1 FOR UPDATE",
                     action_id,
                 )
                 if existing_row is None:
@@ -227,9 +233,18 @@ async def execute_approved_action(
                     )
 
                 try:
-                    raw_result = tool_fn(**tool_args)
-                    if inspect.isawaitable(raw_result):
-                        raw_result = await raw_result
+                    execution_context = ApprovalExecutionContext(
+                        action_id=action_id,
+                        session_id=existing_row.get("session_id"),
+                        actor=existing_row.get("decided_by") or "system:approval_executor",
+                    )
+                    context_token = set_approval_execution_context(execution_context)
+                    try:
+                        raw_result = tool_fn(**tool_args)
+                        if inspect.isawaitable(raw_result):
+                            raw_result = await raw_result
+                    finally:
+                        reset_approval_execution_context(context_token)
                     # MCP tool contracts use an error dict for an unsuccessful
                     # operation. Treat it exactly like an exception so a handler that
                     # reports its own failure cannot be recorded as `executed`.

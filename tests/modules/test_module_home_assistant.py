@@ -30,6 +30,12 @@ from butlers.modules._roster_home import (
     HomeAssistantConfig,
     HomeAssistantModule,
 )
+from butlers.modules._roster_home.actuation import (
+    ActuationRisk,
+    classify_actuation,
+    rollback_hint,
+    verify_post_condition,
+)
 from butlers.modules.base import Module, ToolMeta
 
 pytestmark = pytest.mark.unit
@@ -117,6 +123,43 @@ class TestModuleABCCompliance:
         module = HomeAssistantModule()
         module._config = HomeAssistantConfig(read_only=True)
         assert module.tool_metadata() == {}
+
+
+class TestPhysicalRiskContract:
+    @pytest.mark.parametrize(
+        ("domain", "service", "expected"),
+        [
+            ("homeassistant", "update_entity", ActuationRisk.SAFE),
+            ("light", "turn_on", ActuationRisk.REVERSIBLE),
+            ("scene", "turn_on", ActuationRisk.CONSEQUENTIAL),
+            ("lock", "unlock", ActuationRisk.PROTECTED),
+            ("unknown_domain", "do_thing", ActuationRisk.PROTECTED),
+        ],
+    )
+    def test_risk_map_is_explicit_and_unknown_calls_fail_closed(
+        self, domain: str, service: str, expected: ActuationRisk
+    ) -> None:
+        assert classify_actuation(domain, service) is expected
+
+    def test_reversible_action_has_concrete_rollback_hint(self) -> None:
+        assert rollback_hint(
+            "light", "turn_on", {"entity_id": "light.kitchen"}, {"brightness_pct": 80}
+        ) == {
+            "domain": "light",
+            "service": "turn_off",
+            "target": {"entity_id": "light.kitchen"},
+            "data": None,
+        }
+
+    def test_post_condition_mismatch_is_never_verified(self) -> None:
+        outcome = verify_post_condition(
+            "light",
+            "turn_on",
+            None,
+            {"light.kitchen": {"state": "off", "attributes": {}}},
+        )
+        assert outcome.verified is False
+        assert "mismatch" in (outcome.reason or "")
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +522,23 @@ class TestEntityCache:
 
 
 class TestToolBehaviors:
+    async def test_receipt_failure_refuses_physical_call(
+        self, ha_module: HomeAssistantModule
+    ) -> None:
+        client = MagicMock()
+        client.post = AsyncMock()
+        pool = MagicMock()
+        pool.execute = AsyncMock(side_effect=RuntimeError("receipt store unavailable"))
+        db = MagicMock()
+        db.pool = pool
+        ha_module._db = db
+        ha_module._client = client
+
+        with pytest.raises(RuntimeError, match="receipt store unavailable"):
+            await ha_module._call_service("light", "turn_on", target={"entity_id": "light.kitchen"})
+
+        client.post.assert_not_awaited()
+
     async def test_get_statistics_uses_current_recorder_command(
         self, ha_module: HomeAssistantModule
     ) -> None:

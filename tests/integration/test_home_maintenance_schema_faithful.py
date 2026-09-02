@@ -13,14 +13,26 @@ raises ``UndefinedTableError``.
 
 from __future__ import annotations
 
+import json
 import shutil
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import pytest
+from sqlalchemy import create_engine, inspect
 
+from alembic import command
+from butlers.core.tool_call_capture import (
+    reset_current_runtime_session_id,
+    set_current_runtime_session_id,
+)
 from butlers.db import register_jsonb_codec
 from butlers.jobs.home import run_maintenance_schedule_check
+from butlers.migrations import _build_alembic_config
+from butlers.modules._roster_home import HomeAssistantModule
+from butlers.modules.approvals.execution_context import get_approval_execution_context
+from butlers.modules.approvals.module import ApprovalsModule
 from butlers.testing.migration import create_migrated_test_db, migration_db_name
 
 docker_available = shutil.which("docker") is not None
@@ -37,8 +49,8 @@ def home_db_url(postgres_container) -> str:
     return create_migrated_test_db(
         postgres_container,
         migration_db_name(),
-        chains=["core", "home"],
-        schemas={"core": "public", "home": "home"},
+        chains=["core", "approvals", "home"],
+        schemas={"core": "public", "approvals": "home", "home": "home"},
     )
 
 
@@ -55,6 +67,64 @@ async def public_pool(home_db_url: str) -> asyncpg.Pool:
     )
     yield p
     await p.close()
+
+
+@pytest.fixture
+async def home_pool(home_db_url: str) -> asyncpg.Pool:
+    p = await asyncpg.create_pool(
+        home_db_url,
+        min_size=1,
+        max_size=3,
+        init=register_jsonb_codec,
+        server_settings={"search_path": "home,public"},
+    )
+    yield p
+    await p.close()
+
+
+class _Db:
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self.pool = pool
+
+    def __getattr__(self, name: str):
+        return getattr(self.pool, name)
+
+
+class _Response:
+    def __init__(self, payload: object, *, error: Exception | None = None) -> None:
+        self._payload = payload
+        self._error = error
+        self.content = b"json"
+
+    def raise_for_status(self) -> None:
+        if self._error is not None:
+            raise self._error
+
+    def json(self) -> object:
+        return self._payload
+
+
+class _HaClient:
+    def __init__(self) -> None:
+        self.post_calls = 0
+        self.post_error: Exception | None = None
+        self.observed_state = "off"
+
+    async def post(self, path: str, *, json: object) -> _Response:
+        del path, json
+        self.post_calls += 1
+        return _Response([], error=self.post_error)
+
+    async def get(self, path: str) -> _Response:
+        entity_id = path.removeprefix("/api/states/")
+        return _Response(
+            {
+                "entity_id": entity_id,
+                "state": self.observed_state,
+                "attributes": {},
+                "last_updated": "2026-09-03T00:00:00Z",
+            }
+        )
 
 
 async def _seed_item(
@@ -108,3 +178,156 @@ async def test_maintenance_check_reads_home_schema_under_public_search_path(
     assert result["items_checked"] == 3
     assert result["reminders_sent"] == 1
     assert captured, "a reminder should have been produced for the due/overdue items"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_protected_actuation_requires_approval_and_persists_verified_lineage(
+    home_pool: asyncpg.Pool,
+) -> None:
+    db = _Db(home_pool)
+    approvals = ApprovalsModule()
+    await approvals.on_startup({}, db)
+    home = HomeAssistantModule()
+    client = _HaClient()
+    client.observed_state = "unlocked"
+    home._db = db
+    home._client = client
+
+    async def execute(tool_name: str, args: dict[str, object]) -> dict[str, object]:
+        assert tool_name == "ha_call_service"
+        return await home._call_service(**args)
+
+    approvals.set_tool_executor(execute)
+    session_id = uuid.uuid4()
+    session_token = set_current_runtime_session_id(str(session_id))
+    try:
+        parked = await home._call_service("lock", "unlock", target={"entity_id": "lock.front_door"})
+    finally:
+        reset_current_runtime_session_id(session_token)
+
+    assert parked["status"] == "pending_approval"
+    assert client.post_calls == 0
+
+    approved = await approvals._approve_action(
+        parked["action_id"],
+        actor={"type": "human", "id": "owner", "authenticated": True},
+    )
+    assert approved["status"] == "executed"
+    assert client.post_calls == 1
+
+    receipt = await home_pool.fetchrow(
+        "SELECT * FROM ha_command_log WHERE approval_id = $1",
+        uuid.UUID(parked["action_id"]),
+    )
+    assert receipt is not None
+    assert receipt["status"] == "succeeded"
+    assert receipt["risk"] == "protected"
+    assert receipt["actor"] == "human:owner"
+    assert receipt["session_id"] == session_id
+    assert receipt["approval_id"] == uuid.UUID(parked["action_id"])
+    assert receipt["requested_state"]["target"] == {"entity_id": "lock.front_door"}
+    assert receipt["observed_state"]["lock.front_door"]["state"] == "unlocked"
+    assert get_approval_execution_context() is None
+    event = await home_pool.fetchrow(
+        "SELECT event_type, payload FROM public.domain_events "
+        "WHERE event_type = 'home.actuation_executed' ORDER BY occurred_at DESC LIMIT 1"
+    )
+    assert event is not None
+    assert event["event_type"] == "home.actuation_executed"
+    event_payload = event["payload"]
+    if isinstance(event_payload, str):
+        event_payload = json.loads(event_payload)
+    assert event_payload == {
+        "attempt_id": str(receipt["attempt_id"]),
+        "domain": "lock",
+        "service": "unlock",
+        "risk": "protected",
+        "status": "succeeded",
+        "attention_required": False,
+    }
+    await approvals.on_shutdown()
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_ha_error_and_post_condition_mismatch_never_create_success_receipts(
+    home_pool: asyncpg.Pool,
+) -> None:
+    home = HomeAssistantModule()
+    home._db = _Db(home_pool)
+    client = _HaClient()
+    home._client = client
+
+    client.post_error = RuntimeError("HA refused service")
+    with pytest.raises(RuntimeError, match="HA refused service"):
+        await home._call_service("light", "turn_on", target={"entity_id": "light.kitchen"})
+
+    failed = await home_pool.fetchrow(
+        "SELECT * FROM ha_command_log ORDER BY issued_at DESC LIMIT 1"
+    )
+    assert failed is not None
+    assert failed["status"] == "failed"
+
+    client.post_error = None
+    client.observed_state = "off"
+    unverified = await home._call_service("light", "turn_on", target={"entity_id": "light.kitchen"})
+    assert unverified["status"] == "unverified"
+    assert unverified["attention_required"] is True
+
+    mismatch = await home_pool.fetchrow(
+        "SELECT * FROM ha_command_log WHERE attempt_id = $1",
+        uuid.UUID(unverified["attempt_id"]),
+    )
+    assert mismatch is not None
+    assert mismatch["status"] == "unverified"
+    assert mismatch["rollback_hint"]["service"] == "turn_off"
+    assert "mismatch" in mismatch["failure_reason"]
+    assert (
+        await home_pool.fetchval(
+            "SELECT count(*) FROM ha_command_log WHERE attempt_id = ANY($1::uuid[]) "
+            "AND status = 'succeeded'",
+            [failed["attempt_id"], mismatch["attempt_id"]],
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_each_reversible_retry_gets_its_own_receipt(home_pool: asyncpg.Pool) -> None:
+    home = HomeAssistantModule()
+    home._db = _Db(home_pool)
+    client = _HaClient()
+    client.observed_state = "off"
+    home._client = client
+
+    first = await home._call_service("light", "turn_off", target={"entity_id": "light.kitchen"})
+    second = await home._call_service("light", "turn_off", target={"entity_id": "light.kitchen"})
+
+    assert first["status"] == second["status"] == "succeeded"
+    assert first["attempt_id"] != second["attempt_id"]
+    assert client.post_calls == 2
+
+
+def test_home_actuation_receipt_migration_up_down(postgres_container) -> None:
+    db_url = create_migrated_test_db(
+        postgres_container,
+        migration_db_name(),
+        chains=["core", "home"],
+        schemas={"core": "public", "home": "home"},
+        revisions={"home": "home_001"},
+    )
+    config = _build_alembic_config(db_url, ["home"], target_schema="home")
+
+    command.upgrade(config, "home@home_002")
+    engine = create_engine(db_url)
+    try:
+        added = {column["name"] for column in inspect(engine).get_columns("ha_command_log", "home")}
+        assert {"attempt_id", "risk", "actor", "approval_id", "status"} <= added
+
+        command.downgrade(config, "home_001")
+        downgraded = {
+            column["name"] for column in inspect(engine).get_columns("ha_command_log", "home")
+        }
+        assert "attempt_id" not in downgraded
+        assert "status" not in downgraded
+    finally:
+        engine.dispose()
