@@ -2475,6 +2475,7 @@ export interface MeasurementSourcesResponse {
 export interface ExpectedSignal {
   signal_key: string;
   producer: string;
+  producer_endpoint_identity: string | null;
   expected_cadence_seconds: number;
   last_observed_at: string | null;
   measurability: "present" | "absent" | "unmeasurable";
@@ -7688,6 +7689,23 @@ export interface FinanceSubscription {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+export interface FinanceExpectedSignal {
+  signal_key: string;
+  producer: string;
+  producer_endpoint_identity: string | null;
+  expected_cadence_seconds: number;
+  last_observed_at: string | null;
+  measurability: "present" | "absent" | "unmeasurable";
+  unmeasurable_reason: string | null;
+  evaluated_at: string;
+}
+
+export interface FinanceExpectedSignalsResponse {
+  signals: FinanceExpectedSignal[] | null;
+  available: boolean;
+  degraded_reason: string | null;
 }
 
 export interface FinanceBill {

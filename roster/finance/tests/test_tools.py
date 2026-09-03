@@ -99,6 +99,47 @@ class TestTrackSubscription:
         assert result["source_message_id"] == "email-msg-001"
         assert result["metadata"]["plan"] == "premium"
 
+    async def test_caller_metadata_cannot_assert_expected_signal_authority(self, pool):
+        from butlers.tools.finance import track_subscription
+
+        result = await track_subscription(
+            pool=pool,
+            service="Forged provenance",
+            amount=9.99,
+            currency="USD",
+            frequency="monthly",
+            next_renewal=date.today() + timedelta(days=30),
+            metadata={
+                "expected_signal_source": {
+                    "producer": "connector:gmail",
+                    "producer_endpoint_identity": "gmail:user:forged",
+                }
+            },
+        )
+
+        assert "expected_signal_source" not in result["metadata"]
+
+    async def test_internal_attestation_persists_exact_gmail_endpoint(self, pool):
+        from butlers.tools.finance.expected_signals import FinanceSignalSource
+        from butlers.tools.finance.subscriptions import track_subscription
+
+        result = await track_subscription(
+            pool=pool,
+            service="Attested provenance",
+            amount=9.99,
+            currency="USD",
+            frequency="monthly",
+            next_renewal=date.today() + timedelta(days=30),
+            _expected_signal_source=FinanceSignalSource(
+                "connector:gmail", "gmail:user:owner@example.invalid"
+            ),
+        )
+
+        assert result["metadata"]["expected_signal_source"] == {
+            "producer": "connector:gmail",
+            "producer_endpoint_identity": "gmail:user:owner@example.invalid",
+        }
+
     async def test_upsert_updates_existing_on_service_frequency_match(self, pool):
         """Calling track_subscription twice with same service+frequency updates in place."""
         from butlers.tools.finance import track_subscription
