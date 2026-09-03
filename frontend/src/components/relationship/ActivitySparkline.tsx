@@ -14,6 +14,7 @@
  */
 
 import { useEntityActivityBins } from "@/hooks/use-entities";
+import { SourceDegradedNote } from "@/components/ui/query-boundary";
 
 /** Stick height floor (px) so even the busiest day stays a quiet hairline bar. */
 const STICK_MAX_HEIGHT = 28;
@@ -30,6 +31,16 @@ export function ActivitySparkline({ entityId }: { entityId: string }) {
       <div
         data-testid="sparkline-loading"
         className="h-8 w-full rounded bg-muted/40"
+      />
+    );
+  }
+
+  if (data?.degraded) {
+    return (
+      <SourceDegradedNote
+        label="Activity"
+        detail="Chronicler unavailable"
+        testId="activity-sparkline-degraded"
       />
     );
   }

@@ -47,7 +47,7 @@ function render() {
 
 function mockBins(bins: ActivityBin[]) {
   vi.mocked(useEntityActivityBins).mockReturnValue({
-    data: { bins },
+    data: { bins, degraded: false, degraded_reason: null },
     isLoading: false,
     isError: false,
   } as unknown as ReturnType<typeof useEntityActivityBins>);
@@ -105,6 +105,24 @@ describe("ActivitySparkline", () => {
     expect(container.querySelector('[data-testid="sparkline-empty"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="activity-sparkline"]')).toBeNull();
     expect(container.textContent).toContain("No activity in the last 90 days.");
+  });
+
+  it("renders a degraded source note instead of zero activity", () => {
+    vi.mocked(useEntityActivityBins).mockReturnValue({
+      data: {
+        bins: denseSeries([]),
+        degraded: true,
+        degraded_reason: "chronicler_activity_unavailable",
+      },
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useEntityActivityBins>);
+
+    render();
+
+    expect(container.querySelector('[data-testid="activity-sparkline-degraded"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="sparkline-empty"]')).toBeNull();
+    expect(container.textContent).toContain("Activity: Chronicler unavailable");
   });
 
   it("shows a loading placeholder while fetching", () => {

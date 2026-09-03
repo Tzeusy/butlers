@@ -1551,8 +1551,8 @@ class TestEntityActivity:
         assert "relationship.entity_facts" in fetch_call_sql
         assert "relationship.facts" not in fetch_call_sql
 
-    async def test_chronicler_unreachable_degrades_gracefully(self):
-        """GET /entities/{id}/activity returns relationship facts only when chronicler offline."""
+    async def test_chronicler_unreachable_is_explicitly_degraded(self):
+        """A failed Chronicler read cannot impersonate complete activity."""
         fact_row = self._make_fact_row(last_seen=_NOW)
         app, _ = self._make_app(fact_rows=[fact_row], chronicler_unreachable=True)
         resp = await _get(app, _ACTIVITY_PATH)
@@ -1560,6 +1560,36 @@ class TestEntityActivity:
         body = resp.json()
         assert body["total"] == 1
         assert body["items"][0]["src"] == "relationship"
+        assert body["degraded"] is True
+        assert body["degraded_reason"] == "chronicler_activity_unavailable"
+        assert "offline" not in body["degraded_reason"]
+
+    async def test_genuine_empty_activity_is_healthy(self):
+        """A successful zero-row Chronicler read remains distinct from failure."""
+        app, _ = self._make_app(fact_rows=[], chronicler_episodes=[])
+        resp = await _get(app, _ACTIVITY_PATH)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["items"] == []
+        assert body["total"] == 0
+        assert body["degraded"] is False
+        assert body["degraded_reason"] is None
+
+    async def test_chronicler_failure_marks_bins_only_response_degraded(self):
+        """The frontend sparkline envelope carries the same source failure."""
+        app, _ = self._make_app(fact_rows=[], chronicler_unreachable=True)
+        resp = await _get(
+            app,
+            _ACTIVITY_PATH,
+            bins="daily",
+            window="90d",
+            bins_only=True,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["bins"]) == 90
+        assert body["degraded"] is True
+        assert body["degraded_reason"] == "chronicler_activity_unavailable"
 
     async def test_merged_stream_sorted_desc(self):
         """Activity items from relationship and chronicler are merged and sorted desc by ts."""
