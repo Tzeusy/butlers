@@ -111,7 +111,7 @@ async def track_subscription(
                 payment_method    = COALESCE($6, payment_method),
                 account_id        = COALESCE($7, account_id),
                 source_message_id = COALESCE($8, source_message_id),
-                metadata          = metadata || $9,
+                metadata          = (metadata - 'expected_signal_source') || $9,
                 updated_at        = now()
             WHERE id = $10
             RETURNING *
