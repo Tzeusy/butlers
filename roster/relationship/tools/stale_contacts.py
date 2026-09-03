@@ -80,6 +80,55 @@ def _metadata_value(row: Any) -> Any:
         return None
 
 
+def _mapped_identity_producer(predicate: object, value: object) -> str | None:
+    """Map one active contact identity to an expected-signal producer family."""
+    if not isinstance(predicate, str) or not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold()
+    if not normalized:
+        return None
+    if predicate == "has-email":
+        return "connector:gmail"
+    if predicate == "has-phone":
+        return "connector:whatsapp_user_client"
+    if predicate != "has-handle":
+        return None
+    if normalized.startswith("telegram:") and normalized != "telegram:":
+        return "connector:telegram_user_client"
+    if normalized.endswith("@s.whatsapp.net"):
+        return "connector:whatsapp_user_client"
+    return None
+
+
+async def _active_identity_producers(pool: Any, entity_id: UUID) -> set[str] | None:
+    """Inventory every active mapped identity; unreadable evidence fails closed."""
+    try:
+        rows = await pool.fetch(
+            """
+            SELECT predicate, object
+            FROM relationship.entity_facts
+            WHERE subject = $1
+              AND validity = 'active'
+              AND object_kind = 'literal'
+              AND predicate IN ('has-email', 'has-handle', 'has-phone')
+            ORDER BY predicate, object
+            """,
+            entity_id,
+        )
+    except Exception:  # noqa: BLE001 -- incomplete identity evidence cannot authorize absence
+        logger.warning(
+            "Stale-contact identity inventory unavailable for entity %s",
+            entity_id,
+            exc_info=True,
+        )
+        return None
+    return {
+        producer
+        for row in rows
+        if (producer := _mapped_identity_producer(row["predicate"], row["object"])) is not None
+    }
+
+
 async def _resolve_latest_producer(
     pool: Any,
     *,
@@ -151,6 +200,16 @@ async def _resolve_latest_producer(
                 return "unknown", None
             authorities.add((producer, endpoint))
 
+    identity_producers = await _active_identity_producers(pool, entity_id)
+    if identity_producers is None:
+        return "unknown", None
+    attested_producers = {producer for producer, _endpoint in authorities}
+    participating_producers = attested_producers | identity_producers
+    if len(participating_producers) != 1:
+        return "unknown", None
+    sole_producer = next(iter(participating_producers))
+    if sole_producer.startswith("connector:") and sole_producer not in identity_producers:
+        return "unknown", None
     if len(authorities) != 1:
         return "unknown", None
     return next(iter(authorities))

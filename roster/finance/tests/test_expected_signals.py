@@ -89,15 +89,24 @@ async def test_runtime_owner_requires_server_resolved_owner_entity(
     assert await runtime_signal_source(pool) == FinanceSignalSource("owner")
 
 
-async def test_runtime_unproven_source_has_no_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("endpoint", [None, "", "email:user:owner@example.invalid"])
+async def test_runtime_malformed_gmail_cannot_fall_through_to_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str | None,
+) -> None:
     monkeypatch.setattr(
         expected_signals_module,
         "get_current_runtime_session_routing_context",
         lambda: {
+            "source_entity_id": "00000000-0000-0000-0000-000000000001",
             "request_context": {
                 "source_channel": "email",
-                "source_endpoint_identity": "caller-controlled",
-            }
+                "source_endpoint_identity": endpoint,
+            },
         },
     )
-    assert await runtime_signal_source(AsyncMock()) is None
+    pool = AsyncMock()
+    pool.fetchval.return_value = True
+
+    assert await runtime_signal_source(pool) is None
+    pool.fetchval.assert_not_awaited()

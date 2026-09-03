@@ -39,6 +39,17 @@ def _evaluation(**kwargs: object) -> SimpleNamespace:
     )
 
 
+def _mock_identity_producers(
+    monkeypatch: pytest.MonkeyPatch,
+    *producers: str,
+) -> None:
+    monkeypatch.setattr(
+        stale_contacts,
+        "_active_identity_producers",
+        AsyncMock(return_value=set(producers)),
+    )
+
+
 def test_interaction_sync_attestation_requires_exact_endpoint() -> None:
     assert (
         stale_contacts.interaction_sync_attestation(
@@ -91,6 +102,7 @@ async def test_exact_corroborated_endpoint_is_forwarded_to_shared_helper(
         }
     )
     upsert = AsyncMock(return_value=_evaluation())
+    _mock_identity_producers(monkeypatch, "connector:gmail")
     monkeypatch.setattr(stale_contacts, "resolve_contacts_by_channel_bulk", resolver)
     monkeypatch.setattr(stale_contacts, "upsert_expected_signal", upsert)
 
@@ -139,6 +151,7 @@ async def test_healthy_sibling_cannot_replace_attested_endpoint(
 ) -> None:
     """Relationship passes the observed endpoint, never a provider aggregate."""
     entity_id = uuid4()
+    _mock_identity_producers(monkeypatch, producer)
     pool = AsyncMock()
     pool.fetch.return_value = [
         _fact(
@@ -189,6 +202,7 @@ async def test_tied_latest_endpoints_fail_closed_independent_of_row_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entity_id = uuid4()
+    _mock_identity_producers(monkeypatch, "connector:gmail")
     rows = [
         _fact(_connector_attestation(endpoint="gmail:a@example.com")),
         _fact(_connector_attestation(endpoint="gmail:b@example.com")),
@@ -227,11 +241,93 @@ async def test_mixed_owner_and_connector_authority_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entity_id = uuid4()
+    _mock_identity_producers(monkeypatch, "connector:gmail")
     pool = AsyncMock()
     pool.fetch.return_value = [
         _fact(stale_contacts.owner_attestation(principal="owner")),
         _fact(_connector_attestation()),
     ]
+    monkeypatch.setattr(
+        stale_contacts,
+        "resolve_contacts_by_channel_bulk",
+        AsyncMock(
+            return_value={
+                ("email", "friend@example.com"): ResolvedContact(
+                    contact_id=None,
+                    name="Friend",
+                    roles=[],
+                    entity_id=entity_id,
+                )
+            }
+        ),
+    )
+    upsert = AsyncMock(return_value=_evaluation(state=ExpectedSignalState.UNMEASURABLE))
+    monkeypatch.setattr(stale_contacts, "upsert_expected_signal", upsert)
+
+    await stale_contacts.evaluate_stale_contact_signal(
+        pool,
+        contact_id=uuid4(),
+        entity_id=entity_id,
+        expected_cadence=timedelta(days=14),
+        last_observed_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+
+    assert upsert.await_args.kwargs["producer"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "other_producer",
+    ["connector:telegram_user_client", "connector:whatsapp_user_client"],
+)
+async def test_latest_gmail_cannot_hide_other_active_mapped_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    other_producer: str,
+) -> None:
+    entity_id = uuid4()
+    pool = AsyncMock()
+    pool.fetch.return_value = [_fact(_connector_attestation())]
+    _mock_identity_producers(monkeypatch, "connector:gmail", other_producer)
+    monkeypatch.setattr(
+        stale_contacts,
+        "resolve_contacts_by_channel_bulk",
+        AsyncMock(
+            return_value={
+                ("email", "friend@example.com"): ResolvedContact(
+                    contact_id=None,
+                    name="Friend",
+                    roles=[],
+                    entity_id=entity_id,
+                )
+            }
+        ),
+    )
+    upsert = AsyncMock(return_value=_evaluation(state=ExpectedSignalState.UNMEASURABLE))
+    monkeypatch.setattr(stale_contacts, "upsert_expected_signal", upsert)
+
+    signal = await stale_contacts.evaluate_stale_contact_signal(
+        pool,
+        contact_id=uuid4(),
+        entity_id=entity_id,
+        expected_cadence=timedelta(days=14),
+        last_observed_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+
+    assert signal.is_overdue is False
+    assert upsert.await_args.kwargs["producer"] == "unknown"
+    assert upsert.await_args.kwargs["producer_endpoint_identity"] is None
+
+
+async def test_unreadable_complete_identity_inventory_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entity_id = uuid4()
+    pool = AsyncMock()
+    pool.fetch.return_value = [_fact(_connector_attestation())]
+    monkeypatch.setattr(
+        stale_contacts,
+        "_active_identity_producers",
+        AsyncMock(return_value=None),
+    )
     monkeypatch.setattr(
         stale_contacts,
         "resolve_contacts_by_channel_bulk",
@@ -316,6 +412,7 @@ async def test_server_attested_owner_observation_is_measurable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pool = AsyncMock()
+    _mock_identity_producers(monkeypatch)
     pool.fetch.return_value = [_fact(stale_contacts.owner_attestation(principal="owner"))]
     upsert = AsyncMock(return_value=_evaluation())
     monkeypatch.setattr(stale_contacts, "upsert_expected_signal", upsert)

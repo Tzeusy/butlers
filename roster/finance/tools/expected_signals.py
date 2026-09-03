@@ -87,12 +87,10 @@ async def runtime_signal_source(pool: Any) -> FinanceSignalSource | None:
         request_context = {}
     endpoint = request_context.get("source_endpoint_identity")
     channel = request_context.get("source_channel")
-    if (
-        channel in {"email", "gmail"}
-        and isinstance(endpoint, str)
-        and endpoint.strip().startswith("gmail:")
-    ):
-        return FinanceSignalSource("connector:gmail", endpoint.strip())
+    if channel in {"email", "gmail"}:
+        if isinstance(endpoint, str) and endpoint.strip().startswith("gmail:"):
+            return FinanceSignalSource("connector:gmail", endpoint.strip())
+        return None
 
     entity_id = context.get("source_entity_id")
     if not isinstance(entity_id, str) or not entity_id.strip():

@@ -78,6 +78,14 @@ async def test_dead_attested_endpoint_is_unmeasurable_with_healthy_sibling(
                 valid_at timestamptz NOT NULL,
                 metadata jsonb NOT NULL
             );
+            CREATE SCHEMA relationship;
+            CREATE TABLE relationship.entity_facts (
+                subject uuid NOT NULL,
+                predicate text NOT NULL,
+                object text NOT NULL,
+                object_kind text NOT NULL,
+                validity text NOT NULL
+            );
             CREATE TABLE public._relationship_test_liveness (
                 connector_type text NOT NULL,
                 endpoint_identity text NOT NULL,
@@ -109,6 +117,18 @@ async def test_dead_attested_endpoint_is_unmeasurable_with_healthy_sibling(
                     "writer": "interaction_sync",
                 }
             },
+        )
+        identity_predicate = "has-email" if source_channel == "email" else "has-handle"
+        identity_value = (
+            f"telegram:{source_identity}"
+            if source_channel == "telegram_user_client"
+            else source_identity
+        )
+        await pool.execute(
+            "INSERT INTO relationship.entity_facts VALUES ($1, $2, $3, 'literal', 'active')",
+            entity_id,
+            identity_predicate,
+            identity_value,
         )
         connector_type = producer.removeprefix("connector:")
         rows = [
@@ -159,3 +179,125 @@ async def test_dead_attested_endpoint_is_unmeasurable_with_healthy_sibling(
         )
         assert persisted["measurability"] == "unmeasurable"
         assert persisted["producer_endpoint_identity"] == endpoint
+
+
+@pytest.mark.parametrize("latest_source", ["gmail", "telegram", "whatsapp"])
+@pytest.mark.parametrize("reverse_identities", [False, True])
+async def test_all_active_mapped_identities_make_mixed_contact_unmeasurable(
+    provisioned_postgres_pool,
+    monkeypatch: pytest.MonkeyPatch,
+    latest_source: str,
+    reverse_identities: bool,
+) -> None:
+    sources = {
+        "gmail": (
+            "email",
+            "connector:gmail",
+            "gmail:user:owner",
+            "friend@example.invalid",
+        ),
+        "telegram": (
+            "telegram_user_client",
+            "connector:telegram_user_client",
+            "telegram:user:owner",
+            "12345",
+        ),
+        "whatsapp": (
+            "whatsapp_user_client",
+            "connector:whatsapp_user_client",
+            "whatsapp:user:owner",
+            "6591234567@s.whatsapp.net",
+        ),
+    }
+    async with provisioned_postgres_pool() as pool:
+        await _apply_migrations(pool)
+        await pool.execute(
+            """
+            CREATE TABLE public.facts (
+                id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                entity_id uuid NOT NULL,
+                predicate text NOT NULL,
+                scope text NOT NULL,
+                validity text NOT NULL,
+                valid_at timestamptz NOT NULL,
+                metadata jsonb NOT NULL
+            );
+            CREATE SCHEMA relationship;
+            CREATE TABLE relationship.entity_facts (
+                subject uuid NOT NULL,
+                predicate text NOT NULL,
+                object text NOT NULL,
+                object_kind text NOT NULL,
+                validity text NOT NULL
+            );
+            CREATE TABLE public._relationship_test_liveness (
+                connector_type text NOT NULL,
+                endpoint_identity text NOT NULL,
+                state text NOT NULL,
+                last_heartbeat_at timestamptz
+            );
+            CREATE VIEW public.v_qa_connector_state AS
+            SELECT connector_type, endpoint_identity, state, last_heartbeat_at
+            FROM public._relationship_test_liveness
+            """
+        )
+        entity_id = uuid4()
+        contact_id = uuid4()
+        observed_at = datetime.now(UTC) - timedelta(days=30)
+        channel, producer, endpoint, source_identity = sources[latest_source]
+        await pool.execute(
+            """
+            INSERT INTO public.facts (
+                entity_id, predicate, scope, validity, valid_at, metadata
+            ) VALUES ($1, 'interaction_message', 'relationship', 'active', $2, $3)
+            """,
+            entity_id,
+            observed_at,
+            {
+                "expected_signal_source": {
+                    "producer": producer,
+                    "source_channel": channel,
+                    "source_endpoint_identity": endpoint,
+                    "source_identity": source_identity,
+                    "writer": "interaction_sync",
+                }
+            },
+        )
+        identities = [
+            ("has-email", "friend@example.invalid"),
+            ("has-handle", "telegram:12345"),
+            ("has-handle", "6591234567@s.whatsapp.net"),
+        ]
+        if reverse_identities:
+            identities.reverse()
+        await pool.executemany(
+            "INSERT INTO relationship.entity_facts VALUES ($1, $2, $3, 'literal', 'active')",
+            [(entity_id, predicate, value) for predicate, value in identities],
+        )
+        monkeypatch.setattr(
+            stale_contacts,
+            "resolve_contacts_by_channel_bulk",
+            AsyncMock(
+                return_value={
+                    (channel, source_identity): ResolvedContact(
+                        contact_id=None,
+                        name="Friend",
+                        roles=[],
+                        entity_id=entity_id,
+                    )
+                }
+            ),
+        )
+
+        signal = await stale_contacts.evaluate_stale_contact_signal(
+            pool,
+            contact_id=contact_id,
+            entity_id=entity_id,
+            expected_cadence=timedelta(days=14),
+            last_observed_at=observed_at,
+        )
+
+        assert signal.evaluation.state is ExpectedSignalState.UNMEASURABLE
+        assert signal.evaluation.unmeasurable_reason == "producer_unknown"
+        assert signal.evaluation.producer_endpoint_identity is None
+        assert signal.is_overdue is False
