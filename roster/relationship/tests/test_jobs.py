@@ -593,9 +593,12 @@ async def test_insight_scan_birthday_message_includes_contact_name(provisioned_p
 @pytest.mark.pg_clock
 async def test_insight_scan_contact_candidates_include_entity_and_event_metadata(
     provisioned_postgres_pool,
+    monkeypatch,
 ):
     """Relationship candidates preserve the contact entity and real occasion date."""
     from butlers.jobs._roster.relationship_jobs import run_insight_scan
+
+    _mock_stale_contact_gate(monkeypatch, is_overdue=True)
 
     async with provisioned_postgres_pool() as pool:
         await _setup_relationship_schema(pool)

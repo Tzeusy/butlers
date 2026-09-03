@@ -30,7 +30,7 @@
 
 ## 4. Verification and rollout
 
-- [ ] 4.1 Convert the planning matrix contract into migrated-PostgreSQL tests that kill Gmail,
+- [x] 4.1 Convert the planning matrix contract into migrated-PostgreSQL tests that kill Gmail,
   Telegram user-client, and WhatsApp user-client liveness after cadence elapsed and prove
   unmeasurable with no candidate, overdue result, or nudge. For every connector type, include two
   endpoints and prove a healthy sibling cannot substitute for the dead attested endpoint.

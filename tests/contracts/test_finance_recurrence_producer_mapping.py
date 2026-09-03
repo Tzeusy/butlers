@@ -26,7 +26,8 @@ from butlers.core.liveness import is_liveness_stale
 pytestmark = pytest.mark.contract
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DESIGN = _REPO_ROOT / "openspec/changes/finance-recurrence-producer-mapping/design.md"
+_CHANGE = "openspec/changes/archive/2026-09-03-finance-recurrence-producer-mapping"
+_DESIGN = _REPO_ROOT / _CHANGE / "design.md"
 _START = "<!-- finance-recurrence-producer-map:start -->"
 _END = "<!-- finance-recurrence-producer-map:end -->"
 _NOW = datetime(2026, 9, 3, 12, tzinfo=UTC)
@@ -423,8 +424,8 @@ def test_endpoint_contract_names_implemented_runtime_owner() -> None:
         "about/legends-and-lore/rfcs/0029-expected-signals-and-honest-absence.md",
         "docs/concepts/expected-signals.md",
         "docs/butlers/finance.md",
-        "openspec/changes/finance-recurrence-producer-mapping/design.md",
-        "openspec/changes/finance-recurrence-producer-mapping/tasks.md",
+        f"{_CHANGE}/design.md",
+        f"{_CHANGE}/tasks.md",
     ]
     normalized = {
         path: " ".join((_REPO_ROOT / path).read_text(encoding="utf-8").split()) for path in paths
