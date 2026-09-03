@@ -1148,7 +1148,7 @@ async def run_interaction_sync(db_pool: asyncpg.Pool) -> dict[str, Any]:
     # -----------------------------------------------------------------------
     for row in rows:
         source_channel = row["source_channel"]
-        source_endpoint_identity = row["source_endpoint_identity"]
+        source_endpoint_identity = row.get("source_endpoint_identity")
         thread_identity = row["thread_identity"]
         interaction_date = row["interaction_date"]
         sender_identities: list[str] = [s for s in (row["sender_identities"] or []) if s]
