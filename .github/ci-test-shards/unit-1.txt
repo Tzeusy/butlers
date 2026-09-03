@@ -12,6 +12,7 @@ roster/relationship/tests/test_plex_halo.py
 roster/switchboard/tests/test_contract_models.py
 roster/switchboard/tests/test_deliver_unit.py
 roster/switchboard/tests/test_rule_demotion.py
+roster/switchboard/tests/test_runtime_attention_worker_cycle.py
 roster/switchboard/tests/test_spotify_spoken_policy_bypass.py
 tests/adapters/test_codex_refresh_lock.py
 tests/adapters/test_opencode_adapter.py
