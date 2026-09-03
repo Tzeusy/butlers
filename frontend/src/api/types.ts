@@ -5384,12 +5384,16 @@ export interface DunbarEntry {
   avatar_url?: string | null;
   aliases?: string[];
   last_interaction_at?: string | null;
+  effective_cadence_days?: number | null;
+  stale_contact_state?: "present" | "absent" | "unmeasurable";
 }
 
 /** Response from GET /api/relationship/dunbar/ranking */
 export interface DunbarRankingResponse {
   entries: DunbarEntry[];
   owner_entity_id: string | null;
+  cadence_available?: boolean;
+  unmeasurable_count?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -5426,6 +5430,8 @@ export interface OverdueContact {
 /** Response from GET /api/relationship/contacts/overdue?days=N */
 export interface OverdueContactsResponse {
   contacts: OverdueContact[];
+  cadence_available: boolean;
+  unmeasurable_count: number;
 }
 
 // ---------------------------------------------------------------------------
