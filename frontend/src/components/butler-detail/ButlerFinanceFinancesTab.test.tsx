@@ -568,6 +568,29 @@ describe("ButlerFinanceFinancesTab — KPI strip", () => {
     expect(screen.queryByText("$180.00")).toBeNull();
   });
 
+  it("does not invent USD for an empty spending result", () => {
+    const empty = {
+      start_date: "2026-05-01",
+      end_date: "2026-05-10",
+      currency: null,
+      total_spend: "0",
+      groups: [],
+      by_currency: [],
+      legacy_aggregate_degraded: false,
+      degraded_reason: null,
+    };
+    vi.mocked(useFinanceSpendingSummary).mockReturnValue({
+      data: empty,
+      isLoading: false,
+    } as ReturnType<typeof useFinanceSpendingSummary>);
+
+    renderTab();
+
+    expect(screen.queryByText("$0.00")).toBeNull();
+    const kpiStrip = screen.getByTestId("finance-kpi-strip");
+    expect(kpiStrip.textContent).toContain("No spending data");
+  });
+
   it("renders 'Active subscriptions' label", () => {
     renderTab();
     expect(screen.getByText("Active subscriptions")).toBeDefined();
@@ -900,6 +923,33 @@ describe("ButlerFinanceFinancesTab — accounts panel", () => {
     const states = screen.getAllByTestId("account-feed-freshness");
     expect(states[0].textContent).toContain("Feed never synced");
     expect(states[1].textContent).toContain("Feed synced");
+  });
+
+  it("shows the relative sync timestamp for a stale account", () => {
+    vi.resetAllMocks();
+    setupWithData();
+    const staleSyncedAt = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    vi.mocked(useFinanceAccounts).mockReturnValue({
+      data: {
+        data: [
+          {
+            ...ACCOUNTS[1],
+            id: "acct-stale",
+            last_synced_at: staleSyncedAt,
+            feed_degraded: true,
+            feed_degraded_reason: "stale",
+          },
+        ],
+        meta: { total: 1, offset: 0, limit: 50 },
+      },
+      isLoading: false,
+    } as ReturnType<typeof useFinanceAccounts>);
+    renderTab();
+
+    const state = screen.getByTestId("account-feed-freshness");
+    expect(state.textContent).toContain("Feed stale");
+    // Stale is still evidence-bearing: the relative timestamp must render, not be hidden.
+    expect(state.textContent).not.toBe("Feed stale");
   });
 
   it("shows an honest empty state when no accounts exist", () => {

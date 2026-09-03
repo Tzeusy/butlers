@@ -419,12 +419,6 @@ async def upcoming_bills(
             suppressed_placeholders += 1
             continue
 
-        currency = str(row["currency"])
-        currency_totals = totals_by_currency.setdefault(
-            currency,
-            {"needs_action_amount": Decimal("0"), "autopay_amount": Decimal("0")},
-        )
-
         is_overdue = bill_status == "overdue" or (due < today and bill_status == "pending")
         item = {
             "bill": bill,
@@ -433,12 +427,22 @@ async def upcoming_bills(
         }
 
         if row["autopay"]:
+            currency = str(row["currency"])
+            currency_totals = totals_by_currency.setdefault(
+                currency,
+                {"needs_action_amount": Decimal("0"), "autopay_amount": Decimal("0")},
+            )
             autopay_items.append(item)
             autopay_amount += amount
             currency_totals["autopay_amount"] += amount
         elif row["predicted"]:
             predicted_items.append(item)
         else:
+            currency = str(row["currency"])
+            currency_totals = totals_by_currency.setdefault(
+                currency,
+                {"needs_action_amount": Decimal("0"), "autopay_amount": Decimal("0")},
+            )
             needs_action.append(item)
             needs_action_amount += amount
             currency_totals["needs_action_amount"] += amount
@@ -537,7 +541,17 @@ def compose_upcoming_bills_digest(
             )
 
     if needs_action:
-        needs_action_amount = totals.get("needs_action_amount", "0.00")
+        if totals.get("legacy_aggregate_degraded"):
+            needs_action_amount = " · ".join(
+                f"{item['currency']} {item['needs_action_amount']}"
+                for item in totals.get("by_currency", [])
+                if Decimal(str(item.get("needs_action_amount", "0"))) != 0
+            )
+        else:
+            needs_action_amount = str(totals.get("needs_action_amount", "0.00"))
+            currency = totals.get("currency")
+            if currency:
+                needs_action_amount = f"{currency} {needs_action_amount}"
         sections.append(f"\n⚠️ Needs action ({len(needs_action)}) — {needs_action_amount}")
         sorted_items = sorted(
             needs_action,

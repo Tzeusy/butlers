@@ -262,6 +262,10 @@ async def spending_summary(
         {"key": item["key"], "amount": str(item["amount"]), "count": item["count"]}
         for item in legacy_groups.values()
     ]
+    if group_by in {"week", "month"}:
+        groups.sort(key=lambda item: item["key"])
+    else:
+        groups.sort(key=lambda item: Decimal(item["amount"]), reverse=True)
 
     return {
         "start_date": _iso(start_date),

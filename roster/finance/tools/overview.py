@@ -560,7 +560,8 @@ async def cash_flow(
         FROM transactions
         WHERE posted_at::date >= $1
           AND posted_at::date <= $2
-          AND category <> 'transfer'
+          AND COALESCE(metadata->>'inferred_category', category)
+              NOT IN ('transfer', 'uncategorized')
           {deleted_filter}
         GROUP BY period_key, currency
         ORDER BY period_key ASC, currency ASC
@@ -627,7 +628,8 @@ async def cash_flow(
             FROM transactions
             WHERE posted_at::date >= $1
               AND posted_at::date <= $2
-              AND category <> 'transfer'
+              AND COALESCE(metadata->>'inferred_category', category)
+                  NOT IN ('transfer', 'uncategorized')
               {deleted_filter}
             GROUP BY period_key, currency, category
             ORDER BY period_key ASC, currency ASC, expenses DESC

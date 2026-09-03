@@ -634,7 +634,7 @@ function AccountsPanel({
                         : acct.last_synced_at
                           ? "Feed synced "
                           : "Feed status unavailable"}
-                    {!acct.feed_degraded && acct.last_synced_at ? (
+                    {acct.last_synced_at ? (
                       <Time value={acct.last_synced_at} mode="relative-compact" />
                     ) : null}
                   </p>
@@ -865,7 +865,7 @@ export default function ButlerFinanceFinancesTab() {
       return parseFloat(item.bill.amount) > 0;
     }) ?? null;
   const totalSpend = monthlySummary?.total_spend ?? "0";
-  const currency = monthlySummary?.currency ?? "USD";
+  const currency = monthlySummary?.currency ?? null;
   const monthlyCurrencyTotals = monthlySummary?.by_currency ?? [];
   const monthlyCurrencyDegraded = monthlySummary?.legacy_aggregate_degraded ?? false;
   // Sort once at the parent so children receive a stable, ordered reference.
@@ -887,12 +887,16 @@ export default function ButlerFinanceFinancesTab() {
     ? "..."
     : monthlyCurrencyDegraded
       ? "By currency"
-      : formatCurrency(totalSpend, currency);
+      : currency
+        ? formatCurrency(totalSpend, currency)
+        : "—";
   const monthlySpendSub = monthlyCurrencyDegraded
     ? monthlyCurrencyTotals
         .map((item) => formatCurrency(item.total_spend, item.currency))
         .join(" · ")
-    : undefined;
+    : monthlySummary && currency === null
+      ? "No spending data"
+      : undefined;
 
   const nextBillValue = kpiLoading
     ? "..."

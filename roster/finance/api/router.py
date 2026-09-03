@@ -647,6 +647,10 @@ async def get_spending_summary(
         SpendingGroupModel(key=key, amount=str(value["amount"]), count=int(value["count"]))
         for key, value in legacy_groups.items()
     ]
+    if group_by in {"week", "month"}:
+        groups.sort(key=lambda group: group.key)
+    else:
+        groups.sort(key=lambda group: Decimal(group.amount), reverse=True)
     by_currency = [
         {
             "currency": code,
