@@ -252,7 +252,8 @@ async def test_catalog_create_writes_audit_on_success(app, audit_append_spy, mon
         if len(call.args) >= 3 and call.args[2] == "model.create"
     ]
     assert len(route_calls) == 1
-    assert route_calls[0].args[:2] == (mock_pool, "server-owner")
+    acquired_connection = mock_pool.acquire.return_value.__aenter__.return_value
+    assert route_calls[0].args[:2] == (acquired_connection, "server-owner")
     assert route_calls[0].kwargs == {
         "target": str(entry_id),
         "note": "new-model",
@@ -317,7 +318,8 @@ async def test_catalog_delete_writes_audit_after_cascade_delete(app, audit_appen
         if len(call.args) >= 3 and call.args[2] == "model.delete"
     ]
     assert len(route_calls) == 1
-    assert route_calls[0].args[:2] == (mock_pool, "server-owner")
+    acquired_connection = mock_pool.acquire.return_value.__aenter__.return_value
+    assert route_calls[0].args[:2] == (acquired_connection, "server-owner")
     assert route_calls[0].kwargs == {
         "target": str(entry_id),
         "metadata": {"cascade_deleted_overrides": 2},

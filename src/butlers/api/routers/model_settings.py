@@ -679,47 +679,48 @@ async def create_catalog_entry(
     _validate_complexity_tier(body.complexity_tier)
     pool = _shared_pool(db)
 
-    try:
-        row = await pool.fetchrow(
-            """
-            INSERT INTO public.model_catalog
-                (
-                    alias, runtime_type, model_id, extra_args, complexity_tier,
-                    enabled, priority, session_timeout_s
-                )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING id, alias, runtime_type, model_id, extra_args,
-                      complexity_tier, enabled, priority, session_timeout_s
-            """,
-            body.alias,
-            body.runtime_type,
-            body.model_id,
-            body.extra_args,
-            body.complexity_tier,
-            body.enabled,
-            body.priority,
-            body.session_timeout_s,
-        )
-    except asyncpg.UniqueViolationError:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Catalog entry with alias '{body.alias}' already exists",
-        )
-    except Exception as exc:
-        logger.error("Failed to create catalog entry: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to create catalog entry")
+    async with pool.acquire() as connection, connection.transaction():
+        try:
+            row = await connection.fetchrow(
+                """
+                INSERT INTO public.model_catalog
+                    (
+                        alias, runtime_type, model_id, extra_args, complexity_tier,
+                        enabled, priority, session_timeout_s
+                    )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                RETURNING id, alias, runtime_type, model_id, extra_args,
+                          complexity_tier, enabled, priority, session_timeout_s
+                """,
+                body.alias,
+                body.runtime_type,
+                body.model_id,
+                body.extra_args,
+                body.complexity_tier,
+                body.enabled,
+                body.priority,
+                body.session_timeout_s,
+            )
+        except asyncpg.UniqueViolationError:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Catalog entry with alias '{body.alias}' already exists",
+            )
+        except Exception as exc:
+            logger.error("Failed to create catalog entry: %s", exc)
+            raise HTTPException(status_code=500, detail="Failed to create catalog entry")
 
-    if row is None:
-        raise HTTPException(status_code=500, detail="Insert returned no row")
+        if row is None:
+            raise HTTPException(status_code=500, detail="Insert returned no row")
 
-    await audit.append(
-        pool,
-        authenticated_principal(),
-        "model.create",
-        target=str(row["id"]),
-        note=body.alias,
-        result="success",
-    )
+        await audit.append(
+            connection,
+            authenticated_principal(),
+            "model.create",
+            target=str(row["id"]),
+            note=body.alias,
+            result="success",
+        )
 
     return ApiResponse[ModelCatalogEntry](data=_row_to_catalog_entry(row))
 
@@ -809,37 +810,38 @@ async def delete_catalog_entry(
 ) -> ApiResponse[dict]:
     """Delete a catalog entry by ID. Cascades to butler_model_overrides."""
     pool = _shared_pool(db)
-    deleted = await pool.fetchrow(
-        """
-        WITH target AS (
-            SELECT id, (
-                SELECT count(*)::integer
-                FROM public.butler_model_overrides
-                WHERE catalog_entry_id = $1
-            ) AS cascade_deleted_overrides
-            FROM public.model_catalog
-            WHERE id = $1
-        ), deleted AS (
-            DELETE FROM public.model_catalog AS catalog
-            USING target
-            WHERE catalog.id = target.id
-            RETURNING target.cascade_deleted_overrides
+    async with pool.acquire() as connection, connection.transaction():
+        deleted = await connection.fetchrow(
+            """
+            WITH target AS (
+                SELECT id, (
+                    SELECT count(*)::integer
+                    FROM public.butler_model_overrides
+                    WHERE catalog_entry_id = $1
+                ) AS cascade_deleted_overrides
+                FROM public.model_catalog
+                WHERE id = $1
+            ), deleted AS (
+                DELETE FROM public.model_catalog AS catalog
+                USING target
+                WHERE catalog.id = target.id
+                RETURNING target.cascade_deleted_overrides
+            )
+            SELECT cascade_deleted_overrides FROM deleted
+            """,
+            entry_id,
         )
-        SELECT cascade_deleted_overrides FROM deleted
-        """,
-        entry_id,
-    )
-    if deleted is None:
-        raise HTTPException(status_code=404, detail=f"Catalog entry not found: {entry_id}")
+        if deleted is None:
+            raise HTTPException(status_code=404, detail=f"Catalog entry not found: {entry_id}")
 
-    await audit.append(
-        pool,
-        authenticated_principal(),
-        "model.delete",
-        target=str(entry_id),
-        metadata={"cascade_deleted_overrides": deleted["cascade_deleted_overrides"]},
-        result="success",
-    )
+        await audit.append(
+            connection,
+            authenticated_principal(),
+            "model.delete",
+            target=str(entry_id),
+            metadata={"cascade_deleted_overrides": deleted["cascade_deleted_overrides"]},
+            result="success",
+        )
 
     return ApiResponse[dict](data={"deleted": True, "id": str(entry_id)})
 

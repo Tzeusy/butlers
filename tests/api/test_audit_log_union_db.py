@@ -35,7 +35,7 @@ from __future__ import annotations
 import shutil
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import asyncpg
@@ -47,7 +47,7 @@ from butlers.api.app import create_app
 from butlers.api.db import DatabaseManager
 from butlers.api.routers import audit as audit_module
 from butlers.api.routers import model_settings as model_settings_module
-from butlers.api.routers.audit import log_audit_entry
+from butlers.api.routers.audit import AuditTableNotAvailableError, log_audit_entry
 from butlers.core.state import state_set
 from butlers.db import register_jsonb_codec
 from butlers.testing.migration import create_migrated_test_db, migration_db_name
@@ -395,6 +395,89 @@ async def test_model_delete_audits_and_cascade_deletes_overrides(
     assert audit_row["metadata"] == {"cascade_deleted_overrides": 1}
     assert f"audit-delete-{entry_id}" not in str(audit_row)
     assert "gpt-5" not in str(audit_row)
+
+
+async def test_model_create_rolls_back_when_audit_is_unavailable(
+    pool: asyncpg.Pool, audit_app: FastAPI
+) -> None:
+    """A 503 audit failure cannot leave an unaudited catalog row committed."""
+    alias = f"audit-create-rollback-{uuid.uuid4()}"
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.credential_shared_pool.return_value = pool
+    audit_app.dependency_overrides[model_settings_module._get_db_manager] = lambda: mock_db
+
+    with patch.object(
+        model_settings_module.audit,
+        "append",
+        new=AsyncMock(side_effect=AuditTableNotAvailableError("public.audit_log is not available")),
+    ):
+        transport = httpx.ASGITransport(app=audit_app)
+        async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+            resp = await client.post(
+                "/api/settings/models",
+                json={
+                    "alias": alias,
+                    "runtime_type": "codex",
+                    "model_id": "gpt-5",
+                    "complexity_tier": "workhorse",
+                },
+            )
+
+    assert resp.status_code == 503
+    assert (
+        await pool.fetchval("SELECT count(*) FROM public.model_catalog WHERE alias = $1", alias)
+        == 0
+    )
+
+
+async def test_model_delete_rolls_back_catalog_and_cascade_when_audit_is_unavailable(
+    pool: asyncpg.Pool, audit_app: FastAPI
+) -> None:
+    """A 503 audit failure restores both the catalog row and its override."""
+    entry_id = uuid.uuid4()
+    alias = f"audit-delete-rollback-{entry_id}"
+    await pool.execute(
+        """
+        INSERT INTO public.model_catalog
+            (id, alias, runtime_type, model_id, complexity_tier)
+        VALUES ($1, $2, 'codex', 'gpt-5', 'workhorse')
+        """,
+        entry_id,
+        alias,
+    )
+    await pool.execute(
+        """
+        INSERT INTO public.butler_model_overrides
+            (butler_name, catalog_entry_id, enabled, priority, complexity_tier)
+        VALUES ('general', $1, true, 7, 'workhorse')
+        """,
+        entry_id,
+    )
+    mock_db = MagicMock(spec=DatabaseManager)
+    mock_db.credential_shared_pool.return_value = pool
+    audit_app.dependency_overrides[model_settings_module._get_db_manager] = lambda: mock_db
+
+    with patch.object(
+        model_settings_module.audit,
+        "append",
+        new=AsyncMock(side_effect=AuditTableNotAvailableError("public.audit_log is not available")),
+    ):
+        transport = httpx.ASGITransport(app=audit_app)
+        async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+            resp = await client.delete(f"/api/settings/models/{entry_id}")
+
+    assert resp.status_code == 503
+    assert (
+        await pool.fetchval("SELECT count(*) FROM public.model_catalog WHERE id = $1", entry_id)
+        == 1
+    )
+    assert (
+        await pool.fetchval(
+            "SELECT count(*) FROM public.butler_model_overrides WHERE catalog_entry_id = $1",
+            entry_id,
+        )
+        == 1
+    )
 
 
 async def test_audit_owner_timezone_day_bounds_include_the_entire_owner_day(
