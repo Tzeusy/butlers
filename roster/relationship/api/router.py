@@ -6537,15 +6537,19 @@ async def _fetch_chronicler_activity(
 
     episodes: list[Any] = episodes_raw
     entries: list[ActivityEntry] = []
+    malformed_count = 0
     for ep in episodes:
         if not isinstance(ep, dict):
+            malformed_count += 1
             continue
         episode_id_raw = ep.get("id")
         if not episode_id_raw:
+            malformed_count += 1
             continue
         try:
             episode_uuid = UUID(str(episode_id_raw))
         except (ValueError, AttributeError):
+            malformed_count += 1
             continue
 
         # Use canonical_start_at as the primary timestamp; fall back to start_at.
@@ -6569,6 +6573,13 @@ async def _fetch_chronicler_activity(
                 summary=str(summary) if summary is not None else None,
             )
         )
+    if malformed_count > 0 and len(entries) == 0:
+        logger.info(
+            "Chronicler activity: all %d episode rows were malformed for entity %s; degrading",
+            malformed_count,
+            entity_id,
+        )
+        return [], _CHRONICLER_ACTIVITY_UNAVAILABLE
     return entries, None
 
 

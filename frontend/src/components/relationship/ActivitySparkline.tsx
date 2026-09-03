@@ -22,7 +22,7 @@ const STICK_MAX_HEIGHT = 28;
 const QUIET_OPACITY = 0.04;
 
 export function ActivitySparkline({ entityId }: { entityId: string }) {
-  const { data, isLoading, isError } = useEntityActivityBins(entityId, {
+  const { data, isLoading, isError, refetch } = useEntityActivityBins(entityId, {
     window: "90d",
   });
 
@@ -45,9 +45,18 @@ export function ActivitySparkline({ entityId }: { entityId: string }) {
     );
   }
 
-  // Degrade quietly on error — the sparkline is a quick-refresh affordance, not
-  // load-bearing. Render nothing rather than an error chrome.
-  if (isError || !data) return null;
+  if (isError) {
+    return (
+      <SourceDegradedNote
+        label="Activity"
+        detail="Chronicler unavailable"
+        onRetry={() => refetch()}
+        testId="activity-sparkline-degraded"
+      />
+    );
+  }
+
+  if (!data) return null;
 
   const bins = data.bins;
   const total = bins.reduce((sum, b) => sum + b.count, 0);

@@ -135,13 +135,19 @@ describe("ActivitySparkline", () => {
     expect(container.querySelector('[data-testid="sparkline-loading"]')).not.toBeNull();
   });
 
-  it("renders nothing on error", () => {
+  it("renders a degraded note with retry on query error", () => {
+    const refetch = vi.fn();
     vi.mocked(useEntityActivityBins).mockReturnValue({
       data: undefined,
       isLoading: false,
       isError: true,
+      refetch,
     } as unknown as ReturnType<typeof useEntityActivityBins>);
     render();
-    expect(container.innerHTML).toBe("");
+    expect(container.querySelector('[data-testid="activity-sparkline-degraded"]')).not.toBeNull();
+    expect(container.textContent).toContain("Activity: Chronicler unavailable");
+    const retryButton = container.querySelector("button");
+    expect(retryButton).not.toBeNull();
+    expect(retryButton?.textContent).toContain("Retry");
   });
 });
