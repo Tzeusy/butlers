@@ -582,7 +582,7 @@ describe("ButlerFinanceFinancesTab — KPI strip", () => {
     vi.mocked(useFinanceSpendingSummary).mockReturnValue({
       data: empty,
       isLoading: false,
-    } as ReturnType<typeof useFinanceSpendingSummary>);
+    } as unknown as ReturnType<typeof useFinanceSpendingSummary>);
 
     renderTab();
 
