@@ -967,3 +967,66 @@ describe("ButlerHomeDevicesTab — KPI strip error states", () => {
     expect(kpiStrip!.textContent).not.toContain("42");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: ha_source_available degraded-source note (bu-8t4sc)
+// ---------------------------------------------------------------------------
+
+describe("ButlerHomeDevicesTab — HA source degraded note", () => {
+  afterEach(() => cleanup());
+
+  it("shows a degraded-source note when snapshot-status reports HA unavailable", () => {
+    vi.resetAllMocks();
+    setupWithData();
+    vi.mocked(useHomeSnapshotStatus).mockReturnValue({
+      data: { ...SNAPSHOT_STATUS, ha_source_available: false },
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useHomeSnapshotStatus>);
+
+    const { container } = renderTab();
+    expect(
+      container.querySelector('[data-testid="ha-source-degraded-note"]'),
+    ).not.toBeNull();
+  });
+
+  it("shows a degraded-source note when the device inventory reports HA unavailable", () => {
+    vi.resetAllMocks();
+    setupWithData();
+    vi.mocked(useHomeDevices).mockImplementation((params) => {
+      if (params?.health === "offline") {
+        return {
+          data: OFFLINE_DEVICES_RESP,
+          isLoading: false,
+          isError: false,
+        } as ReturnType<typeof useHomeDevices>;
+      }
+      return {
+        data: {
+          ...ALL_DEVICES_RESP,
+          meta: { ...ALL_DEVICES_RESP.meta, ha_source_available: false },
+        },
+        isLoading: false,
+        isError: false,
+      } as ReturnType<typeof useHomeDevices>;
+    });
+
+    const { container } = renderTab();
+    expect(
+      container.querySelector('[data-testid="ha-source-degraded-note"]'),
+    ).not.toBeNull();
+  });
+
+  it("does not show a degraded-source note when HA source is available", () => {
+    vi.resetAllMocks();
+    setupWithData();
+    vi.mocked(useHomeSnapshotStatus).mockReturnValue({
+      data: { ...SNAPSHOT_STATUS, ha_source_available: true },
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useHomeSnapshotStatus>);
+
+    const { container } = renderTab();
+    expect(container.querySelector('[data-testid="ha-source-degraded-note"]')).toBeNull();
+  });
+});

@@ -104,6 +104,82 @@ async def test_devices_200_and_503(app):
     assert resp_503.status_code == 503
 
 
+# ---------------------------------------------------------------------------
+# ha_source_health guard — degraded-envelope propagation (bu-8t4sc)
+# ---------------------------------------------------------------------------
+
+
+async def test_snapshot_status_reflects_ha_source_health(app):
+    """An HA outage flags ha_source_available=False instead of a truthful-looking count.
+
+    End-to-end through the real _ha_source_available() -> _require_ha_source_healthy()
+    path (not mocked away) to prove the guard is actually wired into this endpoint.
+    """
+    _app, pool = _app_with_mock_db(app, fetchval_result=0)
+    pool.fetchrow.side_effect = [
+        None,  # ha_source_health: no row ever recorded -> unmeasurable
+        {"oldest": None, "newest": None},  # freshness bounds query
+    ]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/home/snapshot-status")
+    assert resp.status_code == 200
+    assert resp.json()["ha_source_available"] is False
+
+    pool.fetchrow.side_effect = [
+        {"status": "healthy", "last_success_at": _NOW},
+        {"oldest": None, "newest": None},
+    ]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp2 = await client.get("/api/home/snapshot-status")
+    assert resp2.status_code == 200
+    assert resp2.json()["ha_source_available"] is True
+
+
+async def test_dashboard_reads_flag_ha_source_unavailable(app, monkeypatch):
+    """entities/entity-detail/areas/devices all surface the degraded-source flag.
+
+    Each response shape is different (PaginationMeta.ha_source_available,
+    a top-level field, a per-row field, DevicePaginationMeta.ha_source_available)
+    per docs/api_and_protocols/response-conventions.md's "match the flag to
+    whatever envelope the endpoint already returns" convention.
+    """
+    router_module = _home_router_module(app)
+    monkeypatch.setattr(router_module, "_ha_source_available", AsyncMock(return_value=False))
+
+    _app_with_mock_db(app, fetch_rows=[_make_entity_row("light.kitchen")], fetchval_result=1)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        entities_resp = await client.get("/api/home/entities")
+    assert entities_resp.json()["meta"]["ha_source_available"] is False
+
+    _app, pool = _app_with_mock_db(app)
+    pool.fetchrow = AsyncMock(return_value=_make_entity_row("light.kitchen"))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        entity_resp = await client.get("/api/home/entities/light.kitchen")
+    assert entity_resp.json()["ha_source_available"] is False
+
+    _app_with_mock_db(app, fetch_rows=[{"area_id": "lr", "entity_count": 2}])
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        areas_resp = await client.get("/api/home/areas")
+    assert areas_resp.json()[0]["ha_source_available"] is False
+
+    _app_with_mock_db(app, fetch_rows=[_make_entity_row("light.kitchen")], fetchval_result=1)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        devices_resp = await client.get("/api/home/devices")
+    assert devices_resp.json()["meta"]["ha_source_available"] is False
+
+
 async def test_command_log_exposes_honest_actuation_receipt_fields(app):
     attempt_id = uuid4()
     session_id = uuid4()
