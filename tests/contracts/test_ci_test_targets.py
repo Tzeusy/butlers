@@ -238,9 +238,37 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
         "github.event_name == 'merge_group' || "
         "(github.event_name == 'pull_request' && needs.changes.outputs.backend == 'true')"
     )
-    for job in [preflight, *unit_jobs, *integration_jobs]:
-        assert job["needs"] == ["changes"]
-        assert job["if"] == backend_condition
+    assert preflight["needs"] == ["changes"]
+    assert preflight["if"] == backend_condition
+
+    # The ten shards additionally depend on the affected-test planner
+    # (bu-v28ho): on a pull_request they only run when the plan did not
+    # select a scoped mode -- a scoped plan means `check-affected` is that
+    # shard's evidence instead. merge_group is unaffected: `plan` never runs
+    # there, so `needs.plan.outputs.mode` is empty and the OR's first branch
+    # (always true for merge_group) still wins.
+    shard_condition = (
+        "github.event_name == 'merge_group' || "
+        "(github.event_name == 'pull_request' && needs.changes.outputs.backend == 'true' "
+        "&& needs.plan.outputs.mode != 'scoped')"
+    )
+    for job in [*unit_jobs, *integration_jobs]:
+        assert job["needs"] == ["changes", "plan"]
+        assert job["if"] == shard_condition
+
+    plan_job = jobs["plan"]
+    assert plan_job["needs"] == ["changes"]
+    assert plan_job["if"] == (
+        "github.event_name == 'pull_request' && needs.changes.outputs.backend == 'true'"
+    )
+    assert set(plan_job["outputs"]) == {"mode", "test_paths"}
+
+    check_affected = jobs["check-affected"]
+    assert check_affected["needs"] == ["changes", "plan"]
+    assert check_affected["if"] == (
+        "github.event_name == 'pull_request' && needs.plan.outputs.mode == 'scoped'"
+    )
+
     frontend_condition = (
         "github.event_name == 'merge_group' || github.event_name == 'push' || "
         "(github.event_name == 'pull_request' && needs.changes.outputs.frontend == 'true')"
@@ -251,6 +279,7 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
 
     assert check_job["needs"] == [
         "changes",
+        "plan",
         "check-preflight",
         "check-unit-1",
         "check-unit-2",
@@ -262,6 +291,7 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
         "check-integration-3",
         "check-integration-4",
         "check-integration-5",
+        "check-affected",
     ]
     assert check_job["if"] == "${{ always() }}"
     assert "cancelled" not in check_job["if"]
@@ -377,21 +407,34 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
         "EVENT_NAME",
         "CHANGES_RESULT",
         "CHANGES_BACKEND",
+        "PLAN_MODE",
         "CHECK_PREFLIGHT_RESULT",
         *[f"CHECK_UNIT_{index}_RESULT" for index in range(1, 6)],
         *[f"CHECK_INTEGRATION_{index}_RESULT" for index in range(1, 6)],
+        "CHECK_AFFECTED_RESULT",
     ):
         assert result_name in gate["run"]
     # Fail closed: a skipped shard passes only for a docs-only PR that the
-    # `changes` job classified successfully, or on push to main (the queue
-    # already validated that tree). Anything else, and any ran/skipped mix, fails.
+    # `changes` job classified successfully, on push to main (the queue
+    # already validated that tree), or a pull_request where the affected-test
+    # planner (bu-v28ho) selected a scoped mode -- in which case
+    # `check-affected` must be the shards' evidence instead. Anything else,
+    # and any ran/skipped mix, fails.
     assert (
         '[ "$EVENT_NAME" = "pull_request" ] && [ "$CHANGES_RESULT" = "success" ] '
         '&& [ "$CHANGES_BACKEND" = "false" ]'
     ) in gate["run"]
     assert '[ "$EVENT_NAME" = "push" ]' in gate["run"]
+    assert (
+        '[ "$EVENT_NAME" = "pull_request" ] && [ "$CHANGES_BACKEND" = "true" ] '
+        '&& [ "$PLAN_MODE" = "scoped" ]'
+    ) in gate["run"]
     assert "skipped, but this event requires the shards to run" in gate["run"]
     assert "inconsistent shard state" in gate["run"]
+    assert (
+        "check-affected=success but this event/plan did not select the scoped lane" in gate["run"]
+    )
+    assert "check-affected=skipped but the plan selected a scoped mode" in gate["run"]
     assert 'echo "shards_ran=true" >> "$GITHUB_OUTPUT"' in gate["run"]
     for step in check_job["steps"][1:]:
         assert "steps.gate.outputs.shards_ran == 'true'" in step["if"]
