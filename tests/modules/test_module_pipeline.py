@@ -2409,6 +2409,16 @@ class TestExtractCannotAnswerCalls:
         assert succeeded is False
         assert dead_letter_id is None
 
+    def test_refused_cannot_answer_does_not_override_the_claimed_lane(self):
+        refused = _cannot_answer_call(status="refused", dead_letter_id=None)
+        refused["result"]["reason"] = "dashboard_lane_conflict"
+
+        attempted, succeeded, dead_letter_id = _extract_cannot_answer_calls([refused])
+
+        assert attempted is False
+        assert succeeded is False
+        assert dead_letter_id is None
+
     def test_system_scope_answer_question_fallback_is_detected(self):
         """answer_question(scope="system") is the same terminal decline as
         cannot_answer — both must be caught by this one extractor."""
@@ -2903,6 +2913,56 @@ class TestMessagePipelineProcessDashboardLanes:
         )
 
         assert result.target_butler == "finance"
+        assert result.acked_targets == ["finance"]
+        pipeline._dead_letter_dashboard_unroutable.assert_not_awaited()
+
+    @patch(
+        "butlers.tools.switchboard.routing.classify._load_available_butlers",
+        new_callable=AsyncMock,
+        return_value=_MOCK_BUTLERS,
+    )
+    async def test_refused_cannot_answer_does_not_override_accepted_route(self, mock_load):
+        async def mock_dispatch(**kwargs):
+            return FakeSpawnerResult(
+                output="Routed to finance; later decline call was refused.",
+                tool_calls=[
+                    {
+                        "name": "route_to_butler",
+                        "args": {"butler": "finance", "prompt": "Log $50 expense"},
+                        "result": {"status": "ok", "butler": "finance"},
+                    },
+                    {
+                        "name": "cannot_answer",
+                        "args": {
+                            "question_summary": "Log $50 expense",
+                            "scope_checked": ["finance"],
+                            "reason": "Conflicting second decision.",
+                        },
+                        "result": {
+                            "status": "refused",
+                            "reason": "dashboard_lane_conflict",
+                            "dead_letter_id": None,
+                        },
+                    },
+                ],
+            )
+
+        pipeline = MessagePipeline(
+            switchboard_pool=MagicMock(), dispatch_fn=mock_dispatch, source_butler="switchboard"
+        )
+        pipeline._load_dashboard_context = AsyncMock(  # type: ignore[method-assign]
+            return_value={"conversation_id": "conv-accepted-route", "page_context": None}
+        )
+        pipeline._dead_letter_dashboard_unroutable = AsyncMock()  # type: ignore[method-assign]
+
+        result = await pipeline.process(
+            "Log $50 expense",
+            tool_args=_dashboard_tool_args(),
+            message_inbox_id="00000000-0000-0000-0000-000000000017",
+        )
+
+        assert result.target_butler == "finance"
+        assert result.routed_targets == ["finance"]
         assert result.acked_targets == ["finance"]
         pipeline._dead_letter_dashboard_unroutable.assert_not_awaited()
 

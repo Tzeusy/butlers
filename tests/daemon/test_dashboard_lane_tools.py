@@ -804,7 +804,7 @@ async def test_dashboard_lane_guard_does_not_affect_non_dashboard_sessions(
 
 
 async def test_answer_question_domain_injects_answer_block_not_confirm_block(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ) -> None:
     patches = _patch_infra()
     butler_dir = _make_switchboard_dir(tmp_path)
@@ -818,6 +818,8 @@ async def test_answer_question_domain_injects_answer_block_not_confirm_block(
         butler_dir, patches, mock_route=AsyncMock(side_effect=_capture)
     )
     fn = tools["answer_question"]
+    fake_stamp = AsyncMock()
+    monkeypatch.setattr("butlers.api.conversations.conversation_set_routed_butler", fake_stamp)
 
     _set_dashboard_routing_context(page_context={"route": "/entities/concentration"})
     try:
@@ -837,6 +839,7 @@ async def test_answer_question_domain_injects_answer_block_not_confirm_block(
     assert "STATEMENT" not in envelope.input.context
     assert "ACTION REQUEST" not in envelope.input.context
     assert envelope.target.butler == "finance"
+    fake_stamp.assert_not_awaited()
 
 
 async def test_answer_question_domain_requires_target(tmp_path: Path) -> None:
@@ -849,7 +852,11 @@ async def test_answer_question_domain_requires_target(tmp_path: Path) -> None:
     )
     fn = tools["answer_question"]
 
-    result = await fn(scope="domain", question="How much did I spend?", target=None)
+    _set_dashboard_routing_context()
+    try:
+        result = await fn(scope="domain", question="How much did I spend?", target=None)
+    finally:
+        _clear_routing_context()
 
     assert result["status"] == "error"
     assert "target is required" in result["error"]
@@ -1022,9 +1029,56 @@ async def test_cannot_answer_writes_one_dead_letter_and_replies_naming_scope_che
     assert "finance" in reply_message
     assert "health" in reply_message
     assert "system" in reply_message
+    assert fake_reply.await_args.kwargs["request_id"] == capture_kwargs["original_request_id"]
 
     # Never files a bug report or routes to a domain butler.
     mock_route.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failed_effect", ["capture", "reply"])
+async def test_cannot_answer_reports_partial_effect_failure_truthfully(
+    tmp_path: Path, monkeypatch, failed_effect: str
+) -> None:
+    patches = _patch_infra()
+    butler_dir = _make_switchboard_dir(tmp_path)
+    _, tools = await _start_switchboard_and_capture_tools(butler_dir, patches)
+
+    import butlers.tools.switchboard.dead_letter.capture as capture_mod
+
+    fake_capture = AsyncMock(return_value="dl-1")
+    fake_reply = AsyncMock(return_value={"id": "msg-1"})
+    if failed_effect == "capture":
+        fake_capture.side_effect = RuntimeError("capture failed")
+    else:
+        fake_reply.side_effect = RuntimeError("reply failed")
+    monkeypatch.setattr(capture_mod, "capture_to_dead_letter", fake_capture)
+    monkeypatch.setattr("butlers.api.conversations.conversation_reply_create", fake_reply)
+    terminal = AsyncMock(return_value=_turn_result("finished"))
+
+    with (
+        patch(
+            "butlers.core.dashboard_turns.claim_dead_letter",
+            AsyncMock(return_value=_turn_result("claimed")),
+        ),
+        patch("butlers.core.dashboard_turns.mark_terminal", terminal),
+    ):
+        _set_dashboard_routing_context(dashboard_message_id="d1d1d1d1-0000-7000-8000-000000000001")
+        try:
+            result = await tools["cannot_answer"](
+                question_summary="What is the meaning of life?",
+                scope_checked=["finance", "health"],
+                reason="No owning scope.",
+            )
+        finally:
+            _clear_routing_context()
+
+    assert result["status"] == "error"
+    assert result["filed"] is (failed_effect != "capture")
+    terminal.assert_awaited_once()
+    assert terminal.await_args.kwargs["state"] == "failed"
+    if failed_effect == "capture":
+        assert "couldn't file it" in fake_reply.await_args.kwargs["message"]
+        assert "has been filed" not in fake_reply.await_args.kwargs["message"]
 
 
 async def test_cannot_answer_claims_turn_before_capture_and_honors_stop(
@@ -1220,9 +1274,9 @@ async def test_second_cannot_answer_call_in_same_turn_is_refused(
     assert fake_capture.await_count == 1
 
 
-async def test_question_lane_guards_do_not_affect_non_dashboard_sessions(tmp_path: Path) -> None:
-    """Regression: without a dashboard conversation_id, the question-lane
-    exclusivity guard must not fire at all."""
+async def test_question_lane_tools_refuse_non_dashboard_sessions(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     patches = _patch_infra()
     butler_dir = _make_switchboard_dir(tmp_path)
     mock_route = AsyncMock(return_value={"result": {"status": "accepted"}})
@@ -1231,9 +1285,26 @@ async def test_question_lane_guards_do_not_affect_non_dashboard_sessions(tmp_pat
         butler_dir, patches, mock_route=mock_route
     )
     answer_fn = tools["answer_question"]
+    cannot_answer_fn = tools["cannot_answer"]
 
-    first = await answer_fn(scope="domain", question="hi?", target="finance")
-    second = await answer_fn(scope="domain", question="hi again?", target="health")
+    import butlers.tools.switchboard.dead_letter.capture as capture_mod
 
-    assert first["status"] == "accepted"
-    assert second["status"] == "accepted"
+    fake_capture = AsyncMock(return_value="dl-1")
+    monkeypatch.setattr(capture_mod, "capture_to_dead_letter", fake_capture)
+    sensitive_question = "private-question-sentinel"
+
+    answer = await answer_fn(scope="domain", question=sensitive_question, target="finance")
+    decline = await cannot_answer_fn(
+        question_summary=sensitive_question,
+        scope_checked=["finance"],
+        reason="No owning scope.",
+    )
+    captured = capsys.readouterr()
+
+    assert answer["status"] == "error"
+    assert answer["reason"] == "dashboard_context_required"
+    assert decline["status"] == "error"
+    assert decline["reason"] == "dashboard_context_required"
+    mock_route.assert_not_awaited()
+    fake_capture.assert_not_awaited()
+    assert sensitive_question not in captured.err

@@ -525,11 +525,11 @@ def _build_dashboard_lane_prompt(
     conversation_id: str | None = None,
     page_context: dict[str, Any] | None = None,
 ) -> str:
-    """Build the CC prompt for dashboard chat-widget messages (three lanes).
+    """Build the CC prompt for dashboard chat-widget messages (four lanes).
 
     Unlike :func:`_build_routing_prompt`, this prompt is used only for the
     dashboard channel (the owner's floating chat widget). It teaches the
-    classification session to pick one of three lanes instead of always
+    classification session to pick one of four lanes instead of always
     calling ``route_to_butler``:
 
     - **Lane A (data statement/correction):** call ``route_to_butler`` exactly
@@ -545,6 +545,8 @@ def _build_dashboard_lane_prompt(
       deterministic block injected into the routed envelope (see Lane A)
       carries the propose-don't-apply contract; this prompt does not need to
       (and must not try to) enforce it itself.
+    - **Lane D (question):** call ``answer_question`` for an identified domain
+      or system scope, or ``cannot_answer`` when no owner can be identified.
 
     An input that cannot be confidently placed into any lane is never a
     best-guess route: the classifier is instructed to call no tool at all,
@@ -766,6 +768,12 @@ def _extract_cannot_answer_calls(
                 result = {}
         if not isinstance(result, dict):
             result = {}
+
+        if result.get("status") == "refused":
+            # A prior terminal tool owns the turn. This declined call did not
+            # dead-letter anything and must not override the first lane's
+            # accepted result in the pipeline's early-return ordering.
+            continue
 
         succeeded = result.get("status") == "ok"
         dead_letter_id = result.get("dead_letter_id")
@@ -3042,9 +3050,10 @@ class MessagePipeline:
                                 message_text, butlers, conversation_history, attachments
                             )
                         elif source == "dashboard":
-                            # Dashboard chat widget: two-lane classification
-                            # (data statement -> route_to_butler; bug/system
-                            # report -> file_bug_report) instead of the
+                            # Dashboard chat widget: four-lane classification
+                            # (data statement/action -> route_to_butler;
+                            # bug/system report -> file_bug_report; question ->
+                            # answer_question/cannot_answer) instead of the
                             # always-route standard prompt.
                             routing_prompt = _build_dashboard_lane_prompt(
                                 message_text,
@@ -3668,7 +3677,7 @@ class MessagePipeline:
                                 routing_error=(
                                     None
                                     if ca_succeeded
-                                    else "cannot_answer: dead-letter capture failed"
+                                    else "cannot_answer: decline persistence failed"
                                 ),
                                 routed_targets=[],
                                 acked_targets=[],

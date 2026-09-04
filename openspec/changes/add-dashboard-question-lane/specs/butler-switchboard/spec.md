@@ -38,7 +38,13 @@ NEVER file a QA bug report.
 - **WHEN** a dashboard message is classified as a genuine question with an identifiable domain owner (e.g. "how much did I spend on groceries this month?")
 - **THEN** the classification session SHALL call `answer_question(scope="domain", question, target)` naming the owning butler as `target`
 - **AND** `answer_question` SHALL dispatch through the same `route.execute` spine `route_to_butler` uses (via the shared `_dispatch_dashboard_target` helper), but SHALL inject a read-only answer-block instruction (`_build_dashboard_answer_block`) into `input.context` instead of the confirm-loop block: the routed session MUST answer only from its own tools, cite what it consulted via `conversation_reply`'s `sources` list when grounded, or give an honest decline (never fabricate a citation) when it cannot ground the answer
-- **AND** a successful acknowledged dispatch SHALL flow through the same routed/acked/failed bookkeeping `route_to_butler` populates, including the sticky `routed_butler` stamp on acceptance
+- **AND** a successful acknowledged dispatch SHALL flow through the same routed/acked/failed bookkeeping `route_to_butler` populates, but SHALL leave `routed_butler` unset so every follow-up re-enters four-lane classification and cannot bypass the answer lane's read-only/citation contract or inherit a stale domain target
+
+#### Scenario: Lane D tools require dashboard conversation context
+
+- **WHEN** `answer_question` or `cannot_answer` is called without a valid dashboard `conversation_id`
+- **THEN** the tool SHALL fail closed with `reason="dashboard_context_required"`
+- **AND** it SHALL NOT route a butler, capture a dead letter, or create a conversation reply
 
 #### Scenario: Lane D — a system-scope question falls back to the honest-decline dead-letter path
 

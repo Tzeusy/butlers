@@ -67,9 +67,9 @@ MUST watch for this message rather than the routed session's raw completion
 - **THEN** the inserted message row's `sources` column SHALL be NULL
 - **AND** behavior SHALL be identical to before `sources` existed
 
-#### Scenario: conversation_reply rejects an explicit empty sources list
+#### Scenario: conversation_reply rejects empty or blank source names
 
-- **WHEN** `conversation_reply` is called with `sources=[]`
+- **WHEN** `conversation_reply` is called with `sources=[]` or with any blank source name
 - **THEN** no message row is inserted
 - **AND** the tool returns `{"status": "error", "error": "..."}` guiding the caller to either name what it consulted or omit `sources` entirely and give an honest decline instead of fabricating a citation
 

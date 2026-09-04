@@ -51,6 +51,13 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("ALTER TABLE dead_letter_queue DROP CONSTRAINT IF EXISTS valid_failure_category")
+    # Preserve downgradeability after the new category has been used. The
+    # original payload and failure_reason retain the exact decline evidence;
+    # only the vocabulary value must map back to the predecessor's catch-all.
+    op.execute(
+        "UPDATE dead_letter_queue SET failure_category = 'unknown' "
+        "WHERE failure_category = 'unanswerable'"
+    )
     op.execute(
         "ALTER TABLE dead_letter_queue ADD CONSTRAINT valid_failure_category CHECK ("
         "failure_category IN ("

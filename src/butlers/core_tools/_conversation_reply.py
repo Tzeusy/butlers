@@ -83,9 +83,10 @@ def register_conversation_reply_tool(ctx: ToolContext, mcp: Any, _core_tool: Cal
                     "(tool names, record identifiers, etc.), e.g. "
                     "['finance.get_budget', 'transaction#a1b2c3']. Omit entirely for "
                     "a confirm-loop/action-proposal/bug-report reply. For an "
-                    "answer-lane reply, pass a NON-EMPTY list — an empty list is "
-                    "rejected, since an unsourced 'answer' is indistinguishable "
-                    "from a fabricated one; give an honest decline instead."
+                    "answer-lane reply, pass a NON-EMPTY list of NON-BLANK names — "
+                    "an empty/blank citation is rejected, since an unsourced "
+                    "'answer' is indistinguishable from a fabricated one; give an "
+                    "honest decline instead."
                 )
             ),
         ] = None,
@@ -107,13 +108,16 @@ def register_conversation_reply_tool(ctx: ToolContext, mcp: Any, _core_tool: Cal
                 "error": f"conversation_id {conversation_id!r} is not a valid UUID",
             }
 
-        if sources is not None and len(sources) == 0:
+        if sources is not None and (
+            not sources
+            or any(not isinstance(source, str) or not source.strip() for source in sources)
+        ):
             return {
                 "status": "error",
                 "error": (
-                    "sources must not be empty for an answer-lane reply — name what "
-                    "you consulted, or omit `sources` entirely and give an honest "
-                    "decline instead of fabricating a citation."
+                    "sources must contain only non-empty names for an answer-lane "
+                    "reply — name what you consulted, or omit `sources` entirely "
+                    "and give an honest decline instead of fabricating a citation."
                 ),
             }
 

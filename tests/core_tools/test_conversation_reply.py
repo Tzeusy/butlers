@@ -143,15 +143,16 @@ async def test_conversation_reply_errors_when_persistence_raises(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_empty_sources_is_rejected_with_guidance():
+@pytest.mark.parametrize("sources", [[], [""], ["   "]])
+async def test_empty_or_blank_sources_are_rejected_with_guidance(sources):
     """An answer-lane reply claiming sources but providing none must error —
     an unsourced 'answer' is indistinguishable from a fabricated one."""
     tool = _register_and_grab(pool=AsyncMock())
 
-    result = await tool(conversation_id=str(uuid4()), message="The answer is 42", sources=[])
+    result = await tool(conversation_id=str(uuid4()), message="The answer is 42", sources=sources)
 
     assert result["status"] == "error"
-    assert "sources must not be empty" in result["error"]
+    assert "sources must contain only non-empty names" in result["error"]
     assert "decline" in result["error"]
 
 

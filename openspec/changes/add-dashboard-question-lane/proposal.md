@@ -58,9 +58,9 @@ Baseline `main` @ `e35880fe1`.
 - **`conversation_reply` gains an optional `sources: list[str] | None`
   parameter.** Omitted (`None`) is unaffected — every existing confirm-loop/
   action-proposal/bug-report reply keeps working exactly as before. An
-  explicit empty list (`[]`) is rejected with guidance text: cite what you
-  consulted, or omit `sources` entirely and give an honest decline. A
-  non-empty list persists to a new `dashboard_messages.sources jsonb` column
+  explicit empty list (`[]`) or blank source name is rejected with guidance
+  text: cite what you consulted, or omit `sources` entirely and give an honest
+  decline. A non-empty list persists to a new `dashboard_messages.sources jsonb` column
   (migration `core_213`, nullable, downgrade drops it) and appears in the
   `message_complete` SSE payload.
 - **No behavior change to the existing General-fallback text**: the

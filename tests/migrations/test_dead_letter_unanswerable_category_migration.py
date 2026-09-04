@@ -169,7 +169,31 @@ async def test_downgrade_restores_the_original_vocabulary(provisioned_postgres_p
     async with provisioned_postgres_pool() as pool:
         await _create_pre_migration_table(pool)
         await _apply(pool, "upgrade")
+        existing = _row(failure_category="unanswerable")
+        await pool.execute(
+            """
+            INSERT INTO dead_letter_queue
+                (id, original_request_id, source_table, failure_reason,
+                 failure_category, original_payload, request_context)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+            """,
+            existing["id"],
+            existing["original_request_id"],
+            existing["source_table"],
+            existing["failure_reason"],
+            existing["failure_category"],
+            existing["original_payload"],
+            existing["request_context"],
+        )
         await _apply(pool, "downgrade")
+
+        assert (
+            await pool.fetchval(
+                "SELECT failure_category FROM dead_letter_queue WHERE id = $1",
+                existing["id"],
+            )
+            == "unknown"
+        )
 
         with pytest.raises(asyncpg.CheckViolationError):
             row = _row(failure_category="unanswerable")

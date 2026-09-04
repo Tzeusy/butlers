@@ -57,6 +57,21 @@ _DASHBOARD_LANE_CLAIM_TOOL_NAME: dict[str, str] = {
 }
 
 
+def _dashboard_conversation_id_from_context(
+    dashboard_context: dict[str, Any] | None,
+) -> str | None:
+    """Return a normalized dashboard conversation UUID, or ``None``."""
+    if not isinstance(dashboard_context, dict):
+        return None
+    raw_conversation_id = dashboard_context.get("conversation_id")
+    if raw_conversation_id in (None, ""):
+        return None
+    try:
+        return str(UUID(str(raw_conversation_id)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _dashboard_turn_id_from_context(
     source_metadata: dict[str, Any],
     dashboard_context: dict[str, Any] | None,
@@ -539,6 +554,7 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
         complexity: str | None,
         dashboard_block_builder: Callable[[dict[str, Any] | None], str],
         claim_value: str,
+        stamp_routed_butler_on_accept: bool,
         routing_ctx: dict[str, Any],
         dashboard_context: dict[str, Any] | None,
         dashboard_conversation_id: str | None,
@@ -549,8 +565,9 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
         Both tools resolve a target butler, inject a deterministic dashboard
         instruction block into the routed envelope's ``input.context``, claim
         the dashboard lane, dispatch via ``route.execute``, and parse the
-        result identically; they differ only in which block is injected
-        (confirm-loop vs. read-only answer) and which claim value is recorded.
+        result identically. They differ in which block is injected
+        (confirm-loop vs. read-only answer), which claim value is recorded,
+        and whether acceptance makes the target sticky for later turns.
         """
         from datetime import UTC, datetime
 
@@ -751,8 +768,10 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
                             "butler": target_butler,
                             "cancelled": True,
                         }
-                    if isinstance(dashboard_context, dict) and dashboard_context.get(
-                        "conversation_id"
+                    if (
+                        stamp_routed_butler_on_accept
+                        and isinstance(dashboard_context, dict)
+                        and dashboard_context.get("conversation_id")
                     ):
                         await _stamp_routed_butler_best_effort(
                             pool,
@@ -874,11 +893,7 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
         # conversation_id); non-dashboard switchboard flows never populate this
         # key and are unaffected.
         _dashboard_context = _routing_ctx.get("dashboard_context")
-        _dashboard_conversation_id = (
-            str(_dashboard_context["conversation_id"])
-            if isinstance(_dashboard_context, dict) and _dashboard_context.get("conversation_id")
-            else None
-        )
+        _dashboard_conversation_id = _dashboard_conversation_id_from_context(_dashboard_context)
         _prior_claim_for_route = (
             _routing_ctx.get(_DASHBOARD_LANE_CLAIM_KEY) if _dashboard_conversation_id else None
         )
@@ -913,6 +928,7 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
                 conversation_id=_dashboard_conversation_id, page_context=page_context
             ),
             claim_value="route",
+            stamp_routed_butler_on_accept=True,
             routing_ctx=_routing_ctx,
             dashboard_context=_dashboard_context,
             dashboard_conversation_id=_dashboard_conversation_id,
@@ -951,11 +967,14 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
         if not isinstance(_routing_ctx, dict):
             _routing_ctx = {}
         _dashboard_context = _routing_ctx.get("dashboard_context")
-        _dashboard_conversation_id = (
-            str(_dashboard_context["conversation_id"])
-            if isinstance(_dashboard_context, dict) and _dashboard_context.get("conversation_id")
-            else None
-        )
+        _dashboard_conversation_id = _dashboard_conversation_id_from_context(_dashboard_context)
+        if _dashboard_conversation_id is None:
+            logger.warning("answer_question requires a valid dashboard conversation context")
+            return {
+                "status": "error",
+                "error": "answer_question requires a valid dashboard conversation context.",
+                "reason": "dashboard_context_required",
+            }
         _prior_claim = (
             _routing_ctx.get(_DASHBOARD_LANE_CLAIM_KEY) if _dashboard_conversation_id else None
         )
@@ -1027,6 +1046,11 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
                 question=question,
             ),
             claim_value="answer",
+            # A question's owner is per-turn evidence, not a conversation-wide
+            # routing pin. Follow-ups must re-enter four-lane classification so
+            # they cannot bypass the read-only/citation contract or change
+            # domains under a stale answer target.
+            stamp_routed_butler_on_accept=False,
             routing_ctx=_routing_ctx,
             dashboard_context=_dashboard_context,
             dashboard_conversation_id=_dashboard_conversation_id,
@@ -1058,11 +1082,15 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
         if not isinstance(_routing_ctx, dict):
             _routing_ctx = {}
         _dashboard_context = _routing_ctx.get("dashboard_context")
-        _dashboard_conversation_id = (
-            str(_dashboard_context["conversation_id"])
-            if isinstance(_dashboard_context, dict) and _dashboard_context.get("conversation_id")
-            else None
-        )
+        _dashboard_conversation_id = _dashboard_conversation_id_from_context(_dashboard_context)
+        if _dashboard_conversation_id is None:
+            logger.warning("cannot_answer requires a valid dashboard conversation context")
+            return {
+                "status": "error",
+                "answered": False,
+                "error": "cannot_answer requires a valid dashboard conversation context.",
+                "reason": "dashboard_context_required",
+            }
         _prior_claim = (
             _routing_ctx.get(_DASHBOARD_LANE_CLAIM_KEY) if _dashboard_conversation_id else None
         )
@@ -1205,35 +1233,37 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
                 "Failed to capture unanswerable dashboard question to dead_letter_queue"
             )
 
-        if dashboard_action_claimed and dashboard_turn_id is not None:
-            try:
-                await mark_terminal(
-                    pool,
-                    message_id=dashboard_turn_id,
-                    state="completed" if filed else "failed",
-                )
-            except Exception:
-                # The dead-letter side effect has already been claimed (and,
-                # if `filed`, performed). Preserve that truth and let
-                # operational reconciliation repair only the terminal marker
-                # rather than attempting the side effect again.
-                logger.exception(
-                    "cannot_answer could not mark dashboard terminal for message %s",
-                    dashboard_turn_id,
-                )
-
+        reply_persisted = False
         if conversation_id:
             _scope_note = ", ".join(scope_checked) if scope_checked else "no identifiable scope"
             _case_note = f" (case {dead_letter_id[:8]})" if dead_letter_id else ""
-            reply_message = (
-                f"I don't have an answer to that — I checked {_scope_note} and "
-                f"couldn't find one ({reason}). This has been filed for manual "
-                f"review{_case_note}."
-            )
+            if filed:
+                reply_message = (
+                    f"I don't have an answer to that — I checked {_scope_note} and "
+                    f"couldn't find one ({reason}). This has been filed for manual "
+                    f"review{_case_note}."
+                )
+            else:
+                reply_message = (
+                    f"I don't have an answer to that — I checked {_scope_note} and "
+                    f"couldn't find one ({reason}). I also couldn't file it for "
+                    "manual review; please try again."
+                )
             try:
                 from butlers.api.conversations import conversation_reply_create
 
-                await conversation_reply_create(pool, UUID(conversation_id), message=reply_message)
+                reply = await conversation_reply_create(
+                    pool,
+                    UUID(conversation_id),
+                    message=reply_message,
+                    request_id=request_uuid,
+                )
+                reply_persisted = reply is not None
+                if not reply_persisted:
+                    logger.warning(
+                        "cannot_answer: conversation no longer exists for request_id=%s",
+                        request_uuid,
+                    )
             except Exception:
                 logger.warning(
                     "cannot_answer: failed to post conversation_reply for conversation %s",
@@ -1243,12 +1273,29 @@ def register_switchboard_tools(ctx: ToolContext, mcp: Any, _core_tool: Callable)
         else:
             logger.warning(
                 "cannot_answer: no conversation_id in routing context — owner not "
-                "notified in-thread (question_summary=%s)",
-                question_summary,
+                "notified in-thread (request_id=%s)",
+                request_uuid,
             )
 
+        completed = filed and reply_persisted
+        if dashboard_action_claimed and dashboard_turn_id is not None:
+            try:
+                await mark_terminal(
+                    pool,
+                    message_id=dashboard_turn_id,
+                    state="completed" if completed else "failed",
+                )
+            except Exception:
+                # At least one terminal effect may already have happened.
+                # Preserve that truth and let operational reconciliation repair
+                # only the terminal marker rather than replaying either effect.
+                logger.exception(
+                    "cannot_answer could not mark dashboard terminal for message %s",
+                    dashboard_turn_id,
+                )
+
         return {
-            "status": "ok" if filed else "error",
+            "status": "ok" if completed else "error",
             "answered": False,
             "dead_letter_id": dead_letter_id,
             "filed": filed,

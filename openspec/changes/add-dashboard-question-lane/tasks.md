@@ -26,9 +26,10 @@
 - [x] 3.1 Extract `_dispatch_dashboard_target` from `route_to_butler`'s
       `route.execute` dispatch tail (permission-independent — envelope
       build, dashboard-turn Stop check, claim, dispatch, result parsing,
-      sticky-stamp) so `route_to_butler` and `answer_question(scope="domain")`
-      share it, differing only in which instruction block is injected and
-      which lane-claim value is recorded.
+      optional sticky-stamp) so `route_to_butler` and
+      `answer_question(scope="domain")` share it. Statement/action routes stamp
+      the accepted target; answer routes leave it unset so later turns are
+      reclassified under the question-lane contract.
 - [x] 3.2 `_build_dashboard_answer_block`: read-only sibling of
       `_build_dashboard_confirm_block` — forbids writes, requires citing
       `sources` on `conversation_reply` for a grounded answer, requires an
@@ -47,6 +48,9 @@
 - [x] 3.5 `route_to_butler`'s lane-conflict guard extended from `== "bug"` to
       `{"bug", "answer", "cannot_answer"}`; `file_bug_report`'s existing
       "never suppressed, only surfaced" behavior is unchanged.
+- [x] 3.6 Both new question-lane tools fail closed without a valid dashboard
+      conversation context; they cannot become unbounded non-dashboard route
+      or dead-letter aliases.
 
 ## 4. Pipeline integration
 
@@ -64,7 +68,7 @@
       parameter; `message_get_by_id`/`message_list`/`message_find_reply_since`
       select the new column.
 - [x] 4.4 `core_tools/_conversation_reply.py`'s `conversation_reply` MCP tool
-      gains the `sources` parameter with the empty-list rejection.
+      gains the `sources` parameter with empty-list and blank-name rejection.
 - [x] 4.5 The dashboard SSE `message_complete` event includes `sources`.
 
 ## 5. Tests
@@ -89,7 +93,7 @@
       persists, downgrade drops it) and `sw_033` (accepts `unanswerable` and
       the original vocabulary, rejects an invented category, downgrade
       restores the original CHECK).
-- [x] 5.6 `openspec validate --strict`; `make lint`; targeted suites for
+- [x] 5.6 `openspec validate --all --strict`; `make lint`; targeted suites for
       pipeline, `_switchboard`, `_conversation_reply`, `api/conversations`,
       `structured_classify` green.
 
