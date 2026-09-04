@@ -113,7 +113,7 @@ function KpiStrip({
         <div className="col-span-2 sm:col-span-4 px-1 pb-1">
           <SourceDegradedNote
             label="Home Assistant"
-            detail="unreachable — device and snapshot counts may be stale"
+            detail="unreachable: device and snapshot counts may be stale"
             testId="ha-source-degraded-note"
           />
         </div>
