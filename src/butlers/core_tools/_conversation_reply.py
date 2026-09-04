@@ -75,6 +75,20 @@ def register_conversation_reply_tool(ctx: ToolContext, mcp: Any, _core_tool: Cal
                 )
             ),
         ],
+        sources: Annotated[
+            list[str] | None,
+            Field(
+                description=(
+                    "Answer-lane only: what you consulted to produce this reply "
+                    "(tool names, record identifiers, etc.), e.g. "
+                    "['finance.get_budget', 'transaction#a1b2c3']. Omit entirely for "
+                    "a confirm-loop/action-proposal/bug-report reply. For an "
+                    "answer-lane reply, pass a NON-EMPTY list — an empty list is "
+                    "rejected, since an unsourced 'answer' is indistinguishable "
+                    "from a fabricated one; give an honest decline instead."
+                )
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Reply into a dashboard conversation for owner confirmation.
 
@@ -93,6 +107,16 @@ def register_conversation_reply_tool(ctx: ToolContext, mcp: Any, _core_tool: Cal
                 "error": f"conversation_id {conversation_id!r} is not a valid UUID",
             }
 
+        if sources is not None and len(sources) == 0:
+            return {
+                "status": "error",
+                "error": (
+                    "sources must not be empty for an answer-lane reply — name what "
+                    "you consulted, or omit `sources` entirely and give an honest "
+                    "decline instead of fabricating a citation."
+                ),
+            }
+
         if pool is None:
             return {"status": "error", "error": "Database pool is not available"}
 
@@ -102,7 +126,7 @@ def register_conversation_reply_tool(ctx: ToolContext, mcp: Any, _core_tool: Cal
 
         try:
             msg = await conversation_reply_create(
-                pool, conv_uuid, message=message, request_id=request_id
+                pool, conv_uuid, message=message, request_id=request_id, sources=sources
             )
         except Exception as exc:
             logger.exception(
