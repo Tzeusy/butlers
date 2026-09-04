@@ -141,7 +141,8 @@ context, but their counts and states are not current-state evidence.
 **Diagnosis:**
 
 ```bash
-psql -h "$POSTGRES_HOST" -p "${POSTGRES_PORT:-5432}" -U "$POSTGRES_USER" \
+psql -h "$POSTGRES_HOST" -p "${POSTGRES_PORT:-5432}" \
+  -U "${POSTGRES_USER:-butlers}" -d "${POSTGRES_DB:-butlers}" \
   -c "SELECT source, status, last_success_at, last_error_at, updated_at
       FROM home.ha_source_health WHERE source = 'home_assistant';"
 

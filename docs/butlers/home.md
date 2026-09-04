@@ -97,7 +97,8 @@ Operators should verify both the source ledger and a reader response without
 selecting the stored error text:
 
 ```bash
-psql -h "$POSTGRES_HOST" -p "${POSTGRES_PORT:-5432}" -U "$POSTGRES_USER" \
+psql -h "$POSTGRES_HOST" -p "${POSTGRES_PORT:-5432}" \
+  -U "${POSTGRES_USER:-butlers}" -d "${POSTGRES_DB:-butlers}" \
   -c "SELECT source, status, last_success_at, last_error_at, updated_at
       FROM home.ha_source_health WHERE source = 'home_assistant';"
 

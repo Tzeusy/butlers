@@ -410,15 +410,16 @@ upserts one row per entity key instead of accumulating temporal fact history.
 - **THEN** the module SHALL attempt one final bounded
   `ha_entity_snapshot` persistence before closing its connections
 
-### Requirement: Database Schema Migration
+### Requirement: Home Assistant Database Schema
 
 The implementation SHALL provide the behavior described by this requirement.
-The module provides an Alembic migration for its home-domain tables.
+The module provides Alembic migrations for its home-domain tables.
 
 #### Scenario: Migration creates tables
 
-- **WHEN** the Alembic migration runs
-- **THEN** `ha_entity_snapshot` (entity_id TEXT PK, state TEXT, attributes JSONB, last_updated TIMESTAMPTZ, captured_at TIMESTAMPTZ) SHALL be created (retained for compatibility even though snapshot writes are currently disabled)
+- **WHEN** the Alembic migrations run
+- **THEN** `ha_entity_snapshot` (entity_id TEXT PK, state TEXT, attributes JSONB, last_updated TIMESTAMPTZ, captured_at TIMESTAMPTZ) SHALL be created as the active bounded live-state cache written by the Home Assistant module
+- **AND** `ha_source_health` (source TEXT PK, status TEXT, last_success_at TIMESTAMPTZ, last_error_at TIMESTAMPTZ, last_error TEXT, updated_at TIMESTAMPTZ) SHALL be created for the module's source-health lease
 - **AND** `ha_command_log` (id BIGSERIAL PK, domain TEXT, service TEXT, target JSONB, data JSONB, result JSONB, context_id TEXT, issued_at TIMESTAMPTZ) SHALL be created
 - **AND** `maintenance_items` SHALL be created (backing the maintenance tool suite)
 - **AND** the `ha_state` predicate SHALL be seeded into `predicate_registry`

@@ -75,6 +75,11 @@ the contact timestamp.
 Superseded by `HA Entity Snapshot Cache`, which records the restored bounded
 table writer and removes the contradictory disabled-fact-writer contract.
 
+### Requirement: Database Schema Migration
+
+Superseded by `Home Assistant Database Schema`, which records both active
+snapshot-cache persistence and its source-health lease.
+
 ## ADDED Requirements
 
 ### Requirement: HA Entity Snapshot Cache
@@ -97,3 +102,24 @@ upserts one row per entity key instead of accumulating temporal fact history.
 - **WHEN** `on_shutdown` is called
 - **THEN** the module SHALL attempt one final bounded
   `ha_entity_snapshot` persistence before closing its connections
+
+### Requirement: Home Assistant Database Schema
+
+The implementation SHALL provide the behavior described by this requirement.
+The module provides Alembic migrations for its home-domain tables.
+
+#### Scenario: Migration creates tables
+
+- **WHEN** the Alembic migrations run
+- **THEN** `ha_entity_snapshot` (entity_id TEXT PK, state TEXT, attributes JSONB, last_updated TIMESTAMPTZ, captured_at TIMESTAMPTZ) SHALL be created as the active bounded live-state cache written by the Home Assistant module
+- **AND** `ha_source_health` (source TEXT PK, status TEXT, last_success_at TIMESTAMPTZ, last_error_at TIMESTAMPTZ, last_error TEXT, updated_at TIMESTAMPTZ) SHALL be created for the module's source-health lease
+- **AND** `ha_command_log` (id BIGSERIAL PK, domain TEXT, service TEXT, target JSONB, data JSONB, result JSONB, context_id TEXT, issued_at TIMESTAMPTZ) SHALL be created
+- **AND** `maintenance_items` SHALL be created (backing the maintenance tool suite)
+- **AND** the `ha_state` predicate SHALL be seeded into `predicate_registry`
+- **AND** index `ix_ha_command_log_issued_at` on `ha_command_log(issued_at)` SHALL be created
+- **AND** the command log SHALL carry nullable legacy-compatible actuation receipt columns for attempt id, risk, actor, session id, approval id, requested/observed state, status, rollback hint, failure reason, and completion time
+
+#### Scenario: Migration branch label
+
+- **WHEN** `migration_revisions()` is called
+- **THEN** it SHALL return `"home"` as the Alembic branch label
