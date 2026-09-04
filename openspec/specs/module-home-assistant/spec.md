@@ -389,7 +389,7 @@ Every service call issued through the module is persisted to the `ha_command_log
 - **WHEN** `ha_call_service` receives an error from HA
 - **THEN** the error SHALL still be logged to `ha_command_log` with the error in the result field
 
-### Requirement: Entity Snapshot Persistence
+### Requirement: HA Entity Snapshot Cache
 
 The Home Assistant module SHALL maintain a bounded current-state cache in
 `ha_entity_snapshot`. The module is its sole writer; each persistence cycle

@@ -66,9 +66,16 @@ is a bounded five-minute lease, not an indefinite readiness claim.
 - **AND** a health-recording failure SHALL be logged and SHALL NOT raise into
   the caller's connect/poll flow
 
-## MODIFIED Requirements
+## REMOVED Requirements
 
 ### Requirement: Entity Snapshot Persistence
+
+Superseded by `HA Entity Snapshot Cache`, which records the restored bounded
+table writer and removes the contradictory disabled-fact-writer contract.
+
+## ADDED Requirements
+
+### Requirement: HA Entity Snapshot Cache
 
 The Home Assistant module SHALL maintain a bounded current-state cache in
 `ha_entity_snapshot`. The module is its sole writer; each persistence cycle
