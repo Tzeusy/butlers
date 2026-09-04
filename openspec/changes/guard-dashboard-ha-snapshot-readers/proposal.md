@@ -26,12 +26,14 @@ scope here, and is left as a discovered follow-up.
 
 - `roster/home/api/router.py`: dashboard reads are graceful, not job-style
   fail-closed — an outage still returns the (possibly stale) snapshot rows
-  so the page has something to show, but every endpoint that reads
-  `ha_entity_snapshot` now tags its response with `ha_source_available`
-  (the fleet-wide "never render an unreachable source as a truthful
-  empty/healthy result" convention, `docs/api_and_protocols/response-conventions.md`)
-  computed via the same `_require_ha_source_healthy` guard, reused rather
-  than reimplemented.
+  so the page has something to show, with `ha_source_available=false` in the
+  endpoint's existing envelope. A missing single entity or an empty bare area
+  list returns 503 during the outage because those response shapes have no
+  honest place to carry the degraded flag. The two energy endpoints also
+  return 503 before cached sensor discovery; otherwise an empty cached sensor
+  list could bypass the live HA call and still render as a truthful empty
+  result. All paths reuse `_require_ha_source_healthy` rather than
+  reimplementing source-health classification.
 - `src/butlers/jobs/context_producers.py`: `run_home_presence_context_producer`
   now confirms `ha_source_health` before reading presence rows; an outage is
   treated the same as "no fresh presence data" (leaves `at_home` untouched
@@ -41,18 +43,15 @@ scope here, and is left as a discovered follow-up.
   scan; an outage adds a high-priority "Home Assistant is unmeasurable"
   highlight instead of silently reporting zero alerts, and the job's return
   dict carries a new `ha_source_unmeasurable` flag.
-- Only the `home-dashboard-extensions` spec is amended here: it is the one
-  baseline (already-archived) spec among the touched files whose scenarios
-  concretely describe response fields (`DevicePaginationMeta`). The context-bus
-  and cross-butler-briefing specs governing the other two sites remain in
-  their own not-yet-archived change directories (`context-bus-producers`,
-  predating this change) and are left untouched to avoid entangling with
-  that unrelated, still-open documentation debt.
+- OpenSpec deltas cover each changed behavior: dashboard snapshot readers in
+  `home-dashboard-extensions`, the presence producer's no-write outage path in
+  `context-bus`, and the Home contribution's explicit unmeasurable highlight
+  in `cross-butler-briefing-contribution`.
 
 ## Impact
 
-- Affected specs: `home-dashboard-extensions` (MODIFIED "Device Inventory
-  Endpoint" requirement — `DevicePaginationMeta` gains `ha_source_available`).
+- Affected specs: `home-dashboard-extensions`, `context-bus`, and
+  `cross-butler-briefing-contribution`.
 - Affected code: `roster/home/api/router.py`, `roster/home/api/models.py`,
   `src/butlers/jobs/context_producers.py`, `src/butlers/jobs/briefing.py`.
 - Affected tests: `tests/api/test_home_dashboard.py`,

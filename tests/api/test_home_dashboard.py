@@ -54,7 +54,7 @@ def _app_with_mock_db(app: FastAPI, *, fetch_rows=None, fetchval_result=0, pool_
     mock_pool = AsyncMock()
     mock_pool.fetch = AsyncMock(return_value=fetch_rows or [])
     mock_pool.fetchval = AsyncMock(return_value=fetchval_result)
-    mock_pool.fetchrow = AsyncMock(return_value=None)
+    mock_pool.fetchrow = AsyncMock(return_value={"status": "healthy", "last_success_at": _NOW})
     mock_pool.execute = AsyncMock(return_value=None)
 
     mock_db = MagicMock(spec=DatabaseManager)
@@ -94,6 +94,7 @@ async def test_devices_200_and_503(app):
     body = resp.json()
     assert "data" in body and "meta" in body
     assert body["data"][0]["entity_id"] == "light.kitchen"
+    assert body["meta"]["ha_source_available"] is True
 
     # 503 when pool unavailable
     _app_with_mock_db(app, pool_available=False)
@@ -178,6 +179,37 @@ async def test_dashboard_reads_flag_ha_source_unavailable(app, monkeypatch):
     ) as client:
         devices_resp = await client.get("/api/home/devices")
     assert devices_resp.json()["meta"]["ha_source_available"] is False
+
+    # A bare-list or missing-item response has nowhere to carry the flag.
+    # Fail closed instead of turning an outage into a truthful-looking empty
+    # area list or authoritative entity absence.
+    _app, pool = _app_with_mock_db(app)
+    pool.fetchrow.return_value = None
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        missing_entity_resp = await client.get("/api/home/entities/sensor.missing")
+        empty_areas_resp = await client.get("/api/home/areas")
+    assert missing_entity_resp.status_code == 503
+    assert empty_areas_resp.status_code == 503
+
+
+async def test_energy_snapshot_discovery_fails_closed_during_ha_outage(app):
+    """An empty cached sensor list must not bypass the live-source outage signal."""
+    _app, pool = _app_with_mock_db(app)
+    pool.fetchrow.return_value = {"status": "error", "last_success_at": _NOW}
+
+    for path in ("/api/home/energy", "/api/home/energy/top-consumers"):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(path)
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "detail": "Home Assistant is unavailable; current snapshot state cannot be confirmed"
+        }
+    pool.fetch.assert_not_awaited()
 
 
 async def test_command_log_exposes_honest_actuation_receipt_fields(app):

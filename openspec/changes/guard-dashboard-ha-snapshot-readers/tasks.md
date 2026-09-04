@@ -8,9 +8,12 @@
       `ha_source_available` in whatever envelope shape it already returns
       (`PaginationMeta` extra field, a top-level model field, a per-row
       field, `DevicePaginationMeta`).
-- [x] 1.3 `get_energy` / `get_energy/top-consumers` left unguarded: both
-      already fail closed (503) on a real live HA statistics call failure,
-      independent of the snapshot cache.
+- [x] 1.3 A missing single entity or empty bare area list fails closed with
+      503 during an outage because neither response shape can carry a
+      degraded flag honestly.
+- [x] 1.4 `get_energy` / `get_energy/top-consumers` check source health before
+      cached sensor discovery and return 503 during an outage, including when
+      the cached sensor list is empty and no live HA call would otherwise run.
 
 ## 2. Context producer guard
 
@@ -45,6 +48,7 @@
 
 ## 6. Contract and verification
 
-- [x] 6.1 Add spec delta to `home-dashboard-extensions`.
+- [x] 6.1 Add spec deltas to `home-dashboard-extensions`, `context-bus`, and
+      `cross-butler-briefing-contribution`.
 - [x] 6.2 `openspec validate --strict` on the changed spec.
 - [x] 6.3 Run `make lint` and the affected test files.

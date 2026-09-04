@@ -113,7 +113,7 @@ function KpiStrip({
         <div className="col-span-2 sm:col-span-4 px-1 pb-1">
           <SourceDegradedNote
             label="Home Assistant"
-            detail="unreachable: device and snapshot counts may be stale"
+            detail="unreachable. Device and snapshot counts may be stale"
             testId="ha-source-degraded-note"
           />
         </div>
@@ -632,6 +632,7 @@ export default function ButlerHomeDevicesTab() {
         overdueError={overdueError}
         haSourceAvailable={
           snapshotStatus?.ha_source_available === false ||
+          offlineDevices?.meta.ha_source_available === false ||
           deviceInventory?.meta.ha_source_available === false
             ? false
             : undefined

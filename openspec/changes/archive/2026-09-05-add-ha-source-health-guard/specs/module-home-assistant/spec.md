@@ -9,9 +9,10 @@ a reader whether the connection is currently healthy. The module SHALL
 maintain a single keyed row per source in `ha_source_health` (`source` TEXT
 PRIMARY KEY, `status` TEXT CHECK IN `'healthy'`/`'error'`,
 `last_success_at`, `last_error_at`, `last_error`, `updated_at`), upserted on
-every WebSocket authentication and every REST `/api/states` fetch (success or
-failure), so downstream readers can distinguish "HA is reachable" from "the
-cache merely looks fresh."
+successful WebSocket liveness and REST `/api/states` contact and revoked on
+transport/setup failure, so downstream readers can distinguish "HA is
+reachable" from "the cache merely looks fresh." A persisted healthy verdict
+is a bounded five-minute lease, not an indefinite readiness claim.
 
 #### Scenario: Successful WebSocket authentication records health
 
@@ -19,6 +20,11 @@ cache merely looks fresh."
   successfully
 - **THEN** the module SHALL upsert `ha_source_health` for `'home_assistant'`
   with `status='healthy'` and `last_success_at=now()`
+
+#### Scenario: WebSocket pong renews the health lease
+
+- **WHEN** the authenticated WebSocket receives a pong
+- **THEN** the module SHALL refresh `last_success_at` with a healthy upsert
 
 #### Scenario: Successful REST poll records health
 
@@ -42,6 +48,15 @@ cache merely looks fresh."
   with `status='error'`, `last_error_at=now()`, and `last_error` describing
   the failure, instead of only logging a warning
 
+#### Scenario: Live WebSocket failure revokes health immediately
+
+- **WHEN** the WebSocket closes, its message or keepalive loop fails, a pong
+  times out, or post-authentication setup/reconnect hydration fails
+- **THEN** the module SHALL upsert `status='error'` before relying on fallback
+  polling or reconnect
+- **AND** a later successful REST contact or WebSocket pong MAY restore the
+  healthy lease
+
 #### Scenario: Health recording is idempotent and never blocks the caller
 
 - **WHEN** `_record_ha_source_success` or `_record_ha_source_error` is called
@@ -50,3 +65,26 @@ cache merely looks fresh."
   (source) DO UPDATE`)
 - **AND** a health-recording failure SHALL be logged and SHALL NOT raise into
   the caller's connect/poll flow
+
+## MODIFIED Requirements
+
+### Requirement: Entity Snapshot Persistence
+
+The Home Assistant module SHALL maintain a bounded current-state cache in
+`ha_entity_snapshot`. The module is its sole writer; each persistence cycle
+upserts one row per entity key instead of accumulating temporal fact history.
+
+#### Scenario: Snapshot loop persistence target
+
+- **WHEN** the snapshot loop runs at `snapshot_interval_seconds`
+- **THEN** the module SHALL UPSERT the populated in-memory entity cache into
+  `ha_entity_snapshot`, updating state, attributes, source timestamps, and
+  `captured_at`
+- **AND** a later observation of the same entity SHALL replace that entity's
+  row in place
+
+#### Scenario: Shutdown
+
+- **WHEN** `on_shutdown` is called
+- **THEN** the module SHALL attempt one final bounded
+  `ha_entity_snapshot` persistence before closing its connections

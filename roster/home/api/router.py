@@ -77,6 +77,9 @@ _ENERGY_UNAVAILABLE_DETAIL = (
     "Energy statistics unavailable: discovered sensors do not provide "
     "finite cumulative-energy change data"
 )
+_HA_SOURCE_UNAVAILABLE_DETAIL = (
+    "Home Assistant is unavailable; current snapshot state cannot be confirmed"
+)
 _ENERGY_DATA_STATUS_HEADER = "X-Butlers-Energy-Data-Status"
 _ENERGY_OMITTED_SENSORS_HEADER = "X-Butlers-Omitted-Sensors"
 
@@ -213,6 +216,8 @@ async def get_entity(
     )
 
     if row is None:
+        if not ha_available:
+            raise HTTPException(status_code=503, detail=_HA_SOURCE_UNAVAILABLE_DETAIL)
         raise HTTPException(status_code=404, detail=f"Entity not found: {entity_id}")
 
     return EntityStateResponse(
@@ -249,6 +254,9 @@ async def list_areas(
         " GROUP BY attributes->>'area_id'"
         " ORDER BY attributes->>'area_id'",
     )
+
+    if not rows and not ha_available:
+        raise HTTPException(status_code=503, detail=_HA_SOURCE_UNAVAILABLE_DETAIL)
 
     return [
         AreaResponse(
@@ -607,6 +615,9 @@ async def get_energy(
                 detail="Invalid 'end' datetime format. Expected ISO 8601.",
             )
 
+    if not await _ha_source_available(pool):
+        raise HTTPException(status_code=503, detail=_HA_SOURCE_UNAVAILABLE_DETAIL)
+
     ha_url, ha_token = await _get_ha_credentials(pool)
     if not ha_url or not ha_token:
         raise HTTPException(
@@ -721,6 +732,9 @@ async def get_energy_top_consumers(
                 status_code=422,
                 detail="Invalid ISO 8601 datetime for 'end'",
             ) from exc
+
+    if not await _ha_source_available(pool):
+        raise HTTPException(status_code=503, detail=_HA_SOURCE_UNAVAILABLE_DETAIL)
 
     ha_url, ha_token = await _get_ha_credentials(pool)
     if not ha_url or not ha_token:
