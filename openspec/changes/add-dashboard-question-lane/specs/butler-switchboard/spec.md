@@ -4,14 +4,15 @@
 
 The Switchboard SHALL classify `dashboard` source-channel messages (the
 owner's floating chat widget) into one of four lanes instead of always
-calling `route_to_butler`: Lane A (data statement/correction), Lane B
-(bug/system report), Lane C (action request), or Lane D (question).
-Lane B SHALL NEVER be routed to a domain butler. Lane D SHALL be answered
-either via `answer_question` (a domain butler answers from its own tools,
-or the system-scope fallback dead-letters until Concierge system-scope
-tools exist) or via `cannot_answer` (dead-letters directly); neither
-Lane D tool SHALL ever route to a domain butler for an ordinary write, and
-`cannot_answer` SHALL NEVER file a QA bug report.
+calling `route_to_butler`: Lane A (data statement/correction) or Lane B
+(bug/system report). Bug/system reports SHALL NEVER be routed to a domain
+butler. The remaining two lanes are Lane C (action request) and Lane D
+(question); Lane D SHALL be answered either via `answer_question` (a
+domain butler answers from its own tools, or the system-scope fallback
+dead-letters until Concierge system-scope tools exist) or via
+`cannot_answer` (dead-letters directly); neither Lane D tool SHALL ever
+route to a domain butler for an ordinary write, and `cannot_answer` SHALL
+NEVER file a QA bug report.
 
 #### Scenario: Lane A — data statement routes with deterministic confirm-loop context
 

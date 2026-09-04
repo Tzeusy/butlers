@@ -101,7 +101,7 @@ A dashboard chat-widget turn SHALL be classified into exactly one of STATEMENT, 
 #### Scenario: An ambiguous dashboard turn yields a clarifying reply, never a best-guess route
 
 - **WHEN** the dashboard classification session cannot confidently place a message into LANE A, B, C, or D
-- **THEN** it SHALL call none of `route_to_butler`, `file_bug_report`, `answer_question`, or `cannot_answer` rather than guessing a target butler
+- **THEN** it SHALL call neither `route_to_butler` nor `file_bug_report` rather than guessing a target butler, and SHALL likewise not call `answer_question` or `cannot_answer` while the turn remains ambiguous
 - **AND** the pipeline's existing dashboard dead-letter path (see the Durable Dashboard Turn Control requirement's failure handling) SHALL capture the turn and reply in-thread asking the owner to clarify, with no route to any domain butler
 
 ### Requirement: SSE Response Streaming
