@@ -53,6 +53,7 @@ def _make_pool(
                 {
                     "status": ha_status,
                     "last_success_at": datetime.now(UTC) if ha_status == "healthy" else None,
+                    "lease_current": ha_status == "healthy",
                 }
                 if ha_status
                 else None

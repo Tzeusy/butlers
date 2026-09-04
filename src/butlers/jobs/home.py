@@ -101,7 +101,7 @@ class EmptyEntitySnapshotError(Exception):
 
 
 _HA_SOURCE_ID = "home_assistant"
-_HA_SOURCE_HEALTH_MAX_AGE = timedelta(minutes=5)
+_HA_SOURCE_HEALTH_MAX_AGE_MINUTES = 5
 
 
 class HASourceUnmeasurableError(Exception):
@@ -133,8 +133,12 @@ async def _require_ha_source_healthy(pool: asyncpg.Pool) -> None:
     leaving a durable ``healthy`` verdict behind indefinitely.
     """
     row = await pool.fetchrow(
-        "SELECT status, last_success_at FROM ha_source_health WHERE source = $1",
+        "SELECT status, last_success_at, "
+        "last_success_at IS NOT NULL "
+        "AND last_success_at >= now() - make_interval(mins => $2) AS lease_current "
+        "FROM ha_source_health WHERE source = $1",
         _HA_SOURCE_ID,
+        _HA_SOURCE_HEALTH_MAX_AGE_MINUTES,
     )
     if row is None:
         raise HASourceUnmeasurableError(
@@ -155,9 +159,7 @@ async def _require_ha_source_healthy(pool: asyncpg.Pool) -> None:
             "timestamp; snapshot reads are unmeasurable",
             last_success_at=None,
         )
-    if last_success_at.tzinfo is None:
-        last_success_at = last_success_at.replace(tzinfo=UTC)
-    if datetime.now(UTC) - last_success_at > _HA_SOURCE_HEALTH_MAX_AGE:
+    if not row["lease_current"]:
         raise HASourceUnmeasurableError(
             "Home Assistant source health lease expired; snapshot reads are "
             "unmeasurable until contact is restored",

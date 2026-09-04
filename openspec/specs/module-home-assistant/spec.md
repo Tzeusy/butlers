@@ -512,6 +512,8 @@ successful WebSocket liveness and REST `/api/states` contact and revoked on
 transport/setup failure, so downstream readers can distinguish "HA is
 reachable" from "the cache merely looks fresh." A persisted healthy verdict
 is a bounded five-minute lease, not an indefinite readiness claim.
+The lease is evaluated against PostgreSQL's clock because PostgreSQL writes
+the contact timestamp.
 
 #### Scenario: Successful WebSocket authentication records health
 

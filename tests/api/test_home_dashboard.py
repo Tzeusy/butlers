@@ -54,7 +54,13 @@ def _app_with_mock_db(app: FastAPI, *, fetch_rows=None, fetchval_result=0, pool_
     mock_pool = AsyncMock()
     mock_pool.fetch = AsyncMock(return_value=fetch_rows or [])
     mock_pool.fetchval = AsyncMock(return_value=fetchval_result)
-    mock_pool.fetchrow = AsyncMock(return_value={"status": "healthy", "last_success_at": _NOW})
+    mock_pool.fetchrow = AsyncMock(
+        return_value={
+            "status": "healthy",
+            "last_success_at": _NOW,
+            "lease_current": True,
+        }
+    )
     mock_pool.execute = AsyncMock(return_value=None)
 
     mock_db = MagicMock(spec=DatabaseManager)
@@ -129,7 +135,7 @@ async def test_snapshot_status_reflects_ha_source_health(app):
     assert resp.json()["ha_source_available"] is False
 
     pool.fetchrow.side_effect = [
-        {"status": "healthy", "last_success_at": _NOW},
+        {"status": "healthy", "last_success_at": _NOW, "lease_current": True},
         {"oldest": None, "newest": None},
     ]
     async with httpx.AsyncClient(
@@ -197,7 +203,11 @@ async def test_dashboard_reads_flag_ha_source_unavailable(app, monkeypatch):
 async def test_energy_snapshot_discovery_fails_closed_during_ha_outage(app):
     """An empty cached sensor list must not bypass the live-source outage signal."""
     _app, pool = _app_with_mock_db(app)
-    pool.fetchrow.return_value = {"status": "error", "last_success_at": _NOW}
+    pool.fetchrow.return_value = {
+        "status": "error",
+        "last_success_at": _NOW,
+        "lease_current": False,
+    }
 
     for path in ("/api/home/energy", "/api/home/energy/top-consumers"):
         async with httpx.AsyncClient(

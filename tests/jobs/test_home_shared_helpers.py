@@ -48,7 +48,11 @@ pytestmark = pytest.mark.unit
 
 def _healthy_row() -> dict[str, Any]:
     """A healthy ``ha_source_health`` row — the default across these tests."""
-    return {"status": "healthy", "last_success_at": datetime.now(UTC)}
+    return {
+        "status": "healthy",
+        "last_success_at": datetime.now(UTC),
+        "lease_current": True,
+    }
 
 
 def _make_pool(
@@ -277,12 +281,24 @@ async def test_read_entity_snapshot_unmeasurable_on_outage():
 
 async def test_require_ha_source_healthy_happy_path():
     """Only a recent healthy status row passes without raising."""
-    pool = _make_pool(fetchrow_return={"status": "healthy", "last_success_at": datetime.now(UTC)})
+    pool = _make_pool(
+        fetchrow_return={
+            "status": "healthy",
+            "last_success_at": datetime.now(UTC),
+            "lease_current": True,
+        }
+    )
     await _require_ha_source_healthy(pool)  # does not raise
+    assert "now() - make_interval(mins => $2)" in pool.fetchrow.await_args.args[0]
+    assert pool.fetchrow.await_args.args[2] == 5
 
     for last_success_at in (None, datetime.now(UTC) - timedelta(minutes=6)):
         stale_pool = _make_pool(
-            fetchrow_return={"status": "healthy", "last_success_at": last_success_at}
+            fetchrow_return={
+                "status": "healthy",
+                "last_success_at": last_success_at,
+                "lease_current": False,
+            }
         )
         with pytest.raises(HASourceUnmeasurableError):
             await _require_ha_source_healthy(stale_pool)

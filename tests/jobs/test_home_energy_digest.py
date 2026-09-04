@@ -55,6 +55,7 @@ def _make_pool(
             return {
                 "status": ha_status,
                 "last_success_at": datetime.now(UTC) if ha_status == "healthy" else None,
+                "lease_current": ha_status == "healthy",
             }
         if "state" in q and "key" in q and args:
             for row in state_rows or []:

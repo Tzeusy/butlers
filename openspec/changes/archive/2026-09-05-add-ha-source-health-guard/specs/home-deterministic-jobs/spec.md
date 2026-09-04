@@ -12,6 +12,8 @@ the Home Assistant module's "HA Source Health Recording" requirement) and
 treat the source as unmeasurable rather than healthy whenever its status is
 not `'healthy'`, no health record exists, no successful-contact timestamp is
 recorded, or the healthy timestamp is older than five minutes.
+Lease age SHALL be evaluated by PostgreSQL against the PostgreSQL-written
+timestamp, not by comparing it with a separate process clock.
 
 #### Scenario: Generic reader guards on source health
 

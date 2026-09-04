@@ -82,8 +82,9 @@ Assistant is reachable. The Home module therefore maintains the single
 `home.ha_source_health` row for `home_assistant`. Successful REST contact or a
 WebSocket pong renews a five-minute health lease; connection, keepalive,
 polling, or post-authentication setup failures mark the row `error`
-immediately. A missing row, an error row, or an expired healthy lease makes
-snapshot-backed reads unmeasurable.
+immediately. PostgreSQL evaluates lease age against its own timestamp. A
+missing row, an error row, or an expired healthy lease makes snapshot-backed
+reads unmeasurable.
 
 Dashboard list/count endpoints retain useful last-known rows where their
 response envelope can carry `ha_source_available=false`. Missing single-item
