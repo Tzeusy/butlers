@@ -1,11 +1,25 @@
 ---
 name: butler-tool-review
 description: Deep audit of every butler's MCP tool surface — tool count per module, historical usage analysis from session data, docstring quality for LLM explainability, failure mode documentation with actionable error messages, and tool group configuration. Use when asked to review butler tools, audit tool counts, check docstring quality, review error messages, find unused tools, or optimize the tool surface. Also use when onboarding a new module to ensure its tools meet quality standards.
+metadata:
+  owner: tze
+  authors:
+    - tze
+    - Claude
+  status: active
+  last_reviewed: "2026-09-05"
 ---
 
 # Butler Tool Review
 
 Comprehensive audit of the MCP tool surface across all butlers. Produces a structured report covering tool inventory, docstring quality, error message quality, and group configuration.
+
+## Support files
+
+- [references/tool-budget.md](references/tool-budget.md) — core/module tool counts and group taxonomy. Load in Phase 1 (inventory) and Phase 6 (group config review). Living catalog — carries its own maintenance contract.
+- [references/quality-patterns.md](references/quality-patterns.md) — before/after fix examples for docstrings and error messages. Load in Phase 2 and Phase 3 when writing up specific issues or fixes.
+- [references/historical-usage-audit.md](references/historical-usage-audit.md) — DB connection details, SQL queries, and result-interpretation rules for Phase 7. Load only when running Phase 7.
+- [references/subagent-prompts.md](references/subagent-prompts.md) — copy-ready dispatch prompts for the Phase 1/2/3/7 subagents. Load when dispatching those subagents.
 
 ## Execution Strategy
 
@@ -107,90 +121,9 @@ See [references/tool-budget.md](references/tool-budget.md) for group taxonomy.
 
 ### Phase 7: Historical Usage Audit
 
-**This phase is critical for removal decisions.** Query the butler's `sessions` table to see which tools the runtime LLM has actually called. Every MCP tool invocation is captured in the JSONB `tool_calls` column via `_ToolCallLoggingMCP` (daemon.py) and persisted by `sessions.complete()`.
+**This phase is critical for removal decisions** — code-level analysis alone cannot tell you whether a tool is actually used. Query the butler's `{schema}.sessions` table (JSONB `tool_calls` column) to see which tools the runtime LLM has actually called. Some tools (`ingest`, `tick`, `route.execute`, `connector.heartbeat`, `backfill.poll`, `backfill.progress`, `trigger`) are called by the daemon or scheduler directly and will NOT appear in session data but are still required — everything else that's LLM-facing MUST show usage to justify its existence.
 
-**Important distinction:** Some tools (e.g. `ingest`, `tick`, `route.execute`, `connector.heartbeat`, `backfill.poll`, `backfill.progress`) are called by the daemon directly, not through the LLM's MCP session. They will NOT appear in session tool_calls but are still required. Tools that are exclusively LLM-facing (memory, calendar, email, state, sessions, schedule, extraction, etc.) MUST show usage here to justify their existence.
-
-#### Database connection
-
-Read `.env.dev` (or `.env.prod` for production) for connection credentials:
-
-```
-POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_SSLMODE
-```
-
-Connect via `psql` with `PGPASSWORD` env var. Sessions live in `{butler_schema}.sessions`.
-
-#### Queries to run
-
-**Tool call frequency (last 30 days):**
-
-```sql
-SELECT
-    tc->>'name' AS tool_name,
-    tc->>'module' AS module,
-    COUNT(*) AS call_count
-FROM {schema}.sessions,
-     jsonb_array_elements(tool_calls) AS tc
-WHERE completed_at > now() - interval '30 days'
-GROUP BY 1, 2
-ORDER BY call_count DESC;
-```
-
-**Last-used date per tool (all time):**
-
-```sql
-SELECT
-    tc->>'name' AS tool_name,
-    tc->>'module' AS module,
-    COUNT(*) AS total_calls,
-    MAX(completed_at) AS last_used
-FROM {schema}.sessions,
-     jsonb_array_elements(tool_calls) AS tc
-GROUP BY 1, 2
-ORDER BY last_used ASC;
-```
-
-**Session volume (for sample size context):**
-
-```sql
-SELECT COUNT(*) AS total_sessions,
-       COUNT(*) FILTER (WHERE completed_at > now() - interval '30 days') AS last_30d
-FROM {schema}.sessions;
-```
-
-Replace `{schema}` with the butler's schema name from `butler.toml` (e.g. `switchboard`, `finance`).
-
-#### Interpreting results
-
-- **Ignore** `command_execution` and `skill` rows — these are runtime internals, not MCP tools.
-- **Ignore** tool name variants with `mcp__` or `{butler}_` prefixes — these are the same tools under different naming conventions. Consolidate counts.
-- **Daemon-called tools** (never appear in session data but still required):
-  - `ingest`, `tick`, `route.execute` — daemon dispatches these directly
-  - `connector.heartbeat`, `backfill.poll`, `backfill.progress` — connector-facing, called by external connectors
-  - `trigger` — called by the scheduler loop
-- **Safe to remove** if a tool has:
-  - Zero calls over 30+ days AND
-  - Is NOT in the daemon-called list above AND
-  - Is NOT newly added (check git log for when the tool was introduced — `git log --all -1 --format=%ai -- {tool_source_file}`)
-
-#### Output format
-
-```
-## Historical Usage (last 30 days, N sessions sampled)
-
-| Tool | Module | Calls | Last Used | Verdict |
-|---|---|---:|---|---|
-| route_to_butler | core | 1292 | 2026-04-07 | KEEP — primary function |
-| memory_store_fact | memory | 0 | never | REMOVE — never called, not daemon-internal |
-| ingest | core | 0 | n/a | KEEP — daemon-called, not LLM-facing |
-
-### Dead tools (0 calls, safe to remove)
-- email_send_message, email_reply_to_thread, ...
-
-### Removal savings
-- N tools removable → estimated ~X token savings
-```
+See [references/historical-usage-audit.md](references/historical-usage-audit.md) for the DB connection details, the exact SQL queries to run, result-interpretation rules (what to ignore, what counts as safe-to-remove), and the output format.
 
 ### Phase 8: MCP Connection Reliability
 
@@ -209,7 +142,7 @@ For each butler, report:
 
 ### Phase 9: Report
 
-Synthesize into a single structured report. **Historical usage data (Phase 7) should be the primary driver of removal recommendations** — code-level analysis alone cannot tell you whether a tool is actually used.
+Synthesize into a single structured report. **Historical usage data (Phase 7) should be the primary driver of removal recommendations** — see Phase 7 for why.
 
 ```markdown
 ## Tool Surface Audit Report
@@ -238,56 +171,4 @@ Tools with 0 calls that are safe to remove. Group by module for clean removal:
 
 ## Subagent Prompt Templates
 
-**Inventory agent (per butler):**
-```
-Read roster/{butler}/butler.toml. List all enabled modules with their
-configured groups. For each module, count the tools that would be
-registered given the groups config. Report as a markdown table.
-Core daemon tools: see the UNIVERSAL/DOMAIN/MESSENGER/SWITCHBOARD
-constants in src/butlers/daemon.py.
-```
-
-**Docstring audit agent (per module):**
-```
-Read {module_file}. For each @mcp.tool() or @_tool() decorated function,
-assess the docstring against these criteria:
-1. Clear purpose line (first sentence)
-2. All parameters documented with types and valid values
-3. Return schema described
-4. LLM guidance on when to use this tool vs alternatives
-Rate each GOOD/NEEDS_WORK/MISSING. List specific issues per tool.
-Report as a markdown table.
-```
-
-**Error audit agent (per module):**
-```
-Read {module_file}. For each tool function, find all error return paths
-({"status": "error"}, raise, except blocks). For each error:
-1. Is the message actionable? (tells LLM what to fix)
-2. Is it specific? (names the bad param/value)
-3. Does it indicate retryability?
-4. Does it avoid bare str(exc) without context?
-Rate each GOOD/BAD. Report as a markdown table with the error path
-description and specific issues.
-```
-
-**Historical usage audit agent (per butler):**
-```
-Connect to the butler's database using credentials from .env.dev
-(POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER, POSTGRES_PASSWORD).
-Run the following queries against the {schema}.sessions table:
-
-1. Tool call frequency (last 30 days):
-   SELECT tc->>'name', tc->>'module', COUNT(*)
-   FROM {schema}.sessions, jsonb_array_elements(tool_calls) AS tc
-   WHERE completed_at > now() - interval '30 days'
-   GROUP BY 1, 2 ORDER BY 3 DESC;
-
-2. Session volume:
-   SELECT COUNT(*), COUNT(*) FILTER (WHERE completed_at > now() - interval '30 days')
-   FROM {schema}.sessions;
-
-Report the raw results. Ignore 'command_execution' and 'skill' rows
-(runtime internals). Consolidate mcp__{butler}__ and {butler}_ prefixed
-tool names with their bare equivalents.
-```
+Copy-ready dispatch prompts for the Phase 1 (inventory), Phase 2 (docstring), Phase 3 (error), and Phase 7 (historical usage) subagents live in [references/subagent-prompts.md](references/subagent-prompts.md) — load it when dispatching a subagent for those phases.

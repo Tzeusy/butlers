@@ -1,6 +1,13 @@
 ---
 name: butler-test-condensation
 description: Guide for discovering, analyzing, and pruning the Butlers test suite. Use when working on test condensation beads (Phase 1 epic bu-rhztl and Phase 2 epic bu-hg8rl both CLOSED; a Phase 3 maintenance cycle was drafted 2026-06-21 but never filed), assessing test bloat, identifying pruning targets, or rewriting tests to be contract-driven. Triggers on test reduction, test pruning, test consolidation, or condensation tasks for this project. Also use when a fresh session needs to assess test health, create new condensation beads, or resume in-progress condensation work.
+metadata:
+  owner: tze
+  authors:
+    - tze
+    - Claude
+  status: active
+  last_reviewed: "2026-09-05"
 ---
 
 # Butler Test Condensation
@@ -9,45 +16,50 @@ Systematic reduction of the Butlers test suite to ~2,000 contract-driven tests.
 Each surviving test must trace to an architectural invariant, an RFC wire
 contract, or an OpenSpec capability.
 
+## Reference Files
+
+| File | Load when |
+|---|---|
+| [references/discovery.md](references/discovery.md) | Measuring current test counts, running staleness/scoped/smell-detection commands, or verifying post-condensation |
+| [references/classification.md](references/classification.md) | Deciding keep/delete/rewrite for a specific test — decision tree + mock-assertion litmus test |
+| [references/domains.md](references/domains.md) | Working a specific domain bead — per-domain targets, file inventories, condensation strategy |
+| [references/beads.md](references/beads.md) | Checking the epic/bead dependency graph, bead IDs, or bead lifecycle commands |
+
 ## Epic History
 
-- **Phase 1 epic `bu-rhztl`** (2026-04-04 → 2026-04-06, **CLOSED**): condensed
-  13,675 → 2,196 tests across 10 PRs. Three-tier architecture established.
-- **Phase 2 epic `bu-hg8rl`** (2026-05-03 → 2026-05-05, **CLOSED**): "all steps
-  complete." Children bu-9riic (Tier 1 backfill), bu-gg4y1 (api), bu-m564i
-  (chronicler) all done. Suite was ~3,700 at open.
-- **Phase 3 maintenance cycle (drafted 2026-06-21, NEVER FILED)**: at that
-  snapshot the suite had **DOUBLED** to **7,494 `def test_` functions / 8,107
-  collected across 657 files** — almost entirely legitimate feature coverage,
-  not bloat. A disciplined moderate pass found only **~1,050–1,250 SAFELY
-  removable**. **No Phase 3 epic was ever opened**, so that trim never ran and
-  the suite kept growing. Re-measured **2026-08-24**: **12,322 `def test_`
-  across 1,006 files** in `tests/` (+64% on the 2026-06-21 snapshot), plus
-  **3,956** in `roster/`; **15,267 collected** under the CI selection. Do NOT
-  over-trim chasing a target number; most growth is real behavior. Per-domain
-  counts + the migrations-boilerplate lever live in
-  [references/domains.md](references/domains.md).
+Full bead graphs and lifecycle commands live in
+[references/beads.md](references/beads.md); current counts live in
+[references/domains.md](references/domains.md) and
+[references/discovery.md](references/discovery.md) — never trust hardcoded
+numbers here.
+
+- **Phase 1** (`bu-rhztl`, CLOSED 2026-04-06): 13,675 → 2,196 tests, 10 PRs.
+  Established the three-tier architecture below.
+- **Phase 2** (`bu-hg8rl`, CLOSED 2026-05-05): ~3,700 tests, "all steps complete."
+- **Phase 3** (drafted 2026-06-21, **NEVER FILED**): suite had doubled to
+  7,494; only ~1,050–1,250 was safely removable — most growth was real
+  feature coverage. No epic was ever opened, so the trim never ran and the
+  suite kept growing. Re-measure before filing anything.
 
 > **Suite-doubling cadence**: the suite reliably ~doubles between condensation
-> cycles on real feature work. Budget a recurring (≈monthly) maintenance pass,
-> but expect the safely-removable fraction to be small (~15%).
+> cycles, yet the safely-removable fraction stays small (~15%). Budget a
+> recurring (≈monthly) pass; do not over-trim chasing a number.
 
 ## Before You Start
 
-1. **Rediscover current state** — never trust hardcoded counts in this skill:
-   ```bash
-   # Anchored so a commented-out or in-string `def test_` cannot inflate the count.
-   CURRENT=$(grep -rEc '^[[:space:]]*(async[[:space:]]+)?def[[:space:]]+test_' tests/ --include='*.py' | awk -F: '{sum+=$2} END {print sum}')
-   echo "Current test count in tests/: $CURRENT"
-   echo "  (2026-08-24 measured 12,322; 2026-06-21 snapshot 7,494; Phase 1 closed at 2,196)"
-   ```
+1. **Rediscover current state** — run the staleness check in
+   [references/discovery.md](references/discovery.md); never trust hardcoded
+   counts in this skill.
 2. **Check epic status**: `bd list --status all` — Phase 1 (`bu-rhztl`) and
-   Phase 2 (`bu-hg8rl`) are both CLOSED. **No Phase 3 epic exists**; the 2026-06-21
-   proposal in [references/beads.md](references/beads.md) was never filed. Do not
-   file one casually — READY beads auto-trigger the autonomous fleet.
-3. **Read your bead**: `bd show <bead-id>` for targets and acceptance criteria
-4. **Load doctrine**: read `about/heart-and-soul/` for invariants, relevant RFCs in `about/legends-and-lore/`
-5. **Run scoped discovery** on your domain — see [references/discovery.md](references/discovery.md)
+   Phase 2 (`bu-hg8rl`) are both CLOSED. **No Phase 3 epic exists**; the
+   2026-06-21 proposal in [references/beads.md](references/beads.md) was
+   never filed. Do not file one casually — READY beads auto-trigger the
+   autonomous fleet.
+3. **Read your bead**: `bd show <bead-id>` for targets and acceptance criteria.
+4. **Load doctrine**: `about/heart-and-soul/` for invariants, relevant RFCs in
+   `about/legends-and-lore/`.
+5. **Run scoped discovery** on your domain — see
+   [references/discovery.md](references/discovery.md).
 
 If your measured counts differ >10% from this skill's numbers, update
 [references/domains.md](references/domains.md) before starting work.
@@ -62,30 +74,20 @@ If your measured counts differ >10% from this skill's numbers, update
    before deleting any call assertion. When in doubt, KEEP.
 2. **Some test files are imported by other test files.** `DELETE_FILE` on a
    shared helper breaks its importers and reds the suite. Before deleting ANY
-   file, confirm nothing imports it:
-   ```bash
-   base=$(basename "$FILE" .py)
-   grep -rn "import .*\b$base\b\|from .*\b$base\b import" tests/ --include='*.py'
-   ```
-   Never delete: any `conftest.py`, any `__init__.py`,
-   `tests/modules/test_module_registry.py`, `tests/modules/test_module_pipeline.py`,
-   `tests/modules/memory/_test_helpers.py`,
-   `tests/e2e/{envelopes,scenarios,reporting,scoring,benchmark}.py`.
+   file, run the shared-helper check in
+   [references/discovery.md](references/discovery.md#shared-helper-detection-run-before-any-delete_file)
+   and confirm nothing imports it. Never delete `conftest.py`, `__init__.py`,
+   or any file on the never-delete list there.
 
 ## Resuming Mid-Epic
 
 If beads are already in-progress or completed:
 
 ```bash
-# 1. What's done, what's available?
-bd list --parent <epic-id>
+bd list --parent <epic-id>                                             # what's done, available?
 bd ready
-
-# 2. Check predecessor's progress on your domain
-git log --oneline -- tests/YOUR_DOMAIN/ | head -10
-
-# 3. Measure current state of your domain
-grep -rc 'def test_' tests/YOUR_DOMAIN --include='*.py' | awk -F: '{sum+=$2} END {print sum}'
+git log --oneline -- tests/YOUR_DOMAIN/ | head -10                     # predecessor's progress
+grep -rc 'def test_' tests/YOUR_DOMAIN --include='*.py' | awk -F: '{sum+=$2} END {print sum}'  # current count
 ```
 
 Phases 1 (`bu-rhztl`) and 2 (`bu-hg8rl`) are closed. For Phase 3, any Tier 1
@@ -119,15 +121,14 @@ docstring cites its RFC/principle. **15 invariants:**
 
 ### Tier 2: Wire Contracts (~500-800 tests)
 
-RFC-defined schemas and state machines:
-- ingest.v1 envelope schema (RFC 0003)
-- route inbox state machine: accepted->processing->processed/errored (RFC 0001)
-- Module ABC contract: register_tools, migrations, on_startup/on_shutdown (RFC 0002)
-- Migration chain execution (schema outcomes, not SQL strings)
-- API response contracts (Pydantic schema validation, not field-by-field)
-- Cross-butler briefing view + 5 guardrails (RFC 0010)
-- Insight delivery: candidate schema, dedup key format, cooldown, anti-spam (RFC 0011)
-- Finance transaction model: tiered dedup, CRUD, soft-delete-only (RFC 0012)
+RFC-defined schemas and state machines: ingest.v1 envelope (RFC 0003); route
+inbox state machine accepted->processing->processed/errored (RFC 0001); Module
+ABC contract — register_tools, migrations, on_startup/on_shutdown (RFC 0002);
+migration chain execution (schema outcomes, not SQL strings); API response
+contracts (Pydantic schema validation, not field-by-field); cross-butler
+briefing view + 5 guardrails (RFC 0010); insight delivery — candidate schema,
+dedup key format, cooldown, anti-spam (RFC 0011); finance transaction model —
+tiered dedup, CRUD, soft-delete-only (RFC 0012).
 
 ### Tier 3: Capability Behavior (~800-1200 tests)
 
@@ -161,47 +162,18 @@ Before marking a bead complete:
 6. **Lint**: `uv run ruff check tests/YOUR_DOMAIN --output-format concise`
 7. **Commit documents delta**: `"Condense X tests: N → M (details of what was removed)"`
 
-**CI-gate reality** (what the hosted workflow actually runs):
-- `check-preflight` runs the lock, lint, format, SQL-safety, shard-manifest,
-  and smoke/release-evidence checks.
-- Five `check-unit-N` jobs and five `check-integration-N` jobs run the
-  manifest-backed unit and integration selections independently; integration
-  shards retain Docker/testcontainers.
-- The legacy `check` job is a fail-closed fan-in over preflight and every shard,
-  and combines their coverage artifacts.
-- The active merge-queue ruleset requires `check`, `guards`, and `frontend`;
-  `frontend-e2e` remains advisory. PR jobs are path-filtered, while the queue's
-  `merge_group` run is the terminal broad gate against the exact tree to land.
-- Local pre-merge gate = ruff + the non-integration subset + `--collect-only`.
-
-**Verifying in a worktree** (a fresh worktree has no `.venv`): give it a **real**
-one. Do not symlink the main repo's venv — this step used to say to, and that is
-what left three worktrees running on main's editable-install `.pth`, so their
-`import butlers` resolved to main's `src/` and their local runs validated main's
-code while looking like they validated the branch diff (bu-1redj). The root
-`conftest.py` now refuses to run in that state.
-```bash
-uv sync --dev                                          # real per-worktree venv
-uv run --no-sync pytest tests/YOUR_DOMAIN -q --tb=short  # --no-sync: no re-sync churn
-```
+CI actually runs a sharded fan-in — `check-preflight` plus five `check-unit-N`
+and five `check-integration-N` shards, fanned into a fail-closed `check` job;
+the merge queue's `merge_group` run against the exact landing tree is the
+terminal gate. Full job breakdown, the merge-queue ruleset, and the
+worktree-venv gotcha (never symlink the main repo's `.venv` — bu-1redj) live in
+[references/discovery.md](references/discovery.md#ci-gate-structure) and
+[references/discovery.md](references/discovery.md#post-condensation-verification).
 
 ## Updating OpenSpec When Tests Reveal Gaps
 
-During condensation, you may find tests that validate behavior NOT in any spec:
-- If the behavior is essential (users rely on it) → create an OpenSpec change to document it
-- If the behavior is an implementation detail → delete the test
-- If the spec contradicts the test → update the spec to match current behavior
-
-Document your decision in a commit message or bead comment.
-
-## Domain-Specific Guidance
-
-[references/domains.md](references/domains.md) — per-domain targets, file inventories, strategies.
-
-## Test Classification Decision Matrix
-
-[references/classification.md](references/classification.md) — how to decide keep/delete/rewrite for any test.
-
-## Beads Epic
-
-[references/beads.md](references/beads.md) — dependency graph, bead IDs, lifecycle.
+A test may validate behavior not in any spec. If it's essential (users rely on
+it), create an OpenSpec change to document it; if it's an implementation
+detail, delete the test; if the spec contradicts the test, update the spec to
+match current behavior. Document your decision in a commit message or bead
+comment.

@@ -1,6 +1,11 @@
 ---
 name: adding-connectors-and-modules
 description: Guide for adding new external service connectors and modules to the Butlers framework. Covers the full integration pattern — account registry, module (MCP tools), connector (background ingestion), and dashboard API. Use when planning, speccing, or implementing a new external service integration (e.g., Steam, Spotify, Discord, WhatsApp). Triggers on "add a connector", "new module", "integrate with", "new external service", "connector spec", "module spec".
+metadata:
+  owner: tze
+  authors: [Claude]
+  status: active
+  last_reviewed: "2026-09-05"
 ---
 
 # Adding Connectors & Modules
@@ -104,6 +109,12 @@ Use `/opsx:ff` to fast-forward artifact creation:
 ```
 
 This creates: proposal → design → specs (one per capability) → tasks.
+
+## Codex Adapter
+
+[`agents/openai.yaml`](agents/openai.yaml) — Codex-specific adapter metadata (display name,
+short description, default prompt). Load/update it only if you change this skill's name,
+description, or purpose, so the Codex-facing copy stays in sync.
 
 ## Common Gotchas
 

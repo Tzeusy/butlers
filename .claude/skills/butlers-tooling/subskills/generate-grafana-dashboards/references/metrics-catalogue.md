@@ -1,7 +1,24 @@
 # Butlers Metrics Catalogue
 
-All metric names **verified against live Prometheus** (`https://prometheus.parrot-hen.ts.net`).
-Last verified: 2026-03-03. Always re-query Prometheus before generating — new metrics may have been added.
+Living catalog of verified metric names, trace span names/tags, and label sets for this
+project's OTel pipeline. All entries verified against live Prometheus
+(`https://prometheus.parrot-hen.ts.net`) and Tempo. Last verified: 2026-03-03.
+
+## Maintenance contract (read this first)
+
+Always re-query Prometheus/Tempo before generating a dashboard — this catalog can lag new
+instrumentation. When discovery (Step 1 in `SKILL.md`) turns up a metric, span, or label not
+listed here:
+
+1. Confirm it against the live source (Prometheus `label_values` query or Tempo tag search)
+   before trusting it.
+2. **Append an entry in the matching section below**, in the existing table format (name,
+   type, labels, description), plus an update to "Last verified" with today's date.
+3. If a listed metric/span no longer appears live, do not delete it silently — note it as
+   unconfirmed with the date, then drop it one revision later once a second check confirms
+   it is gone.
+
+Do the write-back in the same change that surfaced the fact, not as follow-up work.
 
 Quick discovery query:
 ```
@@ -180,16 +197,8 @@ butlers.switchboard.message
 
 ### Tempo Discovery Commands
 
-```bash
-# List available trace tags
-kubectl -n lgtm exec lgtm-tempo-0 -- wget -qO- 'http://localhost:3200/api/search/tags'
-# Get values for a tag
-kubectl -n lgtm exec lgtm-tempo-0 -- wget -qO- 'http://localhost:3200/api/search/tag/butler.name/values'
-# Search traces
-kubectl -n lgtm exec lgtm-tempo-0 -- wget -qO- 'http://localhost:3200/api/search?limit=20'
-# TraceQL search
-kubectl -n lgtm exec lgtm-tempo-0 -- wget -qO- 'http://localhost:3200/api/search?q=%7Bname%3D%22butler.llm_session%22%7D&limit=10'
-```
+See `SKILL.md` § Key endpoints for the `kubectl exec` commands (tag list, tag values,
+search, TraceQL search) — kept there as the single copy to avoid drift.
 
 ---
 

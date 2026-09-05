@@ -1,4 +1,13 @@
-"""Shared GitHub CLI helpers for the butler-qa-pr-review skill."""
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
+"""Shared GitHub CLI helpers for the butler-qa-pr-review skill.
+
+Imported library module (no shebang/__main__); relies only on the stdlib and the
+gh CLI. It carries an empty PEP 723 block because audit_skill.py treats every
+top-level scripts/*.py as an entry point.
+"""
 
 from __future__ import annotations
 

@@ -25,7 +25,7 @@ Include these values in your notes and final handoff when available:
 ## Source Of Truth
 
 Use the repo’s QA follow-up prompt contract as the mental model for this work:
-[src/butlers/core/qa/prompts.py](../../../src/butlers/core/qa/prompts.py)
+[src/butlers/core/qa/prompts.py](../../../../../../src/butlers/core/qa/prompts.py)
 
 That code is the project-specific guidance for how QA review follow-up work is
 expected to behave.

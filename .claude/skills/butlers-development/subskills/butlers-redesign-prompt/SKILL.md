@@ -1,17 +1,21 @@
 ---
 name: butlers-redesign-prompt
 description: Orchestrate a UX redesign of a Butlers dashboard page (or sub-page set) using /project-direction as the spec+beads engine, with redesign-specific upfront phases for vision capture, asset ingestion, impact analysis, backend-contract derivation, LLM-cost feasibility, manifesto/identity preservation, and a th-design design-bar audit. The binding design language is the Dispatch spec (openspec/specs/dashboard-design-language/spec.md); bundles live under pr/overview/ and resolve via references/bundle-registry.md. Use when asked to redesign a dashboard page, with or without a Claude Design bundle. Triggers on "redesign the X page", "plan the Y redesign", "integrate the redesign bundle", "what would it take to ship the SLUG redesign", "design language integration for AREA".
+metadata:
+  owner: tze
+  authors: [tze, Claude]
+  status: active
+  last_reviewed: "2026-09-05"
 ---
 
 # Butlers Redesign Orchestrator
 
-Plan the integration of a Claude Design redesign bundle into the live Butlers stack. This skill is a thin orchestrator that captures user vision, runs four redesign-specific phases via independent subagents, synthesises a brief, and then hands the brief to `/project-direction` so its existing Phase 1–3 (+ R1–R4+ reconciliation) machinery does the spec and beads work. The reason this skill exists is that `/project-direction` is generic; a Butlers redesign has a fixed input (a bundle under `pr/overview/`, or bundle-less origination from the Dispatch spec), a fixed risk profile (LLM cost blowouts, manifesto drift, vision loss in mechanical porting), and a fixed output shape that benefit from pre-baked scaffolding.
+Plan the integration of a Claude Design redesign bundle into the live Butlers stack. This skill is a thin orchestrator: it captures user vision, runs four redesign-specific phases via independent subagents, synthesises a brief, then hands the brief to `/project-direction` so its existing Phase 1–3 (+ R1–R4+ reconciliation) machinery does the spec and beads work. `/project-direction` is generic; a Butlers redesign has a fixed input (a bundle under `pr/overview/`, or bundle-less origination from the Dispatch spec), a fixed risk profile (LLM cost blowouts, manifesto drift, vision loss in mechanical porting), and a fixed output shape — all of which benefit from pre-baked scaffolding.
 
 Two artifacts bind every run: the **Dispatch design language spec**
-(`openspec/specs/dashboard-design-language/spec.md`) is the project design system, and the
+(`openspec/specs/dashboard-design-language/spec.md`) is the project design system; the
 **`/th-design` design bar** supplies the generic UX quality bar wherever the spec is silent.
-Where they conflict, the spec wins — this is exactly th-design's own "project design system
-overrides biases" rule.
+On conflict the spec wins — th-design's own "project design system overrides biases" rule.
 
 ## Hard Rules
 
@@ -169,20 +173,28 @@ Next:
 
 Do not run `/beads-coordinator`. The skill's contract is planning + handoff, not execution.
 
-## Reference and asset files
+## Support files
 
-| Path | Type | When to read | Purpose |
-|------|------|--------------|---------|
-| `references/input-gathering.md` | reference | Phase A | Subagent prompt for asset ingestion + sub-page enumeration + design-token extraction. |
-| `references/impact-analysis.md` | reference | Phase B | Subagent prompt for current-state baseline + per-component classification + stack delta + `## Butlers touched` table. |
-| `references/backend-contract.md` | reference | Phase C | Subagent prompt for deriving API contracts with `evidence` column. Fixture-only rows → `unclear`. |
-| `references/butlers-guardrails.md` | reference | Phase D | Three-pass subagent prompt: LLM-cost feasibility (intent gate + pricing-grounded) + manifesto/identity preservation (scoped via Phase B) + th-design design-bar audit against the Dispatch spec. |
-| `references/llm-pricing.md` | reference | Phase D | Per-MTok rate table, cadence reference, sanity-default per-affordance rows, verdict thresholds. Re-verified date inside. |
-| `references/bundle-registry.md` | reference | Phase 0 | Slug-to-folder map + bundle contract + VISION.md authoring guide. Skill source-of-truth for resolution + toolkit refusal. |
-| `references/dispatch-kit/` | reference | Phases A–E, bundle-less mode | Dispatch execution kit: JSX patterns, page recipes, paste-ready tokens, 12-item pre-merge checklist. |
-| `assets/brief-template.md` | asset | Phase E | Raw markdown template. `cp` to `docs/redesigns/YYYY-MM-DD-SLUG-brief[-vN].md` and substitute placeholders. **Never load into context; copy to disk.** |
-| `openspec/specs/dashboard-design-language/spec.md` (repo-level) | external | All phases | The Dispatch spec — the binding design language and project design system. Overrides generic design biases. |
-| `~/.claude/skills/th-design/subskills/design-bar/SKILL.md` (global) | external | Phase D | Generic design quality bar: default biases, UX walkthrough, definition of done. Applies wherever the Dispatch spec is silent. |
+Read `references/bundle-registry.md` first (Phase 0 needs it before anything else runs); load the rest as their phase comes up.
+
+- [`references/bundle-registry.md`](references/bundle-registry.md) — Phase 0: slug-to-folder map, bundle contract, VISION.md authoring guide. Skill source-of-truth for resolution + toolkit refusal.
+- [`references/input-gathering.md`](references/input-gathering.md) — Phase A subagent prompt: asset ingestion + sub-page enumeration + design-token extraction.
+- [`references/impact-analysis.md`](references/impact-analysis.md) — Phase B subagent prompt: current-state baseline + per-component classification + stack delta + `## Butlers touched` table.
+- [`references/backend-contract.md`](references/backend-contract.md) — Phase C subagent prompt: derives API contracts with an `evidence` column; fixture-only rows → `unclear`.
+- [`references/butlers-guardrails.md`](references/butlers-guardrails.md) — Phase D subagent prompt: three passes — LLM-cost feasibility (intent gate + pricing-grounded), manifesto/identity preservation (scoped via Phase B), th-design design-bar audit against the Dispatch spec.
+- [`references/llm-pricing.md`](references/llm-pricing.md) — Phase D: per-MTok rate table, cadence reference, sanity-default per-affordance rows, verdict thresholds. Re-verified date inside.
+- [`assets/brief-template.md`](assets/brief-template.md) — Phase E: raw markdown template. `cp` to `docs/redesigns/YYYY-MM-DD-SLUG-brief[-vN].md` and substitute placeholders. **Never load into context; copy to disk.**
+- **Dispatch kit** (`references/dispatch-kit/`) — Phases A–E and bundle-less mode: portable Dispatch execution material (JSX patterns, page recipes, paste-ready tokens, pre-merge checklist). Start at [`README.md`](references/dispatch-kit/README.md):
+  - [`KICKOFF_PROMPT.md`](references/dispatch-kit/KICKOFF_PROMPT.md) — paste at the top of a fresh redesign chat.
+  - [`PATTERNS.md`](references/dispatch-kit/PATTERNS.md) — concrete JSX snippets per Dispatch primitive.
+  - [`RECIPES.md`](references/dispatch-kit/RECIPES.md) — one recipe per high-priority page.
+  - [`CHECKLIST.md`](references/dispatch-kit/CHECKLIST.md) — 12-item review list, run before merging.
+  - [`IMPLEMENTATION.md`](references/dispatch-kit/IMPLEMENTATION.md) — overview-page-specific build recipe.
+
+Two external, repo/global docs bind every phase but live outside this package — read in place, do not copy in:
+
+- `openspec/specs/dashboard-design-language/spec.md` (repo-level) — the Dispatch spec: the binding design language and project design system. Overrides generic design biases. All phases.
+- `~/.claude/skills/th-design/subskills/design-bar/SKILL.md` (global) — generic design quality bar: default biases, UX walkthrough, definition of done. Applies wherever the Dispatch spec is silent. Phase D.
 
 ## Common failure modes
 

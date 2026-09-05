@@ -1,5 +1,19 @@
 # Tool Budget Reference
 
+## Maintenance contract (read this first)
+
+This file is a living catalog of per-module tool/group counts — it goes
+stale whenever a module gains, removes, or regroups tools. Whenever an audit
+(or any change to `register_tools()`) finds a count here that no longer
+matches the code:
+
+1. Update the affected row(s) in the same change — don't defer as follow-up.
+2. If a module crosses the 10-tool threshold (gains or loses group support),
+   move it between the "Group Taxonomy" and "Modules Without Group Support"
+   tables.
+3. If core tool constants (`UNIVERSAL_CORE_TOOL_NAMES`, etc.) change in
+   `src/butlers/daemon.py`, update the "Core Tool Groups" tables to match.
+
 ## Why Tool Count Matters
 
 Every registered MCP tool costs tokens at discovery time and degrades model performance. Smaller models (gpt-5.4-mini) degrade significantly above 50 tools. Target: 30-50 tools per butler.

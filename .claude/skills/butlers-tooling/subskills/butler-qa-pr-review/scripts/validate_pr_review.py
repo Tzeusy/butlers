@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Validate Butler QA PR review completion conditions."""
 
 from __future__ import annotations
@@ -15,7 +19,10 @@ from _github import fetch_pr_threads, fetch_required_checks, normalize_repo
 # session_link_guard.py is a repo-root script (scripts/), not a package under
 # this skill directory. Import it the same way tests/scripts/*.py do: resolve
 # the repo root relative to this file and add its scripts/ dir to sys.path.
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+# This file lives at
+# <root>/.claude/skills/butlers-tooling/subskills/butler-qa-pr-review/scripts/
+# so the repo root is six parents up (parents[6]).
+_REPO_ROOT = Path(__file__).resolve().parents[6]
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 from session_link_guard import scan_sources  # noqa: E402
 

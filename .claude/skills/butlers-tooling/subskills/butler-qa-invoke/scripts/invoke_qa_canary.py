@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Inject a synthetic QA canary and wait for it to reach unfixable status."""
 
 from __future__ import annotations

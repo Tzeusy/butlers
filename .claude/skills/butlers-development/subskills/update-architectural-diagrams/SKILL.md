@@ -7,6 +7,11 @@ description: >-
   or update one diagram via /excalidraw-diagram. Use when architecture has
   changed, new butlers or modules have been added, or the user asks to refresh,
   regenerate, or update architectural diagrams.
+metadata:
+  owner: tze
+  authors: [tze, Claude]
+  status: active
+  last_reviewed: "2026-09-05"
 ---
 
 # Update Architectural Diagrams
@@ -25,8 +30,7 @@ instructs its worker to use `/excalidraw-diagram` to create or update one
 
 ## Diagram Catalog
 
-The canonical set of diagrams lives in `docs/diagrams/`. The numbering
-convention groups diagrams by concern:
+Numbering convention, grouped by concern:
 
 | Prefix | Concern | Typical contents |
 |--------|---------|-----------------|
@@ -42,59 +46,45 @@ convention groups diagrams by concern:
 
 ### Phase 1: Survey Current State
 
-Gather these inputs in parallel:
+Gather in parallel:
 
-1. **Roster inventory** — `ls roster/` then read each `butler.toml` and
-   first ~30 lines of `MANIFESTO.md`. Capture: name, port, modules,
-   schedule tasks, and one-line purpose.
-
-2. **Core components** — `ls src/butlers/core/` and `ls src/butlers/modules/`.
-   Note any new files or removed files vs. what the existing diagrams cover.
-
+1. **Roster** — `ls roster/`, then each `butler.toml` + first ~30 lines of
+   `MANIFESTO.md`. Capture: name, port, modules, schedule tasks, one-line purpose.
+2. **Core** — `ls src/butlers/core/` and `ls src/butlers/modules/`. Note
+   files added/removed vs. what existing diagrams cover.
 3. **Dashboard routers** — `ls src/butlers/api/routers/` and
    `ls roster/*/api/router.py`. Count core and butler-specific routers.
-
-4. **Connectors** — `ls src/butlers/connectors/` or scan for connector
-   directories. Note any new or removed connectors.
-
-5. **Existing diagrams** — `ls docs/diagrams/*.excalidraw` and record
-   which files already exist and their names.
-
-6. **Specs** — `ls openspec/specs/` for reference material to cite in
-   bead descriptions.
+4. **Connectors** — `ls src/butlers/connectors/` (or scan for connector
+   dirs). Note new/removed connectors.
+5. **Existing diagrams** — `ls docs/diagrams/*.excalidraw`; record what
+   already exists and its naming.
+6. **Specs** — `ls openspec/specs/` for reference material to cite in bead
+   descriptions.
 
 ### Phase 2: Diff and Decide
 
-Compare the survey results against the diagram catalog above:
-
 | Situation | Action |
 |-----------|--------|
-| New butler added to roster, no `04x-` diagram | Create a new `04x-` child bead |
-| Existing butler's modules/schedule changed | Create an update child bead for its `04x-` diagram |
-| New core component (e.g., new file in `src/butlers/core/`) | Create or update a `06x-` child bead |
-| New dashboard router | Update `07a-` and possibly `07b-` child beads |
-| New connector | Update `05-` child bead |
-| Butler removed from roster | Create a child bead to remove its `04x-` diagram |
-| Diagram exists and nothing changed | Skip — no child bead needed |
-| System topology changed (ports, new butler category) | Update `01-` child bead |
+| New butler added, no `04x-` diagram | Create a `04x-` child bead |
+| Existing butler's modules/schedule changed | Update child bead for its `04x-` diagram |
+| New core component (new file under `src/butlers/core/`) | Create/update a `06x-` child bead |
+| New dashboard router | Update `07a-` and possibly `07b-` |
+| New connector | Update `05-` |
+| Butler removed from roster | Child bead to remove its `04x-` diagram |
+| Diagram exists, nothing changed | Skip — no child bead |
+| System topology changed (ports, new butler category) | Update `01-` |
 
-**Always regenerate `01-` (system topology)** — it is the map of the whole
-system and should reflect the current roster.
+**Always regenerate `01-`** (system topology) — it must reflect the current
+roster. **Always regenerate `02-`** (butler spec) if core infra or the module
+interface changed.
 
-**Always regenerate `02-` (butler spec)** — if core infrastructure or the
-module interface changed.
-
-For diagrams that need updating vs. creating from scratch: the child bead
-description should note the existing file path and instruct the worker to
-read the existing diagram first and evolve it rather than starting from
-zero.
+For updates (vs. from-scratch): note the existing file path in the bead and
+instruct the worker to read it first and evolve rather than restart.
 
 ### Phase 3: Craft Child Beads
 
-For each diagram that needs creation or update, write a child bead under
-the epic. Follow the `/beads-writer` quality standards.
-
-#### Bead Template (adapt per diagram)
+One child bead per diagram needing creation/update, under the epic. Follow
+`/beads-writer` quality standards.
 
 ```
 Title:  "Diagram: <concise diagram subject>"
@@ -125,91 +115,34 @@ Acceptance criteria:
 Estimate: 60  (minutes)
 ```
 
-#### Required Elements per Diagram Category
-
-**01 — System topology:**
-- All butlers with port numbers
-- All connectors as external processes
-- Data flow arrows: ingress, egress, persistence
-- PostgreSQL with schema isolation
-- LLM runtimes as ephemeral subprocesses
-- Dashboard gateway
-- Color legend (butlers=blue, connectors=green, DB=orange,
-  LLM=purple, dashboard=teal, external channels=gray)
-
-**02 — Butler specification:**
-- Two-layer design (core ring + modules ring)
-- MCP SSE transport + tool registration
-- Ephemeral LLM spawning sequence
-- DB schema + Alembic migrations
-- Config directory tree (roster/{name}/)
-- Module interface methods
-- Core tools enumeration
-
-**03x — Fixed butler designs:**
-- Butler-specific MCP tools and endpoints
-- Ingestion/routing/dispatch flows (Switchboard)
-- Key user flow as numbered sequence diagram with swim lanes
-- Scheduled job sidebar
-
-**04x — Rostered butler user flows:**
-- Enabled modules listed
-- Inbound user interaction flow (Telegram → Switchboard → Butler)
-- Each scheduled task as a flow
-- Primary user flow as numbered sequence
-- Data model callout (schema tables)
-
-**05 — Connector design:**
-- Connector as standalone process (NOT a butler)
-- Transport-only lifecycle loop
-- ingest.v1 envelope exploded view (source, event, sender, payload, control)
-- Deduplication decision tree (3 tiers)
-- Crash-safe checkpoints, rate limiting, heartbeat
-- All implemented connectors as examples
-
-**06x — Core deep-dives:**
-- Component internals with data structures
-- Sequence diagrams for key operations
-- Error/edge cases where relevant
-- Cross-references to other components
-
-**07x — Dashboard:**
-- FastAPI gateway + middleware stack
-- All core and butler-specific routers listed
-- Router discovery mechanism
-- Key data flows as sequences (session viewer, memory browser,
-  approval workflow, cost tracking, calendar workspace, SSE streaming)
+Required elements differ by category (what boxes/flows each prefix must
+show) — see [`references/diagram-categories.md`](references/diagram-categories.md)
+when drafting the "what to show" section for a specific diagram.
 
 ### Phase 4: Create Epic and Children
 
-Use `/beads-writer` conventions:
+Follow `/beads-writer` conventions:
 
-1. Create the epic first:
-   ```
-   Title: "Regenerate Excalidraw architecture documentation"
-   Type: epic, Priority: 2
-   Description: <scope summary listing which diagrams will be created/updated/removed>
-   ```
-
+1. Create the epic first: `Title: "Regenerate Excalidraw architecture
+   documentation"`, `Type: epic, Priority: 2`, description = scope summary
+   listing which diagrams will be created/updated/removed.
 2. Create children sequentially (to capture IDs for dependencies).
-
-3. Create a final **reconciliation bead** that depends on all children:
-   ```
-   Title: "Reconcile spec-to-code coverage for architecture diagrams"
-   ```
-   Follow the reconciliation bead template from /beads-writer.
-
+3. Create a final **reconciliation bead** — `Title: "Reconcile spec-to-code
+   coverage for architecture diagrams"` — depending on all children; follow
+   the reconciliation bead template from `/beads-writer`.
 4. Wire dependencies: `bd dep add <recon-id> <child-id>` for every child.
 
 ### Phase 5: Verify and Present
 
 1. `bd dep tree <epic-id>` — confirm structure
 2. `bd ready | grep <epic-prefix>` — confirm children are unblocked
-3. Bead mutations already auto-commit to the shared Dolt server — no sync step. (Optionally `bd export -o .beads/issues.export.jsonl` to refresh the git-tracked mirror.)
+3. Bead mutations already auto-commit to the shared Dolt server — no sync
+   step. (Optionally `bd export -o .beads/issues.export.jsonl` to refresh
+   the git-tracked mirror.)
 
-> **Merge policy:** If a worker's changes are exclusively docs/diagram files
+> **Merge policy:** if a worker's changes are exclusively docs/diagram files
 > (`.excalidraw`, `docs/`), a direct commit + push to `main` is fine — no PR
-> needed. Only open a PR when implementation code is also changed.
+> needed. Only open a PR when implementation code also changed.
 
 Present the created beads as a table:
 
@@ -219,19 +152,16 @@ Present the created beads as a table:
 
 ## Style Guide for Diagram Descriptions
 
-When writing bead descriptions, follow these rules so workers produce
-consistent diagrams:
-
 - **Be exhaustive** — list every box, arrow, and label. Workers have no
   project context beyond the bead description and referenced files.
 - **Cite specifics** — port numbers, tool names, cron expressions, table
   names, file paths. Never say "various tools"; enumerate them.
-- **Reference source files** — include `Reference:` lines pointing to
-  specs, source code, and config files the worker should read.
-- **Specify the output path** — every bead must name its output file
-  in `docs/diagrams/`.
+- **Reference source files** — `Reference:` lines pointing to specs, source
+  code, and config files the worker should read.
+- **Specify the output path** — every bead names its output file in
+  `docs/diagrams/`.
 - **Request consistent color coding** — butlers=blue, connectors=green,
   DB=orange, LLM runtimes=purple, dashboard=teal, external channels=gray.
 - **Request a legend** for topology diagrams.
-- **Use numbered sequences** for flow diagrams, with swim lanes where
-  there are 3+ actors.
+- **Use numbered sequences** for flow diagrams, with swim lanes where there
+  are 3+ actors.

@@ -7,7 +7,7 @@ reproduce the expected gates locally before calling the PR done.
 
 The active `main-merge-queue` ruleset (id 22281319) requires three contexts:
 `check`, `guards`, and `frontend`. From
-[.github/workflows/ci.yml](../../../.github/workflows/ci.yml):
+[.github/workflows/ci.yml](../../../../../../.github/workflows/ci.yml):
 
 1. `guards` runs the repository-wide structural and privacy gates, including
    `session-link-guard` (bu-mr5t5).
@@ -28,7 +28,7 @@ refresh it.
 ### Fast local gate reproduction
 
 Use the documented quality-gate sequence from
-[docs/testing/testing-strategy.md](../../../docs/testing/testing-strategy.md):
+[docs/testing/testing-strategy.md](../../../../../../docs/testing/testing-strategy.md):
 
 ```bash
 uv run ruff check src/ tests/ roster/ conftest.py --output-format concise
@@ -39,7 +39,7 @@ uv run pytest tests/ --ignore=tests/test_db.py --ignore=tests/test_migrations.py
 
 ### Repo make targets
 
-Useful shortcuts from [Makefile](../../../Makefile):
+Useful shortcuts from [Makefile](../../../../../../Makefile):
 
 ```bash
 make lint

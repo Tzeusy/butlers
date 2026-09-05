@@ -70,6 +70,15 @@ address_env = "BUTLER_EMAIL_ADDRESS"
 password_env = "BUTLER_EMAIL_PASSWORD"
 ```
 
+## Advanced sections (optional)
+
+- `[butler.env]` — declares required/optional environment variables.
+- `[butler.shutdown]` — graceful shutdown timeout.
+- `[butler.switchboard]` — routing integration (URL, advertise, liveness TTL, route
+  contract versions).
+
+Full spec: `docs/architecture/butler-daemon.md` and `docs/concepts/butler-lifecycle.md`.
+
 ## Port Allocation
 
 | Butler       | Port  | Type           | Status  |

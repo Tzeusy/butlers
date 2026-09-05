@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = []
+# ///
 """Inspect and operate on GitHub PR review threads for butler-qa-pr-review."""
 
 from __future__ import annotations

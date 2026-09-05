@@ -1,6 +1,11 @@
 ---
 name: butler-qa-invoke
 description: Use when you need to run an end-to-end QA validation canary against the Butlers dashboard API, wait for the backend QA staffer to process it, and confirm the investigation ends as unfixable.
+metadata:
+  owner: tze
+  authors: [tze, Claude]
+  status: active
+  last_reviewed: "2026-09-05"
 ---
 
 # Butler QA Invoke
@@ -21,10 +26,11 @@ Run the synthetic QA validation canary end-to-end and confirm the backend QA sta
 
 ## Primary Path
 
-Use the helper script:
+Use the helper script — [`scripts/invoke_qa_canary.py`](scripts/invoke_qa_canary.py) runs the
+full inject-and-poll cycle below; load it whenever you run this skill for real:
 
 ```bash
-python3 .claude/skills/butlers-tooling/subskills/butler-qa-invoke/scripts/invoke_qa_canary.py \
+uv run .claude/skills/butlers-tooling/subskills/butler-qa-invoke/scripts/invoke_qa_canary.py \
   --base-url https://tzeusy.parrot-hen.ts.net/butlers-dev-api \
   --api-key "$DASHBOARD_API_KEY"
 ```
@@ -87,7 +93,7 @@ Expected steady-state success:
 
 Before calling this skill ready:
 
-1. Verify the helper script parses: `python3 .claude/skills/butlers-tooling/subskills/butler-qa-invoke/scripts/invoke_qa_canary.py --help`
+1. Verify the helper script parses: `uv run .claude/skills/butlers-tooling/subskills/butler-qa-invoke/scripts/invoke_qa_canary.py --help`
 2. Verify the skill references the correct API routes:
    `/api/qa/dev/synthetic-findings` and `/api/qa/investigations`
 3. If you run the skill for real, report the fingerprint, attempt ID, final status, and whether fallback DB checks were needed

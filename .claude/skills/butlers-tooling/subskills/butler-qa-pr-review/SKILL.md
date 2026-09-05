@@ -1,14 +1,15 @@
 ---
 name: butler-qa-pr-review
-description: Use when working a GitHub PR for a Butler QA investigation or reviewer follow-up: unresolved review threads must be answered inline, PR text must contain no personal information or secrets, and the branch is not done until required GitHub checks are green.
+description: "Use when working a GitHub PR for a Butler QA investigation or reviewer follow-up: unresolved review threads must be answered inline, PR text must contain no personal information or secrets, and the branch is not done until required GitHub checks are green."
 compatibility: Requires Python 3, git, gh CLI authenticated to GitHub, network access, and permission to push to the PR branch and reply to review threads.
 metadata:
   owner: tze
   authors:
     - tze
     - OpenAI Codex
+    - Claude
   status: active
-  last_reviewed: "2026-04-15"
+  last_reviewed: "2026-09-05"
 ---
 
 # Butler QA PR Review
@@ -17,14 +18,16 @@ Review one PR end-to-end: scrub personal information, resolve the outstanding re
 
 ## Load These Only When Needed
 
-- `/doctrine` → heart-and-soul — load in the dedicated alignment subagent for doctrine, scope, manifesto, and non-negotiable-rule checks on the PR delta.
-- `/doctrine` → craft-and-care — load in the dedicated alignment subagent for engineering-bar, verification, documentation, and change-hygiene checks on the PR delta.
-- `/doctrine` → spec-and-spine — load in the dedicated alignment subagent for feature-behavior, active OpenSpec change, and spec-drift checks on the PR delta.
-- `scripts/review_threads.py` — list unresolved threads, post inline replies, and resolve threads deterministically through GitHub APIs.
-- `scripts/validate_pr_review.py` — fail-closed validator for unresolved threads, terminal reply format, and required GitHub checks.
-- `references/pii-and-replies.md` — load before drafting replies, commit messages, or PR text edits.
-- `references/qa-investigation-context.md` — load only when `attempt_id`, `fingerprint`, or dashboard context is available.
-- `references/butlers-quality-gates.md` — load only when required GitHub checks are failing or you need local reproduction commands.
+- `/doctrine` → heart-and-soul — in the alignment subagent, for doctrine, scope, manifesto, and non-negotiable-rule checks on the PR delta.
+- `/doctrine` → craft-and-care — in the alignment subagent, for engineering-bar, verification, documentation, and change-hygiene checks.
+- `/doctrine` → spec-and-spine — in the alignment subagent, for feature-behavior, active OpenSpec change, and spec-drift checks.
+- [scripts/review_threads.py](scripts/review_threads.py) — list unresolved threads, post inline replies, resolve threads via GitHub APIs. Run in step 2 and step 5.
+- [scripts/validate_pr_review.py](scripts/validate_pr_review.py) — fail-closed validator for unresolved threads, terminal-reply format, session-link leaks, and required checks. Run in step 6.
+- [scripts/_github.py](scripts/_github.py) — shared gh helpers imported by the two scripts above; not run directly.
+- [references/runtime-contract.md](references/runtime-contract.md) — load for the execution boundary: required context, worktree isolation, helper contract, and stop conditions.
+- [references/pii-and-replies.md](references/pii-and-replies.md) — load before drafting replies, commit messages, or PR text edits.
+- [references/qa-investigation-context.md](references/qa-investigation-context.md) — load only when `attempt_id`, `fingerprint`, or dashboard context is available.
+- [references/butlers-quality-gates.md](references/butlers-quality-gates.md) — load only when required GitHub checks are failing or you need local reproduction commands.
 
 ## Inputs
 
@@ -46,11 +49,8 @@ If the user gives only a PR number, assume `tzeusy-org/butlers`.
 
 ### 1. Create an isolated PR checkout
 
-Before making fixes, checking out the PR branch, or running branch-local tests,
-create a dedicated git worktree for this PR review so simultaneous PR-review
-sessions do not interfere with each other.
-
-Default pattern:
+Before any checkout, fix, or branch-local test, create a dedicated worktree so
+concurrent PR-review sessions do not interfere:
 
 ```bash
 git fetch origin <pr-head-ref>
@@ -59,10 +59,9 @@ git worktree add -b pr-<pr-number>-review .tmp/pr-<pr-number>-review FETCH_HEAD
 
 Rules:
 
-- Do not do PR-fix work in the main checkout.
-- Treat the dedicated worktree as the PR's temporary isolated subtree/worktree.
-- Run branch-local edits, tests, commits, and pushes from that isolated path.
-- Remove the temporary worktree when the review is done if it is no longer needed.
+- Never do PR-fix work in the main checkout.
+- Run all branch-local edits, tests, commits, and pushes from the isolated path.
+- Remove the worktree when the review is done and it is no longer needed.
 
 ### 2. Enumerate the closure set
 
@@ -111,12 +110,9 @@ reported no unaddressed blockers.
 
 ### 4. Load the relevant references
 
-- Before changing PR text, replies, or commit messages, read
-  [references/pii-and-replies.md](references/pii-and-replies.md).
-- If the PR came from a QA investigation, read
-  [references/qa-investigation-context.md](references/qa-investigation-context.md).
-- Only if checks are failing, read
-  [references/butlers-quality-gates.md](references/butlers-quality-gates.md).
+- Before changing PR text, replies, or commit messages: [references/pii-and-replies.md](references/pii-and-replies.md).
+- If the PR came from a QA investigation: [references/qa-investigation-context.md](references/qa-investigation-context.md).
+- Only if checks are failing: [references/butlers-quality-gates.md](references/butlers-quality-gates.md).
 
 ### 5. Work threads to closure
 
@@ -211,6 +207,6 @@ Report:
 - each handled thread URL or ID with its final outcome
 - commit hashes added during review
 - isolated worktree path used for branch-local fixes, if any
-- alignment subagent findings, including doctrine/craft/spec blockers and th1eir dispositions
+- alignment subagent findings, including doctrine/craft/spec blockers and their dispositions
 - final GitHub quality gate status
 - any threads that could not be resolved due to permission or tooling limits

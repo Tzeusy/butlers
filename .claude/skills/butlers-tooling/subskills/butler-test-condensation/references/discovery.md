@@ -202,6 +202,23 @@ ls -1 src/butlers/modules/ | grep -v '__\|\.py$'
 # If you see a new module not in this list, run scoped assessment on it
 ```
 
+## CI Gate Structure
+
+What the hosted workflow actually runs, relocated from SKILL.md's Quality
+Gates section:
+
+- `check-preflight` runs the lock, lint, format, SQL-safety, shard-manifest,
+  and smoke/release-evidence checks.
+- Five `check-unit-N` jobs and five `check-integration-N` jobs run the
+  manifest-backed unit and integration selections independently; integration
+  shards retain Docker/testcontainers.
+- The legacy `check` job is a fail-closed fan-in over preflight and every shard,
+  and combines their coverage artifacts.
+- The active merge-queue ruleset requires `check`, `guards`, and `frontend`;
+  `frontend-e2e` remains advisory. PR jobs are path-filtered, while the queue's
+  `merge_group` run is the terminal broad gate against the exact tree to land.
+- Local pre-merge gate = ruff + the non-integration subset + `--collect-only`.
+
 ## Post-Condensation Verification
 
 ```bash
