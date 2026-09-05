@@ -1,7 +1,7 @@
 """dashboard_messages: add page_context jsonb + captured_at for chip persistence.
 
-Revision ID: core_215
-Revises: core_214
+Revision ID: core_218
+Revises: core_217
 Create Date: 2026-09-05 00:00:00.000000
 
 bu-0ynlk.4 (page-context v2). The dashboard chat widget's removable
@@ -20,8 +20,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "core_215"
-down_revision = "core_214"
+revision = "core_218"
+down_revision = "core_217"
 branch_labels = None
 depends_on = None
 
