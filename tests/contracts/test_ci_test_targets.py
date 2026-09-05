@@ -246,11 +246,19 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
     # select a scoped mode -- a scoped plan means `check-affected` is that
     # shard's evidence instead. merge_group is unaffected: `plan` never runs
     # there, so `needs.plan.outputs.mode` is empty and the OR's first branch
-    # (always true for merge_group) still wins.
+    # (always true for merge_group) still wins -- PROVIDED the job's `if:`
+    # actually gets evaluated. `plan` is a conditionally-skipped dependency,
+    # and GitHub Actions auto-skips a job whose `needs` include a
+    # skipped/failed job UNLESS its own `if:` starts with `always()`; without
+    # that, this shard's `if:` above would never be reached on merge_group
+    # (where `plan` is always skipped) and the job would silently skip
+    # instead of running -- exactly the incident this assertion guards
+    # against (bu-v28ho merge_group eviction, 2026-09-04).
     shard_condition = (
-        "github.event_name == 'merge_group' || "
+        "always() && needs.changes.result == 'success' && "
+        "(github.event_name == 'merge_group' || "
         "(github.event_name == 'pull_request' && needs.changes.outputs.backend == 'true' "
-        "&& needs.plan.outputs.mode != 'scoped')"
+        "&& needs.plan.outputs.mode != 'scoped'))"
     )
     for job in [*unit_jobs, *integration_jobs]:
         assert job["needs"] == ["changes", "plan"]
@@ -266,8 +274,24 @@ def test_ci_workflow_shards_full_lanes_without_coverage_or_privacy_drift() -> No
     check_affected = jobs["check-affected"]
     assert check_affected["needs"] == ["changes", "plan"]
     assert check_affected["if"] == (
+        "always() && needs.changes.result == 'success' && "
         "github.event_name == 'pull_request' && needs.plan.outputs.mode == 'scoped'"
     )
+
+    # Regression guard (bu-v28ho): every job that lists `plan` as a
+    # dependency must opt out of GitHub Actions' implicit
+    # skip-if-a-needed-job-was-skipped-or-failed behavior with `always()` at
+    # the front of its `if:`. A job that adds `plan` to `needs` later without
+    # this prefix will silently never run whenever `plan` is skipped (every
+    # merge_group event, every docs-only or non-backend pull_request).
+    for job_name, job in jobs.items():
+        if "plan" in job.get("needs", []):
+            condition = job["if"].removeprefix("${{").strip()
+            assert condition.startswith("always()"), (
+                f"{job_name}: needs `plan` but its `if:` does not start with always(), "
+                "so it will silently skip whenever `plan` is skipped (e.g. every "
+                "merge_group event)"
+            )
 
     frontend_condition = (
         "github.event_name == 'merge_group' || github.event_name == 'push' || "
