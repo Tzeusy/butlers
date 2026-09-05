@@ -57,7 +57,7 @@ Scope: v1-mandatory
 #### Scenario: Invalid core_groups — unknown group name
 - **WHEN** a PATCH request sets `core_groups` to `["infra", "foo"]`
 - **THEN** the response SHALL return HTTP 422 with a validation error listing `"foo"` as an unknown group
-- **AND** the known groups are: `infra`, `state`, `scheduling`, `sessions`, `notifications`, `media`, `temporal`, `module_mgmt`, `switchboard_routing`, `switchboard_backfill`, `delegation`
+- **AND** the known groups are: `infra`, `state`, `scheduling`, `sessions`, `notifications`, `media`, `temporal`, `module_mgmt`, `switchboard_routing`, `switchboard_backfill`, `delegation`, `domain_events`
 
 #### Scenario: delegation is a known core group
 - **WHEN** a PATCH request sets `core_groups` to a list including `delegation`
@@ -81,10 +81,3 @@ Scope: v1-mandatory
 
 - **WHEN** a PATCH request supplies any `tool_exposure_policy` other than `eager_filtered` or `auto`
 - **THEN** the response SHALL return HTTP 422 without changing the stored policy
-
-## Source References
-
-- Non-Negotiable Rule 4 (deterministic daemon and ephemeral intelligence)
-- Non-Negotiable Rule 5 (operational tuning is DB-backed)
-- RFC 0007 (dashboard and API surface)
-- RFC 0027 (runtime tool surface discovery and exposure)
