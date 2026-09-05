@@ -271,4 +271,37 @@ describe("ConversationList — message search (bu-0ynlk.9)", () => {
       vi.useRealTimers();
     }
   });
+
+  it("surfaces a message search read error with retry instead of a silent empty section", () => {
+    vi.useFakeTimers();
+    const refetchMessageSearch = vi.fn();
+    vi.mocked(useMessageSearch).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch: refetchMessageSearch,
+    } as unknown as ReturnType<typeof useMessageSearch>);
+
+    try {
+      renderConversationList();
+      fireEvent.change(screen.getByPlaceholderText("Search..."), {
+        target: { value: "landlord" },
+      });
+      act(() => vi.advanceTimersByTime(300));
+
+      expect(screen.queryByTestId("message-search-result")).toBeNull();
+      const alerts = screen.getAllByRole("alert");
+      const messageSearchAlert = alerts.find((el) =>
+        el.textContent?.includes("Could not load message search results."),
+      );
+      expect(messageSearchAlert).toBeTruthy();
+
+      fireEvent.click(
+        messageSearchAlert!.querySelector("button") as HTMLButtonElement,
+      );
+      expect(refetchMessageSearch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

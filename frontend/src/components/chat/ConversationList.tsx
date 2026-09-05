@@ -252,8 +252,12 @@ export function ConversationList({
     isError: isSearchError,
     refetch: refetchSearch,
   } = useConversationSearch(butlerName, debouncedQuery);
-  const { data: messageSearchData, isLoading: isMessageSearching } =
-    useMessageSearch(debouncedQuery);
+  const {
+    data: messageSearchData,
+    isLoading: isMessageSearching,
+    isError: isMessageSearchError,
+    refetch: refetchMessageSearch,
+  } = useMessageSearch(debouncedQuery);
 
   function toggleCollapse() {
     const next = !collapsed;
@@ -415,29 +419,36 @@ export function ConversationList({
         {/* Owner-scoped cross-butler message search (bu-0ynlk.9) — separate
             from the conversation-level results above: one row per matching
             message, across every butler the owner has talked to. */}
-        {!collapsed && isSearchActive && (isMessageSearching || messageSearchResults.length > 0) && (
-          <div className="mt-2 pt-2 border-t">
-            <p className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              Messages
-            </p>
-            {isMessageSearching ? (
-              <div className="space-y-1 px-1">
-                {Array.from({ length: 2 }, (_, i) => (
-                  <Skeleton key={i} className="h-10 w-full rounded-lg" />
-                ))}
-              </div>
-            ) : (
-              messageSearchResults.map((result) => (
-                <MessageSearchResultRow
-                  key={result.message_id}
-                  result={result}
-                  panelButlerName={butlerName}
-                  onJumpToMessage={onSelectConversation}
+        {!collapsed &&
+          isSearchActive &&
+          (isMessageSearching || isMessageSearchError || messageSearchResults.length > 0) && (
+            <div className="mt-2 pt-2 border-t">
+              <p className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Messages
+              </p>
+              {isMessageSearchError ? (
+                <ConversationReadError
+                  label="message search results"
+                  onRetry={() => void refetchMessageSearch()}
                 />
-              ))
-            )}
-          </div>
-        )}
+              ) : isMessageSearching ? (
+                <div className="space-y-1 px-1">
+                  {Array.from({ length: 2 }, (_, i) => (
+                    <Skeleton key={i} className="h-10 w-full rounded-lg" />
+                  ))}
+                </div>
+              ) : (
+                messageSearchResults.map((result) => (
+                  <MessageSearchResultRow
+                    key={result.message_id}
+                    result={result}
+                    panelButlerName={butlerName}
+                    onJumpToMessage={onSelectConversation}
+                  />
+                ))
+              )}
+            </div>
+          )}
       </div>
     </div>
   );
