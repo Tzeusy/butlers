@@ -15,6 +15,15 @@ completed session's ``success``/``error``/``model`` columns
 judgment). A clean session writes zero rows. ``(session_id, kind, ordinal)``
 is the idempotence key: ``ordinal`` distinguishes multiple episodes of the
 same kind for one session, reserved for future multi-episode derivation.
+
+Grants a best-effort DML grant to every butler runtime role after creation,
+mirroring ``core_210_expected_signals.py``. Without it, a disaster-recovery
+replay of this revision through the trusted-bootstrap path (see
+``core_196``) would leave the table owned by the bootstrap identity with no
+grant back to the ordinary runtime roles, making it unreadable/unwritable
+by every butler until repaired by hand — caught by
+``test_core_migration_smoke_downgrade_upgrade_round_trip``, which replays
+the head revision through that exact bootstrap path.
 """
 
 from __future__ import annotations
@@ -26,6 +35,21 @@ down_revision = "core_219"
 branch_labels = None
 depends_on = None
 
+_ALL_BUTLER_ROLES = (
+    "butler_chronicler_rw",
+    "butler_education_rw",
+    "butler_finance_rw",
+    "butler_general_rw",
+    "butler_health_rw",
+    "butler_home_rw",
+    "butler_lifestyle_rw",
+    "butler_messenger_rw",
+    "butler_qa_rw",
+    "butler_relationship_rw",
+    "butler_switchboard_rw",
+    "butler_travel_rw",
+)
+
 _KINDS = (
     "degenerate_tool_loop",
     "guardrail_termination",
@@ -33,6 +57,24 @@ _KINDS = (
     "recovered_error",
     "dead_end",
 )
+
+
+def _grant_best_effort(role: str) -> None:
+    op.execute(f"""
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN
+                EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sessions_friction '
+                        'TO "{role}"';
+            END IF;
+        EXCEPTION
+            WHEN insufficient_privilege THEN NULL;
+            WHEN undefined_object THEN NULL;
+            WHEN undefined_table THEN NULL;
+            WHEN invalid_schema_name THEN NULL;
+        END
+        $$;
+    """)
 
 
 def upgrade() -> None:
@@ -50,6 +92,8 @@ def upgrade() -> None:
                 UNIQUE (session_id, kind, ordinal)
         )
     """)
+    for role in _ALL_BUTLER_ROLES:
+        _grant_best_effort(role)
 
 
 def downgrade() -> None:
