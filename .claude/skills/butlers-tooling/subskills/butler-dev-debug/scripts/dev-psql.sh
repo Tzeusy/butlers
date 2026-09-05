@@ -6,11 +6,11 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 Use repo-root .env.dev values to run psql against the dev database.
 
 Usage:
-  ./.claude/skills/butler-dev-debug/scripts/dev-psql.sh [psql args...]
+  ./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh [psql args...]
 
 Examples:
-  ./.claude/skills/butler-dev-debug/scripts/dev-psql.sh -c "SELECT 1"
-  ./.claude/skills/butler-dev-debug/scripts/dev-psql.sh -t -A -c "SELECT now()"
+  ./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh -c "SELECT 1"
+  ./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh -t -A -c "SELECT now()"
 EOF
   exit 0
 fi

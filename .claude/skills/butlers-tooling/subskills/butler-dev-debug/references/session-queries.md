@@ -7,13 +7,13 @@ Use this file when you already know the target butler/schema and need SQL.
 All SQL examples use the standardized helper:
 
 ```bash
-./.claude/skills/butler-dev-debug/scripts/dev-psql.sh -c "SELECT 1"
+./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh -c "SELECT 1"
 ```
 
 ## Session Summary
 
 ```bash
-./.claude/skills/butler-dev-debug/scripts/dev-psql.sh -c "
+./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh -c "
 SET search_path TO <butler-schema>;
 SELECT id, trigger_source, model, success, error,
        left(result, 500) AS result_preview,
@@ -27,7 +27,7 @@ WHERE id = '<session-id>';
 ## Full Prompt
 
 ```bash
-./.claude/skills/butler-dev-debug/scripts/dev-psql.sh -t -A -c "
+./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh -t -A -c "
 SET search_path TO <butler-schema>;
 SELECT prompt FROM sessions WHERE id = '<session-id>';
 "
@@ -36,7 +36,7 @@ SELECT prompt FROM sessions WHERE id = '<session-id>';
 ## Full Result
 
 ```bash
-./.claude/skills/butler-dev-debug/scripts/dev-psql.sh -t -A -c "
+./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh -t -A -c "
 SET search_path TO <butler-schema>;
 SELECT result FROM sessions WHERE id = '<session-id>';
 "
@@ -45,7 +45,7 @@ SELECT result FROM sessions WHERE id = '<session-id>';
 ## Tool Calls
 
 ```bash
-./.claude/skills/butler-dev-debug/scripts/dev-psql.sh -t -A -c "
+./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh -t -A -c "
 SET search_path TO <butler-schema>;
 SELECT tool_calls FROM sessions WHERE id = '<session-id>';
 " | python3 -c "
@@ -65,7 +65,7 @@ for tool in data:
 ## Process Logs
 
 ```bash
-./.claude/skills/butler-dev-debug/scripts/dev-psql.sh -c "
+./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh -c "
 SET search_path TO <butler-schema>;
 SELECT session_id, pid, exit_code, runtime_type,
        left(stderr, 1000) AS stderr_preview

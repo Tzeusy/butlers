@@ -24,7 +24,7 @@ Run the synthetic QA validation canary end-to-end and confirm the backend QA sta
 Use the helper script:
 
 ```bash
-python3 .claude/skills/butler-qa-invoke/scripts/invoke_qa_canary.py \
+python3 .claude/skills/butlers-tooling/subskills/butler-qa-invoke/scripts/invoke_qa_canary.py \
   --base-url https://tzeusy.parrot-hen.ts.net/butlers-dev-api \
   --api-key "$DASHBOARD_API_KEY"
 ```
@@ -50,7 +50,7 @@ It normalizes both to the same `/api/qa/...` calls.
 If the script times out or the API surface is inconclusive, load `butler-dev-debug` and verify via DB:
 
 ```bash
-./.claude/skills/butler-dev-debug/scripts/dev-psql.sh -c "
+./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh -c "
 SELECT id, fingerprint, status, created_at, updated_at, closed_at, error_detail
 FROM public.healing_attempts
 WHERE fingerprint = '<fingerprint>'
@@ -62,7 +62,7 @@ LIMIT 5;
 Also inspect the finding row:
 
 ```bash
-./.claude/skills/butler-dev-debug/scripts/dev-psql.sh -c "
+./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh -c "
 SELECT id, patrol_id, source_butler, dedup_reason, dispatch_queued, healing_attempt_id, created_at
 FROM public.qa_findings
 WHERE fingerprint = '<fingerprint>'
@@ -87,7 +87,7 @@ Expected steady-state success:
 
 Before calling this skill ready:
 
-1. Verify the helper script parses: `python3 .claude/skills/butler-qa-invoke/scripts/invoke_qa_canary.py --help`
+1. Verify the helper script parses: `python3 .claude/skills/butlers-tooling/subskills/butler-qa-invoke/scripts/invoke_qa_canary.py --help`
 2. Verify the skill references the correct API routes:
    `/api/qa/dev/synthetic-findings` and `/api/qa/investigations`
 3. If you run the skill for real, report the fingerprint, attempt ID, final status, and whether fallback DB checks were needed

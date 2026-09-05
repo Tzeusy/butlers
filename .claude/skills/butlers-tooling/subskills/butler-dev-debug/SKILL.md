@@ -50,7 +50,7 @@ If this skill disagrees with those docs or with `docker-compose.yml`, fix the in
 Use the helper script for every SQL query in this skill. `.env.dev` may omit `POSTGRES_DB`; the helper defaults it to `butlers`.
 
 ```bash
-./.claude/skills/butler-dev-debug/scripts/dev-psql.sh -c "SELECT 1"
+./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh -c "SELECT 1"
 ```
 
 ## Debug Flow
@@ -72,7 +72,7 @@ docker logs butlers-dev-butlers-up-1 --since 10m 2>&1 | grep "<session-id>"
 Then fetch the session row from the right schema:
 
 ```bash
-./.claude/skills/butler-dev-debug/scripts/dev-psql.sh -c "
+./.claude/skills/butlers-tooling/subskills/butler-dev-debug/scripts/dev-psql.sh -c "
 SET search_path TO <butler-schema>;
 SELECT id, trigger_source, model, success, error,
        left(result, 500) AS result_preview,

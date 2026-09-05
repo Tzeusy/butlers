@@ -115,7 +115,7 @@ what the surface is *for* (`/doctrine` → heart-and-soul, lay-and-land), and th
 was *promised* (redesign briefs + openspec). Then enumerate candidate surfaces deterministically:
 
 ```bash
-uv run .claude/skills/butler-relentless-jarvis-pursuit/subskills/ui-maturity-audit/scripts/scope_surfaces.py
+uv run .claude/skills/butlers-development/subskills/butler-relentless-jarvis-pursuit/subskills/ui-maturity-audit/scripts/scope_surfaces.py
 ```
 
 It emits the route→file map, redesign briefs, openspec change dirs, modified `dashboard-*` specs,
