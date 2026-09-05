@@ -779,20 +779,24 @@ async def get_fleet_case(
     if case_row is None:
         raise HTTPException(status_code=404, detail=f"Fleet case '{case_id}' not found")
 
-    evidence_rows = await pool.fetch(
-        "SELECT id, case_id, contributor, kind, ref, payload, contributed_at"
-        " FROM public.fleet_case_evidence WHERE case_id = $1"
-        " ORDER BY contributed_at ASC, id ASC"
-        f" LIMIT {_FLEET_CASE_EVIDENCE_LIMIT}",
-        case_uuid,
-    )
-    link_rows = await pool.fetch(
-        "SELECT id, case_id, link_kind, ref, metadata, linked_at"
-        " FROM public.fleet_case_links WHERE case_id = $1"
-        " ORDER BY linked_at ASC, id ASC"
-        f" LIMIT {_FLEET_CASE_LINKS_LIMIT}",
-        case_uuid,
-    )
+    try:
+        evidence_rows = await pool.fetch(
+            "SELECT id, case_id, contributor, kind, ref, payload, contributed_at"
+            " FROM public.fleet_case_evidence WHERE case_id = $1"
+            " ORDER BY contributed_at ASC, id ASC"
+            f" LIMIT {_FLEET_CASE_EVIDENCE_LIMIT}",
+            case_uuid,
+        )
+        link_rows = await pool.fetch(
+            "SELECT id, case_id, link_kind, ref, metadata, linked_at"
+            " FROM public.fleet_case_links WHERE case_id = $1"
+            " ORDER BY linked_at ASC, id ASC"
+            f" LIMIT {_FLEET_CASE_LINKS_LIMIT}",
+            case_uuid,
+        )
+    except Exception as exc:
+        logger.warning("fleet_case_evidence/links lookup failed for %s", case_id, exc_info=True)
+        raise HTTPException(status_code=503, detail="Fleet case store unavailable") from exc
 
     detail = FleetCaseDetail(
         id=str(case_row["id"]),

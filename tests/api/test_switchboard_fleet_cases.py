@@ -334,3 +334,16 @@ async def test_get_case_503_when_lookup_fails(app):
     ) as client:
         resp = await client.get("/api/switchboard/cases/22222222-2222-2222-2222-222222222222")
     assert resp.status_code == 503
+
+
+async def test_get_case_503_when_evidence_or_links_lookup_fails(app):
+    _app_with_mock(
+        app,
+        fetchrow_result=_make_row(_sample_case_row()),
+        fetch_side_effect=RuntimeError("relation does not exist"),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/switchboard/cases/22222222-2222-2222-2222-222222222222")
+    assert resp.status_code == 503
