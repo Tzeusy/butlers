@@ -491,7 +491,7 @@ export default function ConcentrationPage() {
     const predicate = predicateParam || "knows";
     setPageSubject({
       visible_resource: { kind: "concentration", filters: { predicate } },
-      visible_summary: `Concentration — ${predicate}`,
+      visible_summary: `Concentration: ${predicate}`,
     });
   }, [predicateParam, setPageSubject]);
 

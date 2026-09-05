@@ -572,7 +572,7 @@ export default function QaOverviewPage() {
         kind: "qa_overview",
         filters: { severity, since, state, butlers: [...selectedButlers].join(",") },
       },
-      visible_summary: `QA — severity=${severity}, since=${since}`,
+      visible_summary: `QA: severity=${severity}, since=${since}`,
     });
   }, [severity, since, state, selectedButlers, setPageSubject]);
 

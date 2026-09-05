@@ -2749,7 +2749,7 @@ export default function SpendPage() {
       .slice(0, 10)}`;
     setPageSubject({
       visible_resource: { kind: "spend_window", window: windowLabel },
-      visible_summary: `Spend — ${windowLabel}`,
+      visible_summary: `Spend: ${windowLabel}`,
     });
   }, [spendWindow.from, spendWindow.to, setPageSubject]);
 
