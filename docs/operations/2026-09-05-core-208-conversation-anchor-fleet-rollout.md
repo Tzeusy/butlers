@@ -249,9 +249,10 @@ selected lifecycle explicitly renders and authorizes them.
 
 ## 4. Content-blind evidence contract
 
-Store only this schema. The operator may use existing injected authentication
-paths, but no credential value may enter a command line, terminal transcript,
-shell history, or evidence record.
+Store only the two schemas in this section as two separate immutable records.
+The operator may use existing injected authentication paths, but no credential
+value may enter a command line, terminal transcript, shell history, or evidence
+record.
 
 ```yaml
 authorization_id: "<opaque record id>"
@@ -259,7 +260,7 @@ packet_git_sha: "<full commit containing this packet>"
 environment_ref: "<owner-approved opaque label>"
 mode_label: "dev|prod"
 window_started_at: "<RFC3339>"
-window_ended_at: "<RFC3339>"
+evidence_window_closed_at: "<RFC3339>"
 prerequisite_git_sha: "26806d6a25c9ffe9ee8cb190e9c65eb7d4758175"
 target_git_sha: "<full SHA>"
 rollback_git_sha: "<full SHA>"
@@ -328,7 +329,7 @@ abort_reason_codes: []
 rollback:
   invoked: false
   result: "not_invoked|complete|partial|failed|unknown"
-verdict: "complete_fleet_pass|fail_closed"
+pre_reopen_verdict: "ready_to_reopen|fail_closed"
 evidence_digest:
   algorithm: "sha256"
   canonicalization: "RFC8785"
@@ -344,15 +345,64 @@ attestation_binding:
 operator_attestation:
   actor: "<approved operator identity>"
   attested_at: "<RFC3339>"
-  decision: "complete_fleet_pass|fail_closed"
+  decision: "ready_to_reopen|fail_closed"
   binding_sha256: "<exact attestation_binding.value>"
   immutable_record_ref: "<owner-controlled record ref>"
 independent_verifier_attestation:
   actor: "<approved verifier identity>"
   attested_at: "<RFC3339>"
-  decision: "complete_fleet_pass|fail_closed"
+  decision: "ready_to_reopen|fail_closed"
   binding_sha256: "<exact attestation_binding.value>"
   immutable_record_ref: "<independent record ref>"
+```
+
+Reopening must not mutate that attested record. If and only if both
+pre-reopen attestations say `ready_to_reopen`, create this separate append-only
+closeout record for the authorized reopen attempt:
+
+```yaml
+schema_version: "core208-conversation-anchor-rollout-closeout.v1"
+authorization_id: "<same authorization id>"
+packet_git_sha: "<same full packet SHA>"
+environment_ref: "<same owner-approved opaque label>"
+target_git_sha: "<same full target SHA>"
+pre_reopen_evidence_digest: "<exact evidence_digest.value>"
+pre_reopen_attestation_binding: "<exact attestation_binding.value>"
+operator_pre_reopen_attestation_ref: "<exact immutable record ref>"
+verifier_pre_reopen_attestation_ref: "<exact immutable record ref>"
+reopen:
+  attempted_at: "<RFC3339>"
+  completed_at: "<RFC3339|null>"
+  independently_observed_at: "<RFC3339>"
+  final_ingress_status: "open|closed|unknown"
+window_ended_at: "<RFC3339>"
+final_verdict: "complete_fleet_pass|fail_closed"
+closeout_digest:
+  algorithm: "sha256"
+  canonicalization: "RFC8785"
+  value: "<64 lowercase hex characters>"
+closeout_attestation_binding:
+  algorithm: "sha256"
+  fields:
+    - authorization_id
+    - packet_git_sha
+    - target_git_sha
+    - pre_reopen_evidence_digest
+    - pre_reopen_attestation_binding
+    - closeout_digest.value
+  value: "<64 lowercase hex characters>"
+operator_closeout_attestation:
+  actor: "<same approved operator identity>"
+  attested_at: "<RFC3339>"
+  decision: "complete_fleet_pass|fail_closed"
+  binding_sha256: "<exact closeout_attestation_binding.value>"
+  immutable_record_ref: "<owner-controlled closeout record ref>"
+independent_verifier_closeout_attestation:
+  actor: "<same approved verifier identity>"
+  attested_at: "<RFC3339>"
+  decision: "complete_fleet_pass|fail_closed"
+  binding_sha256: "<exact closeout_attestation_binding.value>"
+  immutable_record_ref: "<independent closeout record ref>"
 ```
 
 Allowed evidence is limited to version/SHA, immutable image ID, opaque
@@ -382,8 +432,8 @@ the canonical five-minute future-skew tolerance. A target that changes these
 constants invalidates this packet's cutoff and requires review. Missing times,
 negative age outside the allowed skew, or an age over the cutoff is stale.
 
-The evidence digest is over the complete evidence mapping from
-`authorization_id` through `verdict`, excluding `evidence_digest`,
+The pre-reopen evidence digest is over the complete first mapping from
+`authorization_id` through `pre_reopen_verdict`, excluding `evidence_digest`,
 `attestation_binding`, and both attestation mappings. Serialize that mapping as
 RFC 8785 canonical JSON and SHA-256 the resulting UTF-8 bytes. Then compute
 `attestation_binding.value` as SHA-256 over the RFC 8785 canonical JSON object
@@ -393,6 +443,33 @@ both digests and create distinct immutable attestations carrying the same
 binding value and their own actor, timestamp, decision, and external record
 reference. Identity fields without those digest-bound attestations do not
 satisfy the gate.
+
+After the reopen attempt, compute `closeout_digest.value` over the second
+mapping from `schema_version` through `final_verdict`, excluding
+`closeout_digest`, `closeout_attestation_binding`, and both closeout
+attestations. Compute `closeout_attestation_binding.value` over the exact six
+fields listed in its schema, using the same RFC 8785 and SHA-256 rules. The
+operator and verifier independently recompute and attest that binding. This
+second binding joins the final ingress state and window end to the immutable
+pre-reopen evidence and attestations without editing or escaping either schema.
+
+Timestamp order is fail-closed:
+
+```text
+window_started_at
+  <= evidence_window_closed_at
+  <= both pre-reopen attested_at timestamps
+  < reopen.attempted_at
+  <= reopen.completed_at (when non-null)
+  <= reopen.independently_observed_at
+  <= window_ended_at
+  <= both closeout attested_at timestamps
+```
+
+Any missing, reversed, equal-at-the-strict-boundary, or unverifiable timestamp
+forces `final_verdict: fail_closed`. `complete_fleet_pass` exists only in the
+immutable, doubly attested closeout record after ingress is independently
+observed open; `ready_to_reopen` is never a gate-complete verdict.
 
 ## 5. Preflight: no mutation yet
 
@@ -508,12 +585,20 @@ The concrete two-phase procedure is:
    clamped to 30–300 seconds (`src/butlers/connectors/heartbeat.py:33-35`,
    `src/butlers/connectors/heartbeat.py:72-93`). No traffic may be injected to
    manufacture evidence.
-8. **Attest, then reopen exactly once.** Complete section 7, compute the
-   evidence and binding digests, and obtain both distinct attestations. Recheck
-   that the ingress gate is still closed. Only then may the authorized operator
-   reopen it. Record the open timestamp and independent observation. A gate that
-   opens before both attestations is `producer_started_early`, even if health is
-   otherwise green.
+8. **Close and attest the pre-reopen evidence window.** Complete the writer and
+   producer evidence, set `evidence_window_closed_at`, set
+   `pre_reopen_verdict`, and freeze that record. Compute its evidence and binding
+   digests and obtain both distinct pre-reopen attestations. Recheck that the
+   ingress gate is still closed. Only `ready_to_reopen` from both attestations
+   permits the next step; it does not satisfy `bu-psarp`.
+9. **Reopen exactly once, then close out separately.** After both pre-reopen
+   attestations, perform the authorized reopen. Create the separate closeout
+   record from section 4; record attempt/completion, independent final-state
+   observation, and `window_ended_at` there without changing the first record.
+   Compute the closeout digest and binding, then obtain both distinct closeout
+   attestations. A gate that opens before the pre-reopen attestations, or a
+   closeout that lacks the second digest-bound attestation phase, is
+   `attestation_invalid` even if health is otherwise green.
 
 The temporary rollout window is never a mixed-version acceptance claim. While
 it exists, `bu-psarp` stays open and the core identity-split work stays frozen.
@@ -561,9 +646,9 @@ Any process that starts a Butler daemon, serves the dashboard write API, imports
 the helper as a writer, or writes the table directly must satisfy the full
 writer-unit proof.
 
-### Complete-fleet acceptance
+### Pre-reopen and complete-fleet acceptance
 
-The independent verifier computes `complete_fleet_pass` only when:
+The independent verifier computes `ready_to_reopen` only when:
 
 1. target ancestry, both allowlist scans, broad target-tree scan, full target
    diff review, and deployment-entrypoint review all pass;
@@ -575,13 +660,28 @@ The independent verifier computes `complete_fleet_pass` only when:
    fresh under the recorded per-instance timestamps and cutoff;
 6. `unknown_writers` and `abort_reason_codes` are empty;
 7. no rollback occurred; and
-8. the canonical evidence digest and attestation-binding digest recompute, and
+8. the pre-reopen evidence digest and attestation-binding digest recompute, and
    the operator and independent verifier provide distinct immutable
    attestations bound to the authorization ID, packet SHA, target SHA, and that
    exact evidence digest.
 
+That verdict authorizes only the already-approved reopen step. The independent
+verifier computes `complete_fleet_pass` only after the separate closeout record
+also proves all of the following:
+
+1. both immutable pre-reopen attestations resolve to `ready_to_reopen` and to
+   the exact pre-reopen binding carried by the closeout;
+2. the reopen attempt begins strictly after both pre-reopen attestations;
+3. ingress is independently observed `open`, with the observation and
+   `window_ended_at` ordered as section 4 requires;
+4. the closeout digest and binding both recompute over the unchanged
+   pre-reopen references and final ingress evidence; and
+5. two distinct closeout attestations carry the same closeout binding, which
+   includes the closeout digest, and both decide `complete_fleet_pass`.
+
 Transport HTTP 200, Compose `running`, a successful deployment ledger row, or
-a fresh heartbeat alone is insufficient.
+a fresh heartbeat alone is insufficient. Neither `ready_to_reopen` nor an open
+ingress gate without the final closeout attestations satisfies the fleet gate.
 
 ## 8. Abort and stale-state matrix
 
@@ -593,12 +693,12 @@ a fresh heartbeat alone is insufficient.
 | Rollback artifact/procedure/compatibility cannot be proven | `rollback_unavailable`; abort before quiescing ingress. |
 | Ingress-gate coverage or its continuously closed state cannot be proven | `ingress_gate_unproven`; do not recreate writers or producers. |
 | Ingress cannot be quiesced or old writer count cannot be proven zero | `ingress_not_quiesced` or `old_writer_unverifiable`; keep gate open. |
-| A producer process starts before the complete writer matrix, or the ingress gate permits submission before both attestations | `producer_started_early`; close ingress, abort, and roll back. |
+| A producer process starts before the complete writer matrix, or the ingress gate permits submission before both pre-reopen attestations | `producer_started_early`; close ingress, abort, and roll back. |
 | Build or migration fails before replacement | `deploy_failed_pre_replace`; preserve evidence and use the authorized recovery branch in section 9. |
 | Any writer fails to restart or retains its old process ID | `writer_restart_failed` or `stale_process`; rollback. |
 | Any writer has wrong/unknown image, SHA, start time, or instance count | `mixed_fleet` or `version_unverifiable`; rollback. |
 | Any daemon or expected producer is missing, stale under the recorded 300-second cutoff, degraded, unhealthy, or unverifiable | `fleet_unhealthy`; rollback or leave ingress closed under the approved incident path. |
-| Evidence digest, binding digest, or either distinct attestation is absent or does not recompute | `attestation_invalid`; do not reopen ingress and roll back. |
+| Either phase's digest, binding, distinct attestations, immutable cross-references, or timestamp order is absent or does not recompute | `attestation_invalid`; do not reopen, or re-close ingress if already reopened, then roll back. |
 | Evidence contains or requires sensitive content outside section 4 | `evidence_boundary_breach`; stop capture, quarantine it under the owner's incident procedure, and do not attach it to Beads or a PR. |
 | Window expires before complete verification | `window_expired`; rollback. |
 | Any rollback is partial, failed, unhealthy, stale, or unverifiable | `rollback_incomplete`; keep ingress closed and escalate under the separately authorized incident procedure. |
@@ -629,8 +729,12 @@ one from this document is prohibited.
 5. Repeat the full replacement/version/daemon/producer evidence matrix against
    `[ROLLBACK_GIT_SHA]`. Reopen ingress only if the separately authorized
    rollback acceptance permits it.
-6. Record `verdict: fail_closed` even when rollback is healthy. A successful
-   rollback restores service; it does not satisfy `bu-psarp`.
+6. If rollback begins before a reopen attempt, record
+   `pre_reopen_verdict: fail_closed` and do not create a synthetic closeout.
+   If reopening was attempted, create and attest the closeout with
+   `final_verdict: fail_closed`, including the observed re-closed or unknown
+   ingress state. A successful rollback restores service; it does not satisfy
+   `bu-psarp`.
 
 Do not downgrade a database schema as part of this prerequisite rollback. The
 prerequisite is application-only. If an identity-split schema from PR #3960 (or
@@ -662,10 +766,14 @@ system, while `.env.prod` selects the other target
 
 ## 11. Gate handoff and future PR authority
 
-After `complete_fleet_pass`, attach only the sanitized evidence digest, the
-attestation-binding digest, both immutable attestation record references, and
-the schema from section 4 to `bu-psarp`. Each reference must resolve to the
-same binding value and must name its distinct actor, timestamp, and decision.
+After the closeout records `complete_fleet_pass`, attach only the sanitized
+pre-reopen evidence digest and binding, both immutable pre-reopen attestation
+references, the closeout digest and binding, both immutable closeout
+attestation references, and the two schemas from section 4 to `bu-psarp`.
+Each pair of references must resolve to its phase's same binding value and must
+name its distinct actor, timestamp, and decision. The closeout must carry the
+exact immutable pre-reopen digests and references, not copies with altered
+fields.
 The tracked packet, a deploy command's exit zero, or an unbound operator
 assertion is not the evidence itself. An independent security/operations
 reviewer must confirm:
@@ -675,7 +783,8 @@ reviewer must confirm:
 - artifact, process-replacement, and health proof for the exact fleet;
 - content-blind evidence hygiene;
 - rollback readiness and whether rollback was invoked; and
-- both recomputed digests, both distinct attestations, and the final verdict.
+- all four recomputed digest/binding values, all four distinct phase
+  attestations, the timestamp ordering, and the final closeout verdict.
 
 Even a passing gate only establishes the prerequisite deployment fact. It does
 not authorize any action on PR #3960. A future, separate instruction must name
