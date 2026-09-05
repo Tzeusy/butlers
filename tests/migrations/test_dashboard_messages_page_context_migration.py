@@ -1,4 +1,4 @@
-"""Live-Postgres up/down round-trip for dashboard_messages.page_context (core_218)."""
+"""Live-Postgres up/down round-trip for dashboard_messages.page_context (core_219)."""
 
 from __future__ import annotations
 
@@ -14,13 +14,13 @@ pytestmark = pytest.mark.integration
 
 _MIGRATION_PATH = (
     Path(__file__).resolve().parents[2]
-    / "alembic/versions/core/core_218_dashboard_messages_page_context.py"
+    / "alembic/versions/core/core_219_dashboard_messages_page_context.py"
 )
 
 
 def _load_migration():
     spec = importlib.util.spec_from_file_location(
-        "core_218_dashboard_messages_page_context", _MIGRATION_PATH
+        "core_219_dashboard_messages_page_context", _MIGRATION_PATH
     )
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)

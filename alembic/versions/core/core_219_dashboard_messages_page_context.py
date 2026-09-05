@@ -1,6 +1,6 @@
 """dashboard_messages: add page_context jsonb + captured_at for chip persistence.
 
-Revision ID: core_218
+Revision ID: core_219
 Revises: core_217
 Create Date: 2026-09-05 00:00:00.000000
 
@@ -20,7 +20,7 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "core_218"
+revision = "core_219"
 down_revision = "core_217"
 branch_labels = None
 depends_on = None
