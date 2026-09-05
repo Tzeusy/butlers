@@ -712,16 +712,29 @@ def _estimate_monthly_runs(cron: str, *, reference: datetime = _CADENCE_ANCHOR) 
 
 
 #: Deterministic error-marker classification for ``sessions_summary``'s
-#: ``by_error_marker`` breakdown. Pure substring matching against the same
-#: guardrail/timeout signatures the spawner and switchboard pipeline already
-#: emit (see ``spawner_guardrails.py`` and the switchboard classification
-#: timeout message format) — no LLM judgment, evaluated in SQL at query time.
+#: ``by_error_marker`` breakdown. Pure substring/pattern matching against the
+#: same guardrail/timeout signatures the spawner and switchboard pipeline
+#: already emit (see ``spawner_guardrails.py`` and
+#: ``qa/sources/session_records.py::_is_switchboard_classification_timeout``)
+#: — no LLM judgment, evaluated in SQL at query time.
+#:
+#: The classification_timeout branch mirrors
+#: ``_is_switchboard_classification_timeout`` exactly: a plain switchboard
+#: timeout is not enough, since ``spawner.py`` emits the identical
+#: "Session timed out after {N}s (model=..., butler=...)" message for every
+#: session on a butler, not just classification dispatch. Classification
+#: sessions specifically use a "mini" model with a <=60s cap, so both must
+#: hold or a genuine (non-classification) switchboard timeout — e.g. a
+#: route-dispatch session — would be misclassified.
 _ERROR_MARKER_CASE_SQL = """
     CASE
         WHEN error ILIKE '%degenerate_tool_loop%' THEN 'degenerate_tool_loop'
         WHEN error ILIKE '%tool_call_budget_exceeded%' THEN 'tool_call_budget_exceeded'
         WHEN error ILIKE '%token_budget_exceeded%' THEN 'token_budget_exceeded'
-        WHEN error ILIKE '%TimeoutError%' AND error ILIKE '%butler=switchboard%'
+        WHEN error ILIKE '%TimeoutError%'
+            AND error ILIKE '%butler=switchboard%'
+            AND model ILIKE '%mini%'
+            AND substring(error from 'Session timed out after (\\d+)s')::bigint <= 60
             THEN 'classification_timeout'
         ELSE 'other'
     END
