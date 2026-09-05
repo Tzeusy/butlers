@@ -15,8 +15,9 @@ Every butler daemon SHALL register core MCP tools based on the `core_groups` all
 - `switchboard_routing`: ingest, route_to_butler, connector.heartbeat (name-gated: switchboard only)
 - `switchboard_backfill`: backfill.poll, backfill.progress (name-gated: switchboard only)
 - `delegation`: delegate_ask, delegate_receive, delegate_answer, delegate_wake (type-gated: non-staffer only)
+- `domain_events`: publish_event, subscribe_to_event, unsubscribe_from_event, list_my_subscriptions, receive_domain_event, report_event_reaction (type-gated: non-staffer only)
 - Name-gated tools (messenger-only, switchboard-only) are gated by butler name as an additional check — `core_groups` controls which groups are *eligible*, but `switchboard_routing` and `switchboard_backfill` tools are ONLY registered when `butler_name == "switchboard"`, regardless of core_groups. Similarly, `delivery_preferences_*` and `deferred_notification_*` tools are ONLY registered when `butler_name == "messenger"`. This prevents a domain butler from accidentally gaining switchboard routing powers by adding `switchboard_routing` to its core_groups.
-- Type-gated tools retain their independent boundary: the `delegation` group is registered only for non-staffer butlers, so adding it to a staffer's `core_groups` cannot grant delegation tools.
+- Type-gated tools retain their independent boundary: the `delegation` and `domain_events` groups are registered only for non-staffer butlers, so adding either to a staffer's `core_groups` cannot grant those tools.
 - **`route.execute` special handling:** `route.execute` is registered on the MCP server for all butlers regardless of `core_groups` because the Switchboard calls it server-to-server. Per RFC 0002, `route.execute` is an infrastructure endpoint, not an LLM-facing tool. LLM-visibility filtering (hiding `route.execute` from the LLM's tool list while keeping the MCP handler callable) is deferred to a future change — the current `core_groups` mechanism is single-tier (registered or not) and does not support "registered but hidden from LLM."
 - RFC 0027 supersedes the historical deferral in the preceding bullet. Core tool registration SHALL remain group/type/name gated exactly as above, while a separate adapter-rendered LLM-presentation layer SHALL hide infrastructure-only handlers from model context/native search without removing them from canonical FastMCP `tools/list` or the handler needed by an infrastructure caller. The presentation layer is not a new caller-authentication boundary and does not replace existing handler validation. `route.execute` is the first mandatory infrastructure-only classification; the complete inventory is governed by `core-tool-discovery`.
 
@@ -27,7 +28,7 @@ Scope: v1-mandatory
 #### Scenario: core_groups filters tool registration
 - **WHEN** a butler daemon starts with `core_groups = ['infra', 'notifications']` in runtime_config
 - **THEN** only tools in the `infra` and `notifications` groups SHALL be registered on the MCP server (plus `route.execute` which is always registered)
-- **AND** tools in other groups (state, scheduling, sessions, media, temporal, delegation) SHALL NOT be registered
+- **AND** tools in other groups (state, scheduling, sessions, media, temporal, delegation, domain_events) SHALL NOT be registered
 
 #### Scenario: NULL core_groups enables all tools
 - **WHEN** a butler daemon starts with `core_groups = NULL` in runtime_config

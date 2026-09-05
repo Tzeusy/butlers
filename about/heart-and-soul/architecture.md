@@ -164,10 +164,9 @@ its scope is cross-butler coordination, not domain specialization.
 
 ## Why Tool Surface Discipline Matters
 
-**Proposed doctrine correction in the RFC 0027 exact artifact: owner approval
-required.** Under RFC 0027, initial-context cost comes from tool definitions
-loaded into model context at session start, not from every handler registered
-on the canonical MCP server. Under eager discovery those sets coincide: at
+Under RFC 0027, initial-context cost comes from tool definitions loaded into
+model context at session start, not from every handler registered on the
+canonical MCP server. Under eager discovery those sets coincide: at
 90-157 registered tools, the same 90-157 definitions enter initial context,
 consuming context window, increasing latency, and degrading tool selection,
 especially on smaller or cheaper models. Under verified native deferred

@@ -146,12 +146,11 @@ mechanism; eager filtering is the conservative cross-CLI compatibility path.
   conformance proves hidden definitions never enter model context/search.
 - **Strict policy:** A host that mandates native deferral cannot satisfy
   `eager_filtered` and is ineligible under that policy.
-- **Doctrine correction:** This exact artifact also proposes amending
-  `about/heart-and-soul/architecture.md` so the 30-50 target and initial-context
-  cost refer to definitions initially loaded per session rather than every
-  canonical registered handler. The prior Option B selection did not adopt a
-  Heart-and-Soul amendment; this correction requires owner approval of the
-  exact artifact before it becomes doctrine.
+- **Doctrine amendment status:** Pending exact-artifact owner approval. On an
+  owner-approved merge, `about/heart-and-soul/architecture.md` makes the 30-50
+  target and initial-context cost refer to definitions initially loaded per
+  session rather than every canonical registered handler. The prior Option B
+  selection did not itself adopt this Heart-and-Soul amendment.
 - **Authority:** authorizes RFC/OpenSpec/Beads amendment only. Implementation,
   dependency upgrades, amendment merge, provider evaluation, policy activation,
   deployment, and canary retain separate gates.
