@@ -57,7 +57,7 @@ landed.
 | rot: media-taste | — | **weak** | new (Taste tab queries the wrong subject; play evidence discarded at the connector) |
 | rot: knowledge-capture | — | **weak** | new (121 auto-vivified collections; containment-only search; export omits the brain) |
 | qc: run11-trust | — | **solid** | QC cohort: all five audited run-11 trust moves landed as designed (one live-confirmed) |
-| qc: run11-substrate | — | **weak** | QC cohort: run-11 substrate moves 7 and 8 decorative, 9 and 10 partial, 11 and 12 as designed, 13 not landed |
+| qc: run11-substrate | — | **weak** | QC cohort: run-11 substrate moves 7 and 8 decorative, 9 and 10 partial, 11 and 12 as designed, 13 not landed at audit time and merged since via PR #4015 |
 
 ### QC verdicts on the run-11 epic (bu-8cdl1)
 

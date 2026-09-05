@@ -2840,7 +2840,7 @@
       "qc: run11-substrate": {
         "verdict": "weak",
         "baseline_run11": null,
-        "movement": "QC cohort: run-11 substrate moves 7 and 8 decorative, 9 and 10 partial, 11 and 12 as designed, 13 not landed",
+        "movement": "QC cohort: run-11 substrate moves 7 and 8 decorative, 9 and 10 partial, 11 and 12 as designed, 13 not landed at audit time and merged since via PR #4015",
         "audited": true
       }
     },
