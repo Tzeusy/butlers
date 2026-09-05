@@ -162,6 +162,7 @@ The known core groups are:
 | `module_mgmt` | `module.states`, `module.set_enabled` |
 | `switchboard_routing` | `ingest`, `route_to_butler`, `connector.heartbeat` (name-gated: switchboard only) |
 | `switchboard_backfill` | `backfill.poll`, `backfill.progress` (name-gated: switchboard only) |
+| `delegation` | `delegate_ask`, `delegate_receive`, `delegate_answer`, `delegate_wake` (type-gated: non-staffer only) |
 | `domain_events` | `publish_event`, `subscribe_to_event`, `unsubscribe_from_event`, `list_my_subscriptions`, `receive_domain_event`, `report_event_reaction` (type-gated: non-staffer only) |
 
 **Name-gated groups.** Some groups are additionally gated by butler name:
@@ -171,9 +172,9 @@ The known core groups are:
 when `butler_name == "messenger"`. This prevents a domain butler from
 accidentally gaining switchboard routing powers.
 
-**Type-gated groups.** `domain_events` tools are registered only for
-non-staffer butlers, regardless of `core_groups`. This preserves the staffer
-boundary even if a staffer's configuration names the group.
+**Type-gated groups.** `delegation` and `domain_events` tools are registered
+only for non-staffer butlers, regardless of `core_groups`. This preserves the
+staffer boundary even if a staffer's configuration names either group.
 
 **`route.execute` is ALWAYS registered** regardless of `core_groups`. All
 butlers need it because the Switchboard calls it server-to-server via MCP to
