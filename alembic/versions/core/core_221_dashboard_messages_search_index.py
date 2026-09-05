@@ -1,15 +1,16 @@
 """dashboard_messages: tsvector + trigram full-text search index
 
-Revision ID: core_218
-Revises: core_215
+Revision ID: core_221
+Revises: core_220
 Create Date: 2026-09-05 00:00:00.000000
 
-NOTE: originally authored as ``core_216``. A sibling branch (bu-8cdl1.7,
-RFC 0032) also claimed ``core_216`` and, on collision, moved to ``core_217``;
-this revision moves to ``core_218`` to leave both ``core_216`` and
-``core_217`` free for whichever of those two lands first. Re-verify against
-``alembic/versions/core/`` right before merge and bump ``down_revision`` again
-if another revision lands first (alembic revision chains must be linear).
+NOTE: renumbered twice while landing due to migration-slot races with
+concurrent sibling branches: ``core_216`` (original) -> ``core_218`` (after
+bu-8cdl1.7/RFC 0032 claimed ``core_216`` and moved to ``core_217``) ->
+``core_221`` (after ``core_217``..``core_220`` all landed on ``main`` ahead of
+this PR). Re-verify against ``alembic/versions/core/`` right before merge and
+bump ``down_revision`` again if another revision lands first (alembic
+revision chains must be linear).
 
 bu-0ynlk.9 (conversation_recall core tool + message-level full-text search).
 Any butler can now answer "what did I ask you last week about X" via the new
@@ -50,14 +51,47 @@ a pre-existing gap this migration does not widen or attempt to close.
 Idempotency / reversibility
 ---------------------------
 Every DDL statement is guarded (``IF NOT EXISTS`` / guarded ``DO`` blocks), so
-a re-run is a no-op. Index creation uses ``CONCURRENTLY`` (via Alembic's
-autocommit block, required since Postgres forbids concurrent index DDL inside
-a transaction) so the dashboard chat write path is not blocked while the
-index builds. ``ADD COLUMN ... GENERATED ALWAYS`` cannot use ``CONCURRENTLY``
-(it rewrites the table under a normal transaction) — acceptable here since
-``dashboard_messages`` is not yet at a size where that rewrite is disruptive.
-``downgrade()`` drops the indexes and column and revokes the four added-role
-grants.
+a re-run is a no-op. ``downgrade()`` drops the indexes and column and revokes
+the four added-role grants.
+
+Why plain ``CREATE INDEX``, not ``CONCURRENTLY``
+--------------------------------------------------
+``public.dashboard_messages`` is cross-butler: every butler schema's "core"
+chain applies this migration against the *same physical relation*, and two
+schemas' chains can run concurrently (see
+``tests/migrations/test_runtime_attention_outbox_migration.py::
+test_core_chain_serializes_global_runtime_attention_downgrade_and_reapply_across_processes``).
+An earlier attempt at this migration paired a blocking, table-rewriting
+``ALTER TABLE ... ADD COLUMN ... GENERATED ALWAYS ... STORED`` (takes
+``AccessExclusiveLock`` for the rewrite) with ``CREATE INDEX CONCURRENTLY``
+on that same table inside ``op.get_context().autocommit_block()``. Under the
+two-schema concurrent-upgrade race, one session's CIC can still be in its
+internal "wait for pre-existing snapshots to finish" phase when the other
+session reaches an unrelated, already-merged, ordinary transactional
+``ALTER TABLE`` on the same relation from a *different* core migration
+earlier in the chain (e.g. ``core_213_dashboard_messages_sources.py``'s
+``ADD COLUMN sources``) — that session blocks waiting for
+``AccessExclusiveLock``, while the CIC session is in turn waiting on that
+now-blocked session's still-open transaction: a textbook Postgres CIC
+deadlock (confirmed via repeated local runs of the test above). A
+session-scoped advisory lock only protects statements that opt into taking
+it, and retrofitting one onto every already-applied migration that touches
+this shared table is neither practical nor safe to do to already-merged,
+already-applied revisions.
+
+The fix is simpler: use plain, ordinary ``CREATE INDEX IF NOT EXISTS`` (no
+``CONCURRENTLY``) here, matching every other migration in this codebase that
+touches ``public.dashboard_messages``/``dashboard_conversations``
+(``core_006_dashboard.py``, ``core_210_expected_signals.py``,
+``core_213_dashboard_messages_sources.py``) — none of which use
+``CONCURRENTLY`` on a cross-butler ``public`` table. Plain DDL still takes
+``AccessExclusiveLock``, but two sessions each requesting it just serialize
+in FIFO order (the second blocks until the first's transaction commits) —
+Postgres never has to wait on old snapshots the way CIC does, so there is no
+opportunity for the circular wait. ``dashboard_messages`` is not yet at a
+size where a brief index-build lock is disruptive; the only real cost is a
+short write-path pause during migration, which is exactly what every other
+migration against this table already accepts.
 """
 
 from __future__ import annotations
@@ -65,8 +99,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "core_218"
-down_revision = "core_215"
+revision = "core_221"
+down_revision = "core_220"
 branch_labels = None
 depends_on = None
 
@@ -152,21 +186,23 @@ def upgrade() -> None:
         """
     )
 
-    with op.get_context().autocommit_block():
-        op.execute(
-            """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dashboard_messages_search_vector
-            ON public.dashboard_messages
-            USING gin (search_vector)
-            """
-        )
-        op.execute(
-            """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dashboard_messages_content_trgm
-            ON public.dashboard_messages
-            USING gin (content gin_trgm_ops)
-            """
-        )
+    # Plain (non-CONCURRENTLY) index creation — see module docstring "Why
+    # plain CREATE INDEX, not CONCURRENTLY" for why CIC on this cross-butler
+    # table deadlocks under concurrent per-schema migration upgrades.
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_dashboard_messages_search_vector
+        ON public.dashboard_messages
+        USING gin (search_vector)
+        """
+    )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_dashboard_messages_content_trgm
+        ON public.dashboard_messages
+        USING gin (content gin_trgm_ops)
+        """
+    )
 
     for table_fqn in _TABLE_FQNS:
         for role in _NEW_ROLES:
@@ -178,8 +214,6 @@ def downgrade() -> None:
         for role in _NEW_ROLES:
             _revoke_if_table_exists(table_fqn, _TABLE_PRIVILEGES, role)
 
-    with op.get_context().autocommit_block():
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_dashboard_messages_content_trgm")
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_dashboard_messages_search_vector")
-
+    op.execute("DROP INDEX IF EXISTS idx_dashboard_messages_content_trgm")
+    op.execute("DROP INDEX IF EXISTS idx_dashboard_messages_search_vector")
     op.execute("ALTER TABLE public.dashboard_messages DROP COLUMN IF EXISTS search_vector")

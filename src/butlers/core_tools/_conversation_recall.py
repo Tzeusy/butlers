@@ -1,7 +1,7 @@
 """conversation_recall core tool — cross-butler dashboard chat recall.
 
 Exposes two always-on MCP tools backed by the ``search_vector``/trigram
-indexes added in ``core_218_dashboard_messages_search_index``:
+indexes added in ``core_221_dashboard_messages_search_index``:
 
 - ``conversation_recall`` — full-text search over every butler's dashboard
   messages, answering "what did I ask you last week about X" regardless of

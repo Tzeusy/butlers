@@ -1,4 +1,4 @@
-"""Live-Postgres round-trip test for core_218 (dashboard message search index)."""
+"""Live-Postgres round-trip test for core_221 (dashboard message search index)."""
 
 from __future__ import annotations
 
@@ -14,13 +14,13 @@ pytestmark = pytest.mark.integration
 
 _MIGRATION_PATH = (
     Path(__file__).resolve().parents[2]
-    / "alembic/versions/core/core_218_dashboard_messages_search_index.py"
+    / "alembic/versions/core/core_221_dashboard_messages_search_index.py"
 )
 
 
 def _load_migration():
     spec = importlib.util.spec_from_file_location(
-        "core_218_dashboard_messages_search_index", _MIGRATION_PATH
+        "core_221_dashboard_messages_search_index", _MIGRATION_PATH
     )
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
@@ -32,19 +32,8 @@ async def _apply(pool: asyncpg.Pool, fn_name: str) -> None:
     sqls: list[str] = []
     migration = _load_migration()
 
-    class _FakeAutocommitBlock:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc_info):
-            return False
-
-    fake_context = MagicMock()
-    fake_context.autocommit_block.return_value = _FakeAutocommitBlock()
-
     mocked_op = MagicMock()
     mocked_op.execute.side_effect = sqls.append
-    mocked_op.get_context.return_value = fake_context
     with patch.object(migration, "op", mocked_op):
         getattr(migration, fn_name)()
     for sql in sqls:
