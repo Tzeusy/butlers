@@ -358,11 +358,21 @@ Dashboard conversations SHALL construct `ingest.v1` envelopes that flow through 
 - **THEN** the constructed envelope SHALL set `control.pinned_target` to `routed_butler`, bypassing classification entirely
 - **AND** a conversation whose `routed_butler` is still NULL (not yet routed, or a bug-lane report with no domain-butler target) continues through classification as in the "unpinned until routed" scenario above
 
-#### Scenario: Optional page context on dashboard messages
+#### Scenario: Typed, redacted page context on dashboard messages
 
-- **WHEN** a dashboard message is submitted with a `page_context` object (`route`, `query_params`, optional `entity_ref`) on the request body
-- **THEN** the envelope's `payload.raw.page_context` SHALL carry that object unchanged, grounding the statement for the routed butler
+- **WHEN** a dashboard message is submitted with a `page_context` object (`route`, `query_params`, optional `entity_ref`, optional `visible_resource` {`kind`, `id`, `filters`, `window`}, optional `visible_summary`) on the request body
+- **THEN** the API SHALL strip any query-param key containing a secret-ish marker (`token`, `key`, `secret`, `password`, `authorization`) before persisting or forwarding it, regardless of what the client sent
+- **AND** the API SHALL reject a `visible_resource.kind` outside the closed registry vocabulary
+- **AND** a payload exceeding the size budget SHALL be truncated (dropping `visible_resource.filters`, then `query_params`, then trimming `visible_summary`, in that order) with `truncated=true` set, never silently dropped or rejected outright
+- **AND** the persisted user message row SHALL store the (possibly redacted/truncated) `page_context` plus a `captured_at` timestamp
+- **AND** the envelope's `payload.raw.page_context` SHALL carry that same persisted object, grounding the statement for the routed butler
 - **AND** when no `page_context` is provided, `payload.raw` SHALL NOT contain a `page_context` key
+
+#### Scenario: A retry reuses the originally-captured page context
+
+- **WHEN** a dashboard message is retried with the same client-generated `message_id` (`message_create_idempotent`'s conflict path)
+- **THEN** the API SHALL forward the `page_context` stored on the original write, not a `page_context` on the retry request body, into the ingest envelope
+- **AND** no new capture SHALL occur for the retried message
 
 ### Requirement: Conversation Summary Queries
 
@@ -385,7 +395,8 @@ Conversation endpoint API response models SHALL provide typed response shapes.
 #### Scenario: ConversationMessage model
 
 - **WHEN** a message response is serialized
-- **THEN** each entry includes: `id`, `conversation_id`, `role`, `content`, `created_at`, `session_id`, `model_name`, `input_tokens`, `output_tokens`, `duration_ms`, `tool_calls`, `error`, `request_id`
+- **THEN** each entry includes: `id`, `conversation_id`, `role`, `content`, `created_at`, `session_id`, `model_name`, `input_tokens`, `output_tokens`, `duration_ms`, `tool_calls`, `error`, `request_id`, `page_context`, `captured_at`
+- **AND** `page_context`/`captured_at` are both `null` for assistant-role rows and for any user row sent without a page context
 
 #### Scenario: ConversationSearchResult model
 
