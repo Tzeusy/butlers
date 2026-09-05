@@ -71,7 +71,7 @@ export function ContextChip({
           "border-dashed text-muted-foreground hover:text-foreground hover:border-foreground/40",
         )}
       >
-        Context removed — click to re-attach
+        Context removed, click to re-attach
       </button>
     );
   }

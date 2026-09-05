@@ -1991,7 +1991,7 @@ files under `frontend/src/pages` and `frontend/src/components`.
 ## `frontend/src/components/chat/ContextChip.tsx`
 
 - Context not attached on this page.
-- Context removed — click to re-attach
+- Context removed, click to re-attach
 - Page context attached: {}. Press Backspace or Delete to remove.
 - Remove page context from this message
 
