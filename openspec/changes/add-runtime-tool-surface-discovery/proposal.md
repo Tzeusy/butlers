@@ -161,6 +161,10 @@ mechanism; eager filtering is the conservative cross-CLI compatibility path.
   2026-09-05.** Superseded as the approval artifact by the corrective successor
   that completes the exact current core-tool registration inventory; its
   accepted Option B and doctrine decisions remain historical provenance.
-- Corrective successor: **Pending refreshed exact-head owner approval.** The
-  approval must cite the immutable PR head presented in the review packet; no
-  prior artifact approval transfers to it.
+- `b7ff6c2bf064742907ac14db7e6a5f8e7c4df407`: **Approved by owner.**
+  Superseded as the approval artifact after live `main` added
+  `conversation_recall` and `conversation_thread_read`; its accepted Option B,
+  doctrine, and earlier inventory corrections remain historical provenance.
+- Live-main corrective successor: **Pending refreshed exact-head owner
+  approval.** The approval must cite the immutable PR head presented in the
+  review packet; no prior artifact approval transfers to it.

@@ -4,7 +4,7 @@
 Every butler daemon SHALL register core MCP tools based on the `core_groups` allowlist from `runtime_config` (DB) and the butler's type/name. When `core_groups` is NULL, all groups are enabled (backward compat). When set, only tools in the listed groups are registered.
 - This requirement **supersedes** the tier-based system (UNIVERSAL/DOMAIN/MESSENGER/SWITCHBOARD constants and the `_tools_to_remove` post-registration pruning) documented in RFC 0002 §Tool Budget Discipline. The tier constants (`UNIVERSAL_CORE_TOOL_NAMES`, `DOMAIN_CORE_TOOL_NAMES`, `MESSENGER_CORE_TOOL_NAMES`) are removed. RFC 0002 §Tool Budget Discipline requires amendment to reflect the `core_groups` mechanism.
 - Tool groups:
-- `infra`: status, trigger, tick, correct, memory_access, memory_catalog_fetch, conversation_reply, shutdown, chronicler_day_close_refresh (name-gated: chronicler only)
+- `infra`: status, trigger, tick, correct, memory_access, memory_catalog_fetch, conversation_reply, conversation_recall, conversation_thread_read, shutdown, chronicler_day_close_refresh (name-gated: chronicler only)
 - `state`: state_get, state_set, state_delete, state_list
 - `scheduling`: schedule_list, schedule_create, schedule_update, schedule_delete, schedule_trigger, schedule_costs
 - `sessions`: sessions_list, sessions_get, sessions_summary, sessions_daily, top_sessions

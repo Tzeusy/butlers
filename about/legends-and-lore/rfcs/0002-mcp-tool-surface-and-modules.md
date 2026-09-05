@@ -152,7 +152,7 @@ The known core groups are:
 
 | Group | Tools |
 |-------|-------|
-| `infra` | `status`, `trigger`, `tick`, `correct`, `memory_access`, `memory_catalog_fetch`, `conversation_reply`, `shutdown`, `chronicler_day_close_refresh` (name-gated: chronicler only) |
+| `infra` | `status`, `trigger`, `tick`, `correct`, `memory_access`, `memory_catalog_fetch`, `conversation_reply`, `conversation_recall`, `conversation_thread_read`, `shutdown`, `chronicler_day_close_refresh` (name-gated: chronicler only) |
 | `state` | `state_get`, `state_set`, `state_delete`, `state_list` |
 | `scheduling` | `schedule_list`, `schedule_create`, `schedule_update`, `schedule_delete`, `schedule_trigger`, `schedule_costs` |
 | `sessions` | `sessions_list`, `sessions_get`, `sessions_summary`, `sessions_daily`, `top_sessions` |
