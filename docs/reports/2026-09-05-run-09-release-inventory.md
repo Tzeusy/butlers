@@ -1,6 +1,6 @@
 # Run 09 all-15 release inventory
 
-Evidence snapshot: `2026-09-05T15:01:28+08:00` (`2026-09-05T07:01:28Z`)
+Evidence snapshot: `2026-09-05T15:15:22+08:00` (`2026-09-05T07:15:22Z`)
 
 Scope: the 15 ranked moves in
 [the 2026-09-01 JARVIS pursuit dossier](../redesigns/2026-09-01-jarvis-pursuit.md#ranked-moves-run-09),
@@ -47,12 +47,13 @@ release:
 - [Observed] `.7` overlaps a foreign worktree with 15 uncommitted paths and no PR for the current
   slice. That unpublished work must be preserved.
 
-The smallest safe next step is to repair the parent/gate packet headings, rewrite the gate contract
-to say closure removes only its own blocker, and encode or otherwise enforce the missing
-serialization listed below. After that, the owner can review a refreshed inventory and explicitly
-close `bu-xf54r`. Closing that gate is planning/execution release only. It does **not** authorize
-runtime access, credentials, device or provider calls, deployment/restart, destructive action, PR
-merge, or production change.
+The smallest safe next step is to make every non-closed canonical move packet semantically complete,
+repair the parent/gate packet headings, rewrite the gate contract to say closure removes only its own
+blocker, and encode or otherwise enforce the missing serialization listed below. Only after all 14
+non-closed move packets pass a refreshed semantic audit may the owner release decision be presented
+or `bu-xf54r` be closed. Closing that gate is planning/execution release only. It does **not**
+authorize runtime access, credentials, device or provider calls, deployment/restart, destructive
+action, PR merge, or production change.
 
 ## Reading the inventory
 
@@ -113,7 +114,7 @@ All rows share the evidence timestamp at the top of this report.
 | 6 / `bu-7exe4.6` | Open; unassigned; no heartbeat | `bu-xf54r`; `.15` | No matching PR, branch, or worktree | No | No | **HOLD.** Complete the semantic packet; `.15` must land first; and the `core-notify` / notification-gate surface must serialize with `.13` specification work. Gate closure alone will not make this runnable. |
 | 7 / `bu-7exe4.7` | Open; unassigned; no heartbeat | `bu-xf54r` | No matching move PR. Foreign `bu-8cdl1.8` is assigned to another coordinator and its worktree has 15 uncommitted paths after merged PR #4005 | No | No | **HOLD and preserve unpublished work.** Complete the packet; resolve/land or explicitly park the foreign entity-graph slice; then encode serialization and refresh before any owner closes `bu-xf54r`. |
 | 8 / `bu-7exe4.8` | Open; unassigned; no heartbeat | `bu-xf54r` | Foreign [PR #4015](https://github.com/tzeusy-org/butlers/pull/4015) is open but `CONFLICTING`/`DIRTY`; its successful rollup is stale-base evidence. Clean worktree/remote head `e90f6080` edits `RootLayout.tsx` | No | No | **HOLD.** Complete the packet, let the foreign RootLayout lane settle, refresh `main`, then release only after the overlap is gone or serialized. |
-| 9 / `bu-7exe4.9` | Open; unassigned; no heartbeat | `bu-xf54r` | No matching move artifact. Draft [PR #3952](https://github.com/tzeusy-org/butlers/pull/3952), head `8d16a8f2`, modifies the same core-spawner attempt-orchestration contract | No | No | **HOLD.** Complete the packet against the active Resolution Receipt contract; serialize after higher-priority `.1` and with PR #3952; coordinate core migration numbering with every live migration PR. |
+| 9 / `bu-7exe4.9` | Open; unassigned; no heartbeat | `bu-xf54r` | No matching move artifact. Draft [PR #3952](https://github.com/tzeusy-org/butlers/pull/3952), head `6c6591b7`, modifies the same core-spawner attempt-orchestration contract | No | No | **HOLD.** Complete the packet against the active Resolution Receipt contract; serialize after higher-priority `.1` and with PR #3952; coordinate core migration numbering with every live migration PR. |
 | 10 / `bu-7exe4.10` | Open; unassigned; no heartbeat | `bu-xf54r` | No matching move artifact. Foreign PRs #4012 and #4015 are both open but `CONFLICTING`/`DIRTY`; they edit `index.css` and `RootLayout.tsx` respectively. PR #4012's `check-integration-5` and fan-in `check` failed; PR #4015's rollup passed on its stale base | No | No | **HOLD, spec first.** Complete the packet; produce and separately approve one exact normative delta resolving the system-font conflict; settle foreign layout/CSS work first. |
 | 11 / `bu-7exe4.11` | Open; unassigned; no heartbeat | `bu-xf54r`; `.10` | No matching PR, branch, or worktree | No | No | **HOLD.** Complete the packet; `.10` remains an encoded prerequisite and must land its exact spec/first-frame contract before focus-token implementation. |
 | 12 / `bu-7exe4.12` | Open; unassigned; no heartbeat | `bu-xf54r` | No matching move artifact. `bu-ip5c5` is a stale foreign claim on `EntityFinder`, with no PR/worktree found | No | No | **HOLD.** Complete the packet; an authorized recovery/ownership pass must resolve `bu-ip5c5`; and the shortcut/palette requirements need an exact `dashboard-shell` delta before implementation. |
@@ -177,17 +178,19 @@ Beads mutations performed by this report.
 ## Owner-questionnaire handoff
 
 Do not present “close `bu-xf54r` now” as the recommendation from this snapshot. Present one bounded
-decision only after the graph/control-plane repairs above are independently verified:
+decision only after every non-closed canonical move has a semantically complete packet and the
+graph/control-plane repairs above are independently verified:
 
 > **Release run 09 against the refreshed all-15 graph?**
 >
-> Recommended option: close `bu-xf54r` only after the release gate and parent epic pass `bd lint`,
-> the gate text truthfully says closure removes only this gate while all other dependencies still
-> govern readiness, all missing serialization is encoded or otherwise enforceable, and every
-> foreign artifact named in this report is settled or explicitly preserved behind a blocker. This
-> releases only the current planning/execution packets. It does not authorize runtime access,
-> credentials, provider or device calls, deployment/restart, destructive action, PR merge, or
-> production changes.
+> Recommended option: close `bu-xf54r` only after all 14 non-closed canonical move packets pass the
+> full semantic Dispatch Readiness Packet audit, the release gate and parent epic pass `bd lint`, the
+> gate text truthfully says closure removes only this gate while all other dependencies still govern
+> readiness, all missing serialization is encoded or otherwise enforceable, and every foreign
+> artifact named in this report is settled or explicitly preserved behind a blocker. Until every
+> condition holds, neither present nor execute the close. A later close releases only the current
+> planning/execution packets. It does not authorize runtime access, credentials, provider or device
+> calls, deployment/restart, destructive action, PR merge, or production changes.
 
 For `.13`, the release can authorize only `.13.1` specification work. Exact-artifact owner approval
 is a later act. Runtime/provider evidence is later still. For `.2`, the production rollout/restart
@@ -242,8 +245,9 @@ Final verification ran after rebasing onto clean base
 **Real direction**: Preserve earned operational truth while turning the run-09 findings into
 spec-bound, non-overlapping execution lanes.
 
-**Work on next**: Repair the release-control packets; encode the missing serialization; settle or
-protect foreign artifacts; then refresh and present the single owner release decision.
+**Work on next**: Complete all 14 non-closed move packets semantically; repair the release-control
+packets; encode the missing serialization; settle or protect foreign artifacts; then refresh and
+present the single owner release decision.
 
 **Stop pretending**: A structurally complete 15-row inventory is not an all-at-once runnable graph,
 and a green historical PR rollup is not current release evidence for a conflicting branch.
