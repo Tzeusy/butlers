@@ -1,8 +1,15 @@
 """dashboard_messages: tsvector + trigram full-text search index
 
-Revision ID: core_216
+Revision ID: core_218
 Revises: core_215
 Create Date: 2026-09-05 00:00:00.000000
+
+NOTE: originally authored as ``core_216``. A sibling branch (bu-8cdl1.7,
+RFC 0032) also claimed ``core_216`` and, on collision, moved to ``core_217``;
+this revision moves to ``core_218`` to leave both ``core_216`` and
+``core_217`` free for whichever of those two lands first. Re-verify against
+``alembic/versions/core/`` right before merge and bump ``down_revision`` again
+if another revision lands first (alembic revision chains must be linear).
 
 bu-0ynlk.9 (conversation_recall core tool + message-level full-text search).
 Any butler can now answer "what did I ask you last week about X" via the new
@@ -58,7 +65,7 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "core_216"
+revision = "core_218"
 down_revision = "core_215"
 branch_labels = None
 depends_on = None

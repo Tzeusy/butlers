@@ -1,4 +1,4 @@
-"""Live-Postgres round-trip test for core_216 (dashboard message search index)."""
+"""Live-Postgres round-trip test for core_218 (dashboard message search index)."""
 
 from __future__ import annotations
 
@@ -14,13 +14,13 @@ pytestmark = pytest.mark.integration
 
 _MIGRATION_PATH = (
     Path(__file__).resolve().parents[2]
-    / "alembic/versions/core/core_216_dashboard_messages_search_index.py"
+    / "alembic/versions/core/core_218_dashboard_messages_search_index.py"
 )
 
 
 def _load_migration():
     spec = importlib.util.spec_from_file_location(
-        "core_216_dashboard_messages_search_index", _MIGRATION_PATH
+        "core_218_dashboard_messages_search_index", _MIGRATION_PATH
     )
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
