@@ -174,6 +174,7 @@ async def _insert_subscription(
     currency: str = "USD",
     status: str = "active",
     next_renewal: str = "2099-12-31",
+    cancellation_url: str | None = None,
     notice_period_days: int | None = None,
     cancel_by: str | None = None,
     metadata: dict | None = None,
@@ -186,9 +187,9 @@ async def _insert_subscription(
         """
         INSERT INTO subscriptions (
             service, amount, currency, frequency, next_renewal, status,
-            notice_period_days, cancel_by, metadata
+            cancellation_url, notice_period_days, cancel_by, metadata
         )
-        VALUES ($1, $2, $3, 'monthly', $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, 'monthly', $4, $5, $6, $7, $8, $9)
         RETURNING id
         """,
         service,
@@ -196,6 +197,7 @@ async def _insert_subscription(
         currency,
         renewal_date,
         status,
+        cancellation_url,
         notice_period_days,
         cancel_by_date,
         metadata or {},
@@ -787,13 +789,15 @@ class TestRegisterObligations:
     """Tests for register_obligations against the finance-alerts behavior matrix."""
 
     async def test_known_renewal_warns_at_cancel_by_minus_notice(self, pool):
-        """happy: cancel_by and notice_period_days known -> warn_by is derived."""
+        """happy: cancellation_url, cancel_by, and notice_period_days all
+        known -> warn_by is derived."""
         from butlers.tools.finance.alerts import register_obligations
 
         sub_id = await _insert_subscription(
             pool,
             service="Netflix",
             next_renewal="2026-10-01",
+            cancellation_url="https://netflix.example/cancel",
             notice_period_days=7,
             cancel_by="2026-09-25",
         )
@@ -831,6 +835,27 @@ class TestRegisterObligations:
         result = await register_obligations(pool)
 
         assert result["unknown_door"] == 1
+        obligation = await _get_obligation(pool, sub_id)
+        assert obligation["unknown_door"] is True
+        assert obligation["warn_by"] is None
+
+    async def test_missing_cancellation_url_sets_unknown_door_flag(self, pool):
+        """cancel_by and notice_period_days known but no cancellation_url is
+        still an incomplete door -- the owner has dates but nowhere to act on
+        them, so this must not be treated as a fully known door."""
+        from butlers.tools.finance.alerts import register_obligations
+
+        sub_id = await _insert_subscription(
+            pool,
+            service="HBO Max",
+            next_renewal="2026-11-20",
+            notice_period_days=7,
+            cancel_by="2026-11-13",
+        )
+
+        result = await register_obligations(pool)
+
+        assert result == {"registered": 1, "unknown_door": 1, "price_changes": 0}
         obligation = await _get_obligation(pool, sub_id)
         assert obligation["unknown_door"] is True
         assert obligation["warn_by"] is None
@@ -895,6 +920,7 @@ class TestRegisterObligations:
             pool,
             service="Netflix",
             next_renewal="2026-10-01",
+            cancellation_url="https://netflix.example/cancel",
             notice_period_days=7,
             cancel_by="2026-09-25",
         )
@@ -917,8 +943,8 @@ class TestRegisterObligations:
         await register_obligations(pool)
 
         await pool.execute(
-            "UPDATE subscriptions SET notice_period_days = 7, cancel_by = '2026-09-25' "
-            "WHERE id = $1",
+            "UPDATE subscriptions SET cancellation_url = 'https://netflix.example/cancel', "
+            "notice_period_days = 7, cancel_by = '2026-09-25' WHERE id = $1",
             sub_id,
         )
         result = await register_obligations(pool)

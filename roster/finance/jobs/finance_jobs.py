@@ -830,6 +830,12 @@ async def run_insight_scan(db_pool: asyncpg.Pool, *, now: datetime | None = None
     still unactioned" a durable, escalating answer on the dashboard's
     Standing Conditions panel, best-effort and non-fatal to this scan.
 
+    bu-8cdl1.10 slice 2: this scan also registers/updates a forward
+    obligation ledger row (``finance.obligation_ledger``) per active
+    subscription's next renewal, ahead of the four candidate categories
+    above so it always runs regardless of where a verbosity-off/filtered
+    early exit lands. Also best-effort and non-fatal.
+
     Args:
         db_pool: Database connection pool (used for both finance and insight tables).
         now: Optional reference instant anchoring every window this scan
@@ -872,6 +878,15 @@ async def run_insight_scan(db_pool: asyncpg.Pool, *, now: datetime | None = None
         else:
             counts["accepted"] += 1
         return True  # continue
+
+    # ------------------------------------------------------------------
+    # Forward obligation ledger (bu-8cdl1.10 slice 2)
+    # ------------------------------------------------------------------
+    # Runs first, ahead of every verbosity-off/filtered early exit below, so
+    # this STATE side effect is genuinely "alongside, not instead of"
+    # candidate delivery rather than silently unreachable whenever an
+    # earlier category's submission gets filtered.
+    await _register_obligations(db_pool)
 
     # ------------------------------------------------------------------
     # 1. Spending anomalies
@@ -1332,11 +1347,6 @@ async def run_insight_scan(db_pool: asyncpg.Pool, *, now: datetime | None = None
         if not keep_going:
             logger.info("Finance insight scan: verbosity=off early exit (price changes)")
             return {**counts, "early_exit": True}
-
-    # ------------------------------------------------------------------
-    # 6. Forward obligation ledger (bu-8cdl1.10 slice 2)
-    # ------------------------------------------------------------------
-    await _register_obligations(db_pool)
 
     logger.info(
         "Finance insight scan complete: submitted=%d accepted=%d filtered=%d errors=%d",

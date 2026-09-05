@@ -467,11 +467,14 @@ async def register_obligations(pool: asyncpg.Pool) -> dict[str, Any]:
     keyed by ``(subscription_id, period)`` where ``period`` is the
     subscription's current ``next_renewal`` date:
 
-    - ``warn_by`` = ``cancel_by - notice_period_days`` when both Slice-1
-      cancellation-door fields are known.
-    - ``unknown_door`` = True (and ``warn_by`` left NULL) when either door
-      field is missing, so the owner is prompted to enrich it rather than
-      the obligation silently warning at the wrong time or not at all.
+    - ``warn_by`` = ``cancel_by - notice_period_days`` when all three Slice-1
+      cancellation-door fields (``cancellation_url``, ``notice_period_days``,
+      ``cancel_by``) are known.
+    - ``unknown_door`` = True (and ``warn_by`` left NULL) when any one of
+      those three door fields is missing -- a URL-less door is exactly as
+      unusable to the owner as a missing date -- so the owner is prompted to
+      enrich it rather than the obligation silently warning at the wrong
+      time or not at all.
     - ``price_change_amount``/``price_change_direction`` are set when the
       subscription's ``metadata`` carries a ``next_amount`` that differs from
       the currently tracked amount -- a pre-charge warning, ahead of
@@ -495,7 +498,8 @@ async def register_obligations(pool: asyncpg.Pool) -> dict[str, Any]:
     """
     subscriptions = await pool.fetch(
         """
-        SELECT id, amount, next_renewal, notice_period_days, cancel_by, metadata
+        SELECT id, amount, next_renewal, cancellation_url, notice_period_days,
+               cancel_by, metadata
         FROM subscriptions
         WHERE status = 'active'
         """
@@ -507,10 +511,15 @@ async def register_obligations(pool: asyncpg.Pool) -> dict[str, Any]:
 
     for sub in subscriptions:
         period = sub["next_renewal"]
+        cancellation_url = sub["cancellation_url"]
         notice_period_days = sub["notice_period_days"]
         cancel_by = sub["cancel_by"]
 
-        if cancel_by is not None and notice_period_days is not None:
+        if (
+            cancellation_url is not None
+            and cancel_by is not None
+            and notice_period_days is not None
+        ):
             warn_by = cancel_by - timedelta(days=notice_period_days)
             unknown_door = False
         else:

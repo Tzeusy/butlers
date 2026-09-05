@@ -612,6 +612,38 @@ async def test_insight_scan_missing_obligation_ledger_table_does_not_break_scan(
         assert result["errors"] == 0
 
 
+async def test_insight_scan_registers_obligation_ledger_despite_verbosity_off_early_exit(
+    provisioned_postgres_pool,
+):
+    """bu-8cdl1.10 slice 2: the ledger write must run even when verbosity=off
+    trips the very first candidate submission -- it is a STATE side effect
+    alongside candidate delivery, not gated by whether any candidate survives
+    the verbosity filter."""
+    from butlers.jobs._roster.finance_jobs import run_insight_scan
+
+    async with provisioned_postgres_pool() as pool:
+        await _setup_insight_schema(pool)
+        await pool.execute("UPDATE insight_settings SET verbosity = 'off' WHERE id = 1")
+
+        sub_id = await _insert_subscription(
+            pool, service="Netflix", next_renewal=_today() + timedelta(days=30)
+        )
+        # A bill due soon is an unconditional bill-due submission (section 2),
+        # so the very first _submit() call reliably trips the verbosity-off
+        # early exit regardless of anomaly/budget history.
+        await _insert_bill_returning_id(
+            pool, payee="Electric Co", due_date=_today() + timedelta(days=1)
+        )
+
+        result = await run_insight_scan(pool)
+        assert result["early_exit"] is True
+
+        row = await pool.fetchrow(
+            "SELECT * FROM finance.obligation_ledger WHERE subscription_id = $1::uuid", sub_id
+        )
+        assert row is not None
+
+
 async def test_insight_scan_spending_anomaly_opens_owner_condition(provisioned_postgres_pool):
     """bu-ep4ks.6: an anomalous category also opens a standing owner
     condition, scoped to (category, month)."""
