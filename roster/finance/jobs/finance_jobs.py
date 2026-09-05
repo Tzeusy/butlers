@@ -27,7 +27,7 @@ from butlers.core.owner_conditions import Observation as OwnerObservation
 from butlers.core.owner_conditions import compute_fingerprint as owner_condition_fingerprint
 from butlers.core.owner_conditions import reconcile_snapshot as reconcile_owner_condition
 from butlers.credential_store import CredentialStore
-from butlers.tools.finance.alerts import detect_price_changes
+from butlers.tools.finance.alerts import detect_price_changes, register_obligations
 from butlers.tools.finance.anomaly_detection import anomaly_scan
 from butlers.tools.finance.budgets import _period_anchor, budget_status, resolve_budget_zone
 from butlers.tools.finance.overview import subscription_audit
@@ -784,6 +784,24 @@ async def _reconcile_owner_conditions(
         )
 
 
+async def _register_obligations(db_pool: asyncpg.Pool) -> None:
+    """Best-effort forward obligation ledger write (bu-8cdl1.10 slice 2).
+
+    A STATE side effect alongside the insight-candidate delivery above, not
+    instead of it: this registers/updates ``obligation_ledger`` rows (warn-by
+    date, unknown-door flag, pre-charge price-change flag) for slice 3's
+    future insight payload to read, but does not itself submit an insight
+    candidate. Mirrors ``_reconcile_owner_conditions``'s degraded-honesty
+    contract -- a ledger-write failure must never break the insight scan it
+    runs alongside.
+    """
+    try:
+        async with _finance_scoped_connection(db_pool) as conn:
+            await register_obligations(conn)
+    except Exception:
+        logger.warning("Finance insight scan: obligation ledger registration failed", exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # run_insight_scan
 # ---------------------------------------------------------------------------
@@ -1314,6 +1332,11 @@ async def run_insight_scan(db_pool: asyncpg.Pool, *, now: datetime | None = None
         if not keep_going:
             logger.info("Finance insight scan: verbosity=off early exit (price changes)")
             return {**counts, "early_exit": True}
+
+    # ------------------------------------------------------------------
+    # 6. Forward obligation ledger (bu-8cdl1.10 slice 2)
+    # ------------------------------------------------------------------
+    await _register_obligations(db_pool)
 
     logger.info(
         "Finance insight scan complete: submitted=%d accepted=%d filtered=%d errors=%d",
