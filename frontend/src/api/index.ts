@@ -1065,6 +1065,7 @@ export type {
 export {
   getFinanceAccounts,
   getFinanceExpectedSignals,
+  getFinanceObligations,
   getFinanceSpendingSummary,
   getFinanceSubscriptions,
   getFinanceTransactions,
@@ -1078,6 +1079,8 @@ export type {
   FinanceBill,
   FinanceExpectedSignal,
   FinanceExpectedSignalsResponse,
+  FinanceObligation,
+  FinanceObligationsResponse,
   FinanceBulkUpdateMatch,
   FinanceBulkUpdateOp,
   FinanceBulkUpdateOpResult,
