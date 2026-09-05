@@ -100,9 +100,9 @@ dev substitutes.
 
 ### 2.2 Re-run the closure proof at the authorized target
 
-The following static audit is required from a clean checkout at
-`[AUTHORIZED_TARGET_GIT_SHA]`. Record path and line only, not matched SQL or
-application data:
+The following narrow scans are useful allowlists, not closure proof. Run them
+from a clean checkout at `[AUTHORIZED_TARGET_GIT_SHA]`. Record path and line
+only, not matched SQL or application data:
 
 ```bash
 rg -n -o --glob '*.py' --glob '!tests/**' \
@@ -115,8 +115,57 @@ rg -n -o --glob '*.py' --glob '!tests/**' \
 
 Expected categories are the two runtime INSERTs above, dashboard API mutations,
 daemon Spawner/core-tool mutations, the sole thread-upsert routing call, and
-reviewed migration-only references. Any new runtime call, SQL mutation, dynamic
-SQL writer, daemon launcher, or deployment unit invalidates this inventory.
+reviewed migration-only references.
+
+Closure additionally requires all three reviews below. They deliberately cover
+aliases, dynamic construction, non-Python code, and new top-level paths that an
+exact Python pattern can miss.
+
+1. **Broad tracked-tree identifier/import scan.** Scan the entire target tree,
+   not selected roots or extensions. Include the table identifier, helper and
+   module identifiers, conversation mutation names, SQL execution primitives,
+   daemon/dashboard launch verbs, and database client imports. Retain only
+   matched paths, line numbers, and the reviewer classification.
+
+   ```bash
+   git grep -n -I \
+     -e dashboard_conversations \
+     -e conversation_get_or_create_by_thread \
+     -e butlers.api.conversations \
+     -e asyncpg -e psycopg -e sqlalchemy \
+     -e '.execute(' -e '.executemany(' \
+     -e 'butlers up' -e 'butlers run' -e 'butlers dashboard' \
+     "[AUTHORIZED_TARGET_GIT_SHA]" -- .
+   ```
+
+2. **Full target-diff review.** Review every added, modified, renamed, copied,
+   and deleted tracked path since the pinned prerequisite, without a path
+   filter. For every path, classify whether it can assemble SQL dynamically,
+   call a database writer through an alias, expose a write API, start a daemon,
+   add a language/runtime, generate executable code, or change packaging and
+   deployment behavior.
+
+   ```bash
+   git diff --name-status --find-renames --find-copies \
+     26806d6a25c9ffe9ee8cb190e9c65eb7d4758175.."[AUTHORIZED_TARGET_GIT_SHA]" -- .
+   ```
+
+3. **Deployment-entrypoint and opaque-file review.** Classify every tracked
+   file at the target, including new repository roots, Compose/Kubernetes/systemd
+   manifests, Dockerfiles, package entry points, shell scripts, generated
+   executables, submodules, and binary files. Reconcile those entry points with
+   the live supervisor inventory. An unreviewable binary, submodule, generated
+   executable, external supervisor, or opaque deployment root is an unknown
+   writer, not an exclusion.
+
+   ```bash
+   git ls-tree -r --full-tree "[AUTHORIZED_TARGET_GIT_SHA]"
+   ```
+
+The independent reviewer records the number of tracked paths classified, the
+target diff path count, the matched-path allowlist, and a zero-unknown verdict.
+Any new runtime call, SQL mutation, dynamic SQL writer, daemon launcher,
+deployment entry point, or unclassifiable artifact invalidates this inventory.
 Stop with `static_inventory_changed`; update and independently review the
 packet before live action.
 
@@ -172,7 +221,12 @@ authorization.
 | Maintenance window | Start, end, and time zone. |
 | Target artifact | Full `[AUTHORIZED_TARGET_GIT_SHA]`, expected immutable image ID/digest, and proof the prerequisite is its ancestor. |
 | Rollback artifact | Full `[ROLLBACK_GIT_SHA]`, immutable image ID/digest, retention location, and independent compatibility approval for the target's migrations. |
-| Lifecycle acts | Explicit permission to quiesce named ingress units, build or obtain the target image, run the canonical migration phase, recreate/restart the named writer and producer units, perform content-blind health/version observation, and execute the named rollback procedure if an abort condition occurs. |
+| Ingress gate | One reviewed `[INGRESS_GATE_PROCEDURE_ID]` that closes dashboard ingress and every connector/external-client submission at or before Switchboard acceptance, including already-buffered submissions, and provides content-blind closed/open evidence. Both lifecycle methods require this gate; stopped producer processes are additional defense, not a substitute. |
+| Lifecycle method | Exactly one of `staged_writer_first` or `canonical_deploy_with_ingress_gate`, plus the immutable reviewed procedure ID. No hybrid or ad hoc command sequence. |
+| Common lifecycle acts | Explicit permission to quiesce ingress; stop, create, recreate, and start the named writer and producer units; build or obtain the target image; run the migration phase; perform content-blind health/version observation; retry only named idempotent phases; and execute the named rollback procedure on abort. |
+| Canonical deploy effects | When `canonical_deploy_with_ingress_gate` is selected: explicit permission to materialize or replace `.beads/issues.export.jsonl`; resolve the protected restore endpoint; stop and create `restore-drill-postgres-proxy` and `restore-drill-executor`; invoke both generation-bound verbs of the fixed root-owned firewall wrapper via passwordless `sudo`; create the protected networks/containers; run unscoped `docker compose up -d --remove-orphans`; poll health; and write success or failure to `public.deployments`. |
+| Canonical affected units | Authorization names every unit in the exact merged Compose render. The current unprofiled base-plus-protected set is: `migrations`, `log-init`, `log-cleanup`, `backup-cron`, `dashboard-api`, `butlers-up`, `oauth-gate`, `connector-telegram-bot`, `connector-telegram-user`, `connector-whatsapp-user`, `connector-google-calendar`, `connector-spotify`, `connector-steam`, `connector-owntracks`, `connector-activitywatch`, `connector-home-assistant`, `connector-gmail`, `connector-google-drive`, `connector-google-health`, `restore-drill-postgres-proxy`, and `restore-drill-executor`. Any rendered addition is separately named or aborts. |
+| Staged lifecycle effects | When `staged_writer_first` is selected: explicit permission for the reviewed procedure's build, migration, protected-overlay/firewall, supporting-service, writer-only recreate, later producer-start, health, ledger, and rollback effects. Its effect list must be at least as precise as the canonical list; merely naming “Compose” is insufficient. |
 | Operator and verifier | One authorized operator and one independent operations/security verifier. |
 | Evidence location | Owner-controlled sanitized record location and retention period. |
 | Exclusions acknowledged | No credential read/rotation, message or provider-payload read, raw-log capture, database content inspection, volume deletion, PR #3960 mutation, schema identity-split deployment, Beads closure, or production action outside the named environment. |
@@ -182,6 +236,16 @@ or lifecycle act does not authorize another. A read-only authorization does not
 authorize a restart. A dev authorization does not authorize prod, and neither
 authorizes whichever target happens to hold real personal data merely because
 its filename sounds non-production.
+
+The canonical effect list is code-derived, not a claim that every environment
+uses it. `run_deploy` materializes the local Beads export before protected
+preparation (`src/butlers/core/deploy.py:700-721`), then stops the restore-drill
+proxy/executor, invokes the root-owned firewall wrapper twice, and creates the
+protected units (`src/butlers/core/deploy.py:724-803`). Its recreate is
+unscoped (`src/butlers/core/deploy.py:807-834`), so every unit returned by that
+environment's merged Compose render is an authorized lifecycle effect. Optional
+profiles such as `dev`, `audio`, `minio`, or `hotreload` add units only when the
+selected lifecycle explicitly renders and authorizes them.
 
 ## 4. Content-blind evidence contract
 
@@ -201,6 +265,27 @@ target_git_sha: "<full SHA>"
 rollback_git_sha: "<full SHA>"
 target_contains_prerequisite: true
 static_inventory_status: "match|changed|unknown"
+broad_tree_scan_status: "pass|fail|unknown"
+full_target_diff_review_status: "pass|fail|unknown"
+deployment_entrypoint_review_status: "pass|fail|unknown"
+tracked_paths_classified: "<positive integer>"
+target_diff_paths_classified: "<nonnegative integer>"
+lifecycle_method: "staged_writer_first|canonical_deploy_with_ingress_gate"
+lifecycle_procedure_id: "<immutable reviewed procedure ref>"
+ingress_gate:
+  procedure_id: "<immutable reviewed procedure ref>"
+  coverage: "dashboard_and_all_switchboard_submissions"
+  closed_at: "<RFC3339>"
+  observed_closed_at: "<RFC3339>"
+  status: "closed"
+canonical_deploy_effects:
+  applicable: "true|false"
+  beads_export_materialized: "true|false|not-applicable"
+  restore_drill_units_stopped_and_created: "true|false|not-applicable"
+  root_firewall_prepare_completed: "true|false|not-applicable"
+  root_firewall_attestation_completed: "true|false|not-applicable"
+  merged_compose_units_authorized: "true|false|not-applicable"
+  deployment_ledger_result: "success|failed|not-applicable"
 writer_units:
   - unit_ref: "<compose service or approved opaque supervisor ref>"
     role: "thread_anchor_writer|dashboard_anchor_writer"
@@ -224,17 +309,50 @@ producer_classes:
     expected_instance_count: 1
     fresh_healthy_instance_count: 1
     target_image_instance_count: 1
-    process_refs_before: ["<opaque id>"]
-    process_refs_after: ["<opaque id>"]
     replacement_proven: true
+    instances:
+      - process_ref_before: "<opaque id>"
+        process_ref_after: "<opaque id>"
+        heartbeat_instance_ref: "<opaque UUID>"
+        heartbeat_sent_at: "<RFC3339>"
+        heartbeat_received_at: "<RFC3339>"
+        heartbeat_observed_at: "<RFC3339>"
+        heartbeat_sent_age_seconds: "<number>"
+        heartbeat_received_age_seconds: "<nonnegative number>"
+        freshness_cutoff_seconds: 300
+        future_clock_skew_seconds: "<nonnegative number>"
+        fresh: true
+        state: "healthy"
 unknown_writers: []
 abort_reason_codes: []
 rollback:
   invoked: false
   result: "not_invoked|complete|partial|failed|unknown"
 verdict: "complete_fleet_pass|fail_closed"
-operator: "<approved identity>"
-independent_verifier: "<approved identity>"
+evidence_digest:
+  algorithm: "sha256"
+  canonicalization: "RFC8785"
+  value: "<64 lowercase hex characters>"
+attestation_binding:
+  algorithm: "sha256"
+  fields:
+    - authorization_id
+    - packet_git_sha
+    - target_git_sha
+    - evidence_digest.value
+  value: "<64 lowercase hex characters>"
+operator_attestation:
+  actor: "<approved operator identity>"
+  attested_at: "<RFC3339>"
+  decision: "complete_fleet_pass|fail_closed"
+  binding_sha256: "<exact attestation_binding.value>"
+  immutable_record_ref: "<owner-controlled record ref>"
+independent_verifier_attestation:
+  actor: "<approved verifier identity>"
+  attested_at: "<RFC3339>"
+  decision: "complete_fleet_pass|fail_closed"
+  binding_sha256: "<exact attestation_binding.value>"
+  immutable_record_ref: "<independent record ref>"
 ```
 
 Allowed evidence is limited to version/SHA, immutable image ID, opaque
@@ -254,6 +372,28 @@ application provenance: several connectors currently initialize heartbeat
 `GIT_SHA` for version proof; heartbeat evidence is only liveness and process
 replacement proof. Never dump `.Config.Env` or an entire connector summary.
 
+Freshness is independently recomputed for each opaque producer instance. At
+this target, `freshness_cutoff_seconds` is fixed at 300, matching the canonical
+`online` boundary (`src/butlers/core/liveness.py:23-52`). Record the connector's
+`sent_at`, the Switchboard receipt time, the verifier observation time, and the
+derived age. `fresh` is true only when the receipt age and sent age are each at
+most 300 seconds, `state == "healthy"`, and the sent timestamp is not beyond
+the canonical five-minute future-skew tolerance. A target that changes these
+constants invalidates this packet's cutoff and requires review. Missing times,
+negative age outside the allowed skew, or an age over the cutoff is stale.
+
+The evidence digest is over the complete evidence mapping from
+`authorization_id` through `verdict`, excluding `evidence_digest`,
+`attestation_binding`, and both attestation mappings. Serialize that mapping as
+RFC 8785 canonical JSON and SHA-256 the resulting UTF-8 bytes. Then compute
+`attestation_binding.value` as SHA-256 over the RFC 8785 canonical JSON object
+containing exactly `authorization_id`, `packet_git_sha`, `target_git_sha`, and
+`evidence_digest.value`. The operator and independent verifier each recompute
+both digests and create distinct immutable attestations carrying the same
+binding value and their own actor, timestamp, decision, and external record
+reference. Identity fields without those digest-bound attestations do not
+satisfy the gate.
+
 ## 5. Preflight: no mutation yet
 
 The operator and independent verifier both sign off this phase before any
@@ -268,16 +408,20 @@ service is stopped.
    (`openspec/specs/deployment-and-drift/spec.md`, requirement
    “`butlers deploy` — Preflight Guard Against a Frozen or Divergent Deploy
    Root”; `src/butlers/core/deploy.py:470-579`).
-3. Run the ancestry check and static closure audit from sections 1 and 2.2.
-   Re-enumerate `roster/*/butler.toml`, Compose services, enabled profiles, and
-   every external supervisor. Reconcile zero unknown writers.
+3. Run the ancestry check and all five static closure components from sections
+   1 and 2.2: the two allowlist scans, full-tree scan, full target-diff review,
+   and deployment-entrypoint/opaque-file review. Re-enumerate
+   `roster/*/butler.toml`, Compose services, enabled profiles, and every external
+   supervisor. Reconcile zero unknown writers.
 4. Resolve the actual host/database/project behind the selected mode without
    copying endpoint or credential values into evidence. Require a second-person
    match to the authorization's opaque environment reference.
 5. Capture the before-state for every writer unit: instance count, opaque
    process/container ID, immutable image ID, specifically projected `GIT_SHA`,
-   start time, and health. Capture only aggregate producer counts and opaque
-   heartbeat instance IDs.
+   start time, and health. For every producer instance, assign an opaque ref and
+   capture its process ref, heartbeat instance ref, sent time, server receipt
+   time, verifier observation time, health state, and computed freshness against
+   the 300-second cutoff; omit endpoint identity and error text.
 6. Require the rollback image to exist by immutable ID and remain retained
    under `[ROLLBACK_PROCEDURE_ID]`. Verify the rollback SHA and target migration
    set against the recorded compatibility approval. The prerequisite itself
@@ -286,6 +430,11 @@ service is stopped.
 7. Require sufficient window remaining for one rollout, the full settling
    interval, verification, and one rollback. Require zero active execution of
    any PR #3960/core identity-split operation.
+8. Render the exact lifecycle's service/effect manifest. Match every unit and
+   privileged/local side effect to the authorization in section 3. For the
+   canonical deploy, this includes Beads export materialization, both protected
+   restore-drill units, both root-firewall wrapper invocations, every unscoped
+   Compose unit, health polling, and the deployment-ledger write.
 
 Preflight does not read conversation tables, connector payloads, messages,
 provider sessions, credentials, or raw logs. If the actual deployment cannot
@@ -294,54 +443,77 @@ be inventoried without crossing an unauthorized data boundary, record
 
 ## 6. Authorized rollout and restart order
 
-Use only the lifecycle mechanism named in the authorization. For the baked-image
-Compose topology, the repository's canonical operation is `butlers deploy`:
-it resolves and stamps the current Git SHA, force-runs migrations in a fresh
-one-shot container, recreates services, polls dashboard health, and records a
-deployment result (`openspec/specs/deployment-and-drift/spec.md`, requirement
-“`butlers deploy` — Idempotent Production Deploy Verb”;
-`src/butlers/core/deploy.py:888-945`). A successful command is necessary but is
-not complete-fleet evidence.
+Use exactly the lifecycle method named in the authorization. The preferred
+method, `staged_writer_first`, keeps producer processes stopped through the
+entire writer matrix in addition to keeping the common ingress gate closed. It
+requires a separately reviewed procedure because the repository does not
+currently expose that staging as one command. The fallback,
+`canonical_deploy_with_ingress_gate`, may use `butlers deploy` only when the
+separately reviewed ingress gate remains proven closed at or before Switchboard
+acceptance throughout the unscoped recreate.
 
-The ordered procedure is:
+That distinction is binding. `butlers deploy` resolves and stamps the current
+Git SHA, force-runs migrations, prepares the protected topology, then executes
+an unscoped `docker compose up -d --remove-orphans`
+(`src/butlers/core/deploy.py:807-834`, `src/butlers/core/deploy.py:888-945`).
+Compose can therefore restart unprofiled connectors as soon as its single
+`butlers-up` healthcheck passes; that check covers Switchboard port 41100, not
+the per-daemon writer matrix. A prior `docker compose stop` does not keep those
+connectors stopped through the canonical recreate. Without the reviewed gate,
+the canonical method is `producer_started_early` and must abort.
 
-1. **Close ingress.** Quiesce every authorized dashboard ingress and every
-   present producer from section 2.3. Stop producers before writer units. Do
-   not delete containers, volumes, checkpoints, or queues. If an external
-   client cannot be quiesced, record `ingress_not_quiesced` and stop before
-   replacement.
-2. **Stop old writers.** Stop `dashboard-api` before `butlers-up`, then prove
-   the old writer instance count is zero. Graceful daemon shutdown cancels
-   in-flight route tasks while leaving their durable rows recoverable, then
-   drains runtime sessions (`src/butlers/lifecycle.py:572-633`). Forced kill,
-   timeout, or an unverifiable zero-writer state is an abort.
-3. **Run the authorized build/migration/recreate operation.** Preserve the
-   exact project and environment. Never use `down -v`, volume pruning,
-   hotreload in production, a dirty-root override, or an ad hoc migration
-   shortcut. The canonical deploy builds before migrations and recreates only
-   after migration success (`src/butlers/core/deploy.py:918-924`). The canonical
-   command performs the recreate as one Compose operation; it does not promise
-   an ordering between the two writer services. That is safe only while ingress
-   remains externally quiesced.
-4. **Establish the writer plane.** Verify `butlers-up` first, then
-   `dashboard-api`, regardless of the order Compose created them. The backend
-   unit contains every daemon and exposes a readiness endpoint on each daemon
-   (`src/butlers/daemon.py:759-770`); the dashboard exposes `/health` only after
-   application startup completes (`src/butlers/api/app.py:728-769`).
-5. **Establish producers.** Start each present connector only after
-   `butlers-up` is healthy. The default Compose topology encodes that dependency
-   for Telegram bot/user, WhatsApp, and Gmail, among the other connectors
-   (`docker-compose.yml:329-395`, `docker-compose.yml:685-707`). Keep direct
-   dashboard ingress closed until all writer verification passes.
-6. **Settle.** Wait at least the larger of the configured health start period
-   and one connector heartbeat interval, bounded by the authorization's
-   timeout. Heartbeat intervals are clamped to 30–300 seconds
-   (`src/butlers/connectors/heartbeat.py:33-35`,
-   `src/butlers/connectors/heartbeat.py:72-93`). No traffic should be injected
-   merely to manufacture evidence.
-7. **Verify, then reopen.** Complete section 7 under independent observation.
-   Reopen ingress only after both reviewers agree the verdict is
-   `complete_fleet_pass`.
+The concrete two-phase procedure is:
+
+1. **Close and prove the ingress gate.** Apply
+   `[INGRESS_GATE_PROCEDURE_ID]` across dashboard ingress, every connector,
+   already-buffered submissions, manually launched or externally supervised
+   clients, and any second stack sharing the database. Record the closed and
+   independently observed timestamps. Under `staged_writer_first`, also prove
+   every producer count is zero. Do not infer quiescence from quiet traffic or
+   treat stopped producers as a substitute for the dashboard/submission gate.
+2. **Stop producers, then old writers.** Stop all named producers and direct
+   dashboard ingress first. Stop `dashboard-api`, then `butlers-up`, and prove
+   the old writer instance count is zero. Do not delete containers, volumes,
+   checkpoints, or queues. Graceful daemon shutdown leaves durable route rows
+   recoverable and drains runtime sessions (`src/butlers/lifecycle.py:572-633`).
+   Forced kill, timeout, or unverifiable zero-writer state is an abort.
+3. **Build, migrate, and prepare supporting infrastructure.** Execute every
+   authorized effect from section 3, preserving the exact environment and
+   project. Never use `down -v`, volume pruning, production hotreload, a
+   dirty-root override, or an ad hoc migration shortcut.
+4. **Phase A — establish writers while ingress remains closed.** Under
+   `staged_writer_first`, recreate only the authorized supporting dependencies,
+   `butlers-up`, and `dashboard-api`; producer instance count must remain zero.
+   Under `canonical_deploy_with_ingress_gate`, run the canonical operation and
+   prove the ingress gate remained closed before, during, and after its unscoped
+   recreate even though producer containers may have restarted. A successful
+   deploy result is necessary but is not writer evidence.
+5. **Complete the writer matrix.** Verify `butlers-up` first, including every
+   target-roster daemon's local `/health`, then verify `dashboard-api`. The
+   backend exposes one readiness endpoint per daemon
+   (`src/butlers/daemon.py:759-770`); dashboard `/health` becomes ready after
+   application startup (`src/butlers/api/app.py:728-769`). Any missing,
+   unhealthy, stale, or unverifiable daemon rolls back before producer ingress
+   can reopen.
+6. **Phase B — establish producers only after Phase A passes.** Under
+   `staged_writer_first`, start one named producer class at a time only after
+   the complete per-daemon and dashboard writer matrix has passed. Under
+   `canonical_deploy_with_ingress_gate`, leave the gate closed and verify each
+   already-restarted producer class in the same deterministic order; do not
+   permit it to submit buffered or new work yet. For either method, an unknown
+   or early producer is an abort.
+7. **Settle and verify each producer.** Wait for its post-replacement heartbeat,
+   then record the per-instance timestamps and freshness computation from
+   section 4 before advancing to the next class. Heartbeat intervals are
+   clamped to 30–300 seconds (`src/butlers/connectors/heartbeat.py:33-35`,
+   `src/butlers/connectors/heartbeat.py:72-93`). No traffic may be injected to
+   manufacture evidence.
+8. **Attest, then reopen exactly once.** Complete section 7, compute the
+   evidence and binding digests, and obtain both distinct attestations. Recheck
+   that the ingress gate is still closed. Only then may the authorized operator
+   reopen it. Record the open timestamp and independent observation. A gate that
+   opens before both attestations is `producer_started_early`, even if health is
+   otherwise green.
 
 The temporary rollout window is never a mixed-version acceptance claim. While
 it exists, `bu-psarp` stays open and the core identity-split work stays frozen.
@@ -376,9 +548,12 @@ Project only HTTP status and JSON `status` from `/health`; require HTTP 200 and
 For every present expected producer class, require the post-restart instance
 count to equal the approved count, every container image to be the authorized
 target image when it uses `butlers-app`, every process identity to be new, and
-every heartbeat to be fresh and healthy. Store counts and opaque instance IDs,
-not endpoint identities or error text. A disabled heartbeat or connector without
-an independently approved health surface is `health_unverifiable`, not healthy.
+every heartbeat to be fresh and healthy. Store the per-instance opaque process
+and heartbeat refs, sent/received/observed timestamps, derived age, 300-second
+cutoff, clock skew, and health result; do not store endpoint identities or error
+text. The verifier must be able to recompute `fresh` from the retained fields.
+A disabled heartbeat or connector without an independently approved health
+surface is `health_unverifiable`, not healthy.
 
 An ingest-only external client on an older build does not execute the helper
 and is not automatically a stale writer. It must still be classified explicitly.
@@ -390,15 +565,20 @@ writer-unit proof.
 
 The independent verifier computes `complete_fleet_pass` only when:
 
-1. target ancestry and static inventory both pass;
+1. target ancestry, both allowlist scans, broad target-tree scan, full target
+   diff review, and deployment-entrypoint review all pass;
 2. expected writer count equals observed writer count before and after;
 3. every old writer has disappeared and every after writer proves target image,
    target Git SHA, new process identity, in-window start, and healthy state;
 4. every target-roster daemon is present and `ok`;
-5. every expected producer is present, replaced where required, and healthy;
+5. every expected producer is present, replaced where required, healthy, and
+   fresh under the recorded per-instance timestamps and cutoff;
 6. `unknown_writers` and `abort_reason_codes` are empty;
 7. no rollback occurred; and
-8. the operator and independent verifier sign the same exact evidence digest.
+8. the canonical evidence digest and attestation-binding digest recompute, and
+   the operator and independent verifier provide distinct immutable
+   attestations bound to the authorization ID, packet SHA, target SHA, and that
+   exact evidence digest.
 
 Transport HTTP 200, Compose `running`, a successful deployment ledger row, or
 a fresh heartbeat alone is insufficient.
@@ -411,11 +591,14 @@ a fresh heartbeat alone is insufficient.
 | Target SHA is not exact, not on main, or does not contain the prerequisite | `artifact_unverified`; abort before build. |
 | Static audit or live inventory finds a new/unknown writer or supervisor | `unknown_writer`; abort and re-review the packet. |
 | Rollback artifact/procedure/compatibility cannot be proven | `rollback_unavailable`; abort before quiescing ingress. |
+| Ingress-gate coverage or its continuously closed state cannot be proven | `ingress_gate_unproven`; do not recreate writers or producers. |
 | Ingress cannot be quiesced or old writer count cannot be proven zero | `ingress_not_quiesced` or `old_writer_unverifiable`; keep gate open. |
+| A producer process starts before the complete writer matrix, or the ingress gate permits submission before both attestations | `producer_started_early`; close ingress, abort, and roll back. |
 | Build or migration fails before replacement | `deploy_failed_pre_replace`; preserve evidence and use the authorized recovery branch in section 9. |
 | Any writer fails to restart or retains its old process ID | `writer_restart_failed` or `stale_process`; rollback. |
 | Any writer has wrong/unknown image, SHA, start time, or instance count | `mixed_fleet` or `version_unverifiable`; rollback. |
-| Any daemon or expected producer is missing, stale, degraded, unhealthy, or unverifiable | `fleet_unhealthy`; rollback or leave ingress closed under the approved incident path. |
+| Any daemon or expected producer is missing, stale under the recorded 300-second cutoff, degraded, unhealthy, or unverifiable | `fleet_unhealthy`; rollback or leave ingress closed under the approved incident path. |
+| Evidence digest, binding digest, or either distinct attestation is absent or does not recompute | `attestation_invalid`; do not reopen ingress and roll back. |
 | Evidence contains or requires sensitive content outside section 4 | `evidence_boundary_breach`; stop capture, quarantine it under the owner's incident procedure, and do not attach it to Beads or a PR. |
 | Window expires before complete verification | `window_expired`; rollback. |
 | Any rollback is partial, failed, unhealthy, stale, or unverifiable | `rollback_incomplete`; keep ingress closed and escalate under the separately authorized incident procedure. |
@@ -433,8 +616,8 @@ the deployment-specific commands, protected-overlay handling, and timeouts.
 The repository has no general-purpose `butlers rollback` verb, so improvising
 one from this document is prohibited.
 
-1. Keep dashboard and external ingress closed. Stop any target-version
-   producers in reverse startup order.
+1. Keep the reviewed ingress gate closed. Stop any target-version producers in
+   reverse startup order and prove their submission path remains closed.
 2. Stop the target `dashboard-api`, then the target `butlers-up`; prove zero
    active writer instances.
 3. If failure occurred before any writer container was replaced, restart the
@@ -479,17 +662,20 @@ system, while `.env.prod` selects the other target
 
 ## 11. Gate handoff and future PR authority
 
-After `complete_fleet_pass`, attach only the sanitized evidence digest and the
-schema from section 4 to `bu-psarp`. The tracked packet, a deploy command's exit
-zero, or an operator assertion is not the evidence itself. An independent
-security/operations reviewer must confirm:
+After `complete_fleet_pass`, attach only the sanitized evidence digest, the
+attestation-binding digest, both immutable attestation record references, and
+the schema from section 4 to `bu-psarp`. Each reference must resolve to the
+same binding value and must name its distinct actor, timestamp, and decision.
+The tracked packet, a deploy command's exit zero, or an unbound operator
+assertion is not the evidence itself. An independent security/operations
+reviewer must confirm:
 
 - authorization identity and scope;
 - writer closure and zero unknowns;
 - artifact, process-replacement, and health proof for the exact fleet;
 - content-blind evidence hygiene;
 - rollback readiness and whether rollback was invoked; and
-- the final digest and verdict.
+- both recomputed digests, both distinct attestations, and the final verdict.
 
 Even a passing gate only establishes the prerequisite deployment fact. It does
 not authorize any action on PR #3960. A future, separate instruction must name
