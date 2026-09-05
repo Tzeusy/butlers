@@ -122,11 +122,3 @@ Scope: v1-mandatory
 - **AND** the retry does not consume or masquerade as a second model-catalog candidate selection
 
 Historical candidate-selection wording preserved for archive safety: “the number of attempts SHALL be bounded by the number of eligible same-tier catalog candidates” and “no catalog entry SHALL be invoked more than once for the same logical session.” RFC 0027 narrows those sentences to candidate selection while permitting one bounded presentation fallback for the already-selected candidate.
-
-## Source References
-
-- Non-Negotiable Rule 3 (MCP-only inter-butler communication)
-- Non-Negotiable Rule 4 (deterministic daemon and ephemeral intelligence)
-- RFC 0001 (daemon lifecycle and triggers)
-- RFC 0002 (MCP tool surface and modules)
-- RFC 0027 (runtime tool surface discovery and exposure)

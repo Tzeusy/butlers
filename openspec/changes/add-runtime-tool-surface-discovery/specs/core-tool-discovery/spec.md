@@ -1,13 +1,3 @@
-## Purpose
-
-Defines how a `native_deferred` ephemeral runtime searches a bounded,
-LLM-eligible MCP corpus and loads full typed schemas only when needed, without
-weakening existing butler, module, approval, and infrastructure boundaries. An
-`eager_filtered` runtime instead receives every allowed full definition and no
-native search path. Canonical FastMCP listing remains complete; adapters own the
-search-corpus boundary and verified runtime-native Tool Search supplies the
-material context savings.
-
 ## ADDED Requirements
 
 ### Requirement: Layered Butler Tool Surface
@@ -486,14 +476,3 @@ Scope: v1-mandatory
 - **WHEN** the implementation and one native compatibility record satisfy this changeset
 - **THEN** the system is ready for a separately authorized live canary but does not change a live butler's policy automatically
 - **AND** canary execution, rollback ownership, and production expansion remain operator-controlled actions
-
-## Source References
-
-- Non-Negotiable Rule 2 (modules only add tools)
-- Non-Negotiable Rule 3 (MCP-only inter-butler communication)
-- Non-Negotiable Rule 4 (deterministic daemon and ephemeral intelligence)
-- Non-Negotiable Rule 5 (operational tuning is DB-backed)
-- Non-Negotiable Rule 6 (manifesto-governed scope)
-- RFC 0002 (MCP tool surface and modules)
-- RFC 0005 (observability and telemetry)
-- RFC 0027 (runtime tool surface discovery and exposure)

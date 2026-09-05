@@ -64,9 +64,3 @@ Scope: v1-mandatory
 - **WHEN** the policy PATCH fails validation, transport, or persistence
 - **THEN** the UI SHALL show an actionable error and retain or restore the last server-confirmed policy
 - **AND** it SHALL not claim that the edited value is active
-
-## Source References
-
-- Non-Negotiable Rule 5 (operational tuning is DB-backed)
-- RFC 0007 (dashboard and API surface)
-- RFC 0027 (runtime tool surface discovery and exposure)
