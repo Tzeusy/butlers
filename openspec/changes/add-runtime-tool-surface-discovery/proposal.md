@@ -154,3 +154,13 @@ mechanism; eager filtering is the conservative cross-CLI compatibility path.
 - **Authority:** authorizes RFC/OpenSpec/Beads amendment only. Implementation,
   dependency upgrades, amendment merge, provider evaluation, policy activation,
   deployment, and canary retain separate gates.
+
+## Exact Artifact Approval History
+
+- `f95052bc1ae721b11fc19f1aed8ac9e58e5c318d`: **Approved by owner on
+  2026-09-05.** Superseded as the approval artifact by the corrective successor
+  that completes the exact current core-tool registration inventory; its
+  accepted Option B and doctrine decisions remain historical provenance.
+- Corrective successor: **Pending refreshed exact-head owner approval.** The
+  approval must cite the immutable PR head presented in the review packet; no
+  prior artifact approval transfers to it.

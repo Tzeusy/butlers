@@ -152,7 +152,7 @@ The known core groups are:
 
 | Group | Tools |
 |-------|-------|
-| `infra` | `status`, `trigger`, `tick`, `correct`, `memory_access`, `memory_catalog_fetch` |
+| `infra` | `status`, `trigger`, `tick`, `correct`, `memory_access`, `memory_catalog_fetch`, `conversation_reply`, `shutdown`, `chronicler_day_close_refresh` (name-gated: chronicler only) |
 | `state` | `state_get`, `state_set`, `state_delete`, `state_list` |
 | `scheduling` | `schedule_list`, `schedule_create`, `schedule_update`, `schedule_delete`, `schedule_trigger`, `schedule_costs` |
 | `sessions` | `sessions_list`, `sessions_get`, `sessions_summary`, `sessions_daily`, `top_sessions` |
@@ -160,7 +160,7 @@ The known core groups are:
 | `media` | `get_attachment` |
 | `temporal` | `deadline_*`, `event_chain_*`, `seasonal_period_*` |
 | `module_mgmt` | `module.states`, `module.set_enabled` |
-| `switchboard_routing` | `ingest`, `route_to_butler`, `connector.heartbeat` (name-gated: switchboard only) |
+| `switchboard_routing` | `ingest`, `route_to_butler`, `answer_question`, `cannot_answer`, `file_bug_report`, `connector.heartbeat` (name-gated: switchboard only) |
 | `switchboard_backfill` | `backfill.poll`, `backfill.progress` (name-gated: switchboard only) |
 | `delegation` | `delegate_ask`, `delegate_receive`, `delegate_answer`, `delegate_wake` (type-gated: non-staffer only) |
 | `domain_events` | `publish_event`, `subscribe_to_event`, `unsubscribe_from_event`, `list_my_subscriptions`, `receive_domain_event`, `report_event_reaction` (type-gated: non-staffer only) |
@@ -169,19 +169,23 @@ The known core groups are:
 `switchboard_routing` and `switchboard_backfill` tools are ONLY registered when
 `butler_name == "switchboard"`, regardless of `core_groups`. Similarly,
 `delivery_preferences_*` and `deferred_notification_*` tools are ONLY registered
-when `butler_name == "messenger"`. This prevents a domain butler from
-accidentally gaining switchboard routing powers.
+when `butler_name == "messenger"`; the same Messenger-only boundary applies to
+`scheduling_preferences_set` and `scheduling_preferences_get`.
+`chronicler_day_close_refresh` belongs to `infra` but is registered only when
+`butler_name == "chronicler"`. These checks prevent a domain butler from
+gaining name-bound tools merely by configuring their group.
 
 **Type-gated groups.** `delegation` and `domain_events` tools are registered
 only for non-staffer butlers, regardless of `core_groups`. This preserves the
 staffer boundary even if a staffer's configuration names either group.
 
-**`route.execute` is ALWAYS registered** regardless of `core_groups`. All
-butlers need it because the Switchboard calls it server-to-server via MCP to
-deliver routed requests. `route.execute` is an infrastructure endpoint, not an
-LLM-facing tool. LLM-visibility filtering (hiding `route.execute` from the
-LLM's tool list while keeping the MCP handler callable) is deferred to a
-future change.
+**`route.execute` and `cancel_session` are ALWAYS registered** regardless of
+`core_groups` or butler type. All butlers need `route.execute` because the
+Switchboard calls it server-to-server via MCP to deliver routed requests; the
+dashboard calls `cancel_session` server-to-server to stop an in-flight runtime.
+Both are infrastructure endpoints, not LLM-facing tools. LLM-visibility
+filtering hides them from the LLM's presentation while keeping their MCP
+handlers callable.
 
 **Implementation.** The daemon reads `core_groups` from the effective
 `RuntimeConfig` (resolved from the `runtime_config` DB table via
